@@ -1,6 +1,6 @@
 # Reading Log
 
-An on-device reading stats tracking app for jailbroken kindles.
+Keep tracks of reading for jailbroken kindles.
 
 ## Build
 
@@ -21,9 +21,9 @@ Download and unzip the latest `readinglog-v<x.y.z>-kindle.zip` from the [release
  ## Screenshots
 
 <p align="center">
-    <img src=".github/assets/today.png" width="300" alt="Today" />
-    <img src=".github/assets/books.png" width="300" alt="Books" />
-    <img src=".github/assets/clock.png" width="300" alt="Clock" />
+    <img src=".github/assets/today.png" width="250" alt="Today" />
+    <img src=".github/assets/books.png" width="250" alt="Books" />
+    <img src=".github/assets/clock.png" width="250" alt="Clock" />
 </p>
 
 <!--
