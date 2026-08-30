@@ -1,0 +1,16 @@
+{
+	"items": [
+		{
+			"name": "Reading Log",
+			"priority": 0,
+			"action": "bin/readinglog.sh",
+			"exitmenu": true
+		},
+		{
+			"name": "Reading Log: collect only",
+			"priority": 1,
+			"action": "bin/collect.sh",
+			"exitmenu": false
+		}
+	]
+}

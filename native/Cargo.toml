@@ -1,0 +1,33 @@
+[package]
+name = "readinglog-native"
+version.workspace = true
+license.workspace = true
+edition = "2024"
+publish = false
+
+[lib]
+name = "readinglog_native"
+path = "src/lib.rs"
+
+[[bin]]
+name = "readinglog-native"
+path = "src/main.rs"
+
+[dependencies]
+# Raw open/ioctl/poll for the evdev touchscreen and bezel buttons.
+libc = "0.2"
+# Error propagation with context strings through the device run loop.
+anyhow = "1"
+# Gunzip the firmware's rotated syslog chunks and its daily snapshots.
+# `rust_backend` (miniz_oxide), never the default zlib: a C build script
+# anywhere in the graph ends the rust-lld cross path.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+# TTF rasterizer over the faces the firmware ships, outlining a glyph on demand
+# rather than parsing a whole cmap up front.
+ab_glyph = "0.2"
+# Cover thumbnails out of /mnt/us/system/thumbnails, which the framework writes
+# as JPEG. PNG for anything a user dropped there.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+# X11 client over the socket. NO `allow-unsafe-code`: it links the system
+# libxcb and breaks the static musl link.
+x11rb = { version = "0.13", default-features = false }

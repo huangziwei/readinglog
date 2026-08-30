@@ -1,0 +1,9 @@
+/target
+/artifacts
+.DS_Store
+.claude
+
+# Staged by build.sh from target/. Named, never the directory: ignoring `bin/`
+# would drop bin/readinglog.sh from the release zip.
+/device/extensions/readinglog/bin/readinglog
+.github/assets

@@ -1,0 +1,15 @@
+[workspace]
+resolver = "3"
+members = ["native"]
+
+[workspace.package]
+version = "0.1.0"
+license = "GPL-3.0-or-later"
+
+[profile.dev]
+incremental = true
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

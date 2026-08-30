@@ -1,0 +1,4 @@
+# `rust-lld` and the musl crt objects for armv7-unknown-linux-musleabihf.
+[target.armv7-unknown-linux-musleabihf]
+linker = "rust-lld"
+rustflags = ["-C", "link-self-contained=yes"]

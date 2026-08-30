@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="2200" viewBox="0 0 1440 2200">
+  <!-- The library tile. One hue for the data, ink for the frame and the
+       wordmark. Every colour's Rec. 601 luma sits within two of the grey it
+       stands in for, so a panel resolving no colour draws what it always drew:
+       255, 225, 193, 142, 93, 16 down the ramp.
+
+       One measure runs through it. The frame's inner box is 65..1375 across
+       and 65..2135 down, so its centre is 720. Both blocks are 940 wide and
+       start at x=250, which centres them on 720 with the wordmark. The stack
+       runs 320..1880 and leaves 255 above and below. -->
+  <rect width="1440" height="2200" fill="#ffffff"/>
+  <rect x="60" y="60" width="1320" height="2080" fill="none" stroke="#111111" stroke-width="10"/>
+
+  <!-- Four weeks, inked the way the calendar screen inks a day. Six columns of
+       140 on a pitch of 160: 250..1190. An un-inked cell is inset by half its
+       stroke, so its outer edge sits on the same line as an inked one. -->
+  <g>
+    <rect x="250" y="320" width="140" height="140" fill="#cfe6f7"/>
+    <rect x="412" y="322" width="136" height="136" fill="#ffffff" stroke="#c5d8e4" stroke-width="4"/>
+    <rect x="570" y="320" width="140" height="140" fill="#5b9dcb"/>
+    <rect x="730" y="320" width="140" height="140" fill="#2f6b96"/>
+    <rect x="890" y="320" width="140" height="140" fill="#9fcbe8"/>
+    <rect x="1052" y="322" width="136" height="136" fill="#ffffff" stroke="#c5d8e4" stroke-width="4"/>
+
+    <rect x="250" y="480" width="140" height="140" fill="#2f6b96"/>
+    <rect x="410" y="480" width="140" height="140" fill="#0a1218"/>
+    <rect x="570" y="480" width="140" height="140" fill="#9fcbe8"/>
+    <rect x="730" y="480" width="140" height="140" fill="#cfe6f7"/>
+    <rect x="890" y="480" width="140" height="140" fill="#5b9dcb"/>
+    <rect x="1050" y="480" width="140" height="140" fill="#2f6b96"/>
+
+    <rect x="252" y="642" width="136" height="136" fill="#ffffff" stroke="#c5d8e4" stroke-width="4"/>
+    <rect x="410" y="640" width="140" height="140" fill="#5b9dcb"/>
+    <rect x="570" y="640" width="140" height="140" fill="#0a1218"/>
+    <rect x="730" y="640" width="140" height="140" fill="#0a1218"/>
+    <rect x="890" y="640" width="140" height="140" fill="#2f6b96"/>
+    <rect x="1050" y="640" width="140" height="140" fill="#cfe6f7"/>
+
+    <rect x="250" y="800" width="140" height="140" fill="#9fcbe8"/>
+    <rect x="410" y="800" width="140" height="140" fill="#2f6b96"/>
+    <rect x="570" y="800" width="140" height="140" fill="#cfe6f7"/>
+    <rect x="730" y="800" width="140" height="140" fill="#5b9dcb"/>
+    <rect x="890" y="800" width="140" height="140" fill="#0a1218"/>
+    <rect x="1050" y="800" width="140" height="140" fill="#5b9dcb"/>
+  </g>
+
+  <!-- The hour strip: when the reading happened. Twelve bars of 60 on a pitch
+       of 80, 250..1190, every one standing on the rule at 1340. -->
+  <g fill="#0a1218">
+    <rect x="250" y="1280" width="60" height="60"/>
+    <rect x="330" y="1250" width="60" height="90"/>
+    <rect x="410" y="1190" width="60" height="150"/>
+    <rect x="490" y="1130" width="60" height="210"/>
+    <rect x="570" y="1220" width="60" height="120"/>
+    <rect x="650" y="1280" width="60" height="60"/>
+    <rect x="730" y="1310" width="60" height="30"/>
+    <rect x="810" y="1250" width="60" height="90"/>
+    <rect x="890" y="1160" width="60" height="180"/>
+    <rect x="970" y="1100" width="60" height="240"/>
+    <rect x="1050" y="1040" width="60" height="300"/>
+    <rect x="1130" y="1130" width="60" height="210"/>
+  </g>
+  <rect x="250" y="1340" width="940" height="8" fill="#111111"/>
+
+  <text x="720" y="1660" font-family="Helvetica, Arial, sans-serif" font-size="190"
+        font-weight="bold" fill="#111111" text-anchor="middle">Reading</text>
+  <text x="720" y="1840" font-family="Helvetica, Arial, sans-serif" font-size="190"
+        font-weight="bold" fill="#111111" text-anchor="middle">Log</text>
+</svg>

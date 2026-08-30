@@ -1,0 +1,103 @@
+# Release — attaches the device/ zip to a `published` GitHub release.
+# `workflow_dispatch` names a `tag` to rebuild, or on a blank one builds and
+# tests a ref, attaching nothing.
+
+name: Release
+
+on:
+    release:
+        types: [published]
+    workflow_dispatch:
+        inputs:
+            tag:
+                description: "Release tag to rebuild (blank: build only)"
+                required: false
+                default: ""
+
+permissions:
+    contents: write
+
+jobs:
+    release:
+        runs-on: ubuntu-latest
+
+        # $TAG is the release tag, empty on a dispatch that names none.
+        env:
+            TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+        steps:
+            # `ref` is $TAG, or actions/checkout's default when blank.
+            - uses: actions/checkout@v4
+              with:
+                  ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+            # awk reads [workspace.package].version section-aware.
+            - name: Check the tag against Cargo.toml
+              if: env.TAG != ''
+              run: |
+                  crate=$(awk '/^\[workspace\.package\]/{f=1;next} /^\[/{f=0}
+                               f && /^version *=/{gsub(/[" ]/,""); sub(/^version=/,""); print; exit}' \
+                      Cargo.toml)
+                  if [ "$crate" != "${TAG#v}" ]; then
+                    echo "error: release $TAG does not match Cargo.toml $crate" >&2
+                    exit 1
+                  fi
+                  echo "version $crate"
+
+            - name: Install the cross target
+              run: rustup target add armv7-unknown-linux-musleabihf
+
+            # ~/.cargo/git holds git-pinned dependency revs.
+            - uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                      target
+                  key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+            - name: Format, lint, test
+              run: |
+                  cargo fmt --all --check
+                  cargo clippy --workspace --all-targets -- -D warnings
+                  cargo test --workspace
+
+            - name: Build the device tree
+              run: ./build.sh
+
+            - name: Package
+              id: package
+              env:
+                  VERSION: ${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
+              run: |
+                  # `tr / -` squashes a $VERSION like feat/x to one path segment.
+                  name="readinglog-$(echo "$VERSION" | tr / -)-kindle"
+                  # extensions/ and documents/ open at the archive root.
+                  (cd device && zip -qr "$RUNNER_TEMP/$name.zip" extensions documents -x '*.DS_Store')
+                  # LICENSE rides at the archive root.
+                  zip -q "$RUNNER_TEMP/$name.zip" LICENSE
+                  # `cd "$RUNNER_TEMP"` keeps the path in $name.zip.sha256 relative.
+                  (cd "$RUNNER_TEMP" && sha256sum "$name.zip" > "$name.zip.sha256")
+                  echo "name=$name" >> "$GITHUB_OUTPUT"
+                  ls -lh "$RUNNER_TEMP/$name.zip"
+
+            # `--clobber` replaces an asset of the same name.
+            - name: Attach to the release
+              if: env.TAG != ''
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  NAME: ${{ steps.package.outputs.name }}
+              run: |
+                  gh release upload "$TAG" \
+                    "$RUNNER_TEMP/$NAME.zip" \
+                    "$RUNNER_TEMP/$NAME.zip.sha256" \
+                    --clobber
+
+            - name: Keep the tree from a manual run
+              if: env.TAG == ''
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ${{ steps.package.outputs.name }}
+                  path: |
+                      device/extensions
+                      device/documents
