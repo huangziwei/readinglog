@@ -1,5 +1,7 @@
 # Reading Log
 
+An on-device reading stats tracking app for jailbroken kindles.
+
 ## Build
 
 ```sh
@@ -16,8 +18,15 @@ Download and unzip the latest `readinglog-v<x.y.z>-kindle.zip` from the [release
 | `extensions/readinglog/` | `/mnt/us/extensions/readinglog/` | or anywhere you store your extensions |
 | `documents/ReadingLog.sh` | `/mnt/us/documents/ReadingLog.sh` | or anywhere you store your scriptlets |
 
-<!-- ## Screenshots
+ ## Screenshots
 
+<p align="center">
+    <img src=".github/assets/today.png" width="300" alt="Today" />
+    <img src=".github/assets/books.png" width="300" alt="Books" />
+    <img src=".github/assets/clock.png" width="300" alt="Clock" />
+</p>
+
+<!--
 <table>
     <tr>
         <td><img src=".github/assets/today.png" width="380" alt="Today" /></td>
