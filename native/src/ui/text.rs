@@ -1,6 +1,6 @@
 //! Text rasterization over [`crate::font`]'s chain. ab_glyph coverage past
 //! 96/255 is a black pixel; an uncovered character draws a hollow box. Glyphs
-//! cache per (codepoint, px, face).
+//! cache per (codepoint, px, face, band).
 
 use std::collections::HashMap;
 
@@ -8,7 +8,7 @@ use ab_glyph::{Font as _, FontVec, ScaleFont as _};
 use anyhow::Result;
 
 use crate::eink::fb::Framebuffer;
-use crate::font::{self, FontChain};
+use crate::font::{self, Band, FontChain};
 
 const COVERAGE_THRESHOLD: u8 = 96;
 
@@ -26,7 +26,7 @@ struct Raster {
 pub struct TextRenderer {
     chain: FontChain,
     px: f32,
-    cache: HashMap<(char, u32, usize), Raster>,
+    cache: HashMap<(char, u32, usize, usize), Raster>,
 }
 
 impl TextRenderer {
@@ -50,24 +50,31 @@ impl TextRenderer {
 
     /// Set the size the next draws are at.
     ///
+    /// `px` is the em, whichever face draws the row — see [`font::scale_of`].
     /// A screen mixes half a dozen sizes and one chain serves them all: the
-    /// glyph cache is keyed by size as well as by codepoint and face, so
+    /// glyph cache is keyed by size as well as by codepoint, face and band, so
     /// switching back and forth costs nothing after the first pass.
     pub fn set_px(&mut self, px: f32) {
         self.px = px;
     }
 
     /// How far above the baseline a capital stands, for centring a line inside
-    /// a box rather than hanging it off the baseline.
+    /// a box rather than hanging it off the baseline. CJK is drawn onto this
+    /// same centre by [`FontChain::centring`], so one figure places both.
     pub fn cap_height(&self) -> u32 {
-        (self.px * 0.72).round().max(1.0) as u32
+        (self.px * font::CAP).round().max(1.0) as u32
     }
 
     pub fn line_height(&self) -> u32 {
         // The face's own vertical metrics; round up so adjacent rows don't
         // tear into each other. Always the primary face's, so a row keeps its
-        // height whichever face draws the text.
-        let face = self.chain.primary().as_scaled(self.px);
+        // height whichever face draws the text — which holds because every
+        // face is scaled to the same em, and CJK ink is centred on the Latin
+        // cap rather than hung off the baseline.
+        let face = self
+            .chain
+            .primary()
+            .as_scaled(font::scale_of(self.chain.primary(), self.px));
         (face.height() + face.line_gap()).ceil().max(1.0) as u32
     }
 
@@ -80,7 +87,7 @@ impl TextRenderer {
     /// [`TextRenderer::measure_width`] for text whose language is known — see
     /// [`TextRenderer::draw_in`].
     pub fn measure_width_in(&mut self, script: font::Script, s: &str) -> u32 {
-        let selection = self.chain.select(s, script);
+        let run = font::Script::resolve(script, s);
         let px = self.px;
         let px_key = px.to_bits();
         let mut w = 0u32;
@@ -88,14 +95,9 @@ impl TextRenderer {
             if font::is_invisible(ch) {
                 continue;
             }
-            let advance = match self.chain.glyph_source(selection, ch) {
-                Some((face, font)) => {
-                    let entry = self
-                        .cache
-                        .entry((ch, px_key, face))
-                        .or_insert_with(|| rasterize(font, ch, px));
-                    entry.advance.round().max(0.0) as u32
-                }
+            let band = font::band_of(ch, run);
+            let advance = match self.glyph(band, ch, px, px_key) {
+                Some(glyph) => glyph.advance.round().max(0.0) as u32,
                 None => missing_advance(px),
             };
             w = w.saturating_add(advance);
@@ -122,6 +124,19 @@ impl TextRenderer {
             self.measure_width_in(script, s)
         })
     }
+
+    /// `ch` rasterized for `band`, from the cache or into it. `None` where no
+    /// face in the chain has the character.
+    fn glyph(&mut self, band: Band, ch: char, px: f32, px_key: u32) -> Option<&Raster> {
+        let face = self.chain.face_for(band, ch)?;
+        let drop = self.chain.centring(face, band) * px;
+        let font = self.chain.font(face)?;
+        Some(
+            self.cache
+                .entry((ch, px_key, face, band.slot()))
+                .or_insert_with(|| rasterize(font, ch, px, drop)),
+        )
+    }
 }
 
 impl TextRenderer {
@@ -138,8 +153,10 @@ impl TextRenderer {
         self.draw_in(font::Script::Unknown, fb, x, y_baseline, s, inverted)
     }
 
-    /// [`TextRenderer::draw`] under a known `script`, which orders the faces
-    /// tried. Coverage decides which one draws.
+    /// [`TextRenderer::draw`] under a known `script`, which decides the Han
+    /// convention the run is set in and the order faces are tried in. Each
+    /// character is drawn from the band its own script belongs to, so the
+    /// Latin inside a CJK title still comes off the UI face.
     pub fn draw_in(
         &mut self,
         script: font::Script,
@@ -150,7 +167,7 @@ impl TextRenderer {
         inverted: bool,
     ) -> i32 {
         let fg = if inverted { 0xFF } else { 0x00 };
-        let selection = self.chain.select(s, script);
+        let run = font::Script::resolve(script, s);
         let px = self.px;
         let px_key = px.to_bits();
         let mut cur_x = x;
@@ -158,13 +175,9 @@ impl TextRenderer {
             if font::is_invisible(ch) {
                 continue;
             }
-            match self.chain.glyph_source(selection, ch) {
-                // Cache key uses bit pattern of f32 — same px always keys the same.
-                Some((face, font)) => {
-                    let glyph = self
-                        .cache
-                        .entry((ch, px_key, face))
-                        .or_insert_with(|| rasterize(font, ch, px));
+            let band = font::band_of(ch, run);
+            match self.glyph(band, ch, px, px_key) {
+                Some(glyph) => {
                     blit_threshold(
                         fb,
                         cur_x + glyph.left,
@@ -186,13 +199,14 @@ impl TextRenderer {
     }
 }
 
-/// `ch` outlined from `font` at `px`, with its coverage. ab_glyph works in
-/// screen space, y downward from the baseline, so its bounds are the blit's
-/// offsets.
-fn rasterize(font: &FontVec, ch: char, px: f32) -> Raster {
+/// `ch` outlined from `font` at an em of `px`, with its coverage, dropped by
+/// `drop` pixels. ab_glyph works in screen space, y downward from the
+/// baseline, so its bounds are the blit's offsets.
+fn rasterize(font: &FontVec, ch: char, px: f32, drop: f32) -> Raster {
+    let scale = font::scale_of(font, px);
     let id = font.glyph_id(ch);
-    let advance = font.as_scaled(px).h_advance(id);
-    let Some(outline) = font.outline_glyph(id.with_scale(px)) else {
+    let advance = font.as_scaled(scale).h_advance(id);
+    let Some(outline) = font.outline_glyph(id.with_scale(scale)) else {
         return Raster {
             advance,
             left: 0,
@@ -216,7 +230,7 @@ fn rasterize(font: &FontVec, ch: char, px: f32) -> Raster {
     Raster {
         advance,
         left: bounds.min.x.round() as i32,
-        top: bounds.min.y.round() as i32,
+        top: (bounds.min.y + drop).round() as i32,
         width,
         height,
         coverage,

@@ -1,21 +1,27 @@
-//! Font fallback over the faces the device ships. [`select`] picks one face
-//! per string, dropping to per-character where none covers the run.
-//! [`FontChain::load`] reads the first candidate and leaves the rest `Pending`.
+//! Font fallback over the faces the device ships.
+//!
+//! A character is drawn from the [`Band`] its script belongs to, not from
+//! whichever face happens to cover the whole string: Latin comes from the UI
+//! face, Han from the face setting the run's regional convention, kana and
+//! Hangul from their own. [`FontChain::load`] reads the first candidate and
+//! leaves the rest `Pending`.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use ab_glyph::{Font as _, FontVec};
+use ab_glyph::{Font as _, FontVec, PxScale};
 use anyhow::{Result, anyhow};
 
 /// The regional convention a run of text is set in.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Script {
-    /// No preference. [`Script::Unknown`] promotes no face.
+    /// No preference. [`Script::resolve`] reads one off the text instead.
     #[default]
     Unknown,
     Japanese,
     SimplifiedChinese,
     TraditionalChinese,
+    Korean,
 }
 
 impl Script {
@@ -27,6 +33,7 @@ impl Script {
         match primary.as_str() {
             // `jp` is a country code.
             "ja" | "jp" => Script::Japanese,
+            "ko" | "kr" => Script::Korean,
             // CLDR resolves `yue` to `yue-Hant-HK`.
             "yue" => Script::TraditionalChinese,
             "zh" => {
@@ -43,6 +50,143 @@ impl Script {
             _ => Script::Unknown,
         }
     }
+
+    /// The convention `text` is set in: the catalog's tag where it names one,
+    /// else what the characters themselves say. Kana settles a run for
+    /// Japanese and Hangul for Korean; Han alone cannot be told apart, and
+    /// takes the same default as a bare `zh`.
+    pub fn resolve(hint: Script, text: &str) -> Script {
+        if hint != Script::Unknown {
+            return hint;
+        }
+        let mut han = false;
+        for ch in text.chars() {
+            if is_kana(ch) {
+                return Script::Japanese;
+            }
+            if is_hangul(ch) {
+                return Script::Korean;
+            }
+            han |= is_han(ch);
+        }
+        if han {
+            Script::SimplifiedChinese
+        } else {
+            Script::Unknown
+        }
+    }
+
+    /// The Han convention this script is set in. Every script has one: a run
+    /// with no Han preference still has to choose a face for an ideograph.
+    fn han(self) -> Script {
+        match self {
+            Script::Japanese => Script::Japanese,
+            Script::TraditionalChinese => Script::TraditionalChinese,
+            _ => Script::SimplifiedChinese,
+        }
+    }
+}
+
+/// The faces a character is drawn from, and the order they are tried in.
+///
+/// Han is cut three ways because the conventions disagree on the same
+/// codepoint — 者 carries a dot in Chinese and none in Japanese — so the band
+/// carries the convention with it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Band {
+    Latin,
+    Han(Script),
+    Kana,
+    Hangul,
+}
+
+/// How many bands [`FontChain`] holds an order for.
+const BANDS: usize = 6;
+
+impl Band {
+    /// Where this band's face order sits in [`FontChain::orders`]. Also the
+    /// band's share of a glyph cache key: one face draws two bands at two
+    /// different drops.
+    pub fn slot(self) -> usize {
+        match self {
+            Band::Latin => 0,
+            Band::Han(Script::TraditionalChinese) => 1,
+            Band::Han(Script::Japanese) => 2,
+            // Every other script sets Han in the default convention.
+            Band::Han(_) => 3,
+            Band::Kana => 4,
+            Band::Hangul => 5,
+        }
+    }
+
+    /// Whether this band's ink fills an em box rather than standing on the
+    /// baseline — see [`FontChain::centring`].
+    pub fn is_cjk(self) -> bool {
+        !matches!(self, Band::Latin)
+    }
+
+    /// The characters whose ink stands for the band, first that the face has.
+    fn probes(self) -> &'static [char] {
+        match self {
+            Band::Latin => &[],
+            Band::Han(_) => &['中'],
+            // code2000 draws kana and has no Han at all.
+            Band::Kana => &['中', 'あ'],
+            Band::Hangul => &['한'],
+        }
+    }
+}
+
+/// The band `ch` is drawn from, under a run set in `run`.
+pub fn band_of(ch: char, run: Script) -> Band {
+    if is_hangul(ch) {
+        return Band::Hangul;
+    }
+    if is_kana(ch) {
+        return Band::Kana;
+    }
+    if is_han(ch) {
+        return Band::Han(run.han());
+    }
+    if is_wide(ch) {
+        // Punctuation between ideographs comes off the same face they do.
+        return match run {
+            Script::Japanese => Band::Kana,
+            Script::Korean => Band::Hangul,
+            _ => Band::Han(run.han()),
+        };
+    }
+    Band::Latin
+}
+
+/// The Han blocks a reading device sees: the unified repertoire, Extension A,
+/// the compatibility ideographs and the SIP.
+fn is_han(c: char) -> bool {
+    matches!(c, '\u{3400}'..='\u{4DBF}'
+        | '\u{4E00}'..='\u{9FFF}'
+        | '\u{F900}'..='\u{FAFF}'
+        | '\u{20000}'..='\u{3FFFF}')
+}
+
+/// Hiragana, katakana, and the halfwidth katakana a filename can carry.
+fn is_kana(c: char) -> bool {
+    matches!(c, '\u{3040}'..='\u{30FF}'
+        | '\u{31F0}'..='\u{31FF}'
+        | '\u{FF66}'..='\u{FF9F}')
+}
+
+/// Hangul syllables, and the jamo they decompose to.
+fn is_hangul(c: char) -> bool {
+    matches!(c, '\u{1100}'..='\u{11FF}'
+        | '\u{3130}'..='\u{318F}'
+        | '\u{A960}'..='\u{A97F}'
+        | '\u{AC00}'..='\u{D7FF}')
+}
+
+/// CJK punctuation and the fullwidth forms: an em wide, and drawn by whatever
+/// face the run's ideographs come from. Halfwidth katakana is [`is_kana`]'s.
+fn is_wide(c: char) -> bool {
+    matches!(c, '\u{3000}'..='\u{303F}' | '\u{FF00}'..='\u{FF65}' | '\u{FFA0}'..='\u{FFEF}')
 }
 
 /// One face the device might have, and the convention it sets.
@@ -59,34 +203,60 @@ const FONT_DIRS: &[&str] = &[
     // The firmware set.
     "/usr/java/lib/fonts",
     "/usr/share/fonts",
+    // The regional packs, which carry the faces the base image leaves out.
+    "/var/local/font/mnt/zh-Hant_font/fonts",
+    "/var/local/font/mnt/ja_font/fonts",
     // User-installed faces, ranked below the firmware set.
     "/mnt/us/fonts",
 ];
 
-// Unscanned: `/chroot/usr/java/lib/fonts` mirrors the system set and
-// `/var/local/font/**` holds the CJK packs.
+// Unscanned: `/chroot/usr/java/lib/fonts` mirrors the system set.
 
-/// Face families in preference order, matched case-insensitively against the
-/// filename. `ember` leads; `code2000`, a pan-Unicode catch-all, sorts last.
-const PREFERRED: &[&str] = &[
-    "ember",
-    "bookerly",
-    "baskerville",
-    "caecilia",
-    "helvetica",
-    "code2000",
+/// Latin families in preference order, matched case-insensitively against the
+/// filename. `ember` is the device's own UI face and leads.
+const PREFERRED: &[&str] = &["ember", "bookerly", "baskerville", "caecilia", "helvetica"];
+
+/// The CJK families, by the convention each sets. Matched the same way, and
+/// ranked in the order written: a regular cut before its bold, and the face
+/// the framework itself sets a book in before the alternates.
+///
+/// Amazon's `code2000` is **not** among them — its copy carries kana and
+/// Hangul but not one Han ideograph, so it is a [`CATCH_ALL`], never a Han
+/// face.
+const CJK_FAMILIES: &[(Script, &[&str])] = &[
+    (
+        Script::TraditionalChinese,
+        &["stheititc", "stsongtc", "stkaititc", "styuantc"],
+    ),
+    (
+        Script::Japanese,
+        &["tbgothic", "tbmincho", "tsukumin", "tsukugo"],
+    ),
+    (
+        Script::SimplifiedChinese,
+        &["stheitimedium", "stheitibold", "stsongmedium", "stsongbold"],
+    ),
+    (Script::Korean, &["notosanskr", "notoserifkr"]),
 ];
+
+/// Pan-Unicode faces, tried after every named family and before the unnamed
+/// rest. They keep a character drawable when no proper face has it.
+const CATCH_ALL: &[&str] = &["code2000", "mtchinesesurrogates"];
 
 /// Distance from the plain upright, lower better. The tokens overlap on real
 /// filenames: `Amazon-Ember-RegularItalic` rules out on italic first,
 /// `AmazonEmberBold-Regular` on weight, `-Heavy` and `-Medium` below "regular".
+/// `serif` demotes the eleven `AmazonEmberSerif_*` cuts, which name no weight
+/// this reads and would otherwise stand between Ember and every other face.
 fn weight_rank(lower: &str) -> usize {
     if lower.contains("italic") || lower.contains("oblique") {
         return 3;
     }
-    if ["bold", "heavy", "black", "light", "thin", "cond", "medium"]
-        .iter()
-        .any(|w| lower.contains(w))
+    if [
+        "bold", "heavy", "black", "light", "thin", "cond", "medium", "serif", "poster",
+    ]
+    .iter()
+    .any(|w| lower.contains(w))
     {
         return 2;
     }
@@ -97,19 +267,37 @@ fn weight_rank(lower: &str) -> usize {
     1
 }
 
-/// Rank a filename: lower sorts earlier. Family first, then weight.
-fn rank(file_name: &str) -> (usize, usize) {
+/// Which convention a filename sets, and where it sits in that family's list.
+fn cjk_family(lower: &str) -> Option<(Script, usize)> {
+    CJK_FAMILIES.iter().find_map(|(script, tokens)| {
+        tokens
+            .iter()
+            .position(|t| lower.contains(t))
+            .map(|at| (*script, at))
+    })
+}
+
+/// Rank a filename: lower sorts earlier. Tier first — the Latin families, then
+/// the CJK families, then the pan-Unicode faces, then everything else — and
+/// within a tier the family, then the weight.
+fn rank(file_name: &str) -> (usize, usize, usize) {
     let lower = file_name.to_ascii_lowercase();
-    let family = PREFERRED
-        .iter()
-        .position(|p| lower.contains(p))
-        .unwrap_or(PREFERRED.len());
-    (family, weight_rank(&lower))
+    let weight = weight_rank(&lower);
+    if let Some(at) = PREFERRED.iter().position(|p| lower.contains(p)) {
+        return (0, at, weight);
+    }
+    if let Some((_, at)) = cjk_family(&lower) {
+        return (1, at, weight);
+    }
+    if let Some(at) = CATCH_ALL.iter().position(|p| lower.contains(p)) {
+        return (2, at, weight);
+    }
+    (3, 0, weight)
 }
 
 /// Everything drawable on disk, best first, feeding [`FontChain::load`].
 pub fn discover() -> Vec<Candidate> {
-    let mut found: Vec<(usize, usize, PathBuf)> = Vec::new();
+    let mut found: Vec<((usize, usize, usize), PathBuf, Script)> = Vec::new();
     let extra = std::env::var("READINGLOG_FONTS").unwrap_or_default();
     let dirs = extra
         .split(':')
@@ -132,73 +320,34 @@ pub fn discover() -> Vec<Candidate> {
             if !matches!(ext.as_str(), "ttf" | "otf" | "ttc") {
                 continue;
             }
-            let (family, styled) = rank(name);
-            found.push((family, styled, path));
+            let script = cjk_family(&name.to_ascii_lowercase()).map_or(Script::Unknown, |(s, _)| s);
+            found.push((rank(name), path, script));
         }
     }
-    found.sort();
+    found.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
     found
         .into_iter()
-        .map(|(_, _, path)| Candidate {
-            path,
-            // No candidate claims a script; a language hint promotes none.
-            script: Script::Unknown,
-        })
+        .map(|(_, path, script)| Candidate { path, script })
         .collect()
 }
 
-/// Which face draws a run of text, decided once per string.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Selection {
-    /// This face has every character in the run — draw it all with that one.
-    Whole(usize),
-    /// No single face covers the run: per-character resolution, carrying the
-    /// run's preference for the order.
-    PerChar(Script),
-}
-
-/// The face setting the wanted convention first, then the chain as declared.
-/// `promoted` indexes the chain.
-pub fn visiting_order(faces: usize, promoted: Option<usize>) -> impl Iterator<Item = usize> {
-    promoted
-        .into_iter()
-        .chain((0..faces).filter(move |face| Some(*face) != promoted))
-}
-
-/// First face in `order` carrying every visible character of `text`.
-/// `has_glyph` is asked until a face misses.
-pub fn covering_face<I, F>(text: &str, order: I, mut has_glyph: F) -> Option<usize>
-where
-    I: IntoIterator<Item = usize>,
-    F: FnMut(usize, char) -> bool,
-{
-    order.into_iter().find(|&face| {
-        text.chars()
-            .filter(|c| !is_invisible(*c))
-            .all(|c| has_glyph(face, c))
-    })
-}
-
-/// First face in `order` that has `ch`, or `None` when none does.
-pub fn face_with<I, F>(ch: char, order: I, mut has_glyph: F) -> Option<usize>
-where
-    I: IntoIterator<Item = usize>,
-    F: FnMut(usize, char) -> bool,
-{
-    order.into_iter().find(|&face| has_glyph(face, ch))
-}
-
-/// Code points carrying no glyph: the C0/C1 controls, the BOM and zero-width
-/// spaces, bidi marks, the word joiner, invisible operators, the soft hyphen.
-/// None reaches the rasterizer, which answers a miss with a visible `.notdef`.
-pub fn is_invisible(c: char) -> bool {
-    c.is_control()
-        || matches!(c,
-            '\u{00AD}'                  // soft hyphen
-            | '\u{200B}'..='\u{200F}'   // ZWSP, ZWNJ, ZWJ, LRM, RLM
-            | '\u{2060}'..='\u{2064}'   // word joiner + invisible operators
-            | '\u{FEFF}'                // BOM / zero-width no-break space
-        )
+/// Faces to try for a band, best first: those setting `wanted`, then the
+/// `also` conventions in the order given, then the chain as ranked so a
+/// character some face has is never drawn as a box.
+fn order_for(scripts: &[Script], wanted: Script, also: &[Script]) -> Vec<usize> {
+    let mut order: Vec<usize> = Vec::with_capacity(scripts.len());
+    for script in std::iter::once(wanted).chain(also.iter().copied()) {
+        order.extend(
+            scripts
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| **s == script)
+                .map(|(i, _)| i),
+        );
+    }
+    let tail: Vec<usize> = (0..scripts.len()).filter(|i| !order.contains(i)).collect();
+    order.extend(tail);
+    order
 }
 
 /// An ordered set of faces: the first usable candidate, read up front, plus
@@ -206,15 +355,19 @@ pub fn is_invisible(c: char) -> bool {
 pub struct FontChain {
     primary: FontVec,
     primary_path: PathBuf,
-    primary_script: Script,
     rest: Vec<Face>,
+    /// One face order per [`Band`], indexed by [`Band::slot`]. Built once:
+    /// resolving a character walks the order for its band.
+    orders: [Vec<usize>; BANDS],
+    /// How far a band's ink drops to sit on the Latin cap's centre, in ems,
+    /// per face — see [`FontChain::centring`].
+    centres: HashMap<(usize, usize), f32>,
 }
 
 /// A fallback slot. [`FontChain::load`] drops a candidate it cannot read.
 /// `path` outlives the read, for [`FontChain::paths`].
 struct Face {
     path: PathBuf,
-    script: Script,
     state: State,
 }
 
@@ -250,25 +403,23 @@ impl FontChain {
                 .collect();
             return Err(anyhow!("no usable font among {tried:?}"));
         };
+        let mut scripts = vec![first.script];
         let rest = present
-            .map(|candidate| Face {
-                path: candidate.path.clone(),
-                script: candidate.script,
-                state: State::Pending,
+            .map(|candidate| {
+                scripts.push(candidate.script);
+                Face {
+                    path: candidate.path.clone(),
+                    state: State::Pending,
+                }
             })
             .collect();
         Ok(Self {
             primary,
             primary_path: first.path.clone(),
-            primary_script: first.script,
             rest,
+            orders: band_orders(&scripts),
+            centres: HashMap::new(),
         })
-    }
-
-    /// Faces in the chain, read or not. Never zero: [`FontChain::load`] fails
-    /// on an empty chain.
-    pub fn faces(&self) -> usize {
-        1 + self.rest.len()
     }
 
     /// The chain on this device, primary first. Logged at startup.
@@ -277,49 +428,72 @@ impl FontChain {
             .chain(self.rest.iter().map(|face| face.path.as_path()))
     }
 
-    /// The face line metrics come from, whichever face draws a row.
+    /// The face Latin is set in, which line metrics come from.
     pub fn primary(&self) -> &FontVec {
         &self.primary
     }
 
-    /// Face for the whole of `text`, preferring the one that sets `script` —
-    /// see [`covering_face`].
-    pub fn select(&mut self, text: &str, script: Script) -> Selection {
-        let order = visiting_order(self.faces(), self.promoted(script));
-        match covering_face(text, order, |face, ch| {
-            self.ensure(face).is_some_and(|font| has_glyph(font, ch))
-        }) {
-            Some(face) => Selection::Whole(face),
-            None => Selection::PerChar(script),
+    /// Where in the chain `ch` is drawn from for `band`, reading faces until
+    /// one has the character. `None` when nothing in the chain has it. The
+    /// index is part of the glyph cache's key: two faces rasterize the same
+    /// codepoint differently.
+    pub fn face_for(&mut self, band: Band, ch: char) -> Option<usize> {
+        // The order is owned back for the walk: `ensure` reads faces, and the
+        // orders are fixed for the life of the chain.
+        let order = std::mem::take(&mut self.orders[band.slot()]);
+        let face = order
+            .iter()
+            .copied()
+            .find(|&face| self.ensure(face).is_some_and(|font| has_glyph(font, ch)));
+        self.orders[band.slot()] = order;
+        face
+    }
+
+    /// Face `index`, which [`FontChain::face_for`] has already read. `None`
+    /// for a face that never loaded.
+    pub fn font(&self, index: usize) -> Option<&FontVec> {
+        if index == 0 {
+            return Some(&self.primary);
+        }
+        match &self.rest.get(index - 1)?.state {
+            State::Loaded(font) => Some(font),
+            State::Pending | State::Absent => None,
         }
     }
 
-    /// The face index and the face itself for `ch` under `selection`, or
-    /// `None` when nothing in the chain has the character. The index is the
-    /// glyph cache's key: two faces rasterize the same codepoint differently.
-    pub fn glyph_source(&mut self, selection: Selection, ch: char) -> Option<(usize, &FontVec)> {
-        let face = match selection {
-            Selection::Whole(face) => face,
-            Selection::PerChar(script) => {
-                let order = visiting_order(self.faces(), self.promoted(script));
-                face_with(ch, order, |face, c| {
-                    self.ensure(face).is_some_and(|font| has_glyph(font, c))
-                })?
-            }
-        };
-        self.ensure(face).map(|font| (face, font))
-    }
-
-    /// Chain position of the face setting `script` on this device.
-    /// [`Script::Unknown`] promotes nothing: it names no preference, and the
-    /// pan-Unicode catch-all sets it too.
-    fn promoted(&self, script: Script) -> Option<usize> {
-        if script == Script::Unknown {
-            return None;
+    /// How far `face` drops `band`'s ink for it to sit on the centre of a
+    /// Latin cap, in ems, positive downward.
+    ///
+    /// Nothing about where CJK ink lands is in a face's metrics: `hhea` says
+    /// where the face claims to reach and the ink is somewhere else, and the
+    /// two do not track between faces. So the answer is outlined once per
+    /// face and cached. Latin is exempt — a Latin glyph sits *on* the
+    /// baseline, which is what a baseline is for.
+    pub fn centring(&mut self, face: usize, band: Band) -> f32 {
+        if !band.is_cjk() {
+            return 0.0;
         }
-        std::iter::once(self.primary_script)
-            .chain(self.rest.iter().map(|face| face.script))
-            .position(|candidate| candidate == script)
+        let key = (face, band.slot());
+        if let Some(hit) = self.centres.get(&key) {
+            return *hit;
+        }
+        // `px_bounds` is whole pixels; measuring large makes that a rounding
+        // error in an answer every size scales from.
+        let drop = self
+            .ensure(face)
+            .and_then(|font| {
+                let probe = band
+                    .probes()
+                    .iter()
+                    .copied()
+                    .find(|&c| has_glyph(font, c))?;
+                let glyph = font.glyph_id(probe).with_scale(scale_of(font, CENTRING_PX));
+                let ink = font.outline_glyph(glyph)?.px_bounds();
+                Some(-CJK_CENTRE - (ink.min.y + ink.max.y) / 2.0 / CENTRING_PX)
+            })
+            .unwrap_or(0.0);
+        self.centres.insert(key, drop);
+        drop
     }
 
     /// Face `index`, reading it from disk on first use.
@@ -341,9 +515,61 @@ impl FontChain {
     }
 }
 
+/// The face order for every band, over a chain whose faces set `scripts`.
+fn band_orders(scripts: &[Script]) -> [Vec<usize>; BANDS] {
+    use Script::{Japanese as Ja, Korean as Ko, SimplifiedChinese as Sc, TraditionalChinese as Tc};
+    // A convention's own faces first, then the other Han conventions: a
+    // regional form is wrong where a missing glyph is unreadable.
+    let mut orders = [const { Vec::new() }; BANDS];
+    orders[Band::Latin.slot()] = (0..scripts.len()).collect();
+    orders[Band::Han(Tc).slot()] = order_for(scripts, Tc, &[Sc, Ja]);
+    orders[Band::Han(Ja).slot()] = order_for(scripts, Ja, &[Tc, Sc]);
+    orders[Band::Han(Sc).slot()] = order_for(scripts, Sc, &[Tc, Ja]);
+    orders[Band::Kana.slot()] = order_for(scripts, Ja, &[Sc, Tc]);
+    orders[Band::Hangul.slot()] = order_for(scripts, Ko, &[]);
+    orders
+}
+
+/// A Latin cap, in ems: Amazon Ember draws `H` to 0.695. What a boxed
+/// label centres on, Latin and CJK alike.
+pub const CAP: f32 = 0.695;
+
+/// Where CJK ink is centred above the baseline, in ems. Half a [`CAP`].
+const CJK_CENTRE: f32 = CAP / 2.0;
+
+/// The em [`FontChain::centring`] measures at. Large, and never drawn.
+const CENTRING_PX: f32 = 512.0;
+
+/// The [`PxScale`] that draws `font` with an em `px` pixels tall.
+///
+/// ab_glyph scales a face so that `hhea.ascender - hhea.descender` measures
+/// `PxScale`, and that span is not the em: it is 1.000 em in STHeiti and
+/// TBGothic, 1.254 in Amazon Ember, 1.270 in code2000 and 1.480 in NotoSansKR.
+/// One bare `PxScale` therefore hands every face a different em, and sets a
+/// line of `abcABC中日언문` in three sizes. Dividing the span back out holds
+/// every face's em at `px`.
+pub fn scale_of(font: &FontVec, px: f32) -> PxScale {
+    let height = font.height_unscaled();
+    let upem = font.units_per_em().unwrap_or(height);
+    PxScale::from(px * height / upem)
+}
+
+/// Code points carrying no glyph: the C0/C1 controls, the BOM and zero-width
+/// spaces, bidi marks, the word joiner, invisible operators, the soft hyphen.
+/// None reaches the rasterizer, which answers a miss with a visible `.notdef`.
+pub fn is_invisible(c: char) -> bool {
+    c.is_control()
+        || matches!(c,
+            '\u{00AD}'                  // soft hyphen
+            | '\u{200B}'..='\u{200F}'   // ZWSP, ZWNJ, ZWJ, LRM, RLM
+            | '\u{2060}'..='\u{2064}'   // word joiner + invisible operators
+            | '\u{FEFF}'                // BOM / zero-width no-break space
+        )
+}
+
 /// Whether `font` can draw `ch` at all. Glyph 0 is `.notdef`, which is what a
-/// face hands back for a character it doesn't have — asking for it is how the
-/// tofu got drawn in the first place.
+/// face hands back for a character it doesn't have, and what it draws as a
+/// box: a miss has to be read off the id, not off the outline.
 pub fn has_glyph(font: &FontVec, ch: char) -> bool {
     font.glyph_id(ch).0 != 0
 }
@@ -360,133 +586,240 @@ fn read_face(path: &Path) -> Option<FontVec> {
 mod tests {
     use super::*;
 
-    /// Coverage oracle over face repertoires spelled as strings, one entry
-    /// of `faces` per chain position.
-    fn repertoires<'a>(faces: &'a [&'a str]) -> impl FnMut(usize, char) -> bool + 'a {
-        move |face, ch| faces[face].contains(ch)
-    }
+    /// Every face on a Kindle Scribe's `/usr/java/lib/fonts`, verbatim, cut to
+    /// the ones a title can reach. The full directory holds 122.
+    const DEVICE: &[&str] = &[
+        "Amazon-Ember-Bold.ttf",
+        "Amazon-Ember-Heavy.ttf",
+        "Amazon-Ember-Medium.ttf",
+        "Amazon-Ember-Regular.ttf",
+        "Amazon-Ember-RegularItalic.ttf",
+        "AmazonEmberBold-Bold.ttf",
+        "AmazonEmberBold-Regular.ttf",
+        "AmazonEmberSerif_Rg.ttf",
+        "AmazonEmberSerif_Poster.ttf",
+        "Baskerville-Regular.ttf",
+        "Bookerly-Regular.ttf",
+        "Caecilia_LT_65_Medium.ttf",
+        "Futura-Medium.ttf",
+        "Helvetica_LT_65_Medium.ttf",
+        "KindleBlackboxRegular.ttf",
+        "MTChineseSurrogates.ttf",
+        "NotoSansKR-Regular.otf",
+        "NotoSerifKR-Medium.otf",
+        "Palatino-Regular.ttf",
+        "STHeitiBold.ttf",
+        "STHeitiMedium.ttf",
+        "STHeitiTC.ttf",
+        "STHeitiTCBold.ttf",
+        "STSongMedium.ttf",
+        "STSongTC.ttf",
+        "TBGothicBold_213.ttf",
+        "TBGothicMed_213.ttf",
+        "TBMinchoMedium_213.ttf",
+        "code2000.ttf",
+    ];
 
-    /// The chain tried in declared order — what a caller that knows nothing
-    /// about the text's language gets.
-    fn unhinted(faces: &[&str]) -> impl Iterator<Item = usize> {
-        visiting_order(faces.len(), None)
+    /// [`DEVICE`] in the order [`discover`] would hand it over, with the
+    /// convention each face sets.
+    fn device_chain() -> (Vec<&'static str>, Vec<Script>) {
+        let mut names = DEVICE.to_vec();
+        names.sort_by_key(|n| (rank(n), *n));
+        let scripts = names
+            .iter()
+            .map(|n| cjk_family(&n.to_ascii_lowercase()).map_or(Script::Unknown, |(s, _)| s))
+            .collect();
+        (names, scripts)
     }
 
     #[test]
-    fn a_run_one_face_covers_is_drawn_entirely_by_it() {
-        // Every character is in face 0.
-        let faces = ["あいう漢字", "汉字"];
-        let face = covering_face("漢字あい", unhinted(&faces), repertoires(&faces));
-        assert_eq!(face, Some(0));
-    }
-
-    #[test]
-    fn a_run_the_first_face_misses_moves_whole_to_the_next() {
-        // 楼 is in both faces, 红 only in face 1. Selection is per string:
-        // face 1 draws 楼 too.
-        let faces = ["楼梦", "红楼梦魇"];
+    fn the_ui_font_wins_on_a_real_device() {
+        let (names, _) = device_chain();
         assert_eq!(
-            covering_face("红楼梦魇", unhinted(&faces), repertoires(&faces)),
-            Some(1)
+            names[0], "Amazon-Ember-Regular.ttf",
+            "the device's UI typeface, upright and regular, must draw the UI"
         );
-    }
-
-    #[test]
-    fn a_run_no_single_face_covers_resolves_per_character() {
-        let faces = ["あ", "汉"];
-        assert_eq!(
-            covering_face("あ汉", unhinted(&faces), repertoires(&faces)),
-            None
-        );
-        assert_eq!(
-            face_with('あ', unhinted(&faces), repertoires(&faces)),
-            Some(0)
-        );
-        assert_eq!(
-            face_with('汉', unhinted(&faces), repertoires(&faces)),
-            Some(1)
-        );
-    }
-
-    #[test]
-    fn a_character_no_face_has_resolves_to_nothing() {
-        let faces = ["あ", "汉"];
-        assert_eq!(face_with('𐀀', unhinted(&faces), repertoires(&faces)), None);
-    }
-
-    #[test]
-    fn invisible_characters_do_not_decide_the_face() {
-        // A title carrying a stray BOM must not be pushed off the face that
-        // covers its visible text — no face has a glyph for U+FEFF.
-        let faces = ["あいう", "汉字"];
-        assert_eq!(
-            covering_face("あ\u{FEFF}い", unhinted(&faces), repertoires(&faces)),
-            Some(0)
-        );
-        assert!(is_invisible('\u{FEFF}'));
-        assert!(!is_invisible('あ'));
-    }
-
-    #[test]
-    fn control_characters_never_reach_the_rasterizer() {
-        // A banner message joins its clauses with `\n`, and no face carries
-        // U+000A. The layout consumes it; the renderer skips what is left,
-        // here and for any control riding in on metadata.
-        for c in ['\n', '\r', '\t', '\u{0}', '\u{7F}', '\u{85}'] {
-            assert!(is_invisible(c), "{c:?} would draw as a box");
+        // The traps, each of which beat Regular under an earlier ranking: a
+        // bold family whose cut is named "Regular", two weights with no
+        // bold-ish token, and the serif cuts that name no weight at all.
+        for trap in [
+            "AmazonEmberBold-Regular.ttf",
+            "Amazon-Ember-Heavy.ttf",
+            "Amazon-Ember-Medium.ttf",
+            "Amazon-Ember-RegularItalic.ttf",
+            "AmazonEmberSerif_Rg.ttf",
+            "AmazonEmberSerif_Poster.ttf",
+        ] {
+            assert!(
+                rank("Amazon-Ember-Regular.ttf") < rank(trap),
+                "{trap} should rank below the plain regular"
+            );
         }
-        // Nothing in the chain has one, which is the whole damage: the box got
-        // drawn, and the miss also pushed the rest of the run off its face.
-        let faces = ["Synced 3", "汉字"];
-        assert_eq!(face_with('\n', unhinted(&faces), repertoires(&faces)), None);
-        assert_eq!(
-            covering_face("Synced 3\nSynced 3", unhinted(&faces), repertoires(&faces)),
-            Some(0)
-        );
     }
 
     #[test]
-    fn an_empty_run_selects_the_first_face() {
-        let faces = ["あ"];
-        assert_eq!(
-            covering_face("", unhinted(&faces), repertoires(&faces)),
-            Some(0)
-        );
+    fn a_han_face_outranks_the_pan_unicode_catch_all() {
+        // This firmware's `code2000` holds 24,713 glyphs and none of them is
+        // Han, so it must never stand between a title and a Han face.
+        for han in [
+            "STHeitiMedium.ttf",
+            "STSongMedium.ttf",
+            "STHeitiTC.ttf",
+            "TBGothicMed_213.ttf",
+            "NotoSansKR-Regular.otf",
+        ] {
+            assert!(
+                rank(han) < rank("code2000.ttf"),
+                "{han} must outrank code2000"
+            );
+        }
+        // And the catch-all still outranks the unnamed rest, so a character
+        // no named family has is drawn rather than boxed.
+        for unnamed in ["KindleBlackboxRegular.ttf", "Futura-Medium.ttf"] {
+            assert!(rank("code2000.ttf") < rank(unnamed));
+        }
     }
 
     #[test]
-    fn a_hint_moves_its_face_to_the_front_and_keeps_the_rest_in_order() {
-        assert_eq!(visiting_order(4, Some(2)).collect::<Vec<_>>(), [2, 0, 1, 3]);
-        assert_eq!(visiting_order(4, None).collect::<Vec<_>>(), [0, 1, 2, 3]);
-        assert_eq!(visiting_order(4, Some(0)).collect::<Vec<_>>(), [0, 1, 2, 3]);
+    fn each_cjk_face_is_filed_under_the_convention_it_sets() {
+        let cases = [
+            ("STHeitiMedium.ttf", Script::SimplifiedChinese),
+            ("STHeitiBold.ttf", Script::SimplifiedChinese),
+            ("STSongMedium.ttf", Script::SimplifiedChinese),
+            // The TC cuts share a prefix with the SC ones and must not be
+            // read as them.
+            ("STHeitiTC.ttf", Script::TraditionalChinese),
+            ("STHeitiTCBold.ttf", Script::TraditionalChinese),
+            ("STSongTC.ttf", Script::TraditionalChinese),
+            ("STSongTCBold.ttf", Script::TraditionalChinese),
+            ("STKaitiTC.ttf", Script::TraditionalChinese),
+            ("TBGothicMed_213.ttf", Script::Japanese),
+            ("TBMinchoMedium_213.ttf", Script::Japanese),
+            ("TsukuMinPr5-Medium.ttf", Script::Japanese),
+            ("NotoSansKR-Regular.otf", Script::Korean),
+            ("NotoSerifKR-Medium.otf", Script::Korean),
+        ];
+        for (name, want) in cases {
+            let got = cjk_family(&name.to_ascii_lowercase()).map(|(s, _)| s);
+            assert_eq!(got, Some(want), "{name}");
+        }
+        // Not CJK faces, and none of them may claim a convention.
+        for name in [
+            "code2000.ttf",
+            "Amazon-Ember-Regular.ttf",
+            "Bookerly-Regular.ttf",
+        ] {
+            assert_eq!(cjk_family(&name.to_ascii_lowercase()), None, "{name}");
+        }
     }
 
     #[test]
-    fn a_hint_wins_over_a_face_that_would_also_have_covered_the_run() {
-        // Face 0 (Japanese) covers every character of this Traditional title.
-        // Face 2 is the Traditional one.
-        let faces = ["粵語語法講義", "粤语语法讲义", "粵語語法講義"];
+    fn a_chinese_title_is_drawn_by_a_chinese_face() {
+        // TBGothic is Japanese and covers most of the same codepoints, so a
+        // Simplified band that ranked by filename alone would reach it first.
+        let (names, scripts) = device_chain();
+        let orders = band_orders(&scripts);
+        let first = |band: Band| names[orders[band.slot()][0]];
         assert_eq!(
-            covering_face("粵語語法講義", visiting_order(3, None), repertoires(&faces)),
-            Some(0)
+            first(Band::Han(Script::SimplifiedChinese)),
+            "STHeitiMedium.ttf"
         );
         assert_eq!(
-            covering_face(
-                "粵語語法講義",
-                visiting_order(3, Some(2)),
-                repertoires(&faces)
-            ),
-            Some(2)
+            first(Band::Han(Script::TraditionalChinese)),
+            "STHeitiTC.ttf"
         );
+        assert_eq!(first(Band::Han(Script::Japanese)), "TBGothicMed_213.ttf");
+        assert_eq!(first(Band::Kana), "TBGothicMed_213.ttf");
+        assert_eq!(first(Band::Hangul), "NotoSansKR-Regular.otf");
+        // Latin never leaves the UI face for a CJK one.
+        assert_eq!(first(Band::Latin), "Amazon-Ember-Regular.ttf");
     }
 
     #[test]
-    fn a_hinted_face_that_misses_still_loses_to_coverage() {
-        // A wrong language tag costs regional shapes, never glyphs.
-        let faces = ["紅樓夢魘", "红楼梦魇"];
+    fn every_band_can_still_reach_every_face() {
+        // A band prefers its own convention but never fences the rest off:
+        // a character only one odd face has must still be drawable.
+        let (names, scripts) = device_chain();
+        let orders = band_orders(&scripts);
+        for band in [
+            Band::Latin,
+            Band::Han(Script::SimplifiedChinese),
+            Band::Han(Script::TraditionalChinese),
+            Band::Han(Script::Japanese),
+            Band::Kana,
+            Band::Hangul,
+        ] {
+            let order = &orders[band.slot()];
+            assert_eq!(order.len(), names.len(), "{band:?} drops faces");
+            let mut seen = order.clone();
+            seen.sort_unstable();
+            seen.dedup();
+            assert_eq!(seen.len(), names.len(), "{band:?} repeats a face");
+        }
+    }
+
+    #[test]
+    fn a_character_is_drawn_from_its_own_script_not_the_run_s() {
+        // The Latin inside a CJK title comes off the UI face, and the
+        // ideographs off the Han face — one string, two bands.
+        let run = Script::TraditionalChinese;
+        assert_eq!(band_of('周', run), Band::Han(Script::TraditionalChinese));
+        assert_eq!(band_of('A', run), Band::Latin);
+        assert_eq!(band_of(' ', run), Band::Latin);
+        // Fullwidth punctuation is an em wide and belongs to the ideographs.
+        assert_eq!(band_of('（', run), Band::Han(Script::TraditionalChinese));
+        assert_eq!(band_of('：', run), Band::Han(Script::TraditionalChinese));
+        // Kana and Hangul answer for themselves whatever the run is set in.
+        assert_eq!(band_of('ゆ', run), Band::Kana);
+        assert_eq!(band_of('ン', run), Band::Kana);
+        assert_eq!(band_of('한', run), Band::Hangul);
+    }
+
+    #[test]
+    fn the_run_decides_which_convention_han_is_set_in() {
+        // One codepoint, three faces: 者 carries a dot in Chinese and none in
+        // Japanese, and the tag is what tells them apart.
+        assert_eq!(band_of('者', Script::Japanese), Band::Han(Script::Japanese));
         assert_eq!(
-            covering_face("红楼梦魇", visiting_order(2, Some(0)), repertoires(&faces)),
-            Some(1)
+            band_of('者', Script::TraditionalChinese),
+            Band::Han(Script::TraditionalChinese)
+        );
+        assert_eq!(
+            band_of('者', Script::SimplifiedChinese),
+            Band::Han(Script::SimplifiedChinese)
+        );
+        // Korean and untagged text still have to set an ideograph in some
+        // convention, and take the same default a bare `zh` does.
+        for run in [Script::Korean, Script::Unknown] {
+            assert_eq!(band_of('者', run), Band::Han(Script::SimplifiedChinese));
+        }
+    }
+
+    #[test]
+    fn an_untagged_title_is_read_off_its_own_characters() {
+        // A catalog that names no language still must not set Japanese in a
+        // Chinese face: kana settles it, and Hangul settles Korean.
+        assert_eq!(
+            Script::resolve(Script::Unknown, "ねむらない街の図鑑"),
+            Script::Japanese
+        );
+        assert_eq!(
+            Script::resolve(Script::Unknown, "채식주의자"),
+            Script::Korean
+        );
+        // Han alone cannot be told apart, and takes the bare-`zh` default.
+        assert_eq!(
+            Script::resolve(Script::Unknown, "紅樓夢"),
+            Script::SimplifiedChinese
+        );
+        assert_eq!(
+            Script::resolve(Script::Unknown, "Interval"),
+            Script::Unknown
+        );
+        // A tag that names a convention always wins over the characters.
+        assert_eq!(
+            Script::resolve(Script::TraditionalChinese, "ねむらない"),
+            Script::TraditionalChinese
         );
     }
 
@@ -495,6 +828,7 @@ mod tests {
         assert_eq!(Script::of_language("ja"), Script::Japanese);
         // A country code where a language belongs — real imported metadata.
         assert_eq!(Script::of_language("jp"), Script::Japanese);
+        assert_eq!(Script::of_language("ko"), Script::Korean);
         assert_eq!(Script::of_language("zh-Hant"), Script::TraditionalChinese);
         assert_eq!(Script::of_language("zh_TW"), Script::TraditionalChinese);
         assert_eq!(Script::of_language("ZH-HK"), Script::TraditionalChinese);
@@ -503,77 +837,164 @@ mod tests {
         assert_eq!(Script::of_language("zh-CN"), Script::SimplifiedChinese);
         // CLDR resolves bare `zh` to Simplified.
         assert_eq!(Script::of_language("zh"), Script::SimplifiedChinese);
-        // No chain position claims these tags.
-        assert_eq!(Script::of_language("en"), Script::Unknown);
-        assert_eq!(Script::of_language("ko"), Script::Unknown);
-        assert_eq!(Script::of_language(""), Script::Unknown);
-    }
-
-    #[test]
-    fn the_ui_font_wins_on_a_real_device() {
-        // Every Latin face on a Colorsoft (firmware 5.18), verbatim. Three
-        // carry no bold-ish token and rank below Regular.
-        let mut faces = [
-            "Amazon-Ember-Bold.ttf",
-            "Amazon-Ember-BoldItalic.ttf",
-            "Amazon-Ember-Heavy.ttf",
-            "Amazon-Ember-HeavyItalic.ttf",
-            "Amazon-Ember-Medium.ttf",
-            "Amazon-Ember-MediumItalic.ttf",
-            "Amazon-Ember-Regular.ttf",
-            "Amazon-Ember-RegularItalic.ttf",
-            "AmazonEmberBold-Bold.ttf",
-            "AmazonEmberBold-Regular.ttf",
-            "Baskerville-Regular.ttf",
-            "Bookerly-Regular.ttf",
-            "BookerlyDisplay-Regular.ttf",
-            "Caecilia_LT_65_Medium.ttf",
-            "Futura-Medium.ttf",
-            "Helvetica_LT_65_Medium.ttf",
-            "KindleBlackboxRegular.ttf",
-            "Palatino-Regular.ttf",
-            "code2000.ttf",
-        ];
-        faces.sort_by_key(|f| (rank(f), *f));
-
-        assert_eq!(
-            faces[0], "Amazon-Ember-Regular.ttf",
-            "the device's UI typeface, upright and regular, must draw the UI"
-        );
-        // The traps, each of which beat Regular under an earlier ranking:
-        // a bold family whose cut is named "Regular", and two weights with no
-        // bold-ish token in the name at all.
-        for trap in [
-            "AmazonEmberBold-Regular.ttf",
-            "Amazon-Ember-Heavy.ttf",
-            "Amazon-Ember-Medium.ttf",
-            "Amazon-Ember-RegularItalic.ttf",
-        ] {
-            assert!(
-                rank("Amazon-Ember-Regular.ttf") < rank(trap),
-                "{trap} should rank below the plain regular"
-            );
-        }
-        // The pan-Unicode catch-all ranks below every [`PREFERRED`] family and
-        // above the unnamed ones (Blackbox, Futura, the Noto script packs).
-        for named in ["Bookerly-Regular.ttf", "Baskerville-Regular.ttf"] {
-            assert!(rank(named) < rank("code2000.ttf"));
-        }
-        assert!(rank("code2000.ttf") < rank("KindleBlackboxRegular.ttf"));
-    }
-
-    /// The catalog's `p_languages_0` is what reaches this, in the shapes the
-    /// framework writes it.
-    #[test]
-    fn a_catalog_language_tag_picks_the_convention_to_set_in() {
-        assert_eq!(Script::of_language("en"), Script::Unknown);
-        assert_eq!(Script::of_language(""), Script::Unknown);
+        // The catalog's `p_languages_0`, in the shapes the framework writes.
         assert_eq!(Script::of_language("ja-JP"), Script::Japanese);
-        assert_eq!(Script::of_language("zh"), Script::SimplifiedChinese);
         assert_eq!(
             Script::of_language("zh-Hant-TW"),
             Script::TraditionalChinese
         );
+        assert_eq!(Script::of_language("en"), Script::Unknown);
+        assert_eq!(Script::of_language(""), Script::Unknown);
+    }
+
+    #[test]
+    fn invisible_characters_never_reach_the_rasterizer() {
+        // A banner joins its clauses with `\n`, which no face carries, and a
+        // title can arrive carrying a stray BOM.
+        for c in [
+            '\n', '\r', '\t', '\u{0}', '\u{7F}', '\u{85}', '\u{FEFF}', '\u{00AD}',
+        ] {
+            assert!(is_invisible(c), "{c:?} would draw as a box");
+        }
+        for c in ['あ', 'A', '中', '한', '　'] {
+            assert!(!is_invisible(c), "{c:?} is ink");
+        }
+    }
+
+    /// The real faces, where a dump is pointed at. Skipped otherwise, the way
+    /// `preview.rs` is: the assertions below are about what a specific
+    /// device's files contain, not about the ranking.
+    fn device_chain_on_disk() -> Option<FontChain> {
+        let dirs = std::env::var("READINGLOG_FONTS").ok()?;
+        let candidates: Vec<Candidate> = dirs
+            .split(':')
+            .filter(|d| !d.is_empty())
+            .flat_map(|dir| {
+                let mut names: Vec<PathBuf> = std::fs::read_dir(dir)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|e| e.path())
+                    .filter(|p| {
+                        let ext = p
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .unwrap_or_default()
+                            .to_ascii_lowercase();
+                        matches!(ext.as_str(), "ttf" | "otf" | "ttc")
+                    })
+                    .collect();
+                names.sort_by_key(|p| {
+                    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+                    (rank(name), name.to_string())
+                });
+                names
+            })
+            .map(|path| {
+                let lower = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                let script = cjk_family(&lower).map_or(Script::Unknown, |(s, _)| s);
+                Candidate { path, script }
+            })
+            .collect();
+        FontChain::load(&candidates).ok()
+    }
+
+    #[test]
+    fn a_mixed_title_takes_each_run_off_its_own_face() {
+        let Some(mut chain) = device_chain_on_disk() else {
+            return;
+        };
+        let name = |chain: &FontChain, face: usize| {
+            chain
+                .paths()
+                .nth(face)
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .unwrap_or_default()
+                .to_string()
+        };
+        // A Traditional Chinese author with a Latin gloss: one string, and
+        // each half comes off the face for its own script.
+        let run = Script::TraditionalChinese;
+        for (ch, want) in [('周', "STHeitiTC.ttf"), ('牧', "STHeitiTC.ttf")] {
+            let face = chain.face_for(band_of(ch, run), ch).expect("no face");
+            assert_eq!(name(&chain, face), want, "{ch}");
+        }
+        for ch in ['A', 'n', 'e', ' ', 'C', 'h', 'o', 'u'] {
+            let face = chain.face_for(band_of(ch, run), ch).expect("no face");
+            assert_eq!(
+                name(&chain, face),
+                "Amazon-Ember-Regular.ttf",
+                "{ch} must stay on the UI face inside a CJK title"
+            );
+        }
+        // The fullwidth brackets belong to the ideographs, not to the Latin.
+        for ch in ['（', '）'] {
+            let face = chain.face_for(band_of(ch, run), ch).expect("no face");
+            assert_eq!(name(&chain, face), "STHeitiTC.ttf", "{ch}");
+        }
+    }
+
+    #[test]
+    fn each_convention_reaches_its_own_face_on_a_real_device() {
+        let Some(mut chain) = device_chain_on_disk() else {
+            return;
+        };
+        let name = |chain: &FontChain, face: usize| {
+            chain
+                .paths()
+                .nth(face)
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .unwrap_or_default()
+                .to_string()
+        };
+        // 者 is a character the conventions disagree over, and TBGothic — a
+        // Japanese face — covers it for all three.
+        for (run, want) in [
+            (Script::SimplifiedChinese, "STHeitiMedium.ttf"),
+            (Script::TraditionalChinese, "STHeitiTC.ttf"),
+            (Script::Japanese, "TBGothicMed_213.ttf"),
+        ] {
+            let face = chain.face_for(band_of('者', run), '者').expect("no face");
+            assert_eq!(name(&chain, face), want, "{run:?}");
+        }
+        // Kana and Hangul have faces of their own, and neither is code2000 —
+        // whose copy on this device carries both, and no Han at all.
+        let kana = chain.face_for(Band::Kana, 'ゆ').expect("no face");
+        assert_eq!(name(&chain, kana), "TBGothicMed_213.ttf");
+        let hangul = chain.face_for(Band::Hangul, '한').expect("no face");
+        assert_eq!(name(&chain, hangul), "NotoSansKR-Regular.otf");
+    }
+
+    #[test]
+    fn every_face_is_scaled_to_the_same_em() {
+        let Some(mut chain) = device_chain_on_disk() else {
+            return;
+        };
+        // The faces disagree on `hhea.ascender - hhea.descender`, which is
+        // what a bare `PxScale` sets. Every em measures `px` regardless.
+        const PX: f32 = 28.0;
+        for (band, ch) in [
+            (Band::Latin, 'H'),
+            (Band::Han(Script::SimplifiedChinese), '中'),
+            (Band::Han(Script::Japanese), '中'),
+            (Band::Kana, 'あ'),
+            (Band::Hangul, '한'),
+        ] {
+            let face = chain.face_for(band, ch).expect("no face");
+            let font = chain.font(face).expect("unloaded");
+            let upem = font.units_per_em().unwrap_or(font.height_unscaled());
+            let em = upem * scale_of(font, PX).y / font.height_unscaled();
+            assert!(
+                (em - PX).abs() < 0.01,
+                "{band:?} draws an em of {em}, not {PX}"
+            );
+        }
     }
 
     #[test]
