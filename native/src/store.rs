@@ -1,12 +1,6 @@
-//! The app's own record of what was read, at [`STORE_DIR`].
-//!
-//! `log::source` drops its oldest lines and `catalog` drops a book that leaves
-//! the device. Every pass folds both into [`STORE_FILE`], and the views read
-//! that file alone.
-//!
-//! **Forward only.** A sitting is written once, except one a pass finds in
-//! progress, re-measured from its own start. A [`BookRecord`] takes what
-//! `catalog` states and keeps what `catalog` stops stating. Nothing is dropped.
+//! The app's own record of what was read, at [`STORE_DIR`]. Every pass folds
+//! `log::source` and `catalog` into [`STORE_FILE`]. A sitting is written once,
+//! except one a pass finds in progress and re-measures from its own start.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -23,8 +17,7 @@ pub const STORE_DIR: &str = "/mnt/us/extensions/readinglog";
 /// The file inside it, holding the sittings, the book records and the mark.
 const STORE_FILE: &str = "sessions.tsv";
 
-/// What the first line reads. The number is the parse the sittings below it
-/// were measured by.
+/// What the first line reads. The number names the parse below it.
 const HEADER: &str = "#readinglog\t2";
 
 /// What `catalog` stated about one book, on the last pass that named it.
@@ -37,20 +30,17 @@ pub struct BookRecord {
     pub author: String,
     pub thumbnail: String,
     pub language: String,
-    /// The last progress figure the catalog stated, 0 through 100. Negative
-    /// where it never stated one.
+    /// The catalog's `p_percentFinished`, 0 through 100. Negative where
+    /// unstated.
     pub percent: f64,
-    /// Whether the catalog named this book as one the device holds, on the last
-    /// pass that read it.
+    /// Whether `catalog` stated a `p_location` for this book on the last pass.
     pub on_device: bool,
-    /// The store's own copy of the cover, under `covers::COVERS_DIR`. Empty
-    /// until [`Store::keep_covers`] makes one.
+    /// The store's own copy of the cover, under `covers::COVERS_DIR`.
     pub cover: String,
 }
 
 impl BookRecord {
-    /// False on a `*`-prefixed `cde_key`: a scriptlet, `My Clippings.txt`, a
-    /// hotfix runner. Each carries reading time that is not reading.
+    /// False on a `*`-prefixed `cde_key`, which names a file and not a book.
     pub fn is_book(&self) -> bool {
         !self.cde_key.starts_with('*')
     }
@@ -67,16 +57,13 @@ impl BookRecord {
 /// Everything the app knows, loaded whole.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Store {
-    /// Ascending by `started_at`, which with `end_position` is a sitting's
-    /// identity.
+    /// Ascending by `started_at`, with `end_position` a sitting's identity.
     pub sessions: Vec<Session>,
-    /// `EndPos → BookEndPosition.FromBook`, the map from what a sitting is
-    /// keyed by to what the catalog calls the same book. Ascending by key.
+    /// `EndPos → BookEndPosition.FromBook`, ascending by key.
     pub ends: Vec<(i64, i64)>,
     /// Every book `catalog` has named, ascending by `extent` then `cde_key`.
     pub books: Vec<BookRecord>,
-    /// The newest log line any pass has read, as `YYMMDD:HHMMSS`. Empty before
-    /// the first pass.
+    /// The newest log line any pass has read, as `YYMMDD:HHMMSS`.
     pub mark: String,
 }
 
@@ -250,14 +237,49 @@ impl Store {
         for record in &mut self.books {
             record.on_device = false;
         }
+        // The slots `catalog` stated a `p_percentFinished` for on this pass.
+        let mut stated: Vec<usize> = Vec::new();
         for book in catalog {
-            match self.slot_of(book) {
-                Some(i) => merge(&mut self.books[i], book),
-                None => self.books.push(taken(book)),
+            let slot = match self.slot_of(book) {
+                Some(i) => {
+                    merge(&mut self.books[i], book);
+                    i
+                }
+                None => {
+                    self.books.push(taken(book));
+                    self.books.len() - 1
+                }
+            };
+            if book.percent >= 0.0 {
+                stated.push(slot);
             }
         }
+        self.note_progress(&stated);
         self.sort_books();
         self.books.iter().filter(|r| !before.contains(r)).count()
+    }
+
+    /// Give each record outside `stated` the percentage its newest sitting
+    /// states.
+    ///
+    /// `p_percentFinished` sits on the `p_isArchived = 0` row, which a deletion
+    /// drops. `%Left` on the reading-timer lines states the same figure, and
+    /// `sessions` ascends by `started_at`, so a record's last write is its
+    /// newest sitting's.
+    fn note_progress(&mut self, stated: &[usize]) {
+        for i in 0..self.sessions.len() {
+            let Some(progress) = self.sessions[i].progress else {
+                continue;
+            };
+            let extent = self.extent_of(self.sessions[i].end_position);
+            let key = self.sessions[i].asin.clone();
+            let Some(slot) = self.slot_for(extent, key.as_deref()) else {
+                continue;
+            };
+            if !stated.contains(&slot) {
+                self.books[slot].percent = (progress * 100.0).clamp(0.0, 100.0);
+            }
+        }
     }
 
     /// Copy each book's `thumbnail` into `dir` and point its `cover` at the
@@ -309,13 +331,18 @@ impl Store {
     ///
     /// `key` reaches a book whose `p_contentSize` `catalog` never stated.
     pub fn book_for(&self, extent: i64, key: Option<&str>) -> Option<&BookRecord> {
+        self.slot_for(extent, key).map(|i| &self.books[i])
+    }
+
+    /// Where [`Self::book_for`]'s answer sits in [`Self::books`].
+    fn slot_for(&self, extent: i64, key: Option<&str>) -> Option<usize> {
         if extent != 0
-            && let Some(found) = self.books.iter().find(|b| b.extent == extent)
+            && let Some(i) = self.books.iter().position(|b| b.extent == extent)
         {
-            return Some(found);
+            return Some(i);
         }
         let key = key.filter(|k| !k.is_empty())?;
-        self.books.iter().find(|b| b.cde_key == key)
+        self.books.iter().position(|b| b.cde_key == key)
     }
 
     /// The catalog number for a sitting's own key, which is the key itself
@@ -647,6 +674,49 @@ mod tests {
         assert_eq!(store.books[0].percent, 40.0);
         // A second empty pass has nothing left to change.
         assert_eq!(store.remember(&[]), 0);
+    }
+
+    /// A record read on the device to 88%, then to `progress`, then left with
+    /// the row `p_percentFinished` sits on deleted.
+    fn read_on_to(progress: Option<f64>) -> Store {
+        let mut store = Store {
+            sessions: vec![session(
+                "2026-08-27T10:34:40",
+                "2026-08-27T11:03:20",
+                938_018,
+                1_720,
+            )],
+            ends: Vec::new(),
+            books: Vec::new(),
+            mark: String::new(),
+        };
+        store.sessions[0].progress = progress;
+        store.remember(&[shelved(938_018, "B00OKPCRLG", "A Book", 88.0)]);
+        assert_eq!(store.books[0].percent, 88.0);
+        let mut archived = shelved(938_018, "B00OKPCRLG", "A Book", -1.0);
+        archived.on_device = false;
+        store.remember(&[archived]);
+        store
+    }
+
+    #[test]
+    fn a_record_takes_the_percentage_its_newest_sitting_states() {
+        // `%Left` of 0 on the last turn.
+        assert_eq!(read_on_to(Some(1.0)).books[0].percent, 100.0);
+        // `%Left` of 0.6 on the last turn: a book put down at 40% reads 40%.
+        assert_eq!(read_on_to(Some(0.4)).books[0].percent, 40.0);
+    }
+
+    #[test]
+    fn a_re_download_hands_the_percentage_back_to_the_catalog() {
+        let mut store = read_on_to(Some(1.0));
+        store.remember(&[shelved(938_018, "B00OKPCRLG", "A Book", 99.5)]);
+        assert_eq!(store.books[0].percent, 99.5);
+    }
+
+    #[test]
+    fn a_sitting_stating_no_percentage_leaves_the_record_alone() {
+        assert_eq!(read_on_to(None).books[0].percent, 88.0);
     }
 
     #[test]
