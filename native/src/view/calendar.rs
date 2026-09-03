@@ -23,12 +23,14 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
         cx.fb,
         cx.text,
         cx.theme,
+        cx.s(),
         grid,
         year,
         month,
         |day| cx.stats.day_seconds(day),
         cx.today,
         state.day,
+        cx.week,
     );
     for (day, cell) in days {
         cx.hit(Hit::Day(day), cell);
@@ -43,7 +45,11 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
 /// The month's name between two arrows, each its own hit box.
 fn month_nav(cx: &mut Ctx, area: Rect, year: i64, month: i64) {
     let theme: &Theme = cx.theme;
-    let name = format!("{} {year}", date::MONTHS[(month - 1).clamp(0, 11) as usize]);
+    let s = cx.s();
+    let name = match s.date_ymd {
+        true => format!("{year}年{month}月"),
+        false => format!("{} {year}", s.months[(month - 1).clamp(0, 11) as usize]),
+    };
     cx.text.set_px(theme.head_px);
     let baseline = area.center_y() + cx.text.cap_height() as i32 / 2;
     let w = cx.text.measure_width(&name) as i32;
@@ -68,8 +74,8 @@ fn day_books(cx: &mut Ctx, area: Rect, day: i64) {
     let theme: &Theme = cx.theme;
     let title = format!(
         "{} — {}",
-        date::long_day(day).to_uppercase(),
-        date::duration(cx.stats.day_seconds(day))
+        date::long_day(day, cx.s()).to_uppercase(),
+        date::duration(cx.stats.day_seconds(day), cx.s())
     );
     let inner = chrome::section(cx.fb, cx.text, theme, area, &title);
 
@@ -91,7 +97,7 @@ fn month_books(cx: &mut Ctx, area: Rect, year: i64, month: i64) {
     let first = date::days_from_civil(year, month, 1);
     let last = first + date::days_in_month(year, month) - 1;
     let total: i64 = (first..=last).map(|d| cx.stats.day_seconds(d)).sum();
-    let title = format!("THE MONTH — {}", date::duration(total));
+    let title = format!("{} — {}", cx.s().the_month, date::duration(total, cx.s()));
     let inner = chrome::section(cx.fb, cx.text, theme, area, &title);
 
     let mut totals: Vec<(usize, i64)> = Vec::new();
@@ -117,8 +123,14 @@ fn list(cx: &mut Ctx, area: Rect, totals: &[(usize, i64)]) {
     if totals.is_empty() {
         cx.text.set_px(theme.body_px);
         let baseline = area.y + cx.text.line_height() as i32;
-        cx.text
-            .draw(cx.fb, area.x, baseline, "Nothing read.", false);
+        cx.text.draw_in(
+            cx.ui_script(),
+            cx.fb,
+            area.x,
+            baseline,
+            cx.s().nothing_read,
+            false,
+        );
         return;
     }
     let rows: Vec<(font::Script, String, i64)> = totals
@@ -133,7 +145,7 @@ fn list(cx: &mut Ctx, area: Rect, totals: &[(usize, i64)]) {
         })
         .collect();
     let shown = rows.len().min((area.h / theme.row_h).max(1) as usize);
-    charts::bars(cx.fb, cx.text, theme, area, &rows[..shown]);
+    charts::bars(cx.fb, cx.text, theme, cx.s(), area, &rows[..shown]);
 
     let each = (area.h / shown.max(1) as i32).min(theme.row_h);
     for (i, (book, _)) in totals.iter().take(shown).enumerate() {

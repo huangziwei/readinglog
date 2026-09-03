@@ -6,6 +6,8 @@
 use crate::date;
 use crate::eink::fb::Framebuffer;
 use crate::font::Script;
+use crate::lang::Strings;
+use crate::settings::WeekStart;
 
 use super::paint::{self, DARK, INK, LIGHT, MID, PALE, Rect, WHITE};
 use super::text::TextRenderer;
@@ -13,10 +15,16 @@ use super::theme::Theme;
 
 /// One day of a month grid: which day, and the box it occupies.
 ///
-/// Monday first, and always six rows of seven.
-pub fn month_cells(area: Rect, year: i64, month: i64, gap: i32) -> Vec<(i64, Rect)> {
+/// Always six rows of seven, from whichever day `week` starts on.
+pub fn month_cells(
+    area: Rect,
+    year: i64,
+    month: i64,
+    gap: i32,
+    week: WeekStart,
+) -> Vec<(i64, Rect)> {
     let first = date::days_from_civil(year, month, 1);
-    let lead = date::weekday(first) as i64;
+    let lead = week.column_of(date::weekday(first)) as i64;
     let cols = area.columns(7, gap);
     let rows = area.rows(6, gap);
     let mut out = Vec::new();
@@ -39,17 +47,20 @@ pub fn month(
     fb: &mut Framebuffer,
     text: &mut TextRenderer,
     theme: &Theme,
+    s: &Strings,
     area: Rect,
     year: i64,
     month: i64,
     seconds_of: impl Fn(i64) -> i64,
     today: i64,
     selected: Option<i64>,
+    week: WeekStart,
 ) -> Vec<(i64, Rect)> {
     let head_h = theme.small_px as i32 * 2;
     let (head, grid) = area.split_top(head_h);
     text.set_px(theme.small_px);
-    for (name, cell) in date::WEEKDAYS_SHORT.iter().zip(head.columns(7, theme.gap)) {
+    for (column, cell) in head.columns(7, theme.gap).into_iter().enumerate() {
+        let name = s.weekdays_short[week.day_in(column)];
         let w = text.measure_width(name) as i32;
         text.draw(
             fb,
@@ -60,7 +71,7 @@ pub fn month(
         );
     }
 
-    let cells = month_cells(grid, year, month, theme.gap);
+    let cells = month_cells(grid, year, month, theme.gap, week);
     let busiest = cells
         .iter()
         .map(|(day, _)| seconds_of(*day))
@@ -97,7 +108,7 @@ pub fn month(
             inverted,
         );
         if secs > 0 {
-            let label = date::duration_tight(secs);
+            let label = date::duration_tight(secs, s);
             let w = text.measure_width(&label) as i32;
             text.draw(
                 fb,
@@ -166,6 +177,7 @@ pub fn bars(
     fb: &mut Framebuffer,
     text: &mut TextRenderer,
     theme: &Theme,
+    s: &Strings,
     area: Rect,
     rows: &[(Script, String, i64)],
 ) {
@@ -177,7 +189,7 @@ pub fn bars(
     text.set_px(theme.body_px);
     for (i, (script, name, value)) in rows.iter().enumerate() {
         let row = Rect::new(area.x, area.y + i as i32 * each, area.w, each);
-        let figure = date::duration(*value);
+        let figure = date::duration(*value, s);
         let fw = text.measure_width(&figure) as i32;
         let baseline = row.center_y() + text.cap_height() as i32 / 2;
 
@@ -251,10 +263,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_sunday_week_moves_every_day_one_column_right() {
+        // The same days in the same order, starting a column later — and the
+        // grid still holds every day of the month.
+        let area = Rect::new(0, 0, 700, 600);
+        for (year, month) in [(2026, 8), (2026, 2), (2024, 2), (2026, 11)] {
+            let mon = month_cells(area, year, month, 0, WeekStart::Monday);
+            let sun = month_cells(area, year, month, 0, WeekStart::Sunday);
+            assert_eq!(mon.len(), sun.len(), "{year}-{month} loses a day");
+            let days: Vec<i64> = sun.iter().map(|(d, _)| *d).collect();
+            let want: Vec<i64> = mon.iter().map(|(d, _)| *d).collect();
+            assert_eq!(days, want, "{year}-{month} reorders the days");
+        }
+        // 2026-08-01 is a Saturday: column 5 Monday-first, column 6 Sunday-first.
+        let first = date::days_from_civil(2026, 8, 1);
+        assert_eq!(date::weekday(first), 5);
+        assert_eq!(WeekStart::Monday.column_of(5), 5);
+        assert_eq!(WeekStart::Sunday.column_of(5), 6);
+    }
+
+    #[test]
     fn a_month_starts_on_the_weekday_it_really_starts_on() {
         // 1 August 2026 is a Saturday, the sixth column.
         let area = Rect::new(0, 0, 700, 600);
-        let cells = month_cells(area, 2026, 8, 0);
+        let cells = month_cells(area, 2026, 8, 0, WeekStart::Monday);
         assert_eq!(cells.len(), 31);
         let (first, rect) = cells[0];
         assert_eq!(date::weekday(first), 5);
@@ -264,7 +296,7 @@ mod tests {
 
     #[test]
     fn the_days_of_a_month_run_in_order_across_and_down() {
-        let cells = month_cells(Rect::new(0, 0, 700, 600), 2026, 8, 0);
+        let cells = month_cells(Rect::new(0, 0, 700, 600), 2026, 8, 0, WeekStart::Monday);
         for pair in cells.windows(2) {
             assert_eq!(pair[1].0, pair[0].0 + 1);
         }
@@ -280,7 +312,7 @@ mod tests {
         let area = Rect::new(10, 20, 700, 600);
         for year in [2024, 2026] {
             for month in 1..=12 {
-                for (_, cell) in month_cells(area, year, month, 4) {
+                for (_, cell) in month_cells(area, year, month, 4, WeekStart::Monday) {
                     assert!(cell.x >= area.x, "{year}-{month}");
                     assert!(cell.right() <= area.right(), "{year}-{month}");
                     assert!(cell.y >= area.y, "{year}-{month}");
@@ -292,13 +324,19 @@ mod tests {
 
     #[test]
     fn a_leap_february_gets_its_extra_day() {
-        assert_eq!(month_cells(Rect::new(0, 0, 700, 600), 2024, 2, 0).len(), 29);
-        assert_eq!(month_cells(Rect::new(0, 0, 700, 600), 2026, 2, 0).len(), 28);
+        assert_eq!(
+            month_cells(Rect::new(0, 0, 700, 600), 2024, 2, 0, WeekStart::Monday).len(),
+            29
+        );
+        assert_eq!(
+            month_cells(Rect::new(0, 0, 700, 600), 2026, 2, 0, WeekStart::Monday).len(),
+            28
+        );
     }
 
     #[test]
     fn no_two_days_of_a_month_share_a_box() {
-        let cells = month_cells(Rect::new(0, 0, 700, 600), 2026, 8, 2);
+        let cells = month_cells(Rect::new(0, 0, 700, 600), 2026, 8, 2, WeekStart::Monday);
         for (i, (_, a)) in cells.iter().enumerate() {
             for (_, b) in &cells[i + 1..] {
                 assert!(a != b, "{a:?}");

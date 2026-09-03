@@ -10,6 +10,8 @@ use crate::eink::fb::{Framebuffer, MxcfbRect, WAVEFORM_MODE_GC16};
 use crate::eink::input::{Input, InputEvent};
 use crate::eink::screenshot;
 use crate::eink::touch::{SwipeDir, TouchEvent, classify_swipe};
+use crate::lang::Lang;
+use crate::settings::Settings;
 use crate::stats::Stats;
 use crate::ui::chrome::{self, Tab};
 use crate::ui::cover::Covers;
@@ -19,6 +21,9 @@ use crate::view::{self, Ctx, Cut, Hit, State};
 
 pub struct App {
     theme: Theme,
+    /// The language drawn in: the reader's pick, else [`App::detected`].
+    lang: Lang,
+    settings: Settings,
     text: TextRenderer,
     covers: Covers,
     stats: Stats,
@@ -33,8 +38,11 @@ impl App {
     pub fn new(stats: Stats, theme: Theme, text: TextRenderer) -> Self {
         eprintln!("fonts: {}", text.chain_description());
         let (today, now) = date::now();
+        let settings = Settings::load(Lang::detect());
         Self {
             theme,
+            lang: settings.language,
+            settings,
             text,
             covers: Covers::default(),
             stats,
@@ -43,6 +51,20 @@ impl App {
             now,
             hits: Vec::new(),
         }
+    }
+
+    /// Draw in `lang`, whatever the device says.
+    /// Draw at `size`, whatever is stored.
+    #[cfg(test)]
+    pub fn set_text_size(&mut self, size: crate::settings::TextSize) {
+        self.settings.text_size = size;
+        self.theme = Theme::sized(self.theme.screen.w as u32, self.theme.screen.h as u32, size);
+    }
+
+    #[cfg(test)]
+    pub fn set_language(&mut self, lang: Lang) {
+        self.lang = lang;
+        self.settings.language = lang;
     }
 
     /// Set `state.tab` and `state.book`.
@@ -57,11 +79,14 @@ impl App {
         chrome::clear(fb, &self.theme);
         let area = chrome::content_box(&self.theme);
 
+        let settings = self.settings.clone();
         let mut cx = Ctx {
             fb,
             text: &mut self.text,
             covers: &mut self.covers,
             theme: &self.theme,
+            lang: self.lang,
+            week: self.settings.week_start,
             stats: &self.stats,
             today: self.today,
             now: self.now,
@@ -70,6 +95,7 @@ impl App {
         match self.state.book {
             Some(index) => view::book::draw(&mut cx, area, index),
             None => match self.state.tab {
+                Tab::Config => view::config::draw(&mut cx, area, &settings),
                 Tab::Home => view::home::draw(&mut cx, area),
                 Tab::Calendar => view::calendar::draw(&mut cx, area, &self.state),
                 Tab::Books => view::books::draw(&mut cx, area, &self.state),
@@ -77,7 +103,7 @@ impl App {
             },
         }
         self.hits = std::mem::take(&mut cx.hits);
-        let (exit, tabs) = chrome::tabs(fb, &mut self.text, &self.theme, self.state.tab);
+        let (exit, tabs) = chrome::tabs(fb, &mut self.text, &self.theme, self.lang, self.state.tab);
         self.hits.push((Hit::Exit, exit));
         for (tab, area) in tabs {
             self.hits.push((Hit::Tab(tab), area));
@@ -155,6 +181,31 @@ impl App {
                 }
             }
             Hit::Exit => return Action::Quit,
+            Hit::Language(pick) => {
+                if self.settings.language == pick {
+                    return Action::Nothing;
+                }
+                self.settings.language = pick;
+                self.lang = pick;
+                self.settings.save();
+            }
+            Hit::WeekStart(pick) => {
+                if self.settings.week_start == pick {
+                    return Action::Nothing;
+                }
+                self.settings.week_start = pick;
+                self.settings.save();
+            }
+            Hit::TextSize(pick) => {
+                if self.settings.text_size == pick {
+                    return Action::Nothing;
+                }
+                self.settings.text_size = pick;
+                // Every size on screen comes off the theme, so it is rebuilt.
+                self.theme =
+                    Theme::sized(self.theme.screen.w as u32, self.theme.screen.h as u32, pick);
+                self.settings.save();
+            }
             Hit::Book(index) => self.state.book = Some(index),
             Hit::Day(day) => {
                 // A second tap on `state.day` clears it.
@@ -192,6 +243,8 @@ impl App {
             return Action::Redraw;
         }
         match self.state.tab {
+            // Neither has anything to page through.
+            Tab::Config | Tab::Home => Action::Nothing,
             Tab::Calendar => {
                 self.state.shift_month(by);
                 self.state.day = None;
@@ -219,7 +272,6 @@ impl App {
                 self.state.cut = Cut::ALL[next];
                 Action::Redraw
             }
-            Tab::Home => Action::Nothing,
         }
     }
 }

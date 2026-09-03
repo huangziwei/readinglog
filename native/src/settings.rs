@@ -1,0 +1,282 @@
+//! What the reader has chosen, and the file it survives a restart in.
+//!
+//! Every setting has a default the device supplies or the app picks, so a
+//! missing file is not a broken one: it is a reader who has never opened this
+//! page. A line this build does not know is kept on write, so a downgrade does
+//! not silently drop a newer build's setting.
+
+use std::path::{Path, PathBuf};
+
+use crate::lang::Lang;
+
+/// Where the choices live. Beside the extension rather than in the store: a
+/// setting is not a sitting, and `Store`'s `HEADER` must stay free to change
+/// with what a sitting means.
+const SETTINGS_PATHS: &[&str] = &[
+    "/mnt/us/extensions/readinglog/settings",
+    "/var/local/readinglog/settings",
+];
+
+/// How large the text on a screen is set.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TextSize {
+    Small,
+    #[default]
+    Medium,
+    Large,
+}
+
+impl TextSize {
+    pub const ALL: [TextSize; 3] = [TextSize::Small, TextSize::Medium, TextSize::Large];
+
+    /// What it multiplies the body size by. The strip along the bottom does
+    /// not take it — its six cells hold カレンダー at the base size and
+    /// nothing wider, so the chrome stays put while the content scales.
+    pub fn scale(self) -> f32 {
+        match self {
+            TextSize::Small => 0.85,
+            TextSize::Medium => 1.0,
+            TextSize::Large => 1.2,
+        }
+    }
+
+    fn token(self) -> &'static str {
+        match self {
+            TextSize::Small => "small",
+            TextSize::Medium => "medium",
+            TextSize::Large => "large",
+        }
+    }
+
+    fn of_token(token: &str) -> Option<Self> {
+        match token {
+            "small" => Some(TextSize::Small),
+            "medium" => Some(TextSize::Medium),
+            "large" => Some(TextSize::Large),
+            _ => None,
+        }
+    }
+}
+
+/// Which day a week is drawn from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WeekStart {
+    #[default]
+    Monday,
+    Sunday,
+}
+
+impl WeekStart {
+    pub const ALL: [WeekStart; 2] = [WeekStart::Monday, WeekStart::Sunday];
+
+    /// How far to rotate a Monday-first weekday index for this start.
+    ///
+    /// `date::weekday` counts from Monday because that is what the ISO week
+    /// does and what the grid was built on; a Sunday-first reader sees the
+    /// same days in a different order, not different days.
+    pub fn shift(self) -> usize {
+        match self {
+            WeekStart::Monday => 0,
+            WeekStart::Sunday => 1,
+        }
+    }
+
+    /// The weekday `index` sits at, counting from this start.
+    pub fn column_of(self, monday_first: usize) -> usize {
+        (monday_first + self.shift()) % 7
+    }
+
+    /// The Monday-first weekday drawn in `column`.
+    pub fn day_in(self, column: usize) -> usize {
+        (column + 7 - self.shift()) % 7
+    }
+
+    fn token(self) -> &'static str {
+        match self {
+            WeekStart::Monday => "monday",
+            WeekStart::Sunday => "sunday",
+        }
+    }
+
+    fn of_token(token: &str) -> Option<Self> {
+        match token {
+            "monday" => Some(WeekStart::Monday),
+            "sunday" => Some(WeekStart::Sunday),
+            _ => None,
+        }
+    }
+}
+
+/// Everything the config page sets.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Settings {
+    pub language: Lang,
+    pub week_start: WeekStart,
+    pub text_size: TextSize,
+    /// Lines this build does not know, kept verbatim so a downgrade does not
+    /// drop what a later build wrote.
+    unknown: Vec<String>,
+}
+
+impl Settings {
+    /// The defaults: the device's own language, and the week the way the ISO
+    /// calendar and the existing grid draw it.
+    pub fn new(detected: Lang) -> Self {
+        Self {
+            language: detected,
+            week_start: WeekStart::default(),
+            text_size: TextSize::default(),
+            unknown: Vec::new(),
+        }
+    }
+
+    /// What is on disk, over the defaults. A missing or unreadable file is a
+    /// reader who has never opened the config page.
+    pub fn load(detected: Lang) -> Self {
+        match SETTINGS_PATHS.iter().map(Path::new).find(|p| p.is_file()) {
+            Some(path) => Self::load_from(path, detected),
+            None => Self::new(detected),
+        }
+    }
+
+    /// [`Settings::load`] against a named file.
+    pub fn load_from(path: &Path, detected: Lang) -> Self {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return Self::new(detected);
+        };
+        Self::parse(&text, detected)
+    }
+
+    /// `key=value` a line, `#` a comment. An unreadable value keeps the
+    /// default rather than failing the file: one bad line must not cost the
+    /// reader every other setting.
+    pub fn parse(text: &str, detected: Lang) -> Self {
+        let mut out = Self::new(detected);
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else {
+                out.unknown.push(line.to_string());
+                continue;
+            };
+            let value = value.trim();
+            match key.trim() {
+                "language" => out.language = Lang::from_letter(value),
+                "week_start" => {
+                    if let Some(week) = WeekStart::of_token(value) {
+                        out.week_start = week;
+                    }
+                }
+                "text_size" => {
+                    if let Some(size) = TextSize::of_token(value) {
+                        out.text_size = size;
+                    }
+                }
+                _ => out.unknown.push(line.to_string()),
+            }
+        }
+        out
+    }
+
+    /// The file's whole text.
+    pub fn to_text(&self) -> String {
+        let mut out = String::from("# Reading Log settings. Written by the config page.\n");
+        out.push_str(&format!("language={}\n", self.language.letter()));
+        out.push_str(&format!("week_start={}\n", self.week_start.token()));
+        out.push_str(&format!("text_size={}\n", self.text_size.token()));
+        for line in &self.unknown {
+            out.push_str(line);
+            out.push('\n');
+        }
+        out
+    }
+
+    /// Write to the first path whose directory exists. A device that will not
+    /// take the file keeps the setting for this run and says so in the log:
+    /// losing a preference is not worth refusing to draw over.
+    pub fn save(&self) {
+        for path in SETTINGS_PATHS.iter().map(PathBuf::from) {
+            let Some(dir) = path.parent() else { continue };
+            if !dir.is_dir() {
+                continue;
+            }
+            match std::fs::write(&path, self.to_text()) {
+                Ok(()) => return,
+                Err(err) => eprintln!("settings: {} not written: {err}", path.display()),
+            }
+        }
+        eprintln!("settings: nowhere to write; this run keeps them");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_reader_who_never_opened_the_page_gets_the_device_s_language() {
+        let s = Settings::new(Lang::Japanese);
+        assert_eq!(s.language, Lang::Japanese);
+        assert_eq!(s.week_start, WeekStart::Monday);
+        // And a file that is not there is the same thing, not an error.
+        let missing = Settings::load_from(Path::new("/nonexistent/settings"), Lang::German);
+        assert_eq!(missing.language, Lang::German);
+    }
+
+    #[test]
+    fn a_written_file_round_trips() {
+        let mut s = Settings::new(Lang::English);
+        s.language = Lang::TraditionalChinese;
+        s.week_start = WeekStart::Sunday;
+        s.text_size = TextSize::Large;
+        let back = Settings::parse(&s.to_text(), Lang::English);
+        assert_eq!(back.language, Lang::TraditionalChinese);
+        assert_eq!(back.week_start, WeekStart::Sunday);
+        assert_eq!(back.text_size, TextSize::Large);
+    }
+
+    #[test]
+    fn one_bad_line_does_not_cost_the_other_settings() {
+        let text = "language=t\nweek_start=notaday\n";
+        let s = Settings::parse(text, Lang::English);
+        assert_eq!(s.language, Lang::TraditionalChinese);
+        assert_eq!(s.week_start, WeekStart::Monday, "the default stands");
+    }
+
+    #[test]
+    fn a_later_build_s_setting_survives_this_one() {
+        // A downgrade must not silently drop what a newer build wrote.
+        let text = "language=d\nfuture_setting=7\n";
+        let s = Settings::parse(text, Lang::English);
+        assert_eq!(s.language, Lang::German);
+        assert!(s.to_text().contains("future_setting=7"));
+    }
+
+    #[test]
+    fn the_sizes_run_in_order_and_medium_is_the_base() {
+        assert_eq!(TextSize::Medium.scale(), 1.0);
+        assert!(TextSize::Small.scale() < TextSize::Medium.scale());
+        assert!(TextSize::Large.scale() > TextSize::Medium.scale());
+    }
+
+    #[test]
+    fn a_sunday_week_shows_the_same_days_in_another_order() {
+        // Monday-first indices are what `date::weekday` answers; the setting
+        // only moves which column each lands in.
+        let (mon, sun) = (WeekStart::Monday, WeekStart::Sunday);
+        assert_eq!(mon.column_of(0), 0, "Monday leads a Monday week");
+        assert_eq!(sun.column_of(6), 0, "Sunday leads a Sunday week");
+        assert_eq!(sun.column_of(0), 1, "Monday is second");
+        for start in WeekStart::ALL {
+            let seen: Vec<usize> = (0..7).map(|c| start.day_in(c)).collect();
+            let mut sorted = seen.clone();
+            sorted.sort_unstable();
+            assert_eq!(sorted, (0..7).collect::<Vec<_>>(), "{start:?} drops a day");
+            for day in 0..7 {
+                assert_eq!(start.day_in(start.column_of(day)), day, "{start:?} {day}");
+            }
+        }
+    }
+}

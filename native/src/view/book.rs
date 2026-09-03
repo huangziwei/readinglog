@@ -3,6 +3,7 @@
 
 use crate::date;
 use crate::font::Script;
+use crate::lang::Strings;
 use crate::stats::BookStat;
 use crate::ui::chrome;
 use crate::ui::cover;
@@ -46,6 +47,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
     let theme: &Theme = cx.theme;
     let book = book.clone();
 
+    let s = cx.s();
     // Each band takes what it draws into.
     let air = theme.gap * 2;
     let (head, rest) = area.split_top(heading_height(cx.text, theme) + air);
@@ -54,37 +56,38 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
     let head_h = chrome::section_height(cx.text, theme);
     let (chart, facts) = rest.split_bottom(head_h + theme.row_h * 3);
     let facts = Rect::new(facts.x, facts.y, facts.w, (facts.h - air).max(1));
-    let inner = chrome::section(cx.fb, cx.text, theme, facts, "THE READING");
+    let inner = chrome::section(cx.fb, cx.text, theme, facts, s.the_reading);
 
     // [`figures`] states the other three.
     let lines = [
-        ("Sittings", book.sittings.to_string()),
+        (s.sittings, book.sittings.to_string()),
         (
-            "Days",
+            s.days,
             format!(
-                "{} of {}",
+                "{} {} {}",
                 book.days,
+                s.of,
                 (book.last_day - book.first_day + 1).max(1)
             ),
         ),
-        ("Average a day", date::duration(book.per_day())),
-        ("Average a sitting", date::duration(book.per_sitting())),
-        ("Words", date::words(book.words)),
+        (s.average_a_day, date::duration(book.per_day(), s)),
+        (s.average_a_sitting, date::duration(book.per_sitting(), s)),
+        (s.words, date::words(book.words)),
         (
-            "Reading speed",
-            book.wpm().map_or("—".into(), |w| format!("{w} wpm")),
+            s.reading_speed,
+            book.wpm().map_or("—".into(), |w| format!("{w} {}", s.wpm)),
         ),
-        ("Started", date::short_day(book.first_day)),
-        ("Last read", date::short_day(book.last_day)),
-        ("Measured as", measure_note(&book)),
-        ("On the device", where_note(&book)),
+        (s.started, date::short_day(book.first_day, s)),
+        (s.last_read, date::short_day(book.last_day, s)),
+        (s.measured_as, measure_note(&book, s)),
+        (s.on_the_device, where_note(&book, s)),
     ];
     let rows = inner.rows(lines.len() as i32, 0);
     for ((key, value), row) in lines.iter().zip(&rows) {
         chrome::row(cx.fb, cx.text, theme, *row, key, value);
     }
 
-    let inner = chrome::section(cx.fb, cx.text, theme, chart, "THE LAST THIRTY DAYS");
+    let inner = chrome::section(cx.fb, cx.text, theme, chart, s.last_thirty_days);
     let last = cx.today;
     let series: Vec<i64> = {
         let days = cx.stats.book_days(index);
@@ -158,6 +161,7 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat) {
 
     figures(cx, words, book);
 
+    let s = cx.s();
     if book.has_percent() {
         let track = Rect::new(
             foot.x,
@@ -167,7 +171,7 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat) {
         );
         paint::progress(cx.fb, track, book.percent as i64, 100, INK);
         cx.text.set_px(theme.small_px);
-        let pct = format!("{}% read", book.percent.round() as i64);
+        let pct = format!("{}% {}", book.percent.round() as i64, s.read);
         cx.text
             .draw(cx.fb, foot.x, track.y - theme.gap / 2, &pct, false);
     }
@@ -176,10 +180,15 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat) {
 /// The book's three headline figures, along the foot of the words column.
 fn figures(cx: &mut Ctx, words: Rect, book: &BookStat) {
     let theme: &Theme = cx.theme;
+    let s = cx.s();
     let stated = [
-        (date::duration(book.seconds), "read"),
-        (book.page_turns.to_string(), "pages turned"),
-        (book.time_left().map_or("—".into(), date::duration), "left"),
+        (date::duration(book.seconds, s), s.read),
+        (book.page_turns.to_string(), s.pages_turned),
+        (
+            book.time_left()
+                .map_or("—".into(), |t| date::duration(t, s)),
+            s.left,
+        ),
     ];
     let height = chrome::figure_height(cx.text, theme);
     let row = Rect::new(words.x, words.bottom() - height, words.w, height);
@@ -194,10 +203,10 @@ fn figures(cx: &mut Ctx, words: Rect, book: &BookStat) {
 }
 
 /// Whether the catalog names this book on the device.
-fn where_note(book: &BookStat) -> String {
+fn where_note(book: &BookStat, s: &Strings) -> String {
     match book.on_device {
-        true => "yes".into(),
-        false => "no, removed".into(),
+        true => s.yes.into(),
+        false => s.no_removed.into(),
     }
 }
 
@@ -205,20 +214,25 @@ fn where_note(book: &BookStat) -> String {
 ///
 /// `seconds`, `dwell_seconds` and `awake_seconds` are not one claim: a counter,
 /// a per-page measurement, and an upper bound.
-fn measure_note(book: &BookStat) -> String {
+fn measure_note(book: &BookStat, s: &Strings) -> String {
     let measured = book.seconds - book.dwell_seconds - book.awake_seconds;
     match (measured, book.dwell_seconds, book.awake_seconds) {
-        (_, 0, 0) => "the Kindle's own timer".into(),
-        (0, d, 0) if d > 0 => "page by page".into(),
-        (0, 0, _) => "time awake, a bound".into(),
-        (_, _, 0) => "timer and pages".into(),
-        _ => "part bounded".into(),
+        (_, 0, 0) => s.kindle_timer.into(),
+        (0, d, 0) if d > 0 => s.page_by_page.into(),
+        (0, 0, _) => s.time_awake.into(),
+        (_, _, 0) => s.timer_and_pages.into(),
+        _ => s.part_bounded.into(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lang::Lang;
+
+    fn en() -> &'static Strings {
+        Lang::English.strings()
+    }
 
     fn book(seconds: i64, dwell: i64, awake: i64) -> BookStat {
         BookStat {
@@ -244,11 +258,17 @@ mod tests {
 
     #[test]
     fn a_figure_says_which_of_the_three_regimes_produced_it() {
-        assert_eq!(measure_note(&book(600, 0, 0)), "the Kindle's own timer");
-        assert_eq!(measure_note(&book(600, 600, 0)), "page by page");
-        assert_eq!(measure_note(&book(600, 0, 600)), "time awake, a bound");
-        assert_eq!(measure_note(&book(900, 300, 0)), "timer and pages");
-        assert_eq!(measure_note(&book(900, 300, 300)), "part bounded");
+        assert_eq!(
+            measure_note(&book(600, 0, 0), en()),
+            "the Kindle's own timer"
+        );
+        assert_eq!(measure_note(&book(600, 600, 0), en()), "page by page");
+        assert_eq!(
+            measure_note(&book(600, 0, 600), en()),
+            "time awake, a bound"
+        );
+        assert_eq!(measure_note(&book(900, 300, 0), en()), "timer and pages");
+        assert_eq!(measure_note(&book(900, 300, 300), en()), "part bounded");
     }
 
     #[test]

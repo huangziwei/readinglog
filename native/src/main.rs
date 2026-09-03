@@ -11,10 +11,12 @@ mod covers;
 mod date;
 mod eink;
 mod font;
+mod lang;
 mod log;
 mod orientation;
 #[cfg(test)]
 mod preview;
+mod settings;
 mod stats;
 mod store;
 mod ui;
@@ -99,7 +101,7 @@ fn dump() -> Result<()> {
     let stats = Stats::build(&store, today);
     println!(
         "{} read over {} days, {} books, streak {} (longest {})",
-        date::duration(stats.total_seconds),
+        date::duration(stats.total_seconds, lang::Lang::English.strings()),
         stats.days_read(),
         stats.books.len(),
         stats.current_streak,
@@ -108,7 +110,7 @@ fn dump() -> Result<()> {
     for book in &stats.books {
         println!(
             "  {:>8}  {:>4} sittings  {:>3} days  {:>5}%  {}",
-            date::duration(book.seconds),
+            date::duration(book.seconds, lang::Lang::English.strings()),
             book.sittings,
             book.days,
             if book.has_percent() {
@@ -141,7 +143,9 @@ fn show() -> Result<()> {
     let mut store = Store::load(dir);
     let theme = ui::theme::Theme::for_screen(fb.var.xres, fb.var.yres);
     let mut text = ui::text::TextRenderer::load(theme.body_px)?;
-    let note = ui::splash::note(&store.mark);
+    // The splash draws before `App`, so it detects for itself.
+    let splash_lang = lang::Lang::detect();
+    let note = ui::splash::note(&store.mark, splash_lang.strings());
     ui::splash::show(&mut fb, &mut text, &theme, "Reading Log", &note, "", true)?;
 
     let mut painted = 0;
@@ -167,8 +171,8 @@ fn show() -> Result<()> {
     eprintln!(
         "stats: {} books drawn, {} on an unnamed book, {} on no book",
         stats.books.len(),
-        date::duration(stats.unnamed_seconds),
-        date::duration(stats.skipped_seconds),
+        date::duration(stats.unnamed_seconds, lang::Lang::English.strings()),
+        date::duration(stats.skipped_seconds, lang::Lang::English.strings()),
     );
 
     let mut app = app::App::new(stats, theme, text);

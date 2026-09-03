@@ -4,6 +4,8 @@
 //! calendar to reject a stamp naming no day, a day number to measure elapsed
 //! time on across midnight, a weekday, and month lengths for the calendar grid.
 
+use crate::lang::Strings;
+
 /// `(year, month, day)` as days since 1970-01-01, negative before it.
 ///
 /// Howard Hinnant's `days_from_civil`, shifted to the Unix epoch. Exact for
@@ -108,77 +110,66 @@ pub fn now() -> (i64, i64) {
     }
 }
 
-pub const MONTHS: [&str; 12] = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-];
-
-pub const MONTHS_SHORT: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
-
-/// Monday first, the week the calendar grid is laid out on.
-pub const WEEKDAYS_SHORT: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-pub const WEEKDAYS_INITIAL: [&str; 7] = ["M", "T", "W", "T", "F", "S", "S"];
-
-/// "Aug 9" — enough to place a day at a glance.
-pub fn short_day(days: i64) -> String {
+/// "Aug 9" — enough to place a day at a glance. `9月9日` where the language
+/// writes a date year first.
+pub fn short_day(days: i64, s: &Strings) -> String {
     let (_, m, d) = civil_from_days(days);
-    format!("{} {d}", MONTHS_SHORT[(m - 1).clamp(0, 11) as usize])
+    let month = s.months_short[(m - 1).clamp(0, 11) as usize];
+    match s.date_ymd {
+        true => format!("{month}{d}日"),
+        false => format!("{month} {d}"),
+    }
 }
 
-/// "Sunday, 9 August 2026".
-pub fn long_day(days: i64) -> String {
+/// "Sun, 9 August 2026", or "2026年8月9日（日）".
+pub fn long_day(days: i64, s: &Strings) -> String {
     let (y, m, d) = civil_from_days(days);
-    format!(
-        "{}, {d} {} {y}",
-        WEEKDAYS_SHORT[weekday(days)],
-        MONTHS[(m - 1).clamp(0, 11) as usize]
-    )
+    let weekday = s.weekdays_short[weekday(days)];
+    let month = s.months[(m - 1).clamp(0, 11) as usize];
+    match s.date_ymd {
+        true => format!("{y}年{}{d}日 {weekday}", (m - 1).clamp(0, 11) + 1),
+        false => format!("{weekday}, {d} {month} {y}"),
+    }
 }
 
-/// Durations read as "4h 12m", "37m", "2m". Seconds are never shown: the
-/// counters behind these figures are not that precise, and a reading log
-/// measured to the second would claim an accuracy it does not have.
-pub fn duration(secs: i64) -> String {
-    // Nothing read is nothing, not "under a minute": a day with no reading on it
-    // reads as a day with no reading on it.
+/// Durations read as "4h 12m", "37m", "2m" — and "4小时12分", "4 h 12 min".
+/// Seconds are never shown: the counters behind these figures are not that
+/// precise, and a reading log measured to the second would claim an accuracy
+/// it does not have.
+pub fn duration(secs: i64, s: &Strings) -> String {
+    let sp = if s.unit_space { " " } else { "" };
+    let (h, m) = (s.hours, s.minutes);
+    // Nothing read is nothing, not "under a minute": a day with no reading on
+    // it reads as a day with no reading on it.
     if secs <= 0 {
-        return "0m".into();
+        return format!("0{sp}{m}");
     }
     if secs < 60 {
-        return "<1m".into();
+        return format!("<1{sp}{m}");
     }
-    let h = secs / 3600;
-    let m = (secs % 3600 + 30) / 60;
-    let (h, m) = if m == 60 { (h + 1, 0) } else { (h, m) };
-    match (h, m) {
-        (0, m) => format!("{m}m"),
-        (h, 0) => format!("{h}h"),
-        (h, m) => format!("{h}h {m}m"),
+    let hours = secs / 3600;
+    let mins = (secs % 3600 + 30) / 60;
+    let (hours, mins) = if mins == 60 {
+        (hours + 1, 0)
+    } else {
+        (hours, mins)
+    };
+    match (hours, mins) {
+        (0, mins) => format!("{mins}{sp}{m}"),
+        (hours, 0) => format!("{hours}{sp}{h}"),
+        (hours, mins) => format!("{hours}{sp}{h} {mins}{sp}{m}"),
     }
 }
 
 /// The same, narrowed for a cell with no room: "4h12", "37m".
-pub fn duration_tight(secs: i64) -> String {
+pub fn duration_tight(secs: i64, s: &Strings) -> String {
     if secs < 60 {
         return "·".into();
     }
-    let (h, m) = (secs / 3600, (secs % 3600) / 60);
-    match h {
-        0 => format!("{m}m"),
-        _ => format!("{h}h{m:02}"),
+    let (hours, mins) = (secs / 3600, (secs % 3600) / 60);
+    match hours {
+        0 => format!("{mins}{}", s.minutes),
+        _ => format!("{hours}{}{mins:02}", s.hours),
     }
 }
 
@@ -194,6 +185,12 @@ pub fn words(n: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lang::Lang;
+
+    /// English, which the assertions below are written in.
+    fn en() -> &'static Strings {
+        Lang::English.strings()
+    }
 
     #[test]
     fn the_epoch_is_day_zero_and_a_thursday() {
@@ -239,16 +236,16 @@ mod tests {
 
     #[test]
     fn durations_round_to_the_minute_and_carry() {
-        assert_eq!(duration(0), "0m");
-        assert_eq!(duration(59), "<1m");
-        assert_eq!(duration(1), "<1m");
-        assert_eq!(duration(120), "2m");
-        assert_eq!(duration(3600), "1h");
-        assert_eq!(duration(4 * 3600 + 12 * 60), "4h 12m");
+        assert_eq!(duration(0, en()), "0m");
+        assert_eq!(duration(59, en()), "<1m");
+        assert_eq!(duration(1, en()), "<1m");
+        assert_eq!(duration(120, en()), "2m");
+        assert_eq!(duration(3600, en()), "1h");
+        assert_eq!(duration(4 * 3600 + 12 * 60, en()), "4h 12m");
         // 59m30s rounds to 60 minutes, which is an hour and not "0h 60m".
-        assert_eq!(duration(3570), "1h");
-        assert_eq!(duration_tight(4 * 3600 + 12 * 60), "4h12");
-        assert_eq!(duration_tight(30), "·");
+        assert_eq!(duration(3570, en()), "1h");
+        assert_eq!(duration_tight(4 * 3600 + 12 * 60, en()), "4h12");
+        assert_eq!(duration_tight(30, en()), "·");
     }
 
     #[test]

@@ -8,6 +8,8 @@
 pub mod catalog;
 pub mod covers;
 pub mod date;
+pub mod lang;
 pub mod log;
+pub mod settings;
 pub mod stats;
 pub mod store;

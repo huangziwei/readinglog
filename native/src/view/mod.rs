@@ -10,9 +10,11 @@ pub mod book;
 pub mod books;
 pub mod calendar;
 pub mod clock;
+pub mod config;
 pub mod home;
 
 use crate::eink::fb::Framebuffer;
+use crate::lang::{Lang, Strings};
 use crate::stats::Stats;
 use crate::ui::chrome::Tab;
 use crate::ui::cover::Covers;
@@ -30,6 +32,10 @@ pub enum Hit {
     Book(usize),
     /// Leave the app. The only way out: a book is closed by tapping a tab.
     Exit,
+    /// A chip on the config page.
+    Language(Lang),
+    WeekStart(crate::settings::WeekStart),
+    TextSize(crate::settings::TextSize),
     Prev,
     Next,
     /// One cut of the clock.
@@ -47,11 +53,13 @@ pub enum Cut {
 impl Cut {
     pub const ALL: [Cut; 3] = [Cut::Hour, Cut::Weekday, Cut::Month];
 
-    pub fn label(self) -> &'static str {
+    /// What this cut is called, in the interface's own language.
+    pub fn label(self, lang: Lang) -> &'static str {
+        let s = lang.strings();
         match self {
-            Cut::Hour => "Hour of day",
-            Cut::Weekday => "Weekday",
-            Cut::Month => "Month",
+            Cut::Hour => s.hour_of_day,
+            Cut::Weekday => s.weekday,
+            Cut::Month => s.month,
         }
     }
 }
@@ -122,6 +130,8 @@ pub struct Ctx<'a> {
     pub text: &'a mut TextRenderer,
     pub covers: &'a mut Covers,
     pub theme: &'a Theme,
+    pub lang: Lang,
+    pub week: crate::settings::WeekStart,
     pub stats: &'a Stats,
     /// The device's own local day, and the second of it now.
     pub today: i64,
@@ -132,6 +142,17 @@ pub struct Ctx<'a> {
 impl Ctx<'_> {
     pub fn hit(&mut self, what: Hit, area: Rect) {
         self.hits.push((what, area));
+    }
+
+    /// The words this screen is written in.
+    pub fn s(&self) -> &'static Strings {
+        self.lang.strings()
+    }
+
+    /// The convention this screen's own labels are set in — a book's title
+    /// keeps the convention its catalog entry names, whatever this is.
+    pub fn ui_script(&self) -> crate::font::Script {
+        crate::font::Script::of_language(self.lang.language_tag())
     }
 }
 

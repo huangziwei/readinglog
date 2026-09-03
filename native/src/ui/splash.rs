@@ -1,5 +1,6 @@
 //! A headline, a note and a step, centred on [`Theme::screen`].
 
+use crate::lang::Strings;
 use anyhow::Result;
 
 use crate::eink::fb::{Framebuffer, MxcfbRect, WAVEFORM_MODE_DU, WAVEFORM_MODE_GC16};
@@ -59,12 +60,9 @@ fn centre(fb: &mut Framebuffer, text: &mut TextRenderer, theme: &Theme, y: i32, 
 /// The lines under the headline, for a store at `mark`.
 ///
 /// An empty `mark` names a store that has read no log line.
-pub fn note(mark: &str) -> Vec<String> {
+pub fn note(mark: &str, s: &Strings) -> Vec<String> {
     match mark.is_empty() {
-        true => vec![
-            "First run: every log the device still holds".into(),
-            "is read once. This can take a few minutes.".into(),
-        ],
-        false => vec!["Reading what the log has added.".into()],
+        true => vec![s.first_run_1.into(), s.first_run_2.into()],
+        false => vec![s.catching_up.into()],
     }
 }

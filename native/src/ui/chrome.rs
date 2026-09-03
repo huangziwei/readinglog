@@ -1,8 +1,10 @@
 //! The frame every screen sits in: one strip along the bottom holding Exit and
-//! the four tabs. There is no title bar — the tab drawn in reverse names the
+//! the five tabs. There is no title bar — the tab drawn in reverse names the
 //! screen, and every screen states its own figures in its body.
 
 use crate::eink::fb::Framebuffer;
+
+use crate::lang::Lang;
 
 use super::paint::{self, INK, LIGHT, PALE, Rect, WHITE};
 use super::text::TextRenderer;
@@ -11,6 +13,9 @@ use super::theme::Theme;
 /// The screens, in the order their tabs sit in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
+    /// The settings, first because it sits beside Exit and neither is a
+    /// figure about reading.
+    Config,
     Home,
     Calendar,
     Books,
@@ -18,14 +23,23 @@ pub enum Tab {
 }
 
 impl Tab {
-    pub const ALL: [Tab; 4] = [Tab::Home, Tab::Calendar, Tab::Books, Tab::Clock];
+    pub const ALL: [Tab; 5] = [
+        Tab::Config,
+        Tab::Home,
+        Tab::Calendar,
+        Tab::Books,
+        Tab::Clock,
+    ];
 
-    pub fn label(self) -> &'static str {
+    /// What this tab is called, in the interface's own language.
+    pub fn label(self, lang: Lang) -> &'static str {
+        let s = lang.strings();
         match self {
-            Tab::Home => "Today",
-            Tab::Calendar => "Calendar",
-            Tab::Books => "Books",
-            Tab::Clock => "Clock",
+            Tab::Config => s.config,
+            Tab::Home => s.today,
+            Tab::Calendar => s.calendar,
+            Tab::Books => s.books,
+            Tab::Clock => s.clock,
         }
     }
 }
@@ -35,13 +49,11 @@ pub fn clear(fb: &mut Framebuffer, theme: &Theme) {
     paint::fill(fb, theme.screen, WHITE);
 }
 
-/// What the leftmost cell of the strip says. Exit is set, not drawn: no face
-/// on this firmware carries a power symbol, and the only close marks that
-/// exist sit in `code2000` and the display faces, where they would stand
-/// against Ember's letters in another face's weight.
-const EXIT: &str = "Exit";
+// Exit is set, not drawn: no face on this firmware carries a power symbol,
+// and the only close marks that exist sit in `code2000` and the display faces,
+// where they would stand against Ember's letters in another face's weight.
 
-/// The bottom strip: Exit, then the four tabs, in five cells of one width.
+/// The bottom strip: Exit, then the five tabs, in six cells of one width.
 /// Answers the hit box for Exit and one per tab.
 ///
 /// The tab for the screen showing is drawn in reverse, which is what names the
@@ -51,20 +63,30 @@ pub fn tabs(
     fb: &mut Framebuffer,
     text: &mut TextRenderer,
     theme: &Theme,
+    lang: Lang,
     active: Tab,
 ) -> (Rect, Vec<(Tab, Rect)>) {
     let (strip, _) = theme.screen.split_bottom(theme.tabs_h);
     paint::fill(fb, strip, WHITE);
     paint::hline(fb, 0, strip.y, strip.w, LIGHT, 2);
 
-    // Exit takes the first of five equal cells; the tabs take the rest.
+    // Exit takes the first of six equal cells; the tabs take the rest.
     let mut cells = strip.columns(Tab::ALL.len() as i32 + 1, 0).into_iter();
     let exit = cells.next().unwrap_or(strip);
 
-    text.set_px(theme.body_px);
+    text.set_px(theme.tab_px);
     let baseline = strip.center_y() + text.cap_height() as i32 / 2;
-    let w = text.measure_width(EXIT) as i32;
-    text.draw(fb, exit.x + (exit.w - w) / 2, baseline, EXIT, false);
+    let script = crate::font::Script::of_language(lang.language_tag());
+    let label = lang.strings().exit;
+    let w = text.measure_width_in(script, label) as i32;
+    text.draw_in(
+        script,
+        fb,
+        exit.x + (exit.w - w) / 2,
+        baseline,
+        label,
+        false,
+    );
     paint::vline(fb, exit.right(), strip.y, strip.h, LIGHT, 2);
 
     let mut out = Vec::new();
@@ -73,9 +95,9 @@ pub fn tabs(
         if on {
             paint::fill(fb, cell.inset(theme.gap / 2), INK);
         }
-        let label = tab.label();
-        let w = text.measure_width(label) as i32;
-        text.draw(fb, cell.x + (cell.w - w) / 2, baseline, label, on);
+        let label = tab.label(lang);
+        let w = text.measure_width_in(script, label) as i32;
+        text.draw_in(script, fb, cell.x + (cell.w - w) / 2, baseline, label, on);
         out.push((*tab, cell));
     }
     (exit, out)
@@ -177,4 +199,239 @@ pub fn row(
     text.draw(fb, area.x, baseline, key, false);
     let w = text.measure_width(value) as i32;
     text.draw(fb, area.right() - w, baseline, value, false);
+}
+
+/// Blank space either side of a chip's text, and between one chip and the next.
+const CHIP_PAD: i32 = 20;
+const CHIP_GAP: i32 = 14;
+
+/// How tall one chip is.
+fn chip_height(theme: &Theme) -> i32 {
+    theme.row_h * 2 / 3
+}
+
+/// Where the second column starts on every row. Taken from the widest label,
+/// pulled back until the widest chip run fits, and held between `width / 3`
+/// and `width / 2`.
+///
+/// One column for the whole page, so the rows line up: a per-row column reads
+/// as a ragged edge, and a flat fraction either wastes the page or wraps the
+/// longest run.
+pub fn chip_column(
+    text: &mut TextRenderer,
+    theme: &Theme,
+    labels: &[&str],
+    runs: &[Vec<(&str, crate::font::Script)>],
+    width: i32,
+) -> i32 {
+    text.set_px(theme.body_px);
+    let widest = labels
+        .iter()
+        .map(|label| text.measure_width(label) as i32)
+        .max()
+        .unwrap_or(0);
+    let runs: Vec<i32> = runs.iter().map(|run| run_width(text, theme, run)).collect();
+    column_from(widest, &runs, width)
+}
+
+/// [`chip_column`]'s arithmetic, over widths already measured.
+fn column_from(widest_label: i32, runs: &[i32], width: i32) -> i32 {
+    let wanted = widest_label + CHIP_GAP * 3;
+    let room = runs.iter().map(|run| width - run).min().unwrap_or(i32::MAX);
+    wanted.min(room.max(width / 3).min(width / 2))
+}
+
+/// How wide a run of chips is once tiled, gaps included.
+fn run_width(
+    text: &mut TextRenderer,
+    theme: &Theme,
+    options: &[(&str, crate::font::Script)],
+) -> i32 {
+    text.set_px(theme.body_px);
+    let chips: i32 = options
+        .iter()
+        .map(|(o, script)| text.measure_width_in(*script, o) as i32 + CHIP_PAD * 2)
+        .sum();
+    chips + CHIP_GAP * (options.len().saturating_sub(1)) as i32
+}
+
+/// Where every chip of a row lands, wrapped to `width`, laid out from `(0, 0)`.
+///
+/// Separated from the paint so a dropped chip — a setting the reader cannot
+/// reach — is caught by a test rather than by looking at a screenshot.
+pub fn chip_layout(
+    text: &mut TextRenderer,
+    theme: &Theme,
+    options: &[(&str, crate::font::Script)],
+    width: i32,
+) -> Vec<Rect> {
+    text.set_px(theme.body_px);
+    let height = chip_height(theme);
+    let (mut x, mut y) = (0, 0);
+    let mut out = Vec::new();
+    for (option, script) in options {
+        let w = text.measure_width_in(*script, option) as i32 + CHIP_PAD * 2;
+        if x > 0 && x + w > width {
+            x = 0;
+            y += height + CHIP_GAP;
+        }
+        out.push(Rect::new(x, y, w, height));
+        x += w + CHIP_GAP;
+    }
+    out
+}
+
+/// The name of one setting, on the left of its row.
+pub fn setting(
+    fb: &mut Framebuffer,
+    text: &mut TextRenderer,
+    theme: &Theme,
+    row: Rect,
+    label: &str,
+) {
+    text.set_px(theme.body_px);
+    let baseline = row.center_y() + text.cap_height() as i32 / 2;
+    text.draw(fb, row.x, baseline, label, false);
+}
+
+/// Every option of a setting, side by side, the one in use filled and the rest
+/// outlined, at the places [`chip_layout`] put them.
+///
+/// All of them are shown at once and each is its own tap target: a control
+/// that cycles hides how many values it has, and there is room here. The
+/// caller lays out first and sizes the row from the same answer, so a chip is
+/// never drawn where the row has no height for it. Answers one box per option,
+/// in window coordinates.
+pub fn chips(
+    fb: &mut Framebuffer,
+    text: &mut TextRenderer,
+    theme: &Theme,
+    area: Rect,
+    options: &[(&str, crate::font::Script)],
+    placed: &[Rect],
+    on: usize,
+) -> Vec<Rect> {
+    text.set_px(theme.body_px);
+    let mut out = Vec::new();
+    for (i, (at, (option, script))) in placed.iter().zip(options).enumerate() {
+        let chip = Rect::new(area.x + at.x, area.y + at.y, at.w, at.h);
+        let tw = text.measure_width_in(*script, option) as i32;
+        let picked = i == on;
+        match picked {
+            true => paint::fill(fb, chip, INK),
+            false => paint::stroke(fb, chip, INK, 2),
+        }
+        let baseline = chip.center_y() + text.cap_height() as i32 / 2;
+        text.draw_in(
+            *script,
+            fb,
+            chip.x + (chip.w - tw) / 2,
+            baseline,
+            option,
+            picked,
+        );
+        out.push(chip);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::font::Script;
+    use crate::lang::Lang;
+
+    /// A metric with no font behind it: every character 0.6 em, which is
+    /// wider than Ember sets and narrower than an ideograph, so a layout that
+    /// fits under it fits on the device.
+    fn measured(theme: &Theme, options: &[(&str, Script)], width: i32) -> Vec<Rect> {
+        let height = chip_height(theme);
+        let (mut x, mut y) = (0, 0);
+        let mut out = Vec::new();
+        for (option, _) in options {
+            let em = theme.body_px * 0.6;
+            let w = (option.chars().count() as f32 * em) as i32 + CHIP_PAD * 2;
+            if x > 0 && x + w > width {
+                x = 0;
+                y += height + CHIP_GAP;
+            }
+            out.push(Rect::new(x, y, w, height));
+            x += w + CHIP_GAP;
+        }
+        out
+    }
+
+    #[test]
+    fn every_chip_is_placed_however_narrow_the_row() {
+        // A dropped chip is a setting the reader cannot reach. Every option
+        // gets a box, on every panel, in every language.
+        let names: Vec<(&str, Script)> = Lang::ALL
+            .iter()
+            .map(|l| (l.label(), Script::Unknown))
+            .collect();
+        for (w, h) in [(1264, 1680), (1860, 2480)] {
+            let theme = Theme::for_screen(w, h);
+            let area = content_box(&theme);
+            let width = area.w - area.w / 3;
+            let placed = measured(&theme, &names, width);
+            assert_eq!(placed.len(), names.len(), "{w}x{h} drops a chip");
+            for chip in &placed {
+                assert!(chip.right() <= width, "{w}x{h}: {chip:?} runs past {width}");
+            }
+        }
+    }
+
+    /// The stub's width for a run of chips, gaps included.
+    fn run_of(theme: &Theme, options: &[(&str, Script)]) -> i32 {
+        let em = theme.body_px * 0.6;
+        let chips: i32 = options
+            .iter()
+            .map(|(o, _)| (o.chars().count() as f32 * em) as i32 + CHIP_PAD * 2)
+            .sum();
+        chips + CHIP_GAP * (options.len().saturating_sub(1)) as i32
+    }
+
+    #[test]
+    fn the_language_row_stands_on_one_line() {
+        // What the abbreviations are for. 简体 says what 简体中文 does in half
+        // the width, and with the column taken from the labels rather than a
+        // flat third, all five languages stand on one line on the narrow
+        // panel. A row that wraps still draws — this is fit, not safety.
+        let theme = Theme::for_screen(1264, 1680);
+        let names: Vec<(&str, Script)> = Lang::ALL
+            .iter()
+            .map(|l| (l.label(), Script::Unknown))
+            .collect();
+        let area = content_box(&theme);
+        let sizes: Vec<(&str, Script)> = [
+            ("Small", Script::Unknown),
+            ("Medium", Script::Unknown),
+            ("Large", Script::Unknown),
+        ]
+        .into();
+        let week: Vec<(&str, Script)> = [("Mon", Script::Unknown), ("Sun", Script::Unknown)].into();
+
+        let em = theme.body_px * 0.6;
+        let widest = ["Language", "Text size", "Week starts on"]
+            .iter()
+            .map(|l| (l.chars().count() as f32 * em) as i32)
+            .max()
+            .unwrap_or(0);
+        let runs = [
+            run_of(&theme, &names),
+            run_of(&theme, &sizes),
+            run_of(&theme, &week),
+        ];
+        let column = column_from(widest, &runs, area.w);
+
+        let placed = measured(&theme, &names, area.w - column);
+        let lines: std::collections::BTreeSet<i32> = placed.iter().map(|c| c.y).collect();
+        assert_eq!(lines.len(), 1, "the language row wraps: {placed:?}");
+        for chip in &placed {
+            assert!(
+                chip.right() <= area.w - column,
+                "{chip:?} runs past the row"
+            );
+        }
+    }
 }

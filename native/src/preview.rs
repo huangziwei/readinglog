@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 use crate::app::App;
 use crate::date;
 use crate::eink::fb::Framebuffer;
+use crate::lang::Lang;
 use crate::log::session::{Measure, Session};
+use crate::settings::TextSize;
 use crate::stats::Stats;
 use crate::store::{BookRecord, Store};
 use crate::ui::chrome::Tab;
@@ -193,17 +195,50 @@ fn preview_every_screen() {
 
     let mut app = App::new(stats, theme, text);
     let screens = [
+        ("config", Tab::Config, None),
         ("today", Tab::Home, None),
         ("calendar", Tab::Calendar, None),
         ("books", Tab::Books, None),
         ("clock", Tab::Clock, None),
         ("book", Tab::Books, Some(0)),
     ];
-    for (name, tab, book) in screens {
-        app.show(tab, book);
-        app.draw(&mut fb).expect("a drawn screen");
-        let path = out.join(format!("{name}.png"));
-        fb.capture_png(&path).expect("a written screen");
-        println!("preview: {}", path.display());
+    // Every screen in every language: German is where a row collides first,
+    // and a CJK label set in the wrong face shows nowhere else.
+    for lang in Lang::ALL {
+        app.set_language(lang);
+        let dir = match lang {
+            Lang::English => out.clone(),
+            other => out.join(other.language_tag()),
+        };
+        std::fs::create_dir_all(&dir).expect("a language directory");
+        for (name, tab, book) in screens {
+            app.show(tab, book);
+            app.draw(&mut fb).expect("a drawn screen");
+            let path = dir.join(format!("{name}.png"));
+            fb.capture_png(&path).expect("a written screen");
+            println!("preview: {}", path.display());
+        }
+    }
+
+    // The size ladder, in English: the content grows and the strip does not.
+    app.set_language(Lang::English);
+    for size in TextSize::ALL {
+        app.set_text_size(size);
+        for (name, tab, book) in [("today", Tab::Home, None), ("config", Tab::Config, None)] {
+            app.show(tab, book);
+            app.draw(&mut fb).expect("a drawn screen");
+            let path = out.join(format!("{name}-{}.png", size_token(size)));
+            fb.capture_png(&path).expect("a written screen");
+            println!("preview: {}", path.display());
+        }
+    }
+}
+
+/// What a size is called in a filename.
+fn size_token(size: TextSize) -> &'static str {
+    match size {
+        TextSize::Small => "small",
+        TextSize::Medium => "medium",
+        TextSize::Large => "large",
     }
 }

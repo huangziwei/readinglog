@@ -71,7 +71,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
     let (foot, _) = area.split_bottom(foot_height(theme));
     if from > 0 || to < cx.stats.books.len() {
         cx.text.set_px(theme.small_px);
-        let label = format!("{}–{} of {}", from + 1, to, cx.stats.books.len());
+        let label = format!("{}–{} {} {}", from + 1, to, cx.s().of, cx.stats.books.len());
         let w = cx.text.measure_width(&label) as i32;
         cx.text.draw(
             cx.fb,
@@ -106,7 +106,7 @@ fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
     let script = crate::font::Script::of_language(&book.language);
 
     // Two columns: the words on the left, the figures on the right.
-    let figure = date::duration(book.seconds);
+    let figure = date::duration(book.seconds, cx.s());
     cx.text.set_px(theme.body_px);
     let column_w = figures_width(cx, &figure) + theme.gap * 2;
     let (words, figures) = body.split_left((body.w - column_w).max(theme.gap));
@@ -175,7 +175,7 @@ fn empty(cx: &mut Ctx, area: Rect) {
         true => format!(
             "{} read, on books the catalog names none of. A book is listed \
              once the device has said what it is.",
-            crate::date::duration(cx.stats.total_seconds)
+            crate::date::duration(cx.stats.total_seconds, cx.s())
         ),
         false => "No reading yet. Open a book, read a few pages, then come \
              back — the log starts from the day this first runs."

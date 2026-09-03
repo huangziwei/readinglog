@@ -58,10 +58,11 @@ pub fn draw(cx: &mut Ctx, area: Rect) {
     let secs = cx.stats.day_seconds(today);
     let turns: i64 = cx.stats.sittings_on(today).map(|s| s.page_turns).sum();
     let books = cx.stats.books_on(today);
+    let s = cx.s();
     let stated = [
-        (date::duration(secs), "read today"),
-        (turns.to_string(), "pages turned"),
-        (books.to_string(), "books"),
+        (date::duration(secs, s), s.read_today),
+        (turns.to_string(), s.pages_turned),
+        (books.to_string(), s.books_unit),
     ];
     // `spread` sizes each figure to its own width across `top`.
     let widths: Vec<i32> = stated
@@ -73,11 +74,11 @@ pub fn draw(cx: &mut Ctx, area: Rect) {
         chrome::figure(cx.fb, cx.text, theme, cell, value, label);
     }
 
-    let inner = chrome::section(cx.fb, cx.text, theme, strip, "WHEN, TODAY");
+    let inner = chrome::section(cx.fb, cx.text, theme, strip, s.when_today);
     let spans = cx.stats.day_blocks(today);
     charts::timeline(cx.fb, cx.text, theme, inner, &spans, Some(cx.now));
 
-    let inner = chrome::section(cx.fb, cx.text, theme, week, "THE LAST SEVEN DAYS");
+    let inner = chrome::section(cx.fb, cx.text, theme, week, s.last_seven_days);
     let values = cx.stats.week_ending(today);
     charts::columns(
         cx.fb,
@@ -87,24 +88,24 @@ pub fn draw(cx: &mut Ctx, area: Rect) {
         &values,
         |i| {
             let day = today - 6 + i as i64;
-            date::WEEKDAYS_INITIAL[date::weekday(day)].to_string()
+            s.weekdays_initial[date::weekday(day)].to_string()
         },
         1,
         Some(6),
     );
 
-    let inner = chrome::section(cx.fb, cx.text, theme, totals, "ALL TIME");
+    let inner = chrome::section(cx.fb, cx.text, theme, totals, s.all_time);
     let lines = [
-        ("Total read", date::duration(cx.stats.total_seconds)),
-        ("Books", cx.stats.books.len().to_string()),
-        ("Days read", cx.stats.days_read().to_string()),
+        (s.total_read, date::duration(cx.stats.total_seconds, s)),
+        (s.books_row, cx.stats.books.len().to_string()),
+        (s.days_read, cx.stats.days_read().to_string()),
         (
-            "Current streak",
-            plural(cx.stats.current_streak, "day", "days"),
+            s.current_streak,
+            plural(cx.stats.current_streak, s.day_one, s.day_many),
         ),
         (
-            "Longest streak",
-            plural(cx.stats.longest_streak, "day", "days"),
+            s.longest_streak,
+            plural(cx.stats.longest_streak, s.day_one, s.day_many),
         ),
     ];
     let rows = inner.rows(lines.len() as i32 + 1, 0);
@@ -115,7 +116,7 @@ pub fn draw(cx: &mut Ctx, area: Rect) {
     // `current_book`, in the last row.
     if let (Some(book), Some(row)) = (cx.stats.current_book(), rows.last()) {
         let script = Script::of_language(&book.language);
-        chrome::row(cx.fb, cx.text, theme, *row, "Now reading", "");
+        chrome::row(cx.fb, cx.text, theme, *row, s.now_reading, "");
         // Clamped, measured and drawn at `body_px` in `script`.
         cx.text.set_px(theme.body_px);
         let title = cx

@@ -2,6 +2,8 @@
 //!
 //! [`Theme::for_screen`] scales each field off `xres`. No field is a constant.
 
+use crate::settings::TextSize;
+
 use super::paint::Rect;
 
 pub struct Theme {
@@ -15,6 +17,9 @@ pub struct Theme {
     /// A section heading.
     pub head_px: f32,
     pub body_px: f32,
+    /// The strip along the bottom, which never scales: its six cells hold
+    /// カレンダー at [`BODY_PX`] and nothing wider.
+    pub tab_px: f32,
     /// An axis label, a date under a bar, a unit beside a figure.
     pub small_px: f32,
     /// One row of a list.
@@ -37,18 +42,24 @@ const HEAD_PX: f32 = 50.0;
 
 impl Theme {
     pub fn for_screen(xres: u32, yres: u32) -> Self {
+        Self::sized(xres, yres, TextSize::default())
+    }
+
+    /// [`Theme::for_screen`] at the size the reader set.
+    pub fn sized(xres: u32, yres: u32, size: TextSize) -> Self {
         let w = xres as i32;
-        let body = BODY_PX;
+        let body = (BODY_PX * size.scale()).round();
         Self {
             screen: Rect::new(0, 0, w, yres as i32),
             pad: (w / 32).max(12),
             gap: (w / 90).max(6),
             display_px: (body * 2.6).round(),
-            head_px: HEAD_PX,
+            head_px: (HEAD_PX * size.scale()).round(),
             body_px: body,
             small_px: (body * 0.78).round(),
             row_h: (body * 2.7) as i32,
-            tabs_h: (body * 2.8) as i32,
+            tab_px: BODY_PX,
+            tabs_h: (BODY_PX * 2.8) as i32,
         }
     }
 }
