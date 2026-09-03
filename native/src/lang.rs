@@ -176,19 +176,12 @@ pub struct Strings {
     pub books: &'static str,
     pub clock: &'static str,
 
-    // Today.
+    // Today. The three figures, then the heading over the day's books — the
+    // day's own date heads its timeline, so it needs no word here.
     pub read_today: &'static str,
     pub pages_turned: &'static str,
-    pub books_unit: &'static str,
-    pub when_today: &'static str,
-    pub last_seven_days: &'static str,
-    pub all_time: &'static str,
-    pub total_read: &'static str,
-    pub books_row: &'static str,
-    pub days_read: &'static str,
     pub current_streak: &'static str,
-    pub longest_streak: &'static str,
-    pub now_reading: &'static str,
+    pub what_was_read: &'static str,
 
     // Calendar.
     pub the_month: &'static str,
@@ -232,6 +225,7 @@ pub struct Strings {
     pub busiest: &'static str,
     pub then: &'static str,
     pub in_the_busiest: &'static str,
+
     pub counted_over: &'static str,
 
     // Splash.
@@ -250,10 +244,6 @@ pub struct Strings {
     pub size_medium: &'static str,
     pub size_large: &'static str,
 
-    /// `1 day` and `n days`. Chinese and Japanese inflect neither.
-    pub day_one: &'static str,
-    pub day_many: &'static str,
-
     /// Hours and minutes, appended to a number with no space in English and
     /// CJK, with one in German.
     pub hours: &'static str,
@@ -267,7 +257,6 @@ pub struct Strings {
     pub months: [&'static str; 12],
     pub months_short: [&'static str; 12],
     pub weekdays_short: [&'static str; 7],
-    pub weekdays_initial: [&'static str; 7],
 }
 
 const ENGLISH: Strings = Strings {
@@ -280,16 +269,8 @@ const ENGLISH: Strings = Strings {
 
     read_today: "read today",
     pages_turned: "pages turned",
-    books_unit: "books",
-    when_today: "WHEN, TODAY",
-    last_seven_days: "THE LAST SEVEN DAYS",
-    all_time: "ALL TIME",
-    total_read: "Total read",
-    books_row: "Books",
-    days_read: "Days read",
-    current_streak: "Current streak",
-    longest_streak: "Longest streak",
-    now_reading: "Now reading",
+    current_streak: "current streak",
+    what_was_read: "WHAT WAS READ",
 
     the_month: "THE MONTH",
     nothing_read: "Nothing read.",
@@ -342,9 +323,6 @@ const ENGLISH: Strings = Strings {
     size_medium: "Medium",
     size_large: "Large",
 
-    day_one: "day",
-    day_many: "days",
-
     hours: "h",
     minutes: "m",
     unit_space: false,
@@ -369,7 +347,6 @@ const ENGLISH: Strings = Strings {
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ],
     weekdays_short: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-    weekdays_initial: ["M", "T", "W", "T", "F", "S", "S"],
 };
 
 const GERMAN: Strings = Strings {
@@ -383,16 +360,8 @@ const GERMAN: Strings = Strings {
 
     read_today: "heute gelesen",
     pages_turned: "Seiten",
-    books_unit: "Bücher",
-    when_today: "WANN, HEUTE",
-    last_seven_days: "DIE LETZTEN SIEBEN TAGE",
-    all_time: "INSGESAMT",
-    total_read: "Insgesamt gelesen",
-    books_row: "Bücher",
-    days_read: "Tage gelesen",
-    current_streak: "Aktuelle Serie",
-    longest_streak: "Längste Serie",
-    now_reading: "Liest gerade",
+    current_streak: "aktuelle Serie",
+    what_was_read: "WAS GELESEN WURDE",
 
     the_month: "DER MONAT",
     nothing_read: "Nichts gelesen.",
@@ -445,12 +414,8 @@ const GERMAN: Strings = Strings {
     size_medium: "Mittel",
     size_large: "Groß",
 
-    day_one: "Tag",
-    day_many: "Tage",
-
-    // The plan's measurement: `5 Std 8 Min` sets three figures across the
-    // Book screen at 1258 px into a row 1186 px wide. `h`/`m` are read in
-    // German and are what fits.
+    // `5 Std 8 Min` sets the Book screen's three figures 1258 px across a row
+    // 1186 px wide. `h`/`m` are read in German and are what fits.
     hours: "h",
     minutes: "m",
     unit_space: false,
@@ -475,7 +440,6 @@ const GERMAN: Strings = Strings {
         "Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez",
     ],
     weekdays_short: ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"],
-    weekdays_initial: ["M", "D", "M", "D", "F", "S", "S"],
 };
 
 const JAPANESE: Strings = Strings {
@@ -488,16 +452,8 @@ const JAPANESE: Strings = Strings {
 
     read_today: "今日の読書",
     pages_turned: "めくったページ",
-    books_unit: "冊",
-    when_today: "今日の時間帯",
-    last_seven_days: "この七日間",
-    all_time: "これまで",
-    total_read: "総読書時間",
-    books_row: "冊数",
-    days_read: "読んだ日数",
     current_streak: "継続日数",
-    longest_streak: "最長継続",
-    now_reading: "読書中",
+    what_was_read: "読んだ本",
 
     the_month: "この月",
     nothing_read: "読書なし。",
@@ -550,9 +506,6 @@ const JAPANESE: Strings = Strings {
     size_medium: "中",
     size_large: "大",
 
-    day_one: "日",
-    day_many: "日",
-
     hours: "時間",
     minutes: "分",
     unit_space: false,
@@ -566,7 +519,6 @@ const JAPANESE: Strings = Strings {
         "1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月",
     ],
     weekdays_short: ["月", "火", "水", "木", "金", "土", "日"],
-    weekdays_initial: ["月", "火", "水", "木", "金", "土", "日"],
 };
 
 const SIMPLIFIED: Strings = Strings {
@@ -579,16 +531,8 @@ const SIMPLIFIED: Strings = Strings {
 
     read_today: "今日阅读",
     pages_turned: "翻页",
-    books_unit: "本",
-    when_today: "今天的时段",
-    last_seven_days: "最近七天",
-    all_time: "全部时间",
-    total_read: "累计阅读",
-    books_row: "书籍",
-    days_read: "阅读天数",
     current_streak: "当前连续",
-    longest_streak: "最长连续",
-    now_reading: "正在读",
+    what_was_read: "读了什么",
 
     the_month: "本月",
     nothing_read: "没有阅读。",
@@ -641,9 +585,6 @@ const SIMPLIFIED: Strings = Strings {
     size_medium: "中",
     size_large: "大",
 
-    day_one: "天",
-    day_many: "天",
-
     hours: "小时",
     minutes: "分",
     unit_space: false,
@@ -668,7 +609,6 @@ const SIMPLIFIED: Strings = Strings {
         "1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月",
     ],
     weekdays_short: ["周一", "周二", "周三", "周四", "周五", "周六", "周日"],
-    weekdays_initial: ["一", "二", "三", "四", "五", "六", "日"],
 };
 
 const TRADITIONAL: Strings = Strings {
@@ -681,16 +621,8 @@ const TRADITIONAL: Strings = Strings {
 
     read_today: "今日閱讀",
     pages_turned: "翻頁",
-    books_unit: "本",
-    when_today: "今天的時段",
-    last_seven_days: "最近七天",
-    all_time: "全部時間",
-    total_read: "累計閱讀",
-    books_row: "書籍",
-    days_read: "閱讀天數",
     current_streak: "目前連續",
-    longest_streak: "最長連續",
-    now_reading: "正在讀",
+    what_was_read: "讀了什麼",
 
     the_month: "本月",
     nothing_read: "沒有閱讀。",
@@ -743,9 +675,6 @@ const TRADITIONAL: Strings = Strings {
     size_medium: "中",
     size_large: "大",
 
-    day_one: "天",
-    day_many: "天",
-
     hours: "小時",
     minutes: "分",
     unit_space: false,
@@ -770,7 +699,6 @@ const TRADITIONAL: Strings = Strings {
         "1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月",
     ],
     weekdays_short: ["週一", "週二", "週三", "週四", "週五", "週六", "週日"],
-    weekdays_initial: ["一", "二", "三", "四", "五", "六", "日"],
 };
 
 #[cfg(test)]
@@ -878,7 +806,7 @@ mod tests {
         // field filled in with nothing.
         for lang in Lang::ALL {
             let s = lang.strings();
-            let named: [(&str, &str); 12] = [
+            let named: [(&str, &str); 11] = [
                 ("exit", s.exit),
                 ("config", s.config),
                 ("today", s.today),
@@ -889,7 +817,6 @@ mod tests {
                 ("week_starts_on", s.week_starts_on),
                 ("hours", s.hours),
                 ("minutes", s.minutes),
-                ("day_one", s.day_one),
                 ("read", s.read),
             ];
             for (field, value) in named {

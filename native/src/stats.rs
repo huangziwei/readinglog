@@ -204,8 +204,15 @@ impl Stats {
     /// `Sitting::hours` states the seconds read in each clock hour. Each block
     /// stands in that hour, as many seconds long as were read there.
     pub fn day_blocks(&self, day: i64) -> Vec<(i64, i64)> {
+        self.day_blocks_of(day, None)
+    }
+
+    /// [`Stats::day_blocks`] narrowed to one book, or all of them where `book`
+    /// is `None`.
+    pub fn day_blocks_of(&self, day: i64, book: Option<usize>) -> Vec<(i64, i64)> {
         let mut out: Vec<(i64, i64)> = Vec::new();
-        for sitting in self.sittings_on(day) {
+        let mine = |s: &Sitting| book.is_none() || s.book == book;
+        for sitting in self.sittings_on(day).filter(|s| mine(s)) {
             let closed = sitting.to_secs.max(sitting.from_secs);
             for (hour, secs) in &sitting.hours {
                 let (lo, hi) = (*hour as i64 * 3600, (*hour as i64 + 1) * 3600);
@@ -239,31 +246,26 @@ impl Stats {
         out
     }
 
-    /// Seconds on each of the seven days ending at `last`, oldest first.
-    pub fn week_ending(&self, last: i64) -> [i64; 7] {
-        let mut out = [0; 7];
-        for (i, slot) in out.iter_mut().enumerate() {
-            *slot = self.day_seconds(last - 6 + i as i64);
+    /// Seconds read of each book over a span of days, longest first.
+    ///
+    /// A sitting no record names carries no book, and is left out: these need
+    /// not add up to [`Stats::day_seconds`] over the same days.
+    pub fn book_totals(&self, days: std::ops::RangeInclusive<i64>) -> Vec<(usize, i64)> {
+        let mut out: Vec<(usize, i64)> = Vec::new();
+        for sitting in self.sittings.iter().filter(|s| days.contains(&s.day)) {
+            let Some(book) = sitting.book else { continue };
+            match out.iter_mut().find(|(b, _)| *b == book) {
+                Some((_, secs)) => *secs += sitting.seconds,
+                None => out.push((book, sitting.seconds)),
+            }
         }
+        out.sort_by_key(|(_, secs)| -secs);
         out
-    }
-
-    /// Distinct books read on one day.
-    pub fn books_on(&self, day: i64) -> usize {
-        let mut seen: Vec<usize> = self.sittings_on(day).filter_map(|s| s.book).collect();
-        seen.sort_unstable();
-        seen.dedup();
-        seen.len()
     }
 
     /// Days with any reading at all.
     pub fn days_read(&self) -> i64 {
         self.days.len() as i64
-    }
-
-    /// The book most recently read.
-    pub fn current_book(&self) -> Option<&BookStat> {
-        self.books.first()
     }
 
     /// Most recently read first, and within a day the one put down last.
@@ -481,19 +483,24 @@ mod tests {
     #[test]
     fn a_day_counts_only_the_books_it_can_name() {
         // 2026-08-06 holds one sitting on the named book and one on neither.
+        let sixth = day(2026, 8, 6);
         assert_eq!(
-            Stats::build(&store(), day(2026, 8, 7)).books_on(day(2026, 8, 6)),
+            Stats::build(&store(), day(2026, 8, 7))
+                .book_totals(sixth..=sixth)
+                .len(),
             1
         );
         assert_eq!(
-            Stats::build(&store_both_named(), day(2026, 8, 7)).books_on(day(2026, 8, 6)),
+            Stats::build(&store_both_named(), day(2026, 8, 7))
+                .book_totals(sixth..=sixth)
+                .len(),
             2
         );
     }
 
     #[test]
     fn a_book_taken_off_the_device_keeps_its_title_and_its_cover() {
-        // A record remembered, then a catalog naming it no more.
+        // A record remembered, and a catalog without it.
         let mut s = store();
         s.remember(&[]);
         assert_eq!(s.books.len(), 1, "an empty catalog removes nothing");
@@ -612,7 +619,6 @@ mod tests {
         let stats = Stats::build(&store_both_named(), day(2026, 8, 7));
         assert_eq!(stats.books[0].extent, 148_209, "read on the 7th");
         assert_eq!(stats.books[1].extent, 555, "last read on the 6th");
-        assert_eq!(stats.current_book().map(|b| b.extent), Some(148_209));
     }
 
     #[test]
@@ -725,13 +731,16 @@ mod tests {
     }
 
     #[test]
-    fn a_week_reads_seven_days_ending_where_it_is_asked_to() {
-        let stats = Stats::build(&store(), day(2026, 8, 7));
-        let week = stats.week_ending(day(2026, 8, 7));
-        assert_eq!(week[6], 600, "the 7th");
-        assert_eq!(week[5], 3_000, "the 6th");
-        assert_eq!(week[4], 1_800, "the 5th");
-        assert_eq!(week[..4], [0, 0, 0, 0]);
+    fn a_span_totals_each_book_over_it_longest_first() {
+        let stats = Stats::build(&store_both_named(), day(2026, 8, 7));
+        let week = stats.book_totals(day(2026, 8, 1)..=day(2026, 8, 7));
+        assert_eq!(week.len(), 2);
+        assert!(week[0].1 >= week[1].1, "out of order: {week:?}",);
+        // One day of it, and a day outside the span holds nothing.
+        let sixth = day(2026, 8, 6);
+        assert_eq!(stats.book_totals(sixth..=sixth).len(), 2);
+        let empty = day(2026, 8, 4);
+        assert!(stats.book_totals(empty..=empty).is_empty());
     }
 
     #[test]
@@ -742,8 +751,10 @@ mod tests {
         assert_eq!(sixth[0].from_secs, 21 * 3600, "in the order they happened");
         assert_eq!(sixth[1].from_secs, 22 * 3600);
         // The 22:00 sitting is on a book no record names.
-        assert_eq!(stats.books_on(day(2026, 8, 6)), 1);
-        assert_eq!(stats.books_on(day(2026, 8, 5)), 1);
+        let sixth = day(2026, 8, 6);
+        let fifth = day(2026, 8, 5);
+        assert_eq!(stats.book_totals(sixth..=sixth).len(), 1);
+        assert_eq!(stats.book_totals(fifth..=fifth).len(), 1);
     }
 
     #[test]
@@ -784,7 +795,8 @@ mod tests {
         assert_eq!(stats.total_seconds, 0);
         assert_eq!(stats.days_read(), 0);
         assert_eq!(stats.current_streak, 0);
-        assert!(stats.current_book().is_none());
-        assert_eq!(stats.week_ending(day(2026, 8, 7)), [0; 7]);
+        assert!(stats.books.is_empty());
+        let today = day(2026, 8, 7);
+        assert!(stats.book_totals(today..=today).is_empty());
     }
 }

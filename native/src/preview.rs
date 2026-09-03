@@ -174,6 +174,21 @@ fn fixture(today: i64, art: &Path) -> Store {
     store
 }
 
+/// [`fixture`] with `keep` of today's sittings left on it: how Today reads on
+/// a day that has barely started, and on one with nothing on it yet.
+fn thinned(today: i64, art: &Path, keep: usize) -> Store {
+    let mut store = fixture(today, art);
+    let mut seen = 0usize;
+    store.sessions.retain(|s| {
+        if date::parse_day(date::day_of(&s.started_at)) != Some(today) {
+            return true;
+        }
+        seen += 1;
+        seen <= keep
+    });
+    store
+}
+
 /// Every screen, one PNG each.
 ///
 /// Ignored: [`Framebuffer::open`] wants a display.
@@ -220,8 +235,22 @@ fn preview_every_screen() {
         }
     }
 
-    // The size ladder, in English: the content grows and the strip does not.
+    // Today on a day that has barely started, and on one with nothing on it:
+    // the page is sized by what was read, and both ends have to hold up.
     app.set_language(Lang::English);
+    for (name, keep) in [("today-quiet", 1usize), ("today-empty", 0)] {
+        let stats = Stats::build(&thinned(today, &art, keep), today);
+        let theme = Theme::for_screen(fb.var.xres, fb.var.yres);
+        let text = TextRenderer::load(theme.body_px).expect("a font");
+        let mut thin = App::new(stats, theme, text);
+        thin.show(Tab::Home, None);
+        thin.draw(&mut fb).expect("a drawn screen");
+        let path = out.join(format!("{name}.png"));
+        fb.capture_png(&path).expect("a written screen");
+        println!("preview: {}", path.display());
+    }
+
+    // The size ladder, in English: the content grows and the strip does not.
     for size in TextSize::ALL {
         app.set_text_size(size);
         for (name, tab, book) in [("today", Tab::Home, None), ("config", Tab::Config, None)] {
