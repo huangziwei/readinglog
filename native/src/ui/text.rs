@@ -65,6 +65,14 @@ impl TextRenderer {
         (self.px * font::CAP).round().max(1.0) as u32
     }
 
+    /// How far below the baseline the primary face's descenders reach. What a
+    /// rule or a bar drawn under a line has to clear.
+    pub fn descent(&self) -> u32 {
+        let primary = self.chain.primary();
+        let face = primary.as_scaled(font::scale_of(primary, self.px));
+        (-face.descent()).ceil().max(0.0) as u32
+    }
+
     pub fn line_height(&self) -> u32 {
         // The face's own vertical metrics; round up so adjacent rows don't
         // tear into each other. Always the primary face's, so a row keeps its

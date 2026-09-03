@@ -129,12 +129,23 @@ pub fn draw(cx: &mut Ctx, area: Rect) {
         cx.text
             .draw_in(script, cx.fb, row.right() - w, baseline, &title, false);
         if book.has_percent() {
-            let track = Rect::new(row.x, row.bottom() - theme.gap, row.w, theme.gap / 2);
+            let bottom = baseline + cx.text.descent() as i32;
+            let track = progress_track(*row, bottom, theme.gap);
             paint::progress(cx.fb, track, book.percent as i64, 100, INK);
         }
         // `books` is most-recent-first: the book in hand is the first.
         cx.hit(Hit::Book(0), *row);
     }
+}
+
+/// The progress track under a row of text: at the row's foot, and never
+/// closer to the line than `text_bottom`, which its descenders reach.
+fn progress_track(row: Rect, text_bottom: i32, gap: i32) -> Rect {
+    let thickness = (gap / 2).max(1);
+    let top = (row.bottom() - gap)
+        .max(text_bottom + 2)
+        .min(row.bottom() - thickness);
+    Rect::new(row.x, top, row.w, thickness)
 }
 
 /// A count with the right noun beside it.
@@ -148,6 +159,28 @@ fn plural(n: i64, one: &str, many: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_progress_bar_clears_the_line_it_sits_under() {
+        // A row barely taller than its text: the bar drops to the foot of the
+        // row rather than crossing the descenders of "Now reading".
+        let row = Rect::new(0, 0, 400, 69);
+        let (baseline, descent, gap) = (47, 11, 14);
+        let track = progress_track(row, baseline + descent, gap);
+        assert!(
+            track.y > baseline + descent,
+            "the bar crosses the descenders: bar at {}, text reaches {}",
+            track.y,
+            baseline + descent
+        );
+        assert!(track.bottom() <= row.bottom(), "the bar leaves the row");
+
+        // A tall row leaves the bar at the foot, inset as before.
+        let tall = Rect::new(0, 0, 400, 200);
+        let track = progress_track(tall, 120, gap);
+        assert_eq!(track.y, tall.bottom() - gap);
+        assert_eq!(track.h, gap / 2);
+    }
 
     #[test]
     fn a_count_takes_the_noun_that_fits_it() {

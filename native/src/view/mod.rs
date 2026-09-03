@@ -1,7 +1,7 @@
 //! The screens.
 //!
-//! Each takes the box left between the title bar and the tab strip and draws
-//! into it, recording a hit box for anything the reader can touch. A screen
+//! Each takes the box left above the tab strip and draws into it, recording a
+//! hit box for anything the reader can touch. A screen
 //! holds no state of its own: what month is showing, which book is open and
 //! which day is selected all live in [`State`], so a redraw after a tap is the
 //! same call with a different state.
@@ -28,8 +28,8 @@ pub enum Hit {
     Day(i64),
     /// A book, by its index in [`Stats::books`].
     Book(usize),
-    /// Out of a drill-in, back to the tab it was opened from.
-    Back,
+    /// Leave the app. The only way out: a book is closed by tapping a tab.
+    Exit,
     Prev,
     Next,
     /// One cut of the clock.
@@ -84,6 +84,22 @@ impl State {
         }
     }
 
+    /// Go to `tab`, closing any book open over it. Answers whether that moved
+    /// anywhere: a tap on the tab already showing, with no book over it, is
+    /// not a navigation and costs no redraw.
+    ///
+    /// This is the only way out of a book — there is no back control, and the
+    /// tab a book was opened from stays lit while it is open, so tapping it
+    /// returns to that tab's own screen.
+    pub fn go(&mut self, tab: Tab) -> bool {
+        if self.tab == tab && self.book.is_none() {
+            return false;
+        }
+        self.tab = tab;
+        self.book = None;
+        true
+    }
+
     /// Step the calendar a month either way.
     pub fn shift_month(&mut self, by: i64) {
         let (mut y, mut m) = self.month;
@@ -136,6 +152,44 @@ mod tests {
         assert_eq!(s.month, (2027, 1));
         s.shift_month(-24);
         assert_eq!(s.month, (2025, 1));
+    }
+
+    #[test]
+    fn a_tab_tap_lands_on_that_tab() {
+        let mut s = State::new(date::days_from_civil(2026, 9, 3));
+        assert!(s.go(Tab::Books));
+        assert_eq!(s.tab, Tab::Books);
+        assert!(s.go(Tab::Clock));
+        assert_eq!(s.tab, Tab::Clock);
+    }
+
+    #[test]
+    fn a_tab_tap_closes_the_book_open_over_it() {
+        // The only way out of a book. Tapping the tab it was opened from
+        // returns to that tab's screen and stays there.
+        let mut s = State::new(date::days_from_civil(2026, 9, 3));
+        s.go(Tab::Books);
+        s.book = Some(3);
+        assert!(s.go(Tab::Books), "the tab under a book still navigates");
+        assert_eq!(s.tab, Tab::Books);
+        assert!(s.book.is_none());
+
+        // A book opened from Today is closed by any tab, landing on that one.
+        s.book = Some(3);
+        assert!(s.go(Tab::Calendar));
+        assert_eq!(s.tab, Tab::Calendar);
+        assert!(s.book.is_none());
+    }
+
+    #[test]
+    fn the_tab_already_showing_is_not_a_navigation() {
+        let mut s = State::new(date::days_from_civil(2026, 9, 3));
+        assert_eq!(s.tab, Tab::Home);
+        assert!(
+            !s.go(Tab::Home),
+            "a redraw is owed only where something moved"
+        );
+        assert_eq!(s.tab, Tab::Home);
     }
 
     #[test]

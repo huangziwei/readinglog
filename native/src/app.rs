@@ -55,22 +55,7 @@ impl App {
     /// Draw the whole screen and present it.
     pub fn draw(&mut self, fb: &mut Framebuffer) -> Result<()> {
         chrome::clear(fb, &self.theme);
-        let (title, subtitle) = self.titles();
-
-        // At a book, `back` names the tab; at a tab root, "Exit".
-        let back = match self.state.book {
-            Some(_) => self.state.tab.label(),
-            None => "Exit",
-        };
-        let (under, back_hit) = chrome::header(
-            fb,
-            &mut self.text,
-            &self.theme,
-            &title,
-            &subtitle,
-            Some(back),
-        );
-        let area = chrome::content(&self.theme, under);
+        let area = chrome::content_box(&self.theme);
 
         let mut cx = Ctx {
             fb,
@@ -92,11 +77,9 @@ impl App {
             },
         }
         self.hits = std::mem::take(&mut cx.hits);
-        if let Some(area) = back_hit {
-            self.hits.push((Hit::Back, area));
-        }
-
-        for (tab, area) in chrome::tabs(fb, &mut self.text, &self.theme, self.state.tab) {
+        let (exit, tabs) = chrome::tabs(fb, &mut self.text, &self.theme, self.state.tab);
+        self.hits.push((Hit::Exit, exit));
+        for (tab, area) in tabs {
             self.hits.push((Hit::Tab(tab), area));
         }
         fb.send_update(
@@ -109,23 +92,6 @@ impl App {
             WAVEFORM_MODE_GC16,
         )?;
         Ok(())
-    }
-
-    /// The title bar's two lines.
-    fn titles(&self) -> (String, String) {
-        if let Some(index) = self.state.book
-            && let Some(book) = self.stats.books.get(index)
-        {
-            return ("Book".into(), date::duration(book.seconds));
-        }
-        let subtitle = match self.state.tab {
-            Tab::Home => date::long_day(self.today),
-            Tab::Books => format!("{} books", self.stats.books.len()),
-            Tab::Calendar | Tab::Clock => {
-                format!("{} read", date::duration(self.stats.total_seconds))
-            }
-        };
-        (self.state.tab.label().into(), subtitle)
     }
 
     /// Run until [`Action::Quit`].
@@ -184,17 +150,11 @@ impl App {
         };
         match hit {
             Hit::Tab(tab) => {
-                // A tap on the open tab closes `state.book`.
-                if self.state.tab == tab && self.state.book.is_none() {
+                if !self.state.go(tab) {
                     return Action::Nothing;
                 }
-                self.state.tab = tab;
-                self.state.book = None;
             }
-            Hit::Back => match self.state.book.take() {
-                Some(_) => {}
-                None => return Action::Quit,
-            },
+            Hit::Exit => return Action::Quit,
             Hit::Book(index) => self.state.book = Some(index),
             Hit::Day(day) => {
                 // A second tap on `state.day` clears it.

@@ -19,7 +19,6 @@ pub struct Theme {
     pub small_px: f32,
     /// One row of a list.
     pub row_h: i32,
-    pub header_h: i32,
     pub tabs_h: i32,
 }
 
@@ -49,7 +48,6 @@ impl Theme {
             body_px: body,
             small_px: (body * 0.78).round(),
             row_h: (body * 2.7) as i32,
-            header_h: (body * 3.4) as i32,
             tabs_h: (body * 2.8) as i32,
         }
     }
@@ -92,6 +90,7 @@ mod tests {
             // The rows type sits in are fixed with it; the taller panel fits
             // more of them.
             assert_eq!(t.row_h, reference.row_h, "row_h differs at {w}x{h}");
+            assert_eq!(t.tabs_h, reference.tabs_h, "tabs_h differs at {w}x{h}");
         }
         assert!(
             Theme::for_screen(1860, 2480).screen.h / reference.row_h
@@ -115,7 +114,6 @@ mod tests {
         for (w, h) in PANELS {
             let t = Theme::for_screen(w, h);
             assert!(t.row_h > t.body_px as i32);
-            assert!(t.header_h > t.head_px as i32);
             assert!(t.tabs_h > t.body_px as i32);
         }
     }

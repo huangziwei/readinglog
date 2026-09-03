@@ -1,5 +1,6 @@
-//! The frame every screen sits in: a title bar at the top and the tab strip at
-//! the bottom.
+//! The frame every screen sits in: one strip along the bottom holding Exit and
+//! the four tabs. There is no title bar — the tab drawn in reverse names the
+//! screen, and every screen states its own figures in its body.
 
 use crate::eink::fb::Framebuffer;
 
@@ -34,64 +35,38 @@ pub fn clear(fb: &mut Framebuffer, theme: &Theme) {
     paint::fill(fb, theme.screen, WHITE);
 }
 
-/// The title bar, and the content box left under it.
+/// What the leftmost cell of the strip says. Exit is set, not drawn: no face
+/// on this firmware carries a power symbol, and the only close marks that
+/// exist sit in `code2000` and the display faces, where they would stand
+/// against Ember's letters in another face's weight.
+const EXIT: &str = "Exit";
+
+/// The bottom strip: Exit, then the four tabs, in five cells of one width.
+/// Answers the hit box for Exit and one per tab.
 ///
-/// `back` labels the control at the left, drawn with a leading `‹`; its box
-/// comes back for hit-testing. `None` draws no control.
-pub fn header(
-    fb: &mut Framebuffer,
-    text: &mut TextRenderer,
-    theme: &Theme,
-    title: &str,
-    subtitle: &str,
-    back: Option<&str>,
-) -> (Rect, Option<Rect>) {
-    let (bar, rest) = theme.screen.split_top(theme.header_h);
-    paint::hline(fb, 0, bar.bottom() - 2, bar.w, LIGHT, 2);
-
-    let mut x = theme.pad;
-    let mut hit = None;
-    text.set_px(theme.body_px);
-    let baseline = bar.center_y() + text.cap_height() as i32 / 2;
-    if let Some(label) = back {
-        let label = format!("‹ {label}");
-        let w = text.draw(fb, x, baseline, &label, false) - x;
-        // The hit box runs from x=0, past the label.
-        hit = Some(Rect::new(0, 0, x + w + theme.gap * 2, theme.header_h));
-        x += w + theme.gap * 3;
-    }
-
-    text.set_px(theme.head_px);
-    let baseline = bar.center_y() + text.cap_height() as i32 / 2;
-    let end = text.draw(fb, x, baseline, title, false);
-
-    if !subtitle.is_empty() {
-        text.set_px(theme.small_px);
-        let right = theme.screen.w - theme.pad - text.measure_width(subtitle) as i32;
-        // A `title` reaching past `right` leaves `subtitle` undrawn.
-        if right > end + theme.gap * 2 {
-            text.draw(fb, right, baseline, subtitle, false);
-        }
-    }
-    (rest, hit)
-}
-
-/// The tab strip, and one hit box per tab.
-///
-/// The active tab is drawn as a filled block.
+/// The tab for the screen showing is drawn in reverse, which is what names the
+/// screen. A book is shown over the tab it was opened from, so that tab stays
+/// lit and tapping it closes the book.
 pub fn tabs(
     fb: &mut Framebuffer,
     text: &mut TextRenderer,
     theme: &Theme,
     active: Tab,
-) -> Vec<(Tab, Rect)> {
+) -> (Rect, Vec<(Tab, Rect)>) {
     let (strip, _) = theme.screen.split_bottom(theme.tabs_h);
     paint::fill(fb, strip, WHITE);
     paint::hline(fb, 0, strip.y, strip.w, LIGHT, 2);
 
-    let cells = strip.columns(Tab::ALL.len() as i32, 0);
+    // Exit takes the first of five equal cells; the tabs take the rest.
+    let mut cells = strip.columns(Tab::ALL.len() as i32 + 1, 0).into_iter();
+    let exit = cells.next().unwrap_or(strip);
+
     text.set_px(theme.body_px);
     let baseline = strip.center_y() + text.cap_height() as i32 / 2;
+    let w = text.measure_width(EXIT) as i32;
+    text.draw(fb, exit.x + (exit.w - w) / 2, baseline, EXIT, false);
+    paint::vline(fb, exit.right(), strip.y, strip.h, LIGHT, 2);
+
     let mut out = Vec::new();
     for (tab, cell) in Tab::ALL.iter().zip(cells) {
         let on = *tab == active;
@@ -103,14 +78,14 @@ pub fn tabs(
         text.draw(fb, cell.x + (cell.w - w) / 2, baseline, label, on);
         out.push((*tab, cell));
     }
-    out
+    (exit, out)
 }
 
-/// The content box between the title bar and the tab strip.
+/// The content box: the screen above the strip.
 ///
 /// Air on all four sides, `theme.gap * 2` top and bottom.
-pub fn content(theme: &Theme, under_header: Rect) -> Rect {
-    let (_, rest) = under_header.split_bottom(theme.tabs_h);
+pub fn content(theme: &Theme, area: Rect) -> Rect {
+    let (_, rest) = area.split_bottom(theme.tabs_h);
     let air = theme.gap * 2;
     Rect::new(
         theme.pad,
@@ -122,8 +97,7 @@ pub fn content(theme: &Theme, under_header: Rect) -> Rect {
 
 /// [`content`] from the theme alone.
 pub fn content_box(theme: &Theme) -> Rect {
-    let (_, under_header) = theme.screen.split_top(theme.header_h);
-    content(theme, under_header)
+    content(theme, theme.screen)
 }
 
 /// A section heading with a rule under it, and the box left below.
