@@ -2,6 +2,7 @@
 //! day's own books listed under the grid.
 
 use crate::date;
+use crate::font;
 use crate::ui::chrome;
 use crate::ui::paint::Rect;
 use crate::ui::{charts, theme::Theme};
@@ -120,9 +121,16 @@ fn list(cx: &mut Ctx, area: Rect, totals: &[(usize, i64)]) {
             .draw(cx.fb, area.x, baseline, "Nothing read.", false);
         return;
     }
-    let rows: Vec<(String, i64)> = totals
+    let rows: Vec<(font::Script, String, i64)> = totals
         .iter()
-        .map(|(b, secs)| (cx.stats.books[*b].title.clone(), *secs))
+        .map(|(b, secs)| {
+            let book = &cx.stats.books[*b];
+            (
+                font::Script::of_language(&book.language),
+                book.title.clone(),
+                *secs,
+            )
+        })
         .collect();
     let shown = rows.len().min((area.h / theme.row_h).max(1) as usize);
     charts::bars(cx.fb, cx.text, theme, area, &rows[..shown]);

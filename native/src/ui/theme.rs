@@ -23,17 +23,29 @@ pub struct Theme {
     pub tabs_h: i32,
 }
 
+/// A row of the UI, in pixels of em.
+///
+/// Fixed, not a share of the panel. Every Kindle this runs on is a ~300 ppi
+/// display — 300 on the Colorsoft and the Paperwhite, 304 on the Scribe — so a
+/// pixel is the same fraction of a millimetre on all of them and a size in
+/// pixels is a size on the page. Scaling type with `xres` instead would set
+/// the Scribe's text half again as large as the Paperwhite's for no reason:
+/// the larger panel's job is to show *more*, not bigger.
+const BODY_PX: f32 = 38.0;
+
+/// A section heading.
+const HEAD_PX: f32 = 50.0;
+
 impl Theme {
     pub fn for_screen(xres: u32, yres: u32) -> Self {
         let w = xres as i32;
-        // 28 px on a 1264 px panel.
-        let body = (w as f32 / 45.0).round().max(14.0);
+        let body = BODY_PX;
         Self {
             screen: Rect::new(0, 0, w, yres as i32),
             pad: (w / 32).max(12),
             gap: (w / 90).max(6),
             display_px: (body * 2.6).round(),
-            head_px: (body * 1.25).round(),
+            head_px: HEAD_PX,
             body_px: body,
             small_px: (body * 0.78).round(),
             row_h: (body * 2.7) as i32,
@@ -59,6 +71,33 @@ mod tests {
             assert!(t.head_px > t.body_px);
             assert!(t.display_px > t.head_px);
         }
+    }
+
+    #[test]
+    fn type_is_the_same_size_on_every_panel() {
+        // These panels are all ~300 ppi, so a size in pixels is a size on the
+        // page. A 10.2" Scribe shows more rows than a 7" Paperwhite; it does
+        // not show larger ones.
+        let reference = Theme::for_screen(1264, 1680);
+        for (w, h) in PANELS {
+            let t = Theme::for_screen(w, h);
+            for (name, got, want) in [
+                ("display", t.display_px, reference.display_px),
+                ("head", t.head_px, reference.head_px),
+                ("body", t.body_px, reference.body_px),
+                ("small", t.small_px, reference.small_px),
+            ] {
+                assert_eq!(got, want, "{name} differs at {w}x{h}");
+            }
+            // The rows type sits in are fixed with it; the taller panel fits
+            // more of them.
+            assert_eq!(t.row_h, reference.row_h, "row_h differs at {w}x{h}");
+        }
+        assert!(
+            Theme::for_screen(1860, 2480).screen.h / reference.row_h
+                > reference.screen.h / reference.row_h,
+            "a taller panel must fit more rows"
+        );
     }
 
     #[test]

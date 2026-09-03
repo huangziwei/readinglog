@@ -5,6 +5,7 @@
 
 use crate::date;
 use crate::eink::fb::Framebuffer;
+use crate::font::Script;
 
 use super::paint::{self, DARK, INK, LIGHT, MID, PALE, Rect, WHITE};
 use super::text::TextRenderer;
@@ -158,21 +159,23 @@ pub fn columns(
     }
 }
 
-/// A stack of named bars with the figure at the right.
+/// A stack of named bars with the figure at the right. Each row carries the
+/// convention its name is set in, so a book's title takes the same face here
+/// as it does on its own screen.
 pub fn bars(
     fb: &mut Framebuffer,
     text: &mut TextRenderer,
     theme: &Theme,
     area: Rect,
-    rows: &[(String, i64)],
+    rows: &[(Script, String, i64)],
 ) {
     if rows.is_empty() {
         return;
     }
-    let max = rows.iter().map(|(_, v)| *v).max().unwrap_or(0).max(1);
+    let max = rows.iter().map(|(_, _, v)| *v).max().unwrap_or(0).max(1);
     let each = (area.h / rows.len() as i32).min(theme.row_h);
     text.set_px(theme.body_px);
-    for (i, (name, value)) in rows.iter().enumerate() {
+    for (i, (script, name, value)) in rows.iter().enumerate() {
         let row = Rect::new(area.x, area.y + i as i32 * each, area.w, each);
         let figure = date::duration(*value);
         let fw = text.measure_width(&figure) as i32;
@@ -187,8 +190,9 @@ pub fn bars(
         );
         let filled = (track.w as i64 * value / max) as i32;
         paint::fill(fb, Rect::new(track.x, track.y, filled, track.h), PALE);
-        let clipped = text.wrap_and_clamp(name, (track.w - theme.gap) as u32, 1);
-        text.draw(
+        let clipped = text.wrap_and_clamp_in(*script, name, (track.w - theme.gap) as u32, 1);
+        text.draw_in(
+            *script,
             fb,
             row.x + theme.gap / 2,
             baseline,
