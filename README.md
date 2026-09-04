@@ -18,23 +18,22 @@ Download and unzip the latest `readinglog-v<x.y.z>-kindle.zip` from the [release
 | `extensions/readinglog/` | `/mnt/us/extensions/readinglog/` | it has to be here |
 | `documents/ReadingLog.sh` | `/mnt/us/documents/ReadingLog.sh` | or any subfolders within `documents`  |
 
- ## Screenshots
+## Screenshots
 
 <p align="center">
     <img src=".github/assets/today.png" width="250" alt="Today" />
-    <img src=".github/assets/books.png" width="250" alt="Books" />
-    <img src=".github/assets/clock.png" width="250" alt="Clock" />
+    <img src=".github/assets/book.png" width="250" alt="Book" />
+    <img src=".github/assets/config.png" width="250" alt="Config" />
 </p>
 
-<!--
-<table>
-    <tr>
-        <td><img src=".github/assets/today.png" width="380" alt="Today" /></td>
-        <td><img src=".github/assets/calendar.png" width="380" alt="Calendar" /></td>
-    </tr>
-    <tr>
-        <td><img src=".github/assets/books.png" width="380" alt="Books" /></td>
-        <td><img src=".github/assets/clock.png" width="380" alt="Clock" /></td>
-    </tr>
-</table> -->
+<p align="center">    
+    <img src=".github/assets/books.png" width="250" alt="books" />
+    <img src=".github/assets/rhythm-all-stats.png" width="250" alt="stats" />
+    <img src=".github/assets/rhythm-all-trends.png" width="250" alt="trends" />
+</p>
 
+<p align="center">
+    <img src=".github/assets/rhythm-year.png" width="250" alt="year" />
+    <img src=".github/assets/rhythm-month.png" width="250" alt="month" />
+    <img src=".github/assets/rhythm-week.png" width="250" alt="week" />
+</p>
