@@ -165,7 +165,7 @@ impl App {
             Some(index) => view::book::draw(cx, area, index),
             None => match state.tab {
                 Tab::Config => view::config::draw(cx, area, &settings),
-                Tab::Home => view::home::draw(cx, area),
+                Tab::Home => view::home::draw(cx, area, state.list_from),
                 Tab::Rhythm => view::rhythm::draw(cx, area, &state),
                 Tab::Books => view::books::draw(cx, area, &state),
             },

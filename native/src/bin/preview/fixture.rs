@@ -251,8 +251,7 @@ const BINGE_OPENS: i64 = 8;
 /// One day of [`BINGE_BOOKS`] short sittings, in place of whatever the
 /// generator left on it: a list of more books than a page holds. Every
 /// sitting stays under half an hour.
-fn binge(store: &mut Store, last: i64) {
-    let day = last - BINGE_DAY;
+fn binge(store: &mut Store, day: i64) {
     store
         .sessions
         .retain(|s| date::parse_day(date::day_of(&s.started_at)) != Some(day));
@@ -333,7 +332,7 @@ pub fn library(last: i64, art: &Path) -> Store {
             store.sessions.push(sitting(day, at, secs, extent, measure));
         }
     }
-    binge(&mut store, last);
+    binge(&mut store, last - BINGE_DAY);
     ghosts(&mut store, last);
     store
         .sessions
@@ -353,6 +352,14 @@ pub fn thinned(last: i64, art: &Path, keep: usize) -> Store {
         seen += 1;
         seen <= keep
     });
+    store
+}
+
+/// [`library`] with a second binge on the last day itself, which is the day
+/// Today draws: a day of more books than one page of the list holds.
+pub fn crowded(last: i64, art: &Path) -> Store {
+    let mut store = library(last, art);
+    binge(&mut store, last);
     store
 }
 

@@ -131,6 +131,19 @@ pub fn section(
 }
 
 /// The height [`section`] takes above the box it answers with.
+/// The row a figure or a chip stands on at the right of a section heading,
+/// centred on the title's own ink.
+///
+/// A chip is a box taller than the line inside it, so everything on the row —
+/// the title, a count, a chip — takes this one centre, and a baseline derived
+/// from it lands on the title's own baseline.
+pub fn heading_row(text: &mut TextRenderer, theme: &Theme, head: Rect) -> Rect {
+    text.set_px(theme.small_px);
+    let cap = text.cap_height() as i32;
+    let h = (text.line_height() as i32 + theme.gap / 2).min(head.h.max(1));
+    Rect::new(head.x, head.y + cap / 2 - h / 2, head.w, h)
+}
+
 pub fn section_height(text: &mut TextRenderer, theme: &Theme) -> i32 {
     text.set_px(theme.small_px);
     text.line_height() as i32 + theme.gap + theme.gap / 2

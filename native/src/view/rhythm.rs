@@ -161,18 +161,7 @@ fn day_page(cx: &mut Ctx, area: Rect, state: &State) {
     let now = (day == cx.today).then_some(cx.now);
     charts::timeline(cx.fb, cx.text, theme, inner, &spans, now);
 
-    // `bar` is the strip `section` sets its title in, taken before the call.
-    let bar = Rect::new(list.x, list.y, list.w, head);
-    let inner = chrome::section(cx.fb, cx.text, theme, list, s.what_was_read);
-    let read = cx.stats.book_totals(day..=day);
-    let box_ = daybooks::rows_box(cx, inner, day);
-    let deep = daybooks::fits(theme, box_.h, read.len());
-    let from = state.list_from.min(super::last_page_at(read.len(), deep));
-    let to = (from + deep).min(read.len());
-    if read.len() > deep {
-        pager(cx, bar, from, to, read.len(), deep);
-    }
-    daybooks::draw_noting(cx, inner, day, &read[from..to]);
+    daybooks::paged(cx, list, day, state.list_from);
 }
 
 /// The four spans as a segmented control, each its own hit box. A day open
@@ -732,25 +721,11 @@ fn counted(cx: &mut Ctx, head: Rect, from: usize, to: usize, count: usize, chipp
     cx.text.set_px(theme.small_px);
     let w = cx.text.measure_width(&of) as i32;
     let taken = chipped as i32 * (chip_width(cx, cx.s().open_day) + theme.gap);
-    let row = heading_row(cx, head);
+    let row = chrome::heading_row(cx.text, theme, head);
     cx.text.set_px(theme.small_px);
     let baseline = row.center_y() + cx.text.cap_height() as i32 / 2;
     cx.text
         .draw(cx.fb, head.right() - taken - w, baseline, &of, false);
-}
-
-/// The band a heading's chips and figures stand in.
-///
-/// Centred on the ink of the title [`chrome::section`] sets at the head of
-/// `head`. A chip is a box taller than the line inside it, so everything on
-/// the row — the title, a figure, a chip — takes this one centre, and a
-/// figure computed from it lands on the title's own baseline.
-fn heading_row(cx: &mut Ctx, head: Rect) -> Rect {
-    let theme: &Theme = cx.theme;
-    cx.text.set_px(theme.small_px);
-    let cap = cx.text.cap_height() as i32;
-    let h = (cx.text.line_height() as i32 + theme.gap / 2).min(head.h.max(1));
-    Rect::new(head.x, head.y + cap / 2 - h / 2, head.w, h)
 }
 
 /// How wide a chip carrying `said` stands, its padding included.
@@ -764,10 +739,11 @@ fn chip_width(cx: &mut Ctx, said: &str) -> i32 {
 /// The chip opening the day the grid is narrowed to as its own page, at the
 /// right of the heading naming that day.
 fn open_day_chip(cx: &mut Ctx, head: Rect) {
+    let theme: &Theme = cx.theme;
     let script = cx.ui_script();
     let said = cx.s().open_day;
     let w = chip_width(cx, said);
-    let row = heading_row(cx, head);
+    let row = chrome::heading_row(cx.text, theme, head);
     let chip = Rect::new(row.right() - w, row.y, w, row.h);
     paint::stroke(cx.fb, chip, LIGHT, 1);
     let tw = cx.text.measure_width_in(script, said) as i32;
@@ -853,63 +829,6 @@ fn fitting_px(cx: &mut Ctx, said: &[&str], room: i32) -> f32 {
             .max(floor);
     }
     px
-}
-
-/// `from`–`to` of `count` at the right of the heading the list is under,
-/// beside the chips that step it by `deep`. Each chip carries the index it
-/// opens the list at, held inside the list.
-fn pager(cx: &mut Ctx, head: Rect, from: usize, to: usize, count: usize, deep: usize) {
-    let theme: &Theme = cx.theme;
-    let last = super::last_page_at(count, deep);
-    heading_chips(
-        cx,
-        head,
-        [
-            ("‹", Hit::ListPage(from.saturating_sub(deep)), false),
-            ("›", Hit::ListPage((from + deep).min(last)), false),
-        ],
-    );
-    let of = format!("{}–{to} {} {count}", from + 1, cx.s().of);
-    let row = heading_row(cx, head);
-    cx.text.set_px(theme.small_px);
-    let w = cx.text.measure_width(&of) as i32;
-    let baseline = row.center_y() + cx.text.cap_height() as i32 / 2;
-    let at = head.right() - w - theme.row_h * 3 / 2;
-    cx.text.draw(cx.fb, at, baseline, &of, false);
-}
-
-/// A pair of chips at the right of `head`, the one in use filled.
-fn heading_chips(cx: &mut Ctx, head: Rect, of: [(&str, Hit, bool); 2]) {
-    let theme: &Theme = cx.theme;
-    let script = cx.ui_script();
-    cx.text.set_px(theme.small_px);
-    let pad = theme.gap;
-    let widths: Vec<i32> = of
-        .iter()
-        .map(|(label, _, _)| cx.text.measure_width_in(script, label) as i32 + pad * 2)
-        .collect();
-    let row = heading_row(cx, head);
-    cx.text.set_px(theme.small_px);
-    let mut x = head.right() - widths.iter().sum::<i32>() - theme.gap;
-    for ((label, hit, on), w) in of.iter().zip(&widths) {
-        let chip = Rect::new(x, row.y, *w, row.h);
-        match on {
-            true => paint::fill(cx.fb, chip, INK),
-            false => paint::stroke(cx.fb, chip, LIGHT, 1),
-        }
-        let tw = cx.text.measure_width_in(script, label) as i32;
-        let baseline = chip.center_y() + cx.text.cap_height() as i32 / 2;
-        cx.text.draw_in(
-            script,
-            cx.fb,
-            chip.x + (chip.w - tw) / 2,
-            baseline,
-            label,
-            *on,
-        );
-        cx.hit(*hit, chip);
-        x += w;
-    }
 }
 
 /// The books read on one day, longest first.

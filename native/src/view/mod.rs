@@ -214,6 +214,7 @@ impl State {
         self.opened_day = false;
         self.shelf = Shelf::All;
         self.alltime_page = 0;
+        self.list_from = 0;
         true
     }
 

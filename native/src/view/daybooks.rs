@@ -5,8 +5,10 @@
 use crate::date;
 use crate::font::Script;
 use crate::ui::cover;
-use crate::ui::paint::{self, INK, PALE, Rect};
+use crate::ui::paint::{self, INK, LIGHT, PALE, Rect};
 use crate::ui::theme::Theme;
+
+use crate::ui::chrome;
 
 use super::{Ctx, Hit};
 
@@ -22,6 +24,89 @@ pub fn row_floor(theme: &Theme) -> i32 {
 /// Books an `h`-tall list holds, of `count`.
 pub fn fits(theme: &Theme, h: i32, count: usize) -> usize {
     count.min(((h / row_floor(theme)).max(1)) as usize)
+}
+
+/// One day's books under their own heading, opened at `from`.
+///
+/// A day of more books than the band holds is paged from the heading, and
+/// `from` is held inside the list. Today and the Rhythm day page both draw
+/// this, so a day's books read and page the same from either.
+pub fn paged(cx: &mut Ctx, area: Rect, day: i64, from: usize) {
+    let theme: &Theme = cx.theme;
+    // The strip `section` sets its title in, taken before the call.
+    let bar = Rect::new(
+        area.x,
+        area.y,
+        area.w,
+        chrome::section_height(cx.text, theme),
+    );
+    let inner = chrome::section(cx.fb, cx.text, theme, area, cx.s().what_was_read);
+    let read = cx.stats.book_totals(day..=day);
+    let box_ = rows_box(cx, inner, day);
+    let deep = fits(theme, box_.h, read.len());
+    let from = from.min(super::last_page_at(read.len(), deep));
+    let to = (from + deep).min(read.len());
+    if read.len() > deep {
+        pager(cx, bar, from, to, read.len(), deep);
+    }
+    draw_noting(cx, inner, day, &read[from..to]);
+}
+
+/// `from`–`to` of `count` at the right of the heading the list is under, a
+/// chip on either side of it stepping the list by `deep`. Each chip carries
+/// the index it opens the list at, held inside the list.
+///
+/// The two straddle the count so each is its own target — a thumb covers both
+/// where they sit shoulder to shoulder — and the count between them says which
+/// end of the list each opens.
+fn pager(cx: &mut Ctx, head: Rect, from: usize, to: usize, count: usize, deep: usize) {
+    let theme: &Theme = cx.theme;
+    let last = super::last_page_at(count, deep);
+    let of = format!("{}–{to} {} {count}", from + 1, cx.s().of);
+    let row = chrome::heading_row(cx.text, theme, head);
+    let script = cx.ui_script();
+    cx.text.set_px(theme.small_px);
+    let said = cx.text.measure_width(&of) as i32;
+    let steps = [
+        ("‹", Hit::ListPage(from.saturating_sub(deep))),
+        ("›", Hit::ListPage((from + deep).min(last))),
+    ];
+    let chips: Vec<i32> = steps
+        .iter()
+        .map(|(label, _)| cx.text.measure_width_in(script, label) as i32 + theme.gap * 2)
+        .collect();
+
+    let air = theme.gap * 2;
+    let whole = chips.iter().sum::<i32>() + said + air * 2;
+    let mut x = head.right() - whole;
+    heading_chip(cx, row, x, steps[0].0, steps[0].1, chips[0]);
+    x += chips[0] + air;
+
+    cx.text.set_px(theme.small_px);
+    let baseline = row.center_y() + cx.text.cap_height() as i32 / 2;
+    cx.text.draw(cx.fb, x, baseline, &of, false);
+    x += said + air;
+    heading_chip(cx, row, x, steps[1].0, steps[1].1, chips[1]);
+}
+
+/// One chip of a heading, `w` wide at `x` on `row`, taking a tap onto `hit`.
+fn heading_chip(cx: &mut Ctx, row: Rect, x: i32, label: &str, hit: Hit, w: i32) {
+    let theme: &Theme = cx.theme;
+    let script = cx.ui_script();
+    let chip = Rect::new(x, row.y, w, row.h);
+    paint::stroke(cx.fb, chip, LIGHT, 1);
+    cx.text.set_px(theme.small_px);
+    let tw = cx.text.measure_width_in(script, label) as i32;
+    let baseline = chip.center_y() + cx.text.cap_height() as i32 / 2;
+    cx.text.draw_in(
+        script,
+        cx.fb,
+        chip.x + (chip.w - tw) / 2,
+        baseline,
+        label,
+        false,
+    );
+    cx.hit(hit, chip);
 }
 
 /// The height each of `rows` is drawn at: they share `area`, held between

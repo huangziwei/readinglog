@@ -32,12 +32,12 @@ pub(super) fn bands(area: Rect, theme: &Theme, figures: i32, head: i32) -> [Rect
     ]
 }
 
-pub fn draw(cx: &mut Ctx, area: Rect) {
+/// `from` is where the day's book list opens, held inside it.
+pub fn draw(cx: &mut Ctx, area: Rect, from: usize) {
     let theme: &Theme = cx.theme;
     let today = cx.today;
     let s = cx.s();
 
-    let read = cx.stats.book_totals(today..=today);
     let figures = chrome::figure_height(cx.text, theme);
     let head = chrome::section_height(cx.text, theme);
     let [top, strip, list] = bands(area, theme, figures, head);
@@ -61,15 +61,7 @@ pub fn draw(cx: &mut Ctx, area: Rect) {
     let spans = cx.stats.day_blocks(today);
     charts::timeline(cx.fb, cx.text, theme, inner, &spans, Some(cx.now));
 
-    // `title` names `shown` against `read.len()` where `fits` drops a book.
-    let box_ = daybooks::rows_box(cx, Rect::new(list.x, list.y, list.w, list.h - head), today);
-    let shown = daybooks::fits(theme, box_.h, read.len());
-    let title = match shown < read.len() {
-        true => format!("{} · {shown} {} {}", s.what_was_read, s.of, read.len()),
-        false => s.what_was_read.to_string(),
-    };
-    let inner = chrome::section(cx.fb, cx.text, theme, list, &title);
-    daybooks::draw_noting(cx, inner, today, &read);
+    daybooks::paged(cx, list, today, from);
 }
 
 #[cfg(test)]

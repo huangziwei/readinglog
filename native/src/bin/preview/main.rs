@@ -253,6 +253,7 @@ fn thinned_for(shot: &Shot, opts: &Opts, art: &Path) -> Option<Store> {
     let keep = match (shot.name.as_str(), shot.of.as_deref()) {
         ("today", Some("quiet")) => 1,
         ("today", Some("empty")) => 0,
+        ("today", Some("busy")) => return Some(fixture::crowded(opts.day, art)),
         _ => return None,
     };
     Some(fixture::thinned(opts.day, art, keep))
@@ -397,7 +398,7 @@ fn list() {
             "rhythm" => {
                 "  (:all :trends :week :month :year :back :weekback :picked :day\n   :yearbusy :weekbusy :weekempty :busy :busy2 :busyend)"
             }
-            "today" => "  (:quiet :empty)",
+            "today" => "  (:quiet :empty :busy)",
             "book" => "  (:<index>)",
             "books" => "  (:finished :last)",
             _ => "",
@@ -471,6 +472,7 @@ fn read_args(args: impl Iterator<Item = String>) -> Result<Opts> {
 fn everything() -> Vec<Shot> {
     [
         "today",
+        "today:busy",
         "today:quiet",
         "today:empty",
         "rhythm:all",
