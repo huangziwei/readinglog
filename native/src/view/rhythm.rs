@@ -1,8 +1,6 @@
-//! The calendar, at whichever zoom the picker is set to.
-//!
-//! A week is seven columns of hours, a month a grid of weeks naming the books
-//! read on each day, a year one column a week. Under a week and a year stands
-//! what was read over it, which a day picked off the grid narrows to that day.
+//! The record, at whichever zoom the picker is set to: `alltime` draws a board
+//! of figures over the whole log, a week seven columns of hours, a month a grid
+//! of weeks naming its books, a year one column a week.
 
 use crate::date;
 use crate::font::Script;
@@ -10,10 +8,9 @@ use crate::settings::WeekStart;
 use crate::ui::paint::{self, BAR_RGB, INK, LIGHT, MARK_RGB, PALE, Rect, WHITE};
 use crate::ui::{charts, chrome, theme::Theme};
 
-use super::{Ctx, Hit, Span, State, daybooks};
+use super::{Ctx, Hit, Span, State, alltime, daybooks};
 
-/// Books a day of a month names at the most, before the rest are counted in
-/// `+n`. A cell with room for fewer draws fewer.
+/// Books a day of a month names, the rest counted in `+n`.
 const LANES: usize = 4;
 
 /// Rows of `theme.row_h` the average day takes under its heading.
@@ -30,10 +27,8 @@ fn hours_height(theme: &Theme, head: i32) -> i32 {
 }
 
 /// The five bands of the page, top to bottom: the picker, the span's name
-/// between its arrows, the grid, the average day, and the books.
-///
-/// `grid` is what the span asks for. Where it asks for the page there is no
-/// list, and the grid keeps everything the average day leaves.
+/// between its arrows, the grid, the average day, and the books. `grid` is
+/// what the span asks for, clamped to what the average day leaves.
 fn bands(area: Rect, theme: &Theme, head: i32, grid: i32, listed: bool) -> [Rect; 5] {
     let air = theme.gap * 2;
     let bar = bar_height(theme);
@@ -67,7 +62,7 @@ fn lists_books(span: Span) -> bool {
 /// The height the grid for one span asks for.
 fn grid_height(span: Span, area: Rect, theme: &Theme, day: i64, week: WeekStart) -> i32 {
     match span {
-        Span::Month => area.h,
+        Span::AllTime | Span::Month => area.h,
         Span::Week => week_height(theme),
         Span::Year => {
             let (year, _, _) = date::civil_from_days(day);
@@ -77,8 +72,7 @@ fn grid_height(span: Span, area: Rect, theme: &Theme, day: i64, week: WeekStart)
     }
 }
 
-/// The bands a year's weeks are cut into, stacked down the page. Two of them
-/// double the cell, which is what makes a day of it tappable.
+/// The bands a year's weeks are cut into, stacked down the page.
 const YEAR_BLOCKS: i32 = 2;
 
 /// The column the weekday names stand in beside a year.
@@ -88,7 +82,14 @@ fn gutter(theme: &Theme) -> i32 {
 
 pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
     let theme: &Theme = cx.theme;
-    // A month has no room to state a day under its grid, and opens one whole.
+    // `alltime::draw` takes the page under the picker.
+    if state.span == Span::AllTime {
+        let (bar, rest) = area.split_top(bar_height(theme) + theme.gap * 2);
+        picker(cx, Rect::new(bar.x, bar.y, bar.w, bar_height(theme)), state);
+        alltime::draw(cx, rest);
+        return;
+    }
+    // `Span::Month` has no room under its grid for a day, and opens one whole.
     if state.picked && !lists_books(state.span) {
         let (_, rest) = area.split_top(bar_height(theme) + theme.gap * 2);
         picker(
@@ -121,6 +122,8 @@ fn span_page(cx: &mut Ctx, area: Rect, state: &State) {
     span_nav(cx, nav, &format!("{name} · {total}"));
 
     match span {
+        // `alltime::draw` takes the page ahead of `span_page`.
+        Span::AllTime => {}
         Span::Week => week_columns(cx, grid, day, state.picked),
         Span::Month => month_grid(cx, grid, day),
         Span::Year => year_heatmap(cx, grid, day, state.picked),
@@ -166,7 +169,7 @@ fn day_page(cx: &mut Ctx, area: Rect, day: i64) {
     daybooks::draw(cx, list, day, &read[..shown]);
 }
 
-/// The three spans as a segmented control, each its own hit box. A day open
+/// The four spans as a segmented control, each its own hit box. A day open
 /// over the calendar lights none of them, and a tap on one closes it.
 fn picker(cx: &mut Ctx, area: Rect, state: &State) {
     let theme: &Theme = cx.theme;
@@ -347,8 +350,8 @@ fn month_grid(cx: &mut Ctx, area: Rect, day: i64) {
     let tallest = hour_peak(cx, first..=last);
     let cells = charts::month_cells(grid, year, month, theme.gap, cx.week);
 
-    // A week of the grid shares its lanes, so a book read two days running
-    // draws one bar across them.
+    // A week of the grid shares its lanes: a book read two days running draws
+    // one bar across them.
     for row in cells.chunk_by(|a, b| a.1.y == b.1.y) {
         let days: Vec<Vec<usize>> = row.iter().map(|(day, _)| books_on(cx, *day)).collect();
         let depth = lane_count(theme, row[0].1.inset(theme.gap / 2));
@@ -361,8 +364,8 @@ fn month_grid(cx: &mut Ctx, area: Rect, day: i64) {
             charts::hour_shape(cx.fb, shape_box(theme, inner), &hours, tallest);
             cx.hit(Hit::Day(*day), *cell);
         }
-        // A run reaches past its own cell, so every bar of the week is drawn
-        // over the cells the whole week has laid down.
+        // A run reaches past its own cell; every bar of the week is drawn over
+        // the cells the whole week laid down.
         for (column, (_, cell)) in row.iter().enumerate() {
             let inner = cell.inset(theme.gap / 2);
             let step = cell.w + theme.gap;
@@ -499,11 +502,9 @@ fn more_books(cx: &mut Ctx, inner: Rect, lane: usize, over: usize) {
     cx.text.draw(cx.fb, bar.right() - w, baseline, &more, false);
 }
 
-/// What was read over `days`, longest first, each row a hit box onto its book.
-///
-/// `picked` narrows the whole list to one day of it. The list is a page deep
-/// at the most, and the chips at the right of its heading step through the
-/// rest: what fills the foot of the page is never what the page is about.
+/// What was read over `days`, longest first, each row a hit box onto its
+/// book. `picked` narrows the list to one day; the chips at the right of the
+/// heading step through a list deeper than the page.
 fn book_list(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeInclusive<i64>) {
     let theme: &Theme = cx.theme;
     let s = cx.s();
@@ -639,10 +640,9 @@ fn peak_of(cx: &Ctx, days: std::ops::RangeInclusive<i64>) -> i64 {
     days.map(|day| cx.stats.day_seconds(day)).max().unwrap_or(0)
 }
 
-/// The busiest single hour of any day of a span.
-///
-/// One scale under the whole grid: a day's shape says how much was read in
-/// that hour, and not merely which of its own hours was the fullest.
+/// The busiest single hour of any day of a span, one scale under the whole
+/// grid: a day's shape says how much was read in that hour, and not merely
+/// which of its own hours was the fullest.
 fn hour_peak(cx: &Ctx, days: std::ops::RangeInclusive<i64>) -> i64 {
     days.filter_map(|day| cx.stats.hours_over(day..=day).into_iter().max())
         .max()
@@ -700,10 +700,8 @@ fn book_bar(cx: &mut Ctx, bar: Rect, index: usize) {
 }
 
 /// The columns one span cuts itself into, and how many of them have gone by
-/// over `days`.
-///
-/// A week is read hour by hour, a month weekday by weekday, a year month by
-/// month: the shape a reader is after at that zoom.
+/// over `days`: a week hour by hour, a month weekday by weekday, a year and
+/// `Span::AllTime` month by month.
 fn buckets(cx: &Ctx, span: Span, days: std::ops::RangeInclusive<i64>) -> (Vec<i64>, i64, usize) {
     let over = (cx.today.min(*days.end()) - *days.start() + 1).max(1);
     match span {
@@ -719,7 +717,7 @@ fn buckets(cx: &Ctx, span: Span, days: std::ops::RangeInclusive<i64>) -> (Vec<i6
                 1,
             )
         }
-        Span::Year => (
+        Span::AllTime | Span::Year => (
             cx.stats.months_over(days).to_vec(),
             over.div_euclid(30).max(1),
             1,
@@ -735,18 +733,15 @@ fn bucket_names(cx: &Ctx, span: Span) -> (&'static str, fn(usize, &Ctx) -> Strin
         Span::Month => (s.an_average_week, |at, cx| {
             cx.s().weekdays_short[cx.week.day_in(at.min(6))].to_string()
         }),
-        Span::Year => (s.an_average_month, |at, cx| {
+        Span::AllTime | Span::Year => (s.an_average_month, |at, cx| {
             cx.s().months_short[at.min(11)].to_string()
         }),
     }
 }
 
 /// The reading of a span cut into its own columns, under a figure dividing it
-/// by however many of them have gone by.
-///
-/// The columns keep the seconds themselves: an hour of a year divides to
-/// nothing. The chips at the right swap the span showing for every span of its
-/// width.
+/// by however many have gone by. The columns keep the seconds themselves, and
+/// the chips at the right swap the span showing for every span of its width.
 fn average_of(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeInclusive<i64>) {
     let theme: &Theme = cx.theme;
     let s = cx.s();
@@ -825,7 +820,7 @@ mod tests {
     fn the_bands_run_in_order_down_the_page() {
         for (w, h) in PANELS {
             let (theme, area) = page(w, h);
-            for span in Span::ALL {
+            for span in Span::CALENDAR {
                 let listed = lists_books(span);
                 let out = bands(area, &theme, HEAD, wanted(span, area, &theme), listed);
                 let [picker, nav, grid, hours, list] = out;

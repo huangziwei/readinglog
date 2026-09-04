@@ -1,0 +1,27 @@
+//! Where a candidate screen is drawn from.
+//!
+//! The drafts themselves live under `artifacts/sketch/`, which git ignores: a
+//! candidate is a picture to look at, not code to keep. `preview.sh` writes an
+//! empty register there when none exists, and a draft reaches the repository
+//! by being written into `view`.
+
+#[path = "../../../../artifacts/sketch/mod.rs"]
+mod drafts;
+
+use readinglog_native::ui::chrome::Tab;
+use readinglog_native::ui::paint::Rect;
+use readinglog_native::view::{Ctx, State};
+
+/// What a sketch draws with: the same three arguments a screen takes.
+pub type Draw = fn(&mut Ctx, Rect, &State);
+
+/// A candidate screen: what the preview calls it, the tab it stands under, and
+/// what it draws.
+#[derive(Clone, Copy)]
+pub struct Sketch {
+    pub name: &'static str,
+    pub tab: Tab,
+    pub draw: Draw,
+}
+
+pub use drafts::DRAFTS as ALL;

@@ -1,13 +1,7 @@
 #!/bin/sh
-# ./preview.sh — draws screens to artifacts/preview/*.png, with no display and
-# no X server. Anything after the script name goes to the preview binary:
-#
-#   ./preview.sh --list
-#   ./preview.sh rhythm:week rhythm:month rhythm:year --sheet spans
-#   ./preview.sh --all --panel pw --panel scribe
-#
-# $READINGLOG_FONTS names the device's font directory. preview.env sets it
-# where the environment does not.
+# ./preview.sh [shots...] — draws screens into artifacts/preview/*.png.
+# ./preview.sh --list names every shot, panel and sketch.
+# $READINGLOG_FONTS names the device's fonts; preview.env sets it.
 set -eu
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -20,9 +14,16 @@ if [ -z "${READINGLOG_FONTS:-}" ]; then
 fi
 export READINGLOG_FONTS
 
+# An empty artifacts/sketch/mod.rs where the tree holds none.
+if [ ! -f "$ROOT/artifacts/sketch/mod.rs" ]; then
+    mkdir -p "$ROOT/artifacts/sketch"
+    printf 'use super::Sketch;\n\npub const DRAFTS: &[Sketch] = &[];\n' \
+        > "$ROOT/artifacts/sketch/mod.rs"
+fi
+
 cargo build --quiet --manifest-path "$ROOT/native/Cargo.toml" --bin preview
 
-# The PNGs land under the repo, whichever directory this was called from.
+# --out "$ROOT/artifacts/preview" unless "$@" names one.
 for arg in "$@"; do
     [ "$arg" = "--out" ] && exec "$ROOT/target/debug/preview" "$@"
 done

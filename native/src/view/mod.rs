@@ -6,6 +6,7 @@
 //! around it and which book is open all live in [`State`], so a redraw after a
 //! tap is the same call with a different state.
 
+pub mod alltime;
 pub mod book;
 pub mod books;
 pub mod config;
@@ -52,18 +53,24 @@ pub enum Hit {
 /// How wide a stretch of days the Rhythm screen draws around the one showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Span {
-    Week,
-    Month,
+    /// Everything the record holds, which a board of figures states.
+    AllTime,
     Year,
+    Month,
+    Week,
 }
 
 impl Span {
-    pub const ALL: [Span; 3] = [Span::Week, Span::Month, Span::Year];
+    pub const ALL: [Span; 4] = [Span::AllTime, Span::Year, Span::Month, Span::Week];
+
+    /// The spans drawn as a grid of days over the page.
+    pub const CALENDAR: [Span; 3] = [Span::Year, Span::Month, Span::Week];
 
     /// What this span is called, in the interface's own language.
     pub fn label(self, lang: Lang) -> &'static str {
         let s = lang.strings();
         match self {
+            Span::AllTime => s.all_time,
             Span::Week => s.week,
             Span::Month => s.month,
             Span::Year => s.year,
@@ -74,6 +81,8 @@ impl Span {
     pub fn days(self, day: i64, week: WeekStart) -> std::ops::RangeInclusive<i64> {
         let (year, month, _) = date::civil_from_days(day);
         match self {
+            // Every day the store can hold: the epoch opens it.
+            Span::AllTime => 0..=day,
             Span::Week => {
                 let first = day - week.column_of(date::weekday(day)) as i64;
                 first..=first + 6
@@ -89,6 +98,8 @@ impl Span {
     /// `day` moved `by` spans.
     pub fn step(self, day: i64, by: i64) -> i64 {
         match self {
+            // The whole record has nothing on either side of it.
+            Span::AllTime => day,
             Span::Week => day + by * 7,
             Span::Month => date::shift_months(day, by),
             Span::Year => date::shift_months(day, by * 12),
@@ -99,6 +110,7 @@ impl Span {
     pub fn name(self, day: i64, week: WeekStart, s: &Strings) -> String {
         let (year, month, _) = date::civil_from_days(day);
         match self {
+            Span::AllTime => s.all_time.to_string(),
             Span::Week => {
                 let days = self.days(day, week);
                 format!(

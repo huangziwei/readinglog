@@ -302,7 +302,13 @@ impl App {
             // Neither has anything to page through.
             Tab::Config | Tab::Home => Action::Nothing,
             Tab::Rhythm => {
+                let was = self.state.day;
                 self.state.shift(by);
+                // `Span::AllTime` holds the whole record and has nothing on
+                // either side of it.
+                if self.state.day == was {
+                    return Action::Nothing;
+                }
                 self.state.list_from = 0;
                 Action::Redraw
             }

@@ -1,5 +1,5 @@
-//! An invented library: a shelf in three scripts and fourteen months of
-//! reading over it.
+//! An invented library: a shelf in three scripts and three years of reading
+//! over it.
 //!
 //! Every number comes off [`Rng`], seeded once, so two runs draw the same
 //! picture and two rounds of a design can be held against each other.
@@ -11,7 +11,7 @@ use readinglog_native::log::session::{Measure, Session};
 use readinglog_native::store::{BookRecord, Store};
 
 /// Days of reading laid down behind the day being drawn.
-pub const DAYS: i64 = 430;
+pub const DAYS: i64 = 1150;
 
 /// A book on the shelf, and the stretch of days it was read over.
 struct Shelved {
@@ -28,6 +28,54 @@ struct Shelved {
 /// Titles from one word to a line and a half, in three scripts, at every stage
 /// from opened yesterday to all but finished.
 const SHELF: &[Shelved] = &[
+    Shelved {
+        title: "The Salt Road Companion",
+        author: "Beatrix Oyelaran",
+        language: "en",
+        percent: 100.0,
+        opened: 1140,
+        runs: 210,
+    },
+    Shelved {
+        title: "静かな海の測量",
+        author: "三好あかり",
+        language: "ja",
+        percent: 100.0,
+        opened: 1010,
+        runs: 190,
+    },
+    Shelved {
+        title: "第二座橋",
+        author: "陳望之",
+        language: "zh-Hant",
+        percent: 93.0,
+        opened: 870,
+        runs: 240,
+    },
+    Shelved {
+        title: "Notes Toward a Theory of Weather",
+        author: "Aurelio Sandoval",
+        language: "en",
+        percent: 100.0,
+        opened: 700,
+        runs: 200,
+    },
+    Shelved {
+        title: "长夜行车",
+        author: "邹允",
+        language: "zh-Hans",
+        percent: 58.0,
+        opened: 560,
+        runs: 180,
+    },
+    Shelved {
+        title: "The Cartographer's Apprentice",
+        author: "Nell Hargreave",
+        language: "en",
+        percent: 100.0,
+        opened: 470,
+        runs: 150,
+    },
     Shelved {
         title: "沒有名字的河：一段流域史與它的居民",
         author: "周牧",
