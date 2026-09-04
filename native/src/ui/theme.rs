@@ -1,6 +1,8 @@
-//! Every size on screen, derived from the panel at runtime.
+//! Every size on screen, from the panel and the text size the reader set.
 //!
-//! [`Theme::for_screen`] scales each field off `xres`. No field is a constant.
+//! Type is a fixed pixel size — see [`BODY_PX`] — and every size derived from
+//! it is too. [`Theme::pad`] and [`Theme::gap`] are the only fields the
+//! panel's own width reaches.
 
 use crate::settings::TextSize;
 

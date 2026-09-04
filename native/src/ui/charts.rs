@@ -1,8 +1,9 @@
-//! Five shapes: a grid of days, the names around one, a row of columns, a
-//! stack of labelled bars, and one day's sittings laid along the clock.
+//! The shapes a record is read in: a grid of days, the names around one, a
+//! day's hours as a strip, a row of columns, a stack of labelled bars, and one
+//! day's sittings laid along the clock.
 //!
-//! [`week_cells`], [`month_cells`] and [`year_cells`] state where a day lands,
-//! apart from any draw; [`day_cells`] inks whatever they answer.
+//! [`week_cells`], [`month_cells`] and [`heatmap`] state where a day lands,
+//! apart from any draw.
 
 use crate::date;
 use crate::eink::fb::Framebuffer;

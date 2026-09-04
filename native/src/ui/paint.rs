@@ -12,9 +12,10 @@ pub const LIGHT: u8 = 0xC0;
 pub const DARK: u8 = 0x60;
 pub const INK: u8 = 0x00;
 
-/// The five steps a value is drawn at, lightest first, in one hue. Each
-/// entry's Rec. 601 luma sits within a few of [`PALE`], [`LIGHT`], [`MID`],
-/// [`DARK`] and [`INK`]. Zero is [`WHITE`], off this scale.
+/// The five steps a value is drawn at, lightest first, in one hue. Their
+/// Rec. 601 lumas sit within a few of [`PALE`], [`LIGHT`], half way between
+/// the two remaining levels, [`DARK`] and [`INK`]. Zero is [`WHITE`], off this
+/// scale.
 pub const STEPS_RGB: [[u8; 3]; 5] = [
     [0xCF, 0xE6, 0xF7],
     [0x9F, 0xCB, 0xE8],

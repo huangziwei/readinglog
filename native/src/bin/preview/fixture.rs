@@ -291,7 +291,8 @@ pub fn library(last: i64, art: &Path) -> Store {
         if (shut..shut + 14).contains(&day) {
             continue;
         }
-        let weekend = matches!(date::weekday(day), 0 | 6);
+        // `date::weekday` counts from Monday, so the weekend is 5 and 6.
+        let weekend = matches!(date::weekday(day), 5 | 6);
         // A day off, three weekdays in ten and one weekend day in ten.
         if rng.upto(10) < if weekend { 1 } else { 3 } {
             continue;

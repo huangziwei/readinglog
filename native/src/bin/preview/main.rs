@@ -37,6 +37,12 @@ const PANELS: &[(&str, u32, u32)] = &[
 /// Where the PNGs land under `--out`.
 const OUT: &str = "artifacts/preview";
 
+/// Where the fixture's jackets are drawn, under `--art`.
+///
+/// An input the store's records point at, and the same sixteen files whatever
+/// a run draws, so one set stands apart from any run's own output directory.
+const ART: &str = "artifacts/preview/art";
+
 /// The screens a shot can name, and the tab each sits under.
 const SCREENS: &[(&str, Tab)] = &[
     ("config", Tab::Config),
@@ -84,6 +90,7 @@ struct Opts {
     week: WeekStart,
     day: i64,
     out: PathBuf,
+    art: PathBuf,
     sheet: Option<String>,
     scale: u32,
     crop: Option<sheet::Crop>,
@@ -101,6 +108,7 @@ impl Default for Opts {
             week: WeekStart::Monday,
             day: date::days_from_civil(DAY.0, DAY.1, DAY.2),
             out: PathBuf::from(OUT),
+            art: PathBuf::from(ART),
             sheet: None,
             scale: 40,
             crop: None,
@@ -124,17 +132,17 @@ fn run() -> Result<()> {
     }
     let started = std::time::Instant::now();
     std::fs::create_dir_all(&opts.out).context("make the output directory")?;
-    let art = opts.out.join("art");
-    std::fs::create_dir_all(&art).context("make the cover directory")?;
+    std::fs::create_dir_all(&opts.art).context("make the cover directory")?;
+    let standing = shots_in(&opts.out);
 
-    let library = fixture::library(opts.day, &art);
+    let library = fixture::library(opts.day, &opts.art);
     let mut tiles: Vec<sheet::Tile> = Vec::new();
-    let mut written = 0usize;
+    let mut wrote: Vec<PathBuf> = Vec::new();
     for (w, h) in opts.panels.iter().copied() {
         for lang in opts.langs.iter().copied() {
             for size in opts.sizes.iter().copied() {
                 for shot in &opts.shots {
-                    let store = thinned_for(shot, &opts, &art);
+                    let store = thinned_for(shot, &opts, &opts.art);
                     let store = store.as_ref().unwrap_or(&library);
                     let mut fb = Framebuffer::offscreen(w, h);
                     let mut app = open(store, &opts, w, h, lang, size)?;
@@ -157,7 +165,7 @@ fn run() -> Result<()> {
                     };
                     tile.save(&path).context("write the shot")?;
                     println!("{}", path.display());
-                    written += 1;
+                    wrote.push(path);
                     if opts.sheet.is_some() {
                         tiles.push(tile);
                     }
@@ -173,12 +181,37 @@ fn run() -> Result<()> {
         let path = opts.out.join(format!("{name}.png"));
         sheet.capture_png(&path).context("write the sheet")?;
         println!("{}", path.display());
+        wrote.push(path);
     }
     eprintln!(
-        "preview: {written} shots in {:.1}s",
-        started.elapsed().as_secs_f32()
+        "preview: {} shots in {:.1}s → {}",
+        wrote.len(),
+        started.elapsed().as_secs_f32(),
+        opts.out.display()
     );
+    // A directory holding shots this run did not draw mixes two rounds, and
+    // nothing in the filename says which round a picture belongs to.
+    let stale = standing.iter().filter(|p| !wrote.contains(p)).count();
+    if stale > 0 {
+        eprintln!(
+            "preview: and {stale} older PNG{} beside them — `--out DIR` gives a round \
+             its own directory",
+            if stale == 1 { "" } else { "s" }
+        );
+    }
     Ok(())
+}
+
+/// The PNGs already in `dir`, which this run will leave standing wherever it
+/// does not draw over them.
+fn shots_in(dir: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "png"))
+        .collect()
 }
 
 /// What to say when no face was found.
@@ -338,6 +371,7 @@ fn read_args(args: impl Iterator<Item = String>) -> Result<Opts> {
             "--day" => opts.day = day(&value()?)?,
             "--hide-unnamed" => opts.unnamed = false,
             "--out" => opts.out = PathBuf::from(value()?),
+            "--art" => opts.art = PathBuf::from(value()?),
             "--sheet" => opts.sheet = Some(value()?),
             "--scale" => opts.scale = value()?.parse().context("--scale wants a percentage")?,
             "--crop" => {

@@ -639,9 +639,8 @@ mod tests {
             names[0], "Amazon-Ember-Regular.ttf",
             "the device's UI typeface, upright and regular, must draw the UI"
         );
-        // The traps, each of which beat Regular under an earlier ranking: a
-        // bold family whose cut is named "Regular", two weights with no
-        // bold-ish token, and the serif cuts that name no weight at all.
+        // The traps: a bold family whose cut is named "Regular", two weights
+        // with no bold-ish token, and the serif cuts naming no weight at all.
         for trap in [
             "AmazonEmberBold-Regular.ttf",
             "Amazon-Ember-Heavy.ttf",
@@ -861,9 +860,10 @@ mod tests {
         }
     }
 
-    /// The real faces, where a dump is pointed at. Skipped otherwise, the way
-    /// `preview.rs` is: the assertions below are about what a specific
-    /// device's files contain, not about the ranking.
+    /// The real faces, where `READINGLOG_FONTS` points at a device's own font
+    /// directories. `None` where it is unset, which skips the assertions
+    /// below: they are about what a specific device's files contain, not
+    /// about the ranking.
     fn device_chain_on_disk() -> Option<FontChain> {
         let dirs = std::env::var("READINGLOG_FONTS").ok()?;
         let candidates: Vec<Candidate> = dirs

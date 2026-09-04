@@ -23,8 +23,13 @@ fi
 
 cargo build --quiet --manifest-path "$ROOT/native/Cargo.toml" --bin preview
 
-# --out "$ROOT/artifacts/preview" unless "$@" names one.
+# --out and --art default under $ROOT unless "$@" names them. The jackets are
+# one set shared by every run, never a copy under each --out.
+out= art=
 for arg in "$@"; do
-    [ "$arg" = "--out" ] && exec "$ROOT/target/debug/preview" "$@"
+    [ "$arg" = "--out" ] && out=named
+    [ "$arg" = "--art" ] && art=named
 done
-exec "$ROOT/target/debug/preview" "$@" --out "$ROOT/artifacts/preview"
+[ -z "$out" ] && set -- "$@" --out "$ROOT/artifacts/preview"
+[ -z "$art" ] && set -- "$@" --art "$ROOT/artifacts/preview/art"
+exec "$ROOT/target/debug/preview" "$@"

@@ -1,5 +1,5 @@
-//! Every [`BookStat`], most recent first, with its cover and the progress the
-//! catalog states.
+//! Every [`crate::stats::BookStat`], most recent first, with its cover and the
+//! progress the catalog states.
 
 use crate::date;
 use crate::stats::Stats;

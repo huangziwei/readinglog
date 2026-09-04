@@ -54,7 +54,7 @@ pub enum TouchEvent {
 }
 
 /// Horizontal-swipe direction over one stroke's start→end vector, from
-/// [`classify_swipe`]. `main.rs` maps these to page turns.
+/// [`classify_swipe`]. [`crate::app::App`] maps these to page turns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SwipeDir {
     /// Right-to-left drag → next page (the current page slides off to the left).
