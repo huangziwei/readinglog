@@ -1,9 +1,6 @@
 //! The interface language: what the device is set to, and every word this app
-//! draws in it.
-//!
-//! [`Strings`] is one struct of `&'static str`, so a language that forgets a
-//! word does not compile. Nothing is loaded at runtime — this app draws about
-//! a hundred labels, not a document.
+//! draws in it. [`Strings`] is one struct of `&'static str`, and a language
+//! that forgets a word does not compile. Nothing is loaded at runtime.
 
 use std::path::Path;
 
@@ -18,12 +15,9 @@ pub enum Lang {
     TraditionalChinese,
 }
 
-/// Where the framework writes the locale the reader picked.
-///
-/// `/etc/upstart/langpicker.conf` names it and writes two shell lines into it:
-/// `LANG=en_US.UTF-8` and `LC_ALL=en_US.UTF-8`. The same fact travels over lipc
-/// as `com.lab126.locale`, which this app has no use for: a locale cannot
-/// change while a KUAL extension holds the screen.
+/// Where the device writes the locale the config picker set.
+/// `/etc/upstart/langpicker.conf` names it and writes `LANG=en_US.UTF-8` and
+/// `LC_ALL=en_US.UTF-8` into it. `com.lab126.locale` carries the same fact.
 const LOCALE_FILE: &str = "/var/local/system/locale";
 
 impl Lang {
@@ -37,10 +31,8 @@ impl Lang {
     ];
 
     /// What the button says: one character each, in the language's own script.
-    ///
-    /// A chip names its option and nothing more — 简 says everything 简体中文
-    /// does, in a fifth of the width, and five of these stand on one line
-    /// where five spelled-out names do not.
+    /// 简 says everything 简体中文 does in a fifth of the width, and five of
+    /// these stand on one line where five spelled-out names do not.
     pub fn label(self) -> &'static str {
         match self {
             Lang::English => "EN",
@@ -51,8 +43,8 @@ impl Lang {
         }
     }
 
-    /// What the setting is stored as: one letter, so the file stays readable
-    /// and a hand edit is hard to get wrong.
+    /// What the setting is stored as: one letter. The file stays readable and
+    /// a hand edit is hard to get wrong.
     pub fn letter(self) -> char {
         match self {
             Lang::English => 'e',
@@ -76,9 +68,8 @@ impl Lang {
     }
 
     /// The convention this language's own labels are set in, as a tag
-    /// `font::Script::of_language` reads. A tag rather than a `Script` so this
-    /// module compiles into the host library beside `date`, which needs its
-    /// words and cannot see the drawing code.
+    /// `font::Script::of_language` reads. A tag, never a `Script`: this module
+    /// compiles into the host library beside `date`, which cannot see `ui`.
     pub fn language_tag(self) -> &'static str {
         match self {
             Lang::English => "en",
@@ -101,8 +92,8 @@ impl Lang {
     }
 
     /// What the device is set to. English wherever the file is missing,
-    /// unreadable, or names a language this app is not written in — the ten
-    /// the framework ships include six it has no words for.
+    /// unreadable, or names a language this app is not written in: the ten a
+    /// Kindle ships include six it has no words for.
     pub fn detect() -> Lang {
         Self::detect_in(Path::new(LOCALE_FILE))
     }
@@ -118,9 +109,8 @@ impl Lang {
 }
 
 /// The language a `LANG=` line names, or `None` where there is no such line.
-///
-/// The file is shell, so the value may be quoted and `LC_ALL` may sit beside
-/// it. Only `LANG` is read: the two are written together and `LANG` is first.
+/// The file is shell: the value may be quoted and `LC_ALL` may sit beside it.
+/// Only `LANG` is read — the two are written together and `LANG` is first.
 fn of_locale_file(text: &str) -> Option<Lang> {
     let value = text.lines().find_map(|line| {
         line.trim()
@@ -130,12 +120,9 @@ fn of_locale_file(text: &str) -> Option<Lang> {
     of_posix(value)
 }
 
-/// The language a POSIX locale names.
-///
-/// **The codeset rides on the region** — the framework writes `zh_CN.utf8`,
-/// not `zh_CN` — so every subtag is cut at its first `.` before it is read.
-/// The sixteen values that reach this are every `posix.id.*` in
-/// `/opt/amazon/ebook/config/locales/*.properties`.
+/// The language a POSIX locale names. **The codeset rides on the region** —
+/// the device writes `zh_CN.utf8`, not `zh_CN` — and every subtag is cut at
+/// its first `.` before it is read.
 pub fn of_posix(value: &str) -> Option<Lang> {
     let mut subtags = value
         .split(['-', '_'])
@@ -145,8 +132,8 @@ pub fn of_posix(value: &str) -> Option<Lang> {
         "de" => Some(Lang::German),
         "ja" => Some(Lang::Japanese),
         "zh" => {
-            // The framework ships `zh-Hans-CN` alone, but a region is read
-            // where one is given: nothing else can name Traditional.
+            // A region is read where one is given: nothing else names
+            // Traditional, and the device ships `zh-Hans-CN` alone.
             for subtag in subtags {
                 match subtag.to_ascii_lowercase().as_str() {
                     "hant" | "tw" | "hk" | "mo" => return Some(Lang::TraditionalChinese),
@@ -161,12 +148,9 @@ pub fn of_posix(value: &str) -> Option<Lang> {
     }
 }
 
-/// Every word the interface draws.
-///
-/// Durations keep `h` and `m` in German: `5 Std 8 Min` sets three figures
-/// across the Book screen at 1258 px into a row 1186 px wide, and `h`/`min`
-/// are read in German anyway. Chinese and Japanese take their own units, which
-/// fit.
+/// Every word the interface draws. Durations keep `h` and `m` in German:
+/// `5 Std 8 Min` sets three figures across the Book screen at 1258 px into a
+/// row 1186 px wide. Chinese and Japanese take their own units, which fit.
 pub struct Strings {
     // The strip along the bottom.
     pub exit: &'static str,
@@ -174,9 +158,8 @@ pub struct Strings {
     pub today: &'static str,
     pub rhythm: &'static str,
     pub books: &'static str,
-
     // Today. The three figures, then the heading over the day's books — the
-    // day's own date heads its timeline, so it needs no word here.
+    // day's own date heads its timeline and needs no word here.
     pub read_today: &'static str,
     pub pages_turned: &'static str,
     pub current_streak: &'static str,
@@ -260,6 +243,16 @@ pub struct Strings {
     pub the_calendar: &'static str,
     pub language_row: &'static str,
     pub week_starts_on: &'static str,
+    /// The reading section of the config page, and the row setting whether a
+    /// total counts books the catalog names none of.
+    pub the_record: &'static str,
+    pub unnamed_row: &'static str,
+    pub unnamed_show: &'static str,
+    pub unnamed_hide: &'static str,
+    /// `{n} unidentified · {duration}`, closing a list of books.
+    pub unidentified: &'static str,
+    /// `{n} books in the record`, under the last page of the Books list.
+    pub in_the_record: &'static str,
     pub text_size: &'static str,
     pub size_small: &'static str,
     pub size_medium: &'static str,
@@ -349,6 +342,12 @@ const ENGLISH: Strings = Strings {
     first_run_2: "is read once. This can take a few minutes.",
     catching_up: "Reading what the log has added.",
 
+    the_record: "THE RECORD",
+    unnamed_row: "Unidentified books",
+    unnamed_show: "Show",
+    unnamed_hide: "Hide",
+    unidentified: "unidentified",
+    in_the_record: "books in the record",
     interface: "INTERFACE",
     the_calendar: "THE CALENDAR",
     language_row: "Language",
@@ -454,6 +453,12 @@ const GERMAN: Strings = Strings {
     first_run_2: "wird einmal gelesen. Das dauert einige Minuten.",
     catching_up: "Liest, was dazugekommen ist.",
 
+    the_record: "DIE AUFZEICHNUNG",
+    unnamed_row: "Unbekannte Bücher",
+    unnamed_show: "Zeigen",
+    unnamed_hide: "Verbergen",
+    unidentified: "unbekannt",
+    in_the_record: "Bücher aufgezeichnet",
     interface: "OBERFLÄCHE",
     the_calendar: "DER KALENDER",
     language_row: "Sprache",
@@ -560,6 +565,12 @@ const JAPANESE: Strings = Strings {
     first_run_2: "一度読み込みます。数分かかります。",
     catching_up: "追加された記録を読み込み中。",
 
+    the_record: "記録",
+    unnamed_row: "不明な本",
+    unnamed_show: "表示",
+    unnamed_hide: "非表示",
+    unidentified: "冊が不明",
+    in_the_record: "冊を記録",
     interface: "表示",
     the_calendar: "カレンダー",
     language_row: "言語",
@@ -653,6 +664,12 @@ const SIMPLIFIED: Strings = Strings {
     first_run_2: "都会读取一次，需要几分钟。",
     catching_up: "正在读取新增的记录。",
 
+    the_record: "记录",
+    unnamed_row: "未识别的书",
+    unnamed_show: "显示",
+    unnamed_hide: "隐藏",
+    unidentified: "本未识别",
+    in_the_record: "本已记录",
     interface: "界面",
     the_calendar: "日历",
     language_row: "语言",
@@ -757,6 +774,12 @@ const TRADITIONAL: Strings = Strings {
     first_run_2: "都會讀取一次，需要幾分鐘。",
     catching_up: "正在讀取新增的記錄。",
 
+    the_record: "記錄",
+    unnamed_row: "未識別的書",
+    unnamed_show: "顯示",
+    unnamed_hide: "隱藏",
+    unidentified: "本未識別",
+    in_the_record: "本已記錄",
     interface: "介面",
     the_calendar: "日曆",
     language_row: "語言",
@@ -797,8 +820,8 @@ mod tests {
     use super::*;
 
     /// Every `posix.id.*` in `/opt/amazon/ebook/config/locales/*.properties`
-    /// on a Kindle Scribe — the complete set of values the framework can write
-    /// to [`LOCALE_FILE`], and nothing else reaches [`of_posix`].
+    /// on a Kindle Scribe — every value that can reach [`LOCALE_FILE`], and
+    /// nothing else reaches [`of_posix`].
     const DEVICE_LOCALES: &[(&str, Option<Lang>)] = &[
         ("de_DE.utf8", Some(Lang::German)),
         ("ja_JP.utf8", Some(Lang::Japanese)),
@@ -828,12 +851,12 @@ mod tests {
     #[test]
     fn the_codeset_does_not_hide_the_region() {
         // `zh_CN.utf8` splits to ["zh", "CN.utf8"], and a region matched
-        // whole would miss it. Every subtag is cut at its first `.`.
+        // whole misses it. Every subtag is cut at its first `.`.
         assert_eq!(of_posix("zh_CN.utf8"), Some(Lang::SimplifiedChinese));
         assert_eq!(of_posix("zh_TW.utf8"), Some(Lang::TraditionalChinese));
         assert_eq!(of_posix("zh-Hant-TW"), Some(Lang::TraditionalChinese));
         assert_eq!(of_posix("zh-Hans-CN"), Some(Lang::SimplifiedChinese));
-        // The framework ships no Traditional locale, so a bare `zh` is the
+        // The device ships no Traditional locale, and a bare `zh` is the
         // Simplified one it does ship.
         assert_eq!(of_posix("zh"), Some(Lang::SimplifiedChinese));
     }
@@ -882,7 +905,7 @@ mod tests {
     #[test]
     fn every_language_names_the_convention_it_is_set_in() {
         // The tags round-trip through the parser the catalog's own tags go
-        // through, so a label and a book title choose faces the same way.
+        // through: a label and a book title choose faces alike.
         assert_eq!(Lang::Japanese.language_tag(), "ja");
         assert_eq!(Lang::TraditionalChinese.language_tag(), "zh-Hant");
         assert_eq!(Lang::SimplifiedChinese.language_tag(), "zh-Hans");
@@ -925,9 +948,8 @@ mod tests {
     #[test]
     fn the_nav_labels_fit_the_narrowest_panel() {
         // Five cells of 252 px on a 1264 px panel, 238 usable inside the
-        // inverted block. Measured at BODY_PX against the real faces: the
-        // worst are German Rhythmus at 182 px and Optionen at 163.
-        // `Einstellungen` sets 235 and is why German says Optionen.
+        // inverted block. Measured at BODY_PX against the real faces: German
+        // `Rhythmus` sets 182 px, `Optionen` 163, `Einstellungen` 235.
         for lang in Lang::ALL {
             let s = lang.strings();
             for label in [s.exit, s.config, s.today, s.rhythm, s.books] {

@@ -1,9 +1,6 @@
 //! Reading Log — reading statistics on a Kindle, from the Kindle's own logs.
-//!
 //! Three modes: no argument collects then draws, `--collect` collects alone,
 //! `--dump` prints what the store holds.
-//!
-//! `Framebuffer::open` and `Buttons::open` come before `collect`.
 
 use std::path::Path;
 
@@ -16,7 +13,7 @@ use readinglog_native::eink::touch::Touch;
 use readinglog_native::orientation::Orientation;
 use readinglog_native::stats::Stats;
 use readinglog_native::store::Store;
-use readinglog_native::{app, catalog, date, lang, store, ui};
+use readinglog_native::{app, catalog, date, lang, settings, store, ui};
 
 fn main() {
     let mode = std::env::args().nth(1).unwrap_or_default();
@@ -32,7 +29,6 @@ fn main() {
 }
 
 /// Read the log and the catalog into the store, and answer with the store.
-///
 /// `catalog` is read here and nowhere else, and what it states is written into
 /// `store`.
 fn collect() -> Result<Store> {
@@ -81,7 +77,8 @@ fn collect_into(store: &mut Store, dir: &Path, on: &mut dyn FnMut(usize, usize))
 fn dump() -> Result<()> {
     let store = collect()?;
     let (today, _) = date::now();
-    let stats = Stats::build(&store, today);
+    let settings = settings::Settings::load(lang::Lang::detect());
+    let stats = Stats::build(&store, today, settings.show_unnamed);
     println!(
         "{} read over {} days, {} books, streak {} (longest {})",
         date::duration(stats.total_seconds, lang::Lang::English.strings()),
@@ -127,7 +124,7 @@ fn show() -> Result<()> {
     let theme = ui::theme::Theme::for_screen(fb.var.xres, fb.var.yres);
     let mut text = ui::text::TextRenderer::load(theme.body_px)?;
     eprintln!("fonts: {}", text.chain_description());
-    // The splash draws before `App`, so it detects for itself.
+    // `splash` draws before `App` and detects for itself.
     let splash_lang = lang::Lang::detect();
     let note = ui::splash::note(&store.mark, splash_lang.strings());
     ui::splash::show(&mut fb, &mut text, &theme, "Reading Log", &note, "", true)?;
@@ -150,15 +147,7 @@ fn show() -> Result<()> {
         );
     });
 
-    let (today, _) = date::now();
-    let stats = Stats::build(&store, today);
-    eprintln!(
-        "stats: {} books drawn, {} on an unnamed book, {} on no book",
-        stats.books.len(),
-        date::duration(stats.unnamed_seconds, lang::Lang::English.strings()),
-        date::duration(stats.skipped_seconds, lang::Lang::English.strings()),
-    );
-
-    let mut app = app::App::new(stats, theme, text);
+    let mut app = app::App::new(store, theme, text);
+    eprintln!("stats: {}", app.counted(lang::Lang::English.strings()));
     app.run(&mut fb, &mut input)
 }

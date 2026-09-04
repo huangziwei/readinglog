@@ -87,6 +87,8 @@ struct Opts {
     sheet: Option<String>,
     scale: u32,
     crop: Option<sheet::Crop>,
+    /// Whether a total counts the sittings no record names.
+    unnamed: bool,
 }
 
 impl Default for Opts {
@@ -102,6 +104,7 @@ impl Default for Opts {
             sheet: None,
             scale: 40,
             crop: None,
+            unnamed: true,
         }
     }
 }
@@ -183,17 +186,17 @@ const FONTS: &str = "no font — point READINGLOG_FONTS at the device's font dir
 
 /// An [`App`] over `store`, at the panel and the settings the run names.
 fn open(store: &Store, opts: &Opts, w: u32, h: u32, lang: Lang, size: TextSize) -> Result<App> {
-    let stats = Stats::build(store, opts.day);
-    if stats.books.is_empty() {
+    if Stats::build(store, opts.day, true).books.is_empty() {
         bail!("the fixture named no book");
     }
     let theme = Theme::sized(w, h, size);
     let text = TextRenderer::load(theme.body_px).context(FONTS)?;
-    let mut app = App::new(stats, theme, text);
+    let mut app = App::new(store.clone(), theme, text);
     app.set_clock(opts.day, NOW);
     app.set_language(lang);
     app.set_text_size(size);
     app.set_week_start(opts.week);
+    app.set_unnamed(opts.unnamed);
     Ok(app)
 }
 
@@ -333,6 +336,7 @@ fn read_args(args: impl Iterator<Item = String>) -> Result<Opts> {
             "--size" => sizes.push(size(&value()?)?),
             "--week" => opts.week = week(&value()?)?,
             "--day" => opts.day = day(&value()?)?,
+            "--hide-unnamed" => opts.unnamed = false,
             "--out" => opts.out = PathBuf::from(value()?),
             "--sheet" => opts.sheet = Some(value()?),
             "--scale" => opts.scale = value()?.parse().context("--scale wants a percentage")?,

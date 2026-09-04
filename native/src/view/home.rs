@@ -62,13 +62,14 @@ pub fn draw(cx: &mut Ctx, area: Rect) {
     charts::timeline(cx.fb, cx.text, theme, inner, &spans, Some(cx.now));
 
     // `title` names `shown` against `read.len()` where `fits` drops a book.
-    let shown = daybooks::fits(theme, list.h - head, read.len());
+    let box_ = daybooks::rows_box(cx, Rect::new(list.x, list.y, list.w, list.h - head), today);
+    let shown = daybooks::fits(theme, box_.h, read.len());
     let title = match shown < read.len() {
         true => format!("{} — {shown} {} {}", s.what_was_read, s.of, read.len()),
         false => s.what_was_read.to_string(),
     };
     let inner = chrome::section(cx.fb, cx.text, theme, list, &title);
-    daybooks::draw(cx, inner, today, &read[..shown]);
+    daybooks::draw_noting(cx, inner, today, &read);
 }
 
 #[cfg(test)]

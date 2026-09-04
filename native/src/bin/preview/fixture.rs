@@ -333,6 +333,7 @@ pub fn library(last: i64, art: &Path) -> Store {
         }
     }
     binge(&mut store, last);
+    ghosts(&mut store, last);
     store
         .sessions
         .sort_by(|a, b| a.started_at.cmp(&b.started_at));
@@ -357,4 +358,31 @@ pub fn thinned(last: i64, art: &Path, keep: usize) -> Store {
 /// The day [`library`] lays the binge on, for a run ending on `last`.
 pub fn binge_day(last: i64) -> i64 {
     last - BINGE_DAY
+}
+
+/// Books keyed by an extent no record carries: what the log holds where the
+/// catalog never stated a book's own number.
+const GHOSTS: i64 = 5;
+
+/// Days between one day of ghost sittings and the next.
+const GHOST_EVERY: i64 = 3;
+
+/// The first ghost extent, past every extent [`library`] gives the shelf.
+const GHOST_KEY: i64 = 640_000;
+
+/// One to three ghost sittings on every [`GHOST_EVERY`]th day, today included:
+/// a total no list of books adds up to.
+fn ghosts(store: &mut Store, last: i64) {
+    for back in (0..DAYS).step_by(GHOST_EVERY as usize).chain([BINGE_DAY]) {
+        let day = last - back;
+        let round = back / GHOST_EVERY;
+        for which in 0..=round % 3 {
+            let key = GHOST_KEY + (round + which) % GHOSTS;
+            let at = (17 + which) * 3600 + 600;
+            let secs = 60 * (12 + (back * 7 + which * 13) % 48);
+            store
+                .sessions
+                .push(sitting(day, at, secs, key, Measure::Counted));
+        }
+    }
 }

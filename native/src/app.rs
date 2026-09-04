@@ -25,6 +25,7 @@ pub struct App {
     settings: Settings,
     text: TextRenderer,
     covers: Covers,
+    store: crate::store::Store,
     stats: Stats,
     state: State,
     today: i64,
@@ -34,21 +35,39 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(stats: Stats, theme: Theme, text: TextRenderer) -> Self {
+    pub fn new(store: crate::store::Store, theme: Theme, text: TextRenderer) -> Self {
         let (today, now) = date::now();
         let settings = Settings::load(Lang::detect());
+        let stats = Stats::build(&store, today, settings.show_unnamed);
         Self {
             theme,
             lang: settings.language,
             settings,
             text,
             covers: Covers::default(),
+            store,
             stats,
             state: State::new(today),
             today,
             now,
             hits: Vec::new(),
         }
+    }
+
+    /// What the stats hold, for the launch line.
+    pub fn counted(&self, s: &crate::lang::Strings) -> String {
+        format!(
+            "{} books drawn, {} on {} unnamed, {} on no book",
+            self.stats.books.len(),
+            date::duration(self.stats.unnamed_seconds, s),
+            self.stats.unnamed_books(),
+            date::duration(self.stats.skipped_seconds, s),
+        )
+    }
+
+    /// Total the store again, at the day and the settings held.
+    fn rebuild(&mut self) {
+        self.stats = Stats::build(&self.store, self.today, self.settings.show_unnamed);
     }
 
     /// Draw at `size`, whatever is stored.
@@ -63,6 +82,12 @@ impl App {
         self.settings.language = lang;
     }
 
+    /// Count the sittings no record names, or leave them out of every total.
+    pub fn set_unnamed(&mut self, show: bool) {
+        self.settings.show_unnamed = show;
+        self.rebuild();
+    }
+
     /// Open the week on `start`, whatever is stored.
     pub fn set_week_start(&mut self, start: crate::settings::WeekStart) {
         self.settings.week_start = start;
@@ -73,6 +98,7 @@ impl App {
         self.today = today;
         self.now = now;
         self.state.day = today;
+        self.rebuild();
     }
 
     /// Set `state.tab` and `state.book`.
@@ -256,6 +282,17 @@ impl App {
                 // Every size on screen comes off `theme`.
                 self.theme =
                     Theme::sized(self.theme.screen.w as u32, self.theme.screen.h as u32, pick);
+                self.settings.save();
+            }
+            Hit::ShowUnnamed(pick) => {
+                if self.settings.show_unnamed == pick {
+                    return Action::Nothing;
+                }
+                self.settings.show_unnamed = pick;
+                // Every total on every screen comes off `stats`.
+                self.rebuild();
+                self.state.books_from = 0;
+                self.state.list_from = 0;
                 self.settings.save();
             }
             Hit::Book(index) => self.state.book = Some(index),

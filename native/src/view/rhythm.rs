@@ -166,13 +166,14 @@ fn day_page(cx: &mut Ctx, area: Rect, state: &State) {
     let bar = Rect::new(list.x, list.y, list.w, head);
     let inner = chrome::section(cx.fb, cx.text, theme, list, s.what_was_read);
     let read = cx.stats.book_totals(day..=day);
-    let deep = daybooks::fits(theme, inner.h, read.len());
+    let box_ = daybooks::rows_box(cx, inner, day);
+    let deep = daybooks::fits(theme, box_.h, read.len());
     let from = state.list_from.min(super::last_page_at(read.len(), deep));
     let to = (from + deep).min(read.len());
     if read.len() > deep {
         pager(cx, bar, from, to, read.len(), deep);
     }
-    daybooks::draw(cx, inner, day, &read[from..to]);
+    daybooks::draw_noting(cx, inner, day, &read[from..to]);
 }
 
 /// The four spans as a segmented control, each its own hit box. A day open
@@ -529,7 +530,7 @@ fn book_list(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeInclu
                 s.what_was_read,
                 date::duration(cx.stats.span_seconds(days.clone()), s)
             ),
-            cx.stats.book_totals(days),
+            cx.stats.book_totals(days.clone()),
         ),
     };
     let head = Rect::new(
@@ -538,13 +539,23 @@ fn book_list(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeInclu
         area.w,
         chrome::section_height(cx.text, theme),
     );
-    let inner = chrome::section(cx.fb, cx.text, theme, area, &title);
+    let whole = chrome::section(cx.fb, cx.text, theme, area, &title);
+    let over = picked.map_or(days, |day| day..=day);
+    let (unnamed, seconds) = cx.stats.unnamed_over(over);
+    let foot = (unnamed > 0) as i32 * daybooks::note_height(cx);
+    let inner = Rect::new(whole.x, whole.y, whole.w, (whole.h - foot).max(0));
     if totals.is_empty() {
         cx.text.set_px(theme.body_px);
         let baseline = inner.y + cx.text.line_height() as i32;
         let script = cx.ui_script();
         cx.text
             .draw_in(script, cx.fb, inner.x, baseline, s.nothing_read, false);
+        daybooks::note(
+            cx,
+            Rect::new(whole.x, baseline + theme.gap * 2, whole.w, foot),
+            unnamed,
+            seconds,
+        );
         return;
     }
 
@@ -575,6 +586,13 @@ fn book_list(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeInclu
         let row = Rect::new(inner.x, inner.y + slot as i32 * each, inner.w, each);
         cx.hit(Hit::Book(*book), row);
     }
+    let under = inner.y + page.len() as i32 * each;
+    daybooks::note(
+        cx,
+        Rect::new(whole.x, under, whole.w, whole.bottom() - under),
+        unnamed,
+        seconds,
+    );
 }
 
 /// `from`–`to` of `count` at the right of the heading the list is under,

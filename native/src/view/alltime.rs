@@ -52,7 +52,8 @@ fn cells(cx: &Ctx) -> Vec<Cell> {
     let over = (cx.today - opened(cx) + 1).max(1);
     let read = cx.stats.days_read().max(1);
     let sittings = (cx.stats.sittings.len() as i64).max(1);
-    let books = cx.stats.books.len() as i64;
+    // Every book the record holds, whether or not the shelf can name it.
+    let books = (cx.stats.books.len() + cx.stats.unnamed_books()) as i64;
     let finished = finished_books(cx);
     let (best_day, best_day_secs) = best_day(cx);
     let (sat_on, sat_secs) = longest_sitting(cx);

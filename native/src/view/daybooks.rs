@@ -1,8 +1,6 @@
 //! One day's books, a row each: the cover, the title, how long it was read
 //! that day, how far through it is, and where in the day the reading fell.
-//!
-//! Today and Rhythm both end in this list, so a day reads the same whichever
-//! screen reached it.
+//! Today and Rhythm both end here, and a day reads the same from either.
 
 use crate::date;
 use crate::font::Script;
@@ -26,10 +24,78 @@ pub fn fits(theme: &Theme, h: i32, count: usize) -> usize {
     count.min(((h / row_floor(theme)).max(1)) as usize)
 }
 
+/// The height each of `rows` is drawn at: they share `area`, held between
+/// [`row_floor`] and half again.
+fn row_span(theme: &Theme, area: Rect, rows: usize) -> i32 {
+    let floor = row_floor(theme);
+    (area.h / rows.max(1) as i32).clamp(floor, floor * 3 / 2)
+}
+
+/// Where [`note`] stands under `rows` rows of `box_`. A day of no rows draws
+/// `nothing_read`, `empty` tall, and the note stands under that.
+fn note_at(theme: &Theme, box_: Rect, rows: usize, empty: i32) -> i32 {
+    let drawn = match rows {
+        0 => empty,
+        n => n as i32 * row_span(theme, box_, n),
+    };
+    (box_.y + drawn).min(box_.bottom())
+}
+
+/// The height [`note`] takes, its rule and its air included.
+pub fn note_height(cx: &mut Ctx) -> i32 {
+    cx.text.set_px(cx.theme.small_px);
+    cx.text.line_height() as i32 + cx.theme.gap * 3
+}
+
+/// The line closing a list of books: how many of `books` it could not draw a
+/// row for, and the `seconds` on them. A list holding every book draws none.
+pub fn note(cx: &mut Ctx, at: Rect, books: usize, seconds: i64) {
+    if books == 0 {
+        return;
+    }
+    let theme: &Theme = cx.theme;
+    let s = cx.s();
+    let said = format!(
+        "{books} {} · {}",
+        s.unidentified,
+        date::duration(seconds, s)
+    );
+    let script = cx.ui_script();
+    cx.text.set_px(theme.small_px);
+    paint::hline(cx.fb, at.x, at.y, at.w, PALE, 1);
+    let baseline = at.y + theme.gap * 2 + cx.text.cap_height() as i32;
+    cx.text.draw_in(script, cx.fb, at.x, baseline, &said, false);
+}
+
+/// The part of `area` the rows take, [`note`] holding the foot where `day`
+/// holds books no row can name.
+pub fn rows_box(cx: &mut Ctx, area: Rect, day: i64) -> Rect {
+    let foot = (cx.stats.unnamed_over(day..=day).0 > 0) as i32 * note_height(cx);
+    Rect::new(area.x, area.y, area.w, (area.h - foot).max(0))
+}
+
+/// `read` down `area`, closed by [`note`] where `day` holds books it cannot
+/// name.
+pub fn draw_noting(cx: &mut Ctx, area: Rect, day: i64, read: &[(usize, i64)]) {
+    let theme: &Theme = cx.theme;
+    let (books, seconds) = cx.stats.unnamed_over(day..=day);
+    let box_ = rows_box(cx, area, day);
+    let shown = fits(theme, box_.h, read.len());
+    draw(cx, box_, day, &read[..shown]);
+    cx.text.set_px(theme.body_px);
+    let empty = cx.text.line_height() as i32 + theme.gap * 2;
+    let under = note_at(theme, box_, shown, empty);
+    note(
+        cx,
+        Rect::new(area.x, under, area.w, area.bottom() - under),
+        books,
+        seconds,
+    );
+}
+
 /// `read` down `area`, one book to a row, each row a hit box onto that book.
-///
-/// The span strips are `day`'s own, so they line up under the timeline the
-/// caller drew for it.
+/// The span strips are `day`'s own, lining up under the timeline the caller
+/// drew for it.
 pub fn draw(cx: &mut Ctx, area: Rect, day: i64, read: &[(usize, i64)]) {
     let theme: &Theme = cx.theme;
     if read.is_empty() {
@@ -40,8 +106,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, day: i64, read: &[(usize, i64)]) {
             .draw_in(script, cx.fb, area.x, baseline, cx.s().nothing_read, false);
         return;
     }
-    let floor = row_floor(theme);
-    let each = (area.h / read.len() as i32).clamp(floor, floor * 3 / 2);
+    let each = row_span(theme, area, read.len());
     for (slot, (index, secs)) in read.iter().enumerate() {
         let box_ = Rect::new(area.x, area.y + slot as i32 * each, area.w, each);
         row(cx, box_, day, *index, *secs);
@@ -168,6 +233,25 @@ fn day_spans(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A stand-in for the height `nothing_read` takes.
+    const EMPTY: i32 = 60;
+
+    #[test]
+    fn the_note_stands_under_what_the_list_drew() {
+        let theme = Theme::for_screen(1264, 1680);
+        let box_ = Rect::new(0, 100, 1186, 900);
+        // A list of no rows wrote a line, which the note clears.
+        assert_eq!(note_at(&theme, box_, 0, EMPTY), box_.y + EMPTY);
+        for rows in 1..=4usize {
+            let at = note_at(&theme, box_, rows, EMPTY);
+            let each = row_span(&theme, box_, rows);
+            assert_eq!(at, box_.y + rows as i32 * each, "{rows} rows");
+            assert!(at > box_.y, "{rows} rows: the note sits on the first row");
+        }
+        // More rows than the box holds keep the note inside it.
+        assert!(note_at(&theme, box_, 40, EMPTY) <= box_.bottom());
+    }
 
     #[test]
     fn a_list_never_counts_more_rows_than_it_can_draw() {

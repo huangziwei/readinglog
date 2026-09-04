@@ -35,6 +35,8 @@ pub enum Hit {
     Language(Lang),
     WeekStart(WeekStart),
     TextSize(crate::settings::TextSize),
+    /// Whether a total counts reading on books the catalog names none of.
+    ShowUnnamed(bool),
     Prev,
     Next,
     /// One span of the Rhythm screen.

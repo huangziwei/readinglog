@@ -1,15 +1,12 @@
-//! What the reader has chosen, and the file it survives a restart in.
-//!
-//! Every setting has a default the device supplies or the app picks, so a
-//! missing file is not a broken one: it is a reader who has never opened this
-//! page. A line this build does not know is kept on write, so a downgrade does
-//! not silently drop a newer build's setting.
+//! Every setting the config page holds, and the file they survive a restart
+//! in. Each has a default the device supplies or the app picks, and a line
+//! this build does not know is kept on write.
 
 use std::path::{Path, PathBuf};
 
 use crate::lang::Lang;
 
-/// Where the choices live. Beside the extension rather than in the store: a
+/// Where the choices live, beside the extension and outside the store: a
 /// setting is not a sitting, and `Store`'s `HEADER` must stay free to change
 /// with what a sitting means.
 const SETTINGS_PATHS: &[&str] = &[
@@ -31,7 +28,7 @@ impl TextSize {
 
     /// What it multiplies the body size by. The strip along the bottom does
     /// not take it — its six cells hold カレンダー at the base size and
-    /// nothing wider, so the chrome stays put while the content scales.
+    /// nothing wider, and the chrome stays put while the content scales.
     pub fn scale(self) -> f32 {
         match self {
             TextSize::Small => 0.85,
@@ -70,10 +67,8 @@ impl WeekStart {
     pub const ALL: [WeekStart; 2] = [WeekStart::Monday, WeekStart::Sunday];
 
     /// How far to rotate a Monday-first weekday index for this start.
-    ///
-    /// `date::weekday` counts from Monday because that is what the ISO week
-    /// does and what the grid was built on; a Sunday-first reader sees the
-    /// same days in a different order, not different days.
+    /// `date::weekday` counts from Monday, which the ISO week and the grid
+    /// both do; a Sunday-first week holds the same days in another order.
     pub fn shift(self) -> usize {
         match self {
             WeekStart::Monday => 0,
@@ -113,8 +108,10 @@ pub struct Settings {
     pub language: Lang,
     pub week_start: WeekStart,
     pub text_size: TextSize,
-    /// Lines this build does not know, kept verbatim so a downgrade does not
-    /// drop what a later build wrote.
+    /// Whether a total counts reading on books the catalog names none of.
+    pub show_unnamed: bool,
+    /// Lines this build does not know, kept verbatim: a downgrade drops none
+    /// of what a later build wrote.
     unknown: Vec<String>,
 }
 
@@ -126,12 +123,13 @@ impl Settings {
             language: detected,
             week_start: WeekStart::default(),
             text_size: TextSize::default(),
+            show_unnamed: true,
             unknown: Vec::new(),
         }
     }
 
     /// What is on disk, over the defaults. A missing or unreadable file is a
-    /// reader who has never opened the config page.
+    /// config page never opened, and not an error.
     pub fn load(detected: Lang) -> Self {
         match SETTINGS_PATHS.iter().map(Path::new).find(|p| p.is_file()) {
             Some(path) => Self::load_from(path, detected),
@@ -147,9 +145,8 @@ impl Settings {
         Self::parse(&text, detected)
     }
 
-    /// `key=value` a line, `#` a comment. An unreadable value keeps the
-    /// default rather than failing the file: one bad line must not cost the
-    /// reader every other setting.
+    /// `key=value` a line, `#` a comment. A value that will not read keeps the
+    /// default: one bad line must not cost every other setting.
     pub fn parse(text: &str, detected: Lang) -> Self {
         let mut out = Self::new(detected);
         for line in text.lines() {
@@ -174,6 +171,7 @@ impl Settings {
                         out.text_size = size;
                     }
                 }
+                "show_unnamed" => out.show_unnamed = value != "no",
                 _ => out.unknown.push(line.to_string()),
             }
         }
@@ -186,6 +184,11 @@ impl Settings {
         out.push_str(&format!("language={}\n", self.language.letter()));
         out.push_str(&format!("week_start={}\n", self.week_start.token()));
         out.push_str(&format!("text_size={}\n", self.text_size.token()));
+        let unnamed = match self.show_unnamed {
+            true => "yes",
+            false => "no",
+        };
+        out.push_str(&format!("show_unnamed={unnamed}\n"));
         for line in &self.unknown {
             out.push_str(line);
             out.push('\n');
@@ -194,7 +197,7 @@ impl Settings {
     }
 
     /// Write to the first path whose directory exists. A device that will not
-    /// take the file keeps the setting for this run and says so in the log:
+    /// take the file keeps the setting for this run and logs the refusal:
     /// losing a preference is not worth refusing to draw over.
     pub fn save(&self) {
         for path in SETTINGS_PATHS.iter().map(PathBuf::from) {
@@ -231,10 +234,21 @@ mod tests {
         s.language = Lang::TraditionalChinese;
         s.week_start = WeekStart::Sunday;
         s.text_size = TextSize::Large;
+        s.show_unnamed = false;
         let back = Settings::parse(&s.to_text(), Lang::English);
         assert_eq!(back.language, Lang::TraditionalChinese);
         assert_eq!(back.week_start, WeekStart::Sunday);
         assert_eq!(back.text_size, TextSize::Large);
+        assert!(!back.show_unnamed);
+    }
+
+    #[test]
+    fn the_unnamed_books_are_counted_until_the_page_says_otherwise() {
+        assert!(Settings::new(Lang::English).show_unnamed);
+        // A file written before this build carries no line for it.
+        assert!(Settings::parse("language=e\n", Lang::English).show_unnamed);
+        assert!(!Settings::parse("show_unnamed=no\n", Lang::English).show_unnamed);
+        assert!(Settings::parse("show_unnamed=yes\n", Lang::English).show_unnamed);
     }
 
     #[test]

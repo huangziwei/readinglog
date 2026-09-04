@@ -1,9 +1,6 @@
 //! The settings, as sections of rows: a heading with a rule under it, then one
-//! row per setting with every value beside it.
-//!
-//! Every value is shown at once and each is its own tap target. A control that
-//! cycles hides how many values it has, and there is room here for all of
-//! them. Changes apply on the tap and are written as they are made.
+//! row per setting with every value beside it, each its own tap target.
+//! A change applies on the tap and is written as it is made.
 
 use crate::font::Script;
 use crate::lang::Lang;
@@ -29,8 +26,8 @@ struct Section<'a> {
     rows: Vec<Row<'a>>,
 }
 
-/// The page, built from what is set. Kept apart from the drawing so the shape
-/// of the page can be asserted without a framebuffer.
+/// The page, built from what is set. Kept apart from the drawing: the shape
+/// of the page is asserted without a framebuffer.
 fn sections<'a>(lang: Lang, settings: &Settings) -> Vec<Section<'a>> {
     let s = lang.strings();
     let plain = Script::of_language(lang.language_tag());
@@ -87,6 +84,16 @@ fn sections<'a>(lang: Lang, settings: &Settings) -> Vec<Section<'a>> {
         hit: |i| Hit::TextSize(TextSize::ALL[i.min(TextSize::ALL.len() - 1)]),
     };
 
+    let unnamed = Row {
+        label: s.unnamed_row,
+        options: vec![
+            (s.unnamed_show.to_string(), plain),
+            (s.unnamed_hide.to_string(), plain),
+        ],
+        on: !settings.show_unnamed as usize,
+        hit: |i| Hit::ShowUnnamed(i == 0),
+    };
+
     vec![
         Section {
             heading: s.interface,
@@ -95,6 +102,10 @@ fn sections<'a>(lang: Lang, settings: &Settings) -> Vec<Section<'a>> {
         Section {
             heading: s.the_calendar,
             rows: vec![week],
+        },
+        Section {
+            heading: s.the_record,
+            rows: vec![unnamed],
         },
     ]
 }
@@ -105,7 +116,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, settings: &Settings) {
     let page = sections(cx.lang, settings);
 
     // Every row's chips start at one column, taken from the widest label and
-    // pulled back until the widest run fits — so no row wraps that need not.
+    // pulled back until the widest run fits. No row wraps that need not.
     let labels: Vec<&str> = page
         .iter()
         .flat_map(|s| s.rows.iter().map(|r| r.label))
@@ -125,8 +136,8 @@ pub fn draw(cx: &mut Ctx, area: Rect, settings: &Settings) {
     let mut rest = area;
 
     for section in page {
-        // Laid out once. The same answer sizes the row and places the chips,
-        // so a wrapped option can never fall outside the height it was given.
+        // Laid out once. The same answer sizes the row and places the chips:
+        // a wrapped option never falls outside the height it was given.
         let borrowed: Vec<Vec<(&str, Script)>> = section
             .rows
             .iter()
@@ -144,8 +155,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, settings: &Settings) {
         let heights: Vec<i32> = placed
             .iter()
             .map(|row| {
-                // Plus air, so a row that wrapped does not sit against the
-                // next one's chips.
+                // Plus air: a row that wrapped clears the next one's chips.
                 (row.iter().map(|c| c.bottom()).max().unwrap_or(0) + theme.gap).max(theme.row_h)
             })
             .collect();

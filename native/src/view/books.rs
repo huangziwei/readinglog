@@ -18,9 +18,10 @@ fn row_height(theme: &Theme) -> i32 {
     theme.row_h * 5 / 2
 }
 
-/// The strip under the rows that the page counter sits in.
+/// The strip under the rows that the page counter sits in, with a line under
+/// it for what the record holds beyond the list.
 fn foot_height(theme: &Theme) -> i32 {
-    theme.small_px as i32 * 2
+    theme.small_px as i32 * 7 / 2
 }
 
 /// The width of the figures column: the wider of `figure` and `100%`.
@@ -100,17 +101,12 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
 
     // `foot` takes a tap on either half.
     let (foot, _) = area.split_bottom(foot_height(theme));
+    cx.text.set_px(theme.small_px);
+    let line = cx.text.line_height() as i32;
+    let counted = foot.bottom() - line;
     if from > 0 || to < shelf.len() {
-        cx.text.set_px(theme.small_px);
         let label = format!("{}–{} {} {}", from + 1, to, cx.s().of, shelf.len());
-        let w = cx.text.measure_width(&label) as i32;
-        cx.text.draw(
-            cx.fb,
-            foot.x + (foot.w - w) / 2,
-            foot.bottom(),
-            &label,
-            false,
-        );
+        centred(cx, foot, counted, &label);
         let (left, right) = foot.split_left(foot.w / 2);
         if from > 0 {
             cx.hit(Hit::Prev, left);
@@ -119,6 +115,41 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
             cx.hit(Hit::Next, right);
         }
     }
+    // The record's own count closes the last page of the whole shelf.
+    if to == shelf.len() && state.shelf == Shelf::All {
+        record_line(cx, foot, counted + line);
+    }
+}
+
+/// How many books the record holds, and how many of them no row can name.
+fn record_line(cx: &mut Ctx, foot: Rect, baseline: i32) {
+    let s = cx.s();
+    let unnamed = cx.stats.unnamed_books();
+    if unnamed == 0 {
+        return;
+    }
+    let said = format!(
+        "{} {} · {unnamed} {}",
+        cx.stats.books.len() + unnamed,
+        s.in_the_record,
+        s.unidentified
+    );
+    centred(cx, foot, baseline, &said);
+}
+
+/// `said` centred in `foot`, on `baseline`.
+fn centred(cx: &mut Ctx, foot: Rect, baseline: i32, said: &str) {
+    let script = cx.ui_script();
+    cx.text.set_px(cx.theme.small_px);
+    let w = cx.text.measure_width_in(script, said) as i32;
+    cx.text.draw_in(
+        script,
+        cx.fb,
+        foot.x + (foot.w - w) / 2,
+        baseline,
+        said,
+        false,
+    );
 }
 
 /// The shelves as a chip apiece, the one showing filled, each its own hit box.
