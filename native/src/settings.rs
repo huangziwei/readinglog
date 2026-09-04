@@ -26,9 +26,9 @@ pub enum TextSize {
 impl TextSize {
     pub const ALL: [TextSize; 3] = [TextSize::Small, TextSize::Medium, TextSize::Large];
 
-    /// What it multiplies the body size by. The strip along the bottom does
-    /// not take it — its six cells hold カレンダー at the base size and
-    /// nothing wider, and the chrome stays put while the content scales.
+    /// What it multiplies the body size by. `chrome::tabs` does not take it:
+    /// its five cells are measured at the base size, and the chrome stays put
+    /// while the content scales.
     pub fn scale(self) -> f32 {
         match self {
             TextSize::Small => 0.85,
