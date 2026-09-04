@@ -36,7 +36,6 @@ pub struct App {
 
 impl App {
     pub fn new(stats: Stats, theme: Theme, text: TextRenderer) -> Self {
-        eprintln!("fonts: {}", text.chain_description());
         let (today, now) = date::now();
         let settings = Settings::load(Lang::detect());
         Self {
@@ -53,47 +52,80 @@ impl App {
         }
     }
 
-    /// Draw in `lang`, whatever the device says.
     /// Draw at `size`, whatever is stored.
-    #[cfg(test)]
     pub fn set_text_size(&mut self, size: crate::settings::TextSize) {
         self.settings.text_size = size;
         self.theme = Theme::sized(self.theme.screen.w as u32, self.theme.screen.h as u32, size);
     }
 
-    #[cfg(test)]
+    /// Draw in `lang`, whatever the device says.
     pub fn set_language(&mut self, lang: Lang) {
         self.lang = lang;
         self.settings.language = lang;
     }
 
+    /// Open the week on `start`, whatever is stored.
+    pub fn set_week_start(&mut self, start: crate::settings::WeekStart) {
+        self.settings.week_start = start;
+    }
+
+    /// Draw as though the device's clock read `now` seconds into `today`.
+    pub fn set_clock(&mut self, today: i64, now: i64) {
+        self.today = today;
+        self.now = now;
+        self.state.day = today;
+    }
+
     /// Set `state.tab` and `state.book`.
-    #[cfg(test)]
     pub fn show(&mut self, tab: Tab, book: Option<usize>) {
         self.state.tab = tab;
         self.state.book = book;
     }
 
     /// Draw Rhythm at `span`, whatever it was left on.
-    #[cfg(test)]
     pub fn set_span(&mut self, span: crate::view::Span) {
         self.state.span = span;
         self.state.picked = false;
     }
 
     /// Draw Rhythm with `day` picked off the grid.
-    #[cfg(test)]
     pub fn open_day(&mut self, day: i64) {
         self.state.day = day;
         self.state.picked = true;
     }
 
+    /// Where the reader has navigated to.
+    pub fn state(&self) -> &State {
+        &self.state
+    }
+
     /// Draw the whole screen and present it.
     pub fn draw(&mut self, fb: &mut Framebuffer) -> Result<()> {
+        let settings = self.settings.clone();
+        let state = self.state.clone();
+        self.frame(fb, &mut |cx, area| match state.book {
+            Some(index) => view::book::draw(cx, area, index),
+            None => match state.tab {
+                Tab::Config => view::config::draw(cx, area, &settings),
+                Tab::Home => view::home::draw(cx, area),
+                Tab::Rhythm => view::rhythm::draw(cx, area, &state),
+                Tab::Books => view::books::draw(cx, area, &state),
+            },
+        })
+    }
+
+    /// `body` in the content box, under the tab strip, presented in one update.
+    ///
+    /// [`App::draw`] fills it with the screen `state` names. A caller with a
+    /// screen of its own draws that instead, in the frame the device gives it.
+    pub fn frame(
+        &mut self,
+        fb: &mut Framebuffer,
+        body: &mut dyn FnMut(&mut Ctx, crate::ui::paint::Rect),
+    ) -> Result<()> {
         chrome::clear(fb, &self.theme);
         let area = chrome::content_box(&self.theme);
 
-        let settings = self.settings.clone();
         let mut cx = Ctx {
             fb,
             text: &mut self.text,
@@ -106,15 +138,7 @@ impl App {
             now: self.now,
             hits: Vec::new(),
         };
-        match self.state.book {
-            Some(index) => view::book::draw(&mut cx, area, index),
-            None => match self.state.tab {
-                Tab::Config => view::config::draw(&mut cx, area, &settings),
-                Tab::Home => view::home::draw(&mut cx, area),
-                Tab::Rhythm => view::rhythm::draw(&mut cx, area, &self.state),
-                Tab::Books => view::books::draw(&mut cx, area, &self.state),
-            },
-        }
+        body(&mut cx, area);
         self.hits = std::mem::take(&mut cx.hits);
         let (exit, tabs) = chrome::tabs(fb, &mut self.text, &self.theme, self.lang, self.state.tab);
         self.hits.push((Hit::Exit, exit));
@@ -138,7 +162,7 @@ impl App {
         self.draw(fb)?;
         let mut down: Option<(u32, u32)> = None;
         loop {
-            match input.next()? {
+            match input.event()? {
                 InputEvent::Touch(TouchEvent::Down { x, y }) => down = Some((x, y)),
                 InputEvent::Touch(TouchEvent::Up { x, y }) => {
                     let from = down.take();

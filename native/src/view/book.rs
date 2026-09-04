@@ -192,14 +192,7 @@ fn figures(cx: &mut Ctx, words: Rect, book: &BookStat) {
     ];
     let height = chrome::figure_height(cx.text, theme);
     let row = Rect::new(words.x, words.bottom() - height, words.w, height);
-    let widths: Vec<i32> = stated
-        .iter()
-        .map(|(value, label)| chrome::figure_width(cx.text, theme, value, label))
-        .collect();
-    let cells = row.spread(&widths, theme.gap * 2);
-    for (cell, (value, label)) in cells.into_iter().zip(&stated) {
-        chrome::figure(cx.fb, cx.text, theme, cell, value, label);
-    }
+    chrome::figures(cx.fb, cx.text, theme, row, &stated);
 }
 
 /// Whether the catalog names this book on the device.

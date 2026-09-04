@@ -1,6 +1,6 @@
 # Reading Log
 
-Keep tracks of reading for jailbroken kindles.
+Keep track of your reading, for jailbroken kindles. 
 
 ## Build
 
@@ -15,8 +15,8 @@ Download and unzip the latest `readinglog-v<x.y.z>-kindle.zip` from the [release
 
 | from | to | notes |
 |:--|:--|:-- |
-| `extensions/readinglog/` | `/mnt/us/extensions/readinglog/` | or anywhere you store your extensions |
-| `documents/ReadingLog.sh` | `/mnt/us/documents/ReadingLog.sh` | or anywhere you store your scriptlets |
+| `extensions/readinglog/` | `/mnt/us/extensions/readinglog/` | it has to be here |
+| `documents/ReadingLog.sh` | `/mnt/us/documents/ReadingLog.sh` | or any subfolders within `documents`  |
 
  ## Screenshots
 

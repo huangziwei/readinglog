@@ -49,15 +49,7 @@ pub fn draw(cx: &mut Ctx, area: Rect) {
         (turns.to_string(), s.pages_turned),
         (cx.stats.current_streak.to_string(), s.current_streak),
     ];
-    // `spread` sizes each figure to its own width across `top`.
-    let widths: Vec<i32> = stated
-        .iter()
-        .map(|(value, label)| chrome::figure_width(cx.text, theme, value, label))
-        .collect();
-    let cells = top.spread(&widths, theme.gap * 2);
-    for (cell, (value, label)) in cells.into_iter().zip(&stated) {
-        chrome::figure(cx.fb, cx.text, theme, cell, value, label);
-    }
+    chrome::figures(cx.fb, cx.text, theme, top, &stated);
 
     let inner = chrome::section(
         cx.fb,

@@ -31,3 +31,9 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 # X11 client over the socket. NO `allow-unsafe-code`: it links the system
 # libxcb and breaks the static musl link.
 x11rb = { version = "0.13", default-features = false }
+
+# Draws every screen to a PNG on the host. Off the device build: build.sh names
+# the binary it cross-compiles.
+[[bin]]
+name = "preview"
+path = "src/bin/preview/main.rs"

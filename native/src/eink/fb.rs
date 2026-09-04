@@ -78,7 +78,9 @@ pub struct Var {
     pub yres: u32,
 }
 
-pub struct Framebuffer {
+/// The window a [`Framebuffer`] presents through, and the wire format the
+/// server takes it in.
+struct Surface {
     conn: RustConnection,
     win: Window,
     gc: Gcontext,
@@ -89,11 +91,18 @@ pub struct Framebuffer {
     /// R, G, B offsets within a `bytes_per_pixel`-wide wire pixel. Depth-24
     /// little-endian BGRX is `[2, 1, 0]`. Unused on depth-8.
     chan: [usize; 3],
+    /// Per-`PutImage` byte budget (server max request length minus header slack).
+    max_req_bytes: usize,
+}
+
+pub struct Framebuffer {
+    /// Where a frame is presented. `None` on a surface opened by
+    /// [`Framebuffer::offscreen`], which is read through
+    /// [`Framebuffer::capture_png`] instead.
+    surface: Option<Surface>,
     pub var: Var,
     /// Packed RGB ([`CH`] bytes/pixel), stride `xres * CH`. Every draw writes here.
     backing: Vec<u8>,
-    /// Per-`PutImage` byte budget (server max request length minus header slack).
-    max_req_bytes: usize,
 }
 
 impl Framebuffer {
@@ -206,16 +215,31 @@ impl Framebuffer {
         let backing = vec![0xFFu8; xres as usize * yres as usize * CH];
 
         Ok(Self {
-            conn,
-            win,
-            gc,
-            depth,
-            bytes_per_pixel,
-            chan,
+            surface: Some(Surface {
+                conn,
+                win,
+                gc,
+                depth,
+                bytes_per_pixel,
+                chan,
+                max_req_bytes,
+            }),
             var: Var { xres, yres },
             backing,
-            max_req_bytes,
         })
+    }
+
+    /// A white `xres` by `yres` surface with no server behind it.
+    ///
+    /// Everything draws into it the way it draws into a window, and
+    /// [`Framebuffer::capture_png`] takes the frame off it.
+    /// [`Framebuffer::send_update`] presents nothing.
+    pub fn offscreen(xres: u32, yres: u32) -> Self {
+        Self {
+            surface: None,
+            var: Var { xres, yres },
+            backing: vec![0xFFu8; xres as usize * yres as usize * CH],
+        }
     }
 
     /// A gray pixel (0=black, 255=white) stored as `(v,v,v)`. Out-of-range no-ops.
@@ -233,6 +257,33 @@ impl Framebuffer {
         let idx = (y as usize * self.var.xres as usize + x as usize) * CH;
         if idx + CH <= self.backing.len() {
             self.backing[idx..idx + CH].copy_from_slice(&rgb);
+        }
+    }
+
+    /// `pixels`, `width` wide in packed RGB, with its top left at `(x, y)`.
+    ///
+    /// A row at a time, clipped to the surface.
+    pub fn blit_rgb(&mut self, x: i32, y: i32, width: u32, pixels: &[u8]) {
+        let stride = self.var.xres as usize * CH;
+        let src_stride = width as usize * CH;
+        if src_stride == 0 {
+            return;
+        }
+        for (row, line) in pixels.chunks_exact(src_stride).enumerate() {
+            let at_y = y + row as i32;
+            if at_y < 0 || at_y >= self.var.yres as i32 {
+                continue;
+            }
+            // `from` and `till` clip the run to the surface's own columns.
+            let from = x.max(0);
+            let till = (x + width as i32).min(self.var.xres as i32);
+            if till <= from {
+                continue;
+            }
+            let head = (from - x) as usize * CH;
+            let take = (till - from) as usize * CH;
+            let at = at_y as usize * stride + from as usize * CH;
+            self.backing[at..at + take].copy_from_slice(&line[head..head + take]);
         }
     }
 
@@ -277,8 +328,11 @@ impl Framebuffer {
     /// Drains the X event queue, returning whether the server asked for a redraw.
     /// `EXPOSURE` events and `put_image` errors both arrive here.
     pub fn pump_events(&mut self) -> bool {
+        let Some(surface) = self.surface.as_mut() else {
+            return false;
+        };
         let mut needs_repaint = false;
-        while let Ok(Some(event)) = self.conn.poll_for_event() {
+        while let Ok(Some(event)) = surface.conn.poll_for_event() {
             match event {
                 Event::Expose(_) => needs_repaint = true,
                 Event::Error(e) => {
@@ -295,15 +349,18 @@ impl Framebuffer {
     /// Presents the rows of `rect`, converting the backing to the wire pixel
     /// format per band. `waveform` is ignored.
     pub fn send_update(&mut self, rect: MxcfbRect, _waveform: u32) -> Result<u32> {
-        let bpp = self.bytes_per_pixel;
+        let Some(surface) = self.surface.as_mut() else {
+            return Ok(0);
+        };
+        let bpp = surface.bytes_per_pixel;
         let xres = self.var.xres as usize;
         let bk_stride = xres * CH; // backing bytes per scanline (RGB)
         let wire_stride = xres * bpp; // wire bytes per scanline
         let width = self.var.xres as u16;
         let top = rect.top.min(self.var.yres);
         let bottom = rect.top.saturating_add(rect.height).min(self.var.yres);
-        let max_rows = (self.max_req_bytes.saturating_sub(64) / wire_stride.max(1)).max(1);
-        let [rb, gb, bb] = self.chan;
+        let max_rows = (surface.max_req_bytes.saturating_sub(64) / wire_stride.max(1)).max(1);
+        let [rb, gb, bb] = surface.chan;
 
         // Reused across bands. Pad bytes stay at the 0xFF fill.
         let mut wire: Vec<u8> = Vec::new();
@@ -334,17 +391,18 @@ impl Framebuffer {
                 }
             }
 
-            self.conn
+            surface
+                .conn
                 .put_image(
                     ImageFormat::Z_PIXMAP,
-                    self.win,
-                    self.gc,
+                    surface.win,
+                    surface.gc,
                     width,
                     h as u16,
                     0,
                     y as i16,
                     0,
-                    self.depth,
+                    surface.depth,
                     &wire,
                 )
                 .context("put_image")?;
@@ -352,7 +410,8 @@ impl Framebuffer {
         }
         // A round-trip, past `flush`: the reply marks the batch processed and
         // delivers any error it raised.
-        self.conn
+        surface
+            .conn
             .get_input_focus()
             .context("sync round-trip")?
             .reply()
@@ -386,7 +445,10 @@ impl Framebuffer {
 impl Drop for Framebuffer {
     fn drop(&mut self) {
         // The WM recomposites the screen under a destroyed window.
-        let _ = self.conn.destroy_window(self.win);
-        let _ = self.conn.flush();
+        let Some(surface) = &self.surface else {
+            return;
+        };
+        let _ = surface.conn.destroy_window(surface.win);
+        let _ = surface.conn.flush();
     }
 }

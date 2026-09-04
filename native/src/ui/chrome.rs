@@ -144,24 +144,26 @@ pub fn figure_height(text: &mut TextRenderer, theme: &Theme) -> i32 {
     value + theme.gap + text.line_height() as i32
 }
 
-/// The width [`figure`] needs: the wider of the number and the name under it.
-pub fn figure_width(text: &mut TextRenderer, theme: &Theme, value: &str, label: &str) -> i32 {
-    text.set_px(theme.display_px);
+/// The width a figure set at `px` needs: the wider of the number and the name
+/// under it.
+fn figure_width(text: &mut TextRenderer, theme: &Theme, value: &str, label: &str, px: f32) -> i32 {
+    text.set_px(px);
     let value = text.measure_width(value) as i32;
     text.set_px(theme.small_px);
     value.max(text.measure_width(label) as i32)
 }
 
-/// A figure with its name under it.
-pub fn figure(
+/// A figure at `px` with its name under it.
+fn figure(
     fb: &mut Framebuffer,
     text: &mut TextRenderer,
     theme: &Theme,
     area: Rect,
     value: &str,
     label: &str,
+    px: f32,
 ) {
-    text.set_px(theme.display_px);
+    text.set_px(px);
     let w = text.measure_width(value) as i32;
     let top = area.y + text.cap_height() as i32;
     text.draw(fb, area.x + (area.w - w) / 2, top, value, false);
@@ -175,6 +177,53 @@ pub fn figure(
         label,
         false,
     );
+}
+
+/// `stated` spread across `row`, the first flush left and the last flush right.
+///
+/// The set is drawn at [`Theme::display_px`] where it fits `row` at that size,
+/// and at the largest size down to [`Theme::body_px`] that does where it does
+/// not: a book of a hundred hours states its total in full.
+pub fn figures(
+    fb: &mut Framebuffer,
+    text: &mut TextRenderer,
+    theme: &Theme,
+    row: Rect,
+    stated: &[(String, &str)],
+) {
+    let air = theme.gap * 2;
+    let between = air * (stated.len() as i32 - 1).max(0);
+    let measure = |text: &mut TextRenderer, px: f32| -> Vec<i32> {
+        stated
+            .iter()
+            .map(|(value, label)| figure_width(text, theme, value, label, px))
+            .collect()
+    };
+    let px = figures_px(theme.display_px, theme.body_px, row.w, |px| {
+        measure(text, px).iter().sum::<i32>() + between
+    });
+    let widths = measure(text, px);
+    for (cell, (value, label)) in row.spread(&widths, air).into_iter().zip(stated) {
+        figure(fb, text, theme, cell, value, label, px);
+    }
+}
+
+/// The size a row of figures is set at: `display` where the set fits `room`,
+/// else the largest size down to `floor` that does.
+///
+/// `needed` states the width the set takes at a size.
+fn figures_px(display: f32, floor: f32, room: i32, mut needed: impl FnMut(f32) -> i32) -> f32 {
+    let mut px = display;
+    let mut takes = needed(px);
+    while px > floor && takes > room {
+        // A width is near enough proportional to `px` to land in one step; the
+        // pixel taken off it settles the rounding.
+        px = (px * room as f32 / takes.max(1) as f32)
+            .min(px - 1.0)
+            .max(floor);
+        takes = needed(px);
+    }
+    px
 }
 
 /// One line of a key and its value, the value set hard against the right.
@@ -425,5 +474,20 @@ mod tests {
                 "{chip:?} runs past the row"
             );
         }
+    }
+
+    #[test]
+    fn a_row_of_figures_comes_down_to_the_size_that_fits_it() {
+        // A set as wide as nine ems, which is what three headline figures run
+        // to on a book of a hundred hours.
+        let needed = |px: f32| (px * 9.0) as i32;
+        assert_eq!(figures_px(99.0, 38.0, 900, needed), 99.0);
+
+        let px = figures_px(99.0, 38.0, 450, needed);
+        assert!(needed(px) <= 450, "{px}px still takes {}", needed(px));
+        assert!(px > 38.0, "{px}px gives up more than it has to");
+
+        // A row too narrow at any size stops at the floor.
+        assert_eq!(figures_px(99.0, 38.0, 10, needed), 38.0);
     }
 }

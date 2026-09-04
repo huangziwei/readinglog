@@ -50,11 +50,11 @@ impl Input {
     /// Block until the next event from either device (see
     /// [`Self::next_deadline`]); the everyday call, with only the idle
     /// [`TICK_MS`] wake and no arm deadline.
-    pub fn next(&mut self) -> Result<InputEvent> {
+    pub fn event(&mut self) -> Result<InputEvent> {
         self.next_deadline(None)
     }
 
-    /// [`Self::next`] with an [`InputEvent::Tick`] at `deadline`, past a busy
+    /// [`Self::event`] with an [`InputEvent::Tick`] at `deadline`, past a busy
     /// touch fd: the timeout is the remaining time to the absolute `deadline`,
     /// recomputed each iteration. `None` gives a plain [`TICK_MS`] idle tick.
     pub fn next_deadline(&mut self, deadline: Option<Instant>) -> Result<InputEvent> {

@@ -7,3 +7,5 @@
 # would drop bin/readinglog.sh from the release zip.
 /device/extensions/readinglog/bin/readinglog
 .github/assets/calendar.png
+# Written by hand: the host path READINGLOG_FONTS takes.
+/preview.env

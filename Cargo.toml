@@ -9,6 +9,12 @@ license = "GPL-3.0-or-later"
 [profile.dev]
 incremental = true
 
+# `preview` rasterizes glyphs and encodes whole panels every run. The crates
+# doing that work are built once at 3; this crate is rebuilt on every edit and
+# stays at the default, which is the shorter half of an edit-to-picture turn.
+[profile.dev.package."*"]
+opt-level = 3
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

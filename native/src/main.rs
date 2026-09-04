@@ -5,35 +5,18 @@
 //!
 //! `Framebuffer::open` and `Buttons::open` come before `collect`.
 
-mod app;
-mod catalog;
-mod covers;
-mod date;
-mod eink;
-mod font;
-mod lang;
-mod log;
-mod orientation;
-#[cfg(test)]
-mod preview;
-mod settings;
-mod stats;
-mod store;
-mod ui;
-mod view;
-mod wrap;
-
 use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use eink::buttons::Buttons;
-use eink::fb::Framebuffer;
-use eink::input::Input;
-use eink::touch::Touch;
-use orientation::Orientation;
-use stats::Stats;
-use store::Store;
+use readinglog_native::eink::buttons::Buttons;
+use readinglog_native::eink::fb::Framebuffer;
+use readinglog_native::eink::input::Input;
+use readinglog_native::eink::touch::Touch;
+use readinglog_native::orientation::Orientation;
+use readinglog_native::stats::Stats;
+use readinglog_native::store::Store;
+use readinglog_native::{app, catalog, date, lang, store, ui};
 
 fn main() {
     let mode = std::env::args().nth(1).unwrap_or_default();
@@ -143,6 +126,7 @@ fn show() -> Result<()> {
     let mut store = Store::load(dir);
     let theme = ui::theme::Theme::for_screen(fb.var.xres, fb.var.yres);
     let mut text = ui::text::TextRenderer::load(theme.body_px)?;
+    eprintln!("fonts: {}", text.chain_description());
     // The splash draws before `App`, so it detects for itself.
     let splash_lang = lang::Lang::detect();
     let note = ui::splash::note(&store.mark, splash_lang.strings());
