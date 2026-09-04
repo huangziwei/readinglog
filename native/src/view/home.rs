@@ -17,7 +17,7 @@ const FIGURE_AIR: (i32, i32) = (1, 2);
 /// The three bands `draw` fills, top to bottom. `top` takes `figures` and
 /// `strip` takes `head` plus `STRIP_ROWS`, each with its air; `list` takes
 /// what is left.
-fn bands(area: Rect, theme: &Theme, figures: i32, head: i32) -> [Rect; 3] {
+pub(super) fn bands(area: Rect, theme: &Theme, figures: i32, head: i32) -> [Rect; 3] {
     let air = theme.gap * 2;
     let (over, under) = (
         theme.row_h * FIGURE_AIR.0 / 2,

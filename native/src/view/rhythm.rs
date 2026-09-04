@@ -8,7 +8,7 @@ use crate::settings::WeekStart;
 use crate::ui::paint::{self, BAR_RGB, INK, LIGHT, MARK_RGB, PALE, Rect, WHITE};
 use crate::ui::{charts, chrome, theme::Theme};
 
-use super::{Ctx, Hit, Span, State, alltime, daybooks};
+use super::{Ctx, Hit, Span, State, alltime, daybooks, home};
 
 /// Books a day of a month names, the rest counted in `+n`.
 const LANES: usize = 4;
@@ -89,7 +89,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
     let (bar, rest) = area.split_top(bar_height(theme) + theme.gap * 2);
     picker(cx, Rect::new(bar.x, bar.y, bar.w, bar_height(theme)), state);
     match state.picked {
-        true => day_page(cx, rest, state.day),
+        true => day_page(cx, rest, state),
         false => alltime::draw(cx, rest),
     }
 }
@@ -131,39 +131,48 @@ fn span_page(cx: &mut Ctx, area: Rect, state: &State) {
     }
 }
 
-/// One day in full: its name between the arrows that step it, its timeline,
-/// and every book read on it.
-fn day_page(cx: &mut Ctx, area: Rect, day: i64) {
+/// One day in full on `home::bands`: its figures, its timeline under the day
+/// it fell on, and the books read on it. A day of more books than the list
+/// holds pages them from its heading.
+fn day_page(cx: &mut Ctx, area: Rect, state: &State) {
     let theme: &Theme = cx.theme;
     let s = cx.s();
-    let air = theme.gap * 2;
-    let title = format!(
-        "{} · {}",
-        date::long_day(day, s),
-        date::duration(cx.stats.day_seconds(day), s)
-    );
-    let (nav, rest) = area.split_top(bar_height(theme) + air);
-    span_nav(
-        cx,
-        Rect::new(nav.x, nav.y, nav.w, bar_height(theme)),
-        &title,
-    );
+    let day = state.day;
+    let figures = chrome::figure_height(cx.text, theme);
+    let head = chrome::section_height(cx.text, theme);
+    let [top, strip, list] = home::bands(area, theme, figures, head);
 
-    let (strip, list) = rest.split_top(theme.row_h + air);
+    let turns: i64 = cx.stats.sittings_on(day).map(|s| s.page_turns).sum();
+    let longest = cx
+        .stats
+        .sittings_on(day)
+        .map(|s| s.seconds)
+        .max()
+        .unwrap_or(0);
+    let stated = [
+        (date::duration(cx.stats.day_seconds(day), s), s.total_read),
+        (turns.to_string(), s.pages_turned),
+        (date::duration(longest, s), s.longest_sitting),
+    ];
+    chrome::figures(cx.fb, cx.text, theme, top, &stated);
+
+    let named = date::long_day(day, s).to_uppercase();
+    let inner = chrome::section(cx.fb, cx.text, theme, strip, &named);
     let spans = cx.stats.day_blocks(day);
     let now = (day == cx.today).then_some(cx.now);
-    charts::timeline(
-        cx.fb,
-        cx.text,
-        theme,
-        Rect::new(strip.x, strip.y, strip.w, theme.row_h),
-        &spans,
-        now,
-    );
+    charts::timeline(cx.fb, cx.text, theme, inner, &spans, now);
 
+    // `bar` is the strip `section` sets its title in, taken before the call.
+    let bar = Rect::new(list.x, list.y, list.w, head);
+    let inner = chrome::section(cx.fb, cx.text, theme, list, s.what_was_read);
     let read = cx.stats.book_totals(day..=day);
-    let shown = daybooks::fits(theme, list.h, read.len());
-    daybooks::draw(cx, list, day, &read[..shown]);
+    let deep = daybooks::fits(theme, inner.h, read.len());
+    let from = state.list_from.min(read.len().saturating_sub(deep));
+    let to = (from + deep).min(read.len());
+    if read.len() > deep {
+        pager(cx, bar, from, to, read.len(), deep);
+    }
+    daybooks::draw(cx, inner, day, &read[from..to]);
 }
 
 /// The four spans as a segmented control, each its own hit box. A day open
@@ -542,30 +551,11 @@ fn book_list(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeInclu
 
     // `from` holds at the last page of the list.
     let deep = ((inner.h / theme.row_h).max(1) as usize).min(totals.len());
-    let last = totals.len().saturating_sub(deep);
-    let from = state.list_from.min(last);
-    let page = &totals[from..(from + deep).min(totals.len())];
+    let from = state.list_from.min(totals.len().saturating_sub(deep));
+    let to = (from + deep).min(totals.len());
+    let page = &totals[from..to];
     if totals.len() > deep {
-        let of = format!(
-            "{}–{} {} {}",
-            from + 1,
-            from + page.len(),
-            s.of,
-            totals.len()
-        );
-        heading_chips(
-            cx,
-            head,
-            [
-                ("‹", Hit::ListPage(-(deep as i64)), false),
-                ("›", Hit::ListPage(deep as i64), false),
-            ],
-        );
-        cx.text.set_px(theme.small_px);
-        let w = cx.text.measure_width(&of) as i32;
-        let baseline = head.y + cx.text.cap_height() as i32;
-        let at = head.right() - w - theme.row_h * 3 / 2;
-        cx.text.draw(cx.fb, at, baseline, &of, false);
+        pager(cx, head, from, to, totals.len(), deep);
     }
 
     let rows: Vec<(Script, String, i64)> = page
@@ -586,6 +576,28 @@ fn book_list(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeInclu
         let row = Rect::new(inner.x, inner.y + slot as i32 * each, inner.w, each);
         cx.hit(Hit::Book(*book), row);
     }
+}
+
+/// `from`–`to` of `count` at the right of the heading the list is under,
+/// beside the chips that step it by `deep`. Each chip carries the index it
+/// opens the list at, held inside the list.
+fn pager(cx: &mut Ctx, head: Rect, from: usize, to: usize, count: usize, deep: usize) {
+    let theme: &Theme = cx.theme;
+    let last = count.saturating_sub(deep);
+    heading_chips(
+        cx,
+        head,
+        [
+            ("‹", Hit::ListPage(from.saturating_sub(deep)), false),
+            ("›", Hit::ListPage((from + deep).min(last)), false),
+        ],
+    );
+    let of = format!("{}–{to} {} {count}", from + 1, cx.s().of);
+    cx.text.set_px(theme.small_px);
+    let w = cx.text.measure_width(&of) as i32;
+    let baseline = head.y + cx.text.cap_height() as i32;
+    let at = head.right() - w - theme.row_h * 3 / 2;
+    cx.text.draw(cx.fb, at, baseline, &of, false);
 }
 
 /// A pair of chips at the right of a heading, the one in use filled.
@@ -920,16 +932,48 @@ mod tests {
         }
     }
 
+    /// A stand-in for `chrome::figure_height`.
+    const FIGURES: i32 = 90;
+
+    /// The list `day_page` draws the day's books into, on a `w` by `h` panel.
+    fn day_list(w: i32, h: i32) -> (Theme, Rect) {
+        let (theme, area) = page(w, h);
+        let (_, rest) = area.split_top(bar_height(&theme) + theme.gap * 2);
+        let [_, _, list] = home::bands(rest, &theme, FIGURES, HEAD);
+        (
+            theme,
+            Rect::new(list.x, list.y + HEAD, list.w, list.h - HEAD),
+        )
+    }
+
     #[test]
-    fn a_day_page_holds_the_timeline_and_more_than_one_book() {
+    fn a_day_page_holds_more_than_one_book_under_its_timeline() {
         for (w, h) in PANELS {
-            let (theme, area) = page(w, h);
-            let air = theme.gap * 2;
-            let (_, rest) = area.split_top(bar_height(&theme) + air);
-            let (_, rest) = rest.split_top(bar_height(&theme) + air);
-            let (_, list) = rest.split_top(theme.row_h + air);
+            let (theme, list) = day_list(w, h);
             let shown = daybooks::fits(&theme, list.h, 9);
-            assert!(shown >= 3, "{w}x{h}: room for {shown} books");
+            assert!(shown >= 2, "{w}x{h}: room for {shown} books");
+        }
+    }
+
+    #[test]
+    fn paging_a_day_reaches_every_book_and_ends_on_a_full_page() {
+        const BOOKS: usize = 9;
+        for (w, h) in PANELS {
+            let (theme, list) = day_list(w, h);
+            let deep = daybooks::fits(&theme, list.h, BOOKS);
+            let last = BOOKS - deep;
+
+            let (mut from, mut seen) = (0usize, 0usize);
+            loop {
+                seen = seen.max((from + deep).min(BOOKS));
+                let next = (from + deep).min(last);
+                if next == from {
+                    break;
+                }
+                from = next;
+            }
+            assert_eq!(seen, BOOKS, "{w}x{h}: {seen} of {BOOKS} books reached");
+            assert_eq!(from, last, "{w}x{h}: the last page is a short one");
         }
     }
 

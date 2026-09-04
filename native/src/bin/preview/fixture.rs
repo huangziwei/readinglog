@@ -243,6 +243,31 @@ fn sitting(day: i64, at: i64, secs: i64, extent: i64, measure: Measure) -> Sessi
     }
 }
 
+/// Days back from the last day drawn that the binge falls on.
+const BINGE_DAY: i64 = 40;
+
+/// Books read on the binge day, one to an hour from [`BINGE_OPENS`].
+const BINGE_BOOKS: usize = 9;
+const BINGE_OPENS: i64 = 8;
+
+/// One day of [`BINGE_BOOKS`] short sittings, in place of whatever the
+/// generator left on it: a list of more books than a page holds. Every sitting
+/// stays under half an hour, under both records the board states.
+fn binge(store: &mut Store, last: i64) {
+    let day = last - BINGE_DAY;
+    store
+        .sessions
+        .retain(|s| date::parse_day(date::day_of(&s.started_at)) != Some(day));
+    for slot in 0..BINGE_BOOKS {
+        let at = (BINGE_OPENS + slot as i64) * 3600 + 600;
+        let secs = 60 * (18 + (slot as i64 * 7) % 9);
+        let extent = store.books[slot].extent;
+        store
+            .sessions
+            .push(sitting(day, at, secs, extent, Measure::Counted));
+    }
+}
+
 /// The shelf, and [`DAYS`] of reading over it ending on `last`.
 pub fn library(last: i64, art: &Path) -> Store {
     let mut store = Store::default();
@@ -309,6 +334,7 @@ pub fn library(last: i64, art: &Path) -> Store {
             store.sessions.push(sitting(day, at, secs, extent, measure));
         }
     }
+    binge(&mut store, last);
     store
         .sessions
         .sort_by(|a, b| a.started_at.cmp(&b.started_at));
@@ -328,4 +354,9 @@ pub fn thinned(last: i64, art: &Path, keep: usize) -> Store {
         seen <= keep
     });
     store
+}
+
+/// The day [`library`] lays the binge on, for a run ending on `last`.
+pub fn binge_day(last: i64) -> i64 {
+    last - BINGE_DAY
 }

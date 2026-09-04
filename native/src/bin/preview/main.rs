@@ -247,10 +247,20 @@ fn set_span(app: &mut App, shot: &Shot) -> Result<()> {
         "month" => app.set_span(Span::Month),
         "year" => app.set_span(Span::Year),
         "day" => app.open_day(app.state().day),
+        "busy" => busy(app, 0),
+        "busy2" => busy(app, 3),
         // `today:quiet`, `today:empty` and `book:3` name no span.
         _ => {}
     }
     Ok(())
+}
+
+/// The fixture's fullest day, its book list opened at `from`: how a day of
+/// more books than the page holds reads.
+fn busy(app: &mut App, from: usize) {
+    let day = fixture::binge_day(app.state().day);
+    app.open_day(day);
+    app.open_list(from);
 }
 
 /// The part of a filename naming the panel, where the run draws more than one.
@@ -289,7 +299,7 @@ fn list() {
     println!("screens:");
     for (name, _) in SCREENS {
         let of = match *name {
-            "rhythm" => "  (:all :week :month :year :day)",
+            "rhythm" => "  (:all :week :month :year :day :busy :busy2)",
             "today" => "  (:quiet :empty)",
             "book" => "  (:<index>)",
             "books" => "  (:finished)",

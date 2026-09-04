@@ -41,8 +41,9 @@ pub enum Hit {
     Span(Span),
     /// The average day over every span of its width, or over the one showing.
     Average(bool),
-    /// A page of the book list, forward or back.
-    ListPage(i64),
+    /// Where a book list opens, as an index into it. The screen drawing the
+    /// list holds the index inside the list: a step past either end is no step.
+    ListPage(usize),
     /// The books tab, narrowed to one shelf.
     Shelved(Shelf),
 }

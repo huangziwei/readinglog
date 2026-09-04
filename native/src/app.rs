@@ -100,6 +100,12 @@ impl App {
         self.state.picked = true;
     }
 
+    /// Open a book list at `from`, held inside the list by the screen drawing
+    /// it.
+    pub fn open_list(&mut self, from: usize) {
+        self.state.list_from = from;
+    }
+
     /// Where the reader has navigated to.
     pub fn state(&self) -> &State {
         &self.state
@@ -271,12 +277,11 @@ impl App {
                 self.state.book = None;
                 self.state.books_from = 0;
             }
-            Hit::ListPage(by) => {
-                let at = self.state.list_from as i64 + by;
-                if at < 0 {
+            Hit::ListPage(at) => {
+                if at == self.state.list_from {
                     return Action::Nothing;
                 }
-                self.state.list_from = at as usize;
+                self.state.list_from = at;
             }
             Hit::Span(span) => {
                 if self.state.span == span && !self.state.picked {
