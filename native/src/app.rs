@@ -147,6 +147,11 @@ impl App {
         self.state.books_from = from;
     }
 
+    /// Where every touchable thing was on the frame last drawn.
+    pub fn hits(&self) -> &[(Hit, crate::ui::paint::Rect)] {
+        &self.hits
+    }
+
     /// The tab, day, span and open book the screens are drawn at.
     pub fn state(&self) -> &State {
         &self.state

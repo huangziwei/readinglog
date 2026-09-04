@@ -18,6 +18,7 @@ use readinglog_native::settings::{TextSize, WeekStart};
 use readinglog_native::stats::Stats;
 use readinglog_native::store::Store;
 use readinglog_native::ui::chrome::Tab;
+use readinglog_native::ui::paint;
 use readinglog_native::ui::text::TextRenderer;
 use readinglog_native::ui::theme::Theme;
 use readinglog_native::view::{Shelf, Span};
@@ -96,6 +97,10 @@ struct Opts {
     sheet: Option<String>,
     scale: u32,
     crop: Option<sheet::Crop>,
+    /// Whether every hit box is outlined over the frame. A tap target is
+    /// invisible in a render, and a screen that looks right can still take a
+    /// tap where it should take none.
+    hits: bool,
     /// Whether a total counts the sittings no record names.
     unnamed: bool,
 }
@@ -115,6 +120,7 @@ impl Default for Opts {
             sheet: None,
             scale: 40,
             crop: None,
+            hits: false,
             unnamed: true,
         }
     }
@@ -153,6 +159,9 @@ fn run() -> Result<()> {
                     let mut fb = Framebuffer::offscreen(w, h);
                     let mut app = open(store, &opts, w, h, lang, size)?;
                     draw(&mut app, &mut fb, shot)?;
+                    if opts.hits {
+                        outline_hits(&app, &mut fb);
+                    }
                     let path = opts.out.join(format!(
                         "{}{}{}{}.png",
                         shot.label(),
@@ -270,6 +279,13 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot) -> Result<()> {
     app.draw(fb)
 }
 
+/// Every hit box the frame recorded, outlined over it.
+fn outline_hits(app: &App, fb: &mut Framebuffer) {
+    for (_, area) in app.hits() {
+        paint::stroke(fb, *area, paint::INK, 2);
+    }
+}
+
 /// Rhythm's zoom, where the shot names one.
 fn set_span(app: &mut App, shot: &Shot) -> Result<()> {
     let Some(of) = shot.of.as_deref() else {
@@ -285,11 +301,16 @@ fn set_span(app: &mut App, shot: &Shot) -> Result<()> {
         "last" => app.open_books(usize::MAX),
         "week" => app.set_span(Span::Week),
         // A span stepped off the one holding today, where the way back to it
-        // is drawn.
-        "back" => {
-            app.set_span(Span::Year);
+        // is drawn. The week is the tightest of them: its name is the longest
+        // and the chip stands beside it.
+        "back" | "weekback" => {
+            let span = match of {
+                "weekback" => Span::Week,
+                _ => Span::Year,
+            };
+            app.set_span(span);
             let day = app.state().day;
-            app.set_day(Span::Year.step(day, -1));
+            app.set_day(span.step(day, -1));
         }
         "month" => app.set_span(Span::Month),
         "year" => app.set_span(Span::Year),
@@ -299,6 +320,12 @@ fn set_span(app: &mut App, shot: &Shot) -> Result<()> {
         "picked" => {
             app.set_span(Span::Year);
             app.open_day(app.state().day);
+        }
+        // The binge day picked off the year's heatmap: a cover grid deeper
+        // than one page, where the count and the chip share the heading.
+        "yearbusy" => {
+            app.set_span(Span::Year);
+            busy(app, 0);
         }
         "busy" => busy(app, 0),
         "busy2" => busy(app, 3),
@@ -354,7 +381,7 @@ fn list() {
     for (name, _) in SCREENS {
         let of = match *name {
             "rhythm" => {
-                "  (:all :trends :week :month :year :back :picked :day :busy :busy2 :busyend)"
+                "  (:all :trends :week :month :year :back :weekback :picked :day :yearbusy :busy :busy2 :busyend)"
             }
             "today" => "  (:quiet :empty)",
             "book" => "  (:<index>)",
@@ -395,6 +422,7 @@ fn read_args(args: impl Iterator<Item = String>) -> Result<Opts> {
             "--week" => opts.week = week(&value()?)?,
             "--day" => opts.day = day(&value()?)?,
             "--hide-unnamed" => opts.unnamed = false,
+            "--hits" => opts.hits = true,
             "--out" => opts.out = PathBuf::from(value()?),
             "--art" => opts.art = PathBuf::from(value()?),
             "--store" => opts.store = Some(PathBuf::from(value()?)),
@@ -437,7 +465,9 @@ fn everything() -> Vec<Shot> {
         "rhythm:month",
         "rhythm:year",
         "rhythm:back",
+        "rhythm:weekback",
         "rhythm:picked",
+        "rhythm:yearbusy",
         "rhythm:day",
         "books",
         "books:finished",

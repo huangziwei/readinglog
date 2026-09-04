@@ -230,67 +230,60 @@ fn span_figures(cx: &mut Ctx, area: Rect, days: std::ops::RangeInclusive<i64>) {
 }
 
 /// `title` between two arrows, each its own hit box. `back` draws the chip
-/// returning to the span that holds today, at the right.
+/// returning to the span that holds today, beside the name it replaces.
 ///
 /// No rule under it: the air below is what separates the name from the
-/// figures, and a line there closes the two into one block.
+/// figures, and a line there closes the two into one block. The chip keeps
+/// its distance from both arrows, a thumb's width and more, so a reach for
+/// one cannot land on the other.
 fn span_nav(cx: &mut Ctx, area: Rect, title: &str, back: bool) {
     let theme: &Theme = cx.theme;
+    let script = cx.ui_script();
     cx.text.set_px(theme.head_px);
     let baseline = area.center_y() + cx.text.cap_height() as i32 / 2;
-    let script = cx.ui_script();
-    let w = cx.text.measure_width_in(script, title) as i32;
-    cx.text.draw_in(
-        script,
-        cx.fb,
-        area.x + (area.w - w) / 2,
-        baseline,
-        title,
-        false,
-    );
+    let title_w = cx.text.measure_width_in(script, title) as i32;
+
+    // The name is centred whatever else stands on the row: the chip beside it
+    // is optional and must not move it.
+    let at = area.x + (area.w - title_w) / 2;
+    cx.text.draw_in(script, cx.fb, at, baseline, title, false);
+    let chip = back.then(|| now_chip(cx, area, at + title_w + theme.gap * 3));
+
     cx.text.set_px(theme.head_px);
     let next = cx.text.measure_width("›") as i32;
     cx.text.draw(cx.fb, area.x, baseline, "‹", false);
     cx.text
         .draw(cx.fb, area.right() - next, baseline, "›", false);
 
-    // A chip beside the forward arrow narrows what that arrow may take, so
-    // the two never share a pixel.
-    if back {
-        now_chip(cx, area, next);
-    }
-    let reach = match back {
-        true => next + theme.gap,
-        false => area.w / 6,
-    };
-    cx.hit(Hit::Prev, Rect::new(area.x, area.y, area.w / 6, area.h));
+    // The forward arrow takes a sixth of the row, or whatever the chip beside
+    // a long name leaves it, so the two never share a pixel.
+    let reach = area.w / 6;
+    let opens = chip.map_or(area.right() - reach, |chip| {
+        (chip.right() + theme.gap).max(area.right() - reach)
+    });
+    cx.hit(Hit::Prev, Rect::new(area.x, area.y, reach, area.h));
     cx.hit(
         Hit::Next,
-        Rect::new(area.right() - reach, area.y, reach, area.h),
+        Rect::new(opens, area.y, area.right() - opens, area.h),
     );
 }
 
-/// The chip returning to the span holding today, set left of the forward
-/// arrow.
-fn now_chip(cx: &mut Ctx, area: Rect, arrow: i32) {
+/// The chip returning to the span holding today, opening at `x`. Answers the
+/// box it took.
+fn now_chip(cx: &mut Ctx, area: Rect, x: i32) -> Rect {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
     let said = cx.s().now;
-    cx.text.set_px(theme.small_px);
-    let w = cx.text.measure_width_in(script, said) as i32;
-    let pad = theme.gap;
-    let h = cx.text.line_height() as i32 + theme.gap / 2;
-    let chip = Rect::new(
-        area.right() - arrow - theme.gap - w - pad * 2,
-        area.center_y() - h / 2,
-        w + pad * 2,
-        h,
-    );
+    let w = chip_width(cx, said);
+    let h = cx.text.line_height() as i32 + theme.gap;
+    let chip = Rect::new(x, area.center_y() - h / 2, w, h);
     paint::stroke(cx.fb, chip, LIGHT, 1);
+    let tw = cx.text.measure_width_in(script, said) as i32;
     let baseline = chip.center_y() + cx.text.cap_height() as i32 / 2;
     cx.text
-        .draw_in(script, cx.fb, chip.x + pad, baseline, said, false);
+        .draw_in(script, cx.fb, chip.x + (w - tw) / 2, baseline, said, false);
     cx.hit(Hit::Now, chip);
+    chip
 }
 
 /// Rows of `theme.row_h` a week gives the day totals and the hours under them.
@@ -516,7 +509,12 @@ fn year_heatmap(cx: &mut Ctx, area: Rect, day: i64, picked: bool) {
         if picked && *at == day {
             paint::stroke(cx.fb, cell.inset(-2), INK, 2);
         }
-        cx.hit(Hit::Day(*at), *cell);
+        // A day with nothing on it takes no tap. The cells are small enough
+        // that an empty one standing between two read days would only steal
+        // the reach meant for them, and it has nothing to state.
+        if secs > 0 {
+            cx.hit(Hit::Day(*at), *cell);
+        }
     }
 }
 
@@ -573,6 +571,13 @@ fn more_books(cx: &mut Ctx, inner: Rect, lane: usize, over: usize) {
 /// and the grid is better off with fewer, larger ones.
 const COVER_FLOOR: i32 = 3;
 
+/// The air the cover grid keeps: between one jacket and the next, under the
+/// heading before the first row, and under a jacket before its figures.
+/// Jackets set shoulder to shoulder read as one band of colour, not a shelf.
+fn cover_air(theme: &Theme) -> i32 {
+    theme.gap * 2
+}
+
 /// Every book read over `days` as its cover, what was read of it under each.
 ///
 /// As many to a row as the width holds and as many rows as the band has
@@ -622,8 +627,11 @@ fn cover_grid(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeIncl
     }
 
     // The arrows stand at the ends of the grid's own row, where a thumb
-    // reaches without covering a jacket. The grid keeps the middle.
+    // reaches without covering a jacket. The grid keeps the middle, opening a
+    // row of air below the heading.
     let reach = arrow_reach(cx);
+    let air = cover_air(theme);
+    let (_, inner) = inner.split_top(air.min(inner.h));
     let grid = Rect::new(
         inner.x + reach,
         inner.y,
@@ -637,7 +645,7 @@ fn cover_grid(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeIncl
     if read.len() > deep {
         counted(cx, head, from, to, read.len(), picked.is_some());
         let last = super::last_page_at(read.len(), deep);
-        let rows_h = (to - from).div_ceil(columns as usize) as i32 * (cell.h + theme.gap);
+        let rows_h = (to - from).div_ceil(columns as usize) as i32 * (cell.h + air);
         let band = Rect::new(inner.x, inner.y, inner.w, rows_h.min(inner.h));
         step_arrow(
             cx,
@@ -656,15 +664,15 @@ fn cover_grid(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeIncl
     for (slot, (book, secs)) in read[from..to].iter().enumerate() {
         let at = slot as i32;
         let box_ = Rect::new(
-            grid.x + (at % columns) * (cell.w + theme.gap),
-            grid.y + (at / columns) * (cell.h + theme.gap),
+            grid.x + (at % columns) * (cell.w + air),
+            grid.y + (at / columns) * (cell.h + air),
             cell.w,
             cell.h,
         );
         jacket(cx, box_, *book, *secs);
         cx.hit(Hit::Book(*book), box_);
     }
-    let under = inner.y + (to - from).div_ceil(columns as usize) as i32 * (cell.h + theme.gap);
+    let under = inner.y + (to - from).div_ceil(columns as usize) as i32 * (cell.h + air);
     daybooks::note(
         cx,
         Rect::new(whole.x, under, whole.w, whole.bottom() - under),
@@ -710,9 +718,24 @@ fn counted(cx: &mut Ctx, head: Rect, from: usize, to: usize, count: usize, chipp
     cx.text.set_px(theme.small_px);
     let w = cx.text.measure_width(&of) as i32;
     let taken = chipped as i32 * (chip_width(cx, cx.s().open_day) + theme.gap);
-    let baseline = head.y + cx.text.cap_height() as i32;
+    let row = heading_row(cx, head);
+    cx.text.set_px(theme.small_px);
+    let baseline = row.center_y() + cx.text.cap_height() as i32 / 2;
     cx.text
         .draw(cx.fb, head.right() - taken - w, baseline, &of, false);
+}
+
+/// The band a heading's chips and figures stand in.
+///
+/// Centred on the ink of the title [`chrome::section`] sets at the head of
+/// `head`, so a chip — a box taller than the line inside it — and a figure
+/// beside it share that one centre rather than each taking its own top edge.
+fn heading_row(cx: &mut Ctx, head: Rect) -> Rect {
+    let theme: &Theme = cx.theme;
+    cx.text.set_px(theme.small_px);
+    let cap = cx.text.cap_height() as i32;
+    let h = (cx.text.line_height() as i32 + theme.gap / 2).min(head.h.max(1));
+    Rect::new(head.x, head.y + cap / 2 - h / 2, head.w, h)
 }
 
 /// How wide a chip carrying `said` stands, its padding included.
@@ -726,12 +749,11 @@ fn chip_width(cx: &mut Ctx, said: &str) -> i32 {
 /// The chip opening the day the grid is narrowed to as its own page, at the
 /// right of the heading naming that day.
 fn open_day_chip(cx: &mut Ctx, head: Rect) {
-    let theme: &Theme = cx.theme;
     let script = cx.ui_script();
     let said = cx.s().open_day;
     let w = chip_width(cx, said);
-    let h = cx.text.line_height() as i32 + theme.gap / 2;
-    let chip = Rect::new(head.right() - w, head.y, w, h);
+    let row = heading_row(cx, head);
+    let chip = Rect::new(row.right() - w, row.y, w, row.h);
     paint::stroke(cx.fb, chip, LIGHT, 1);
     let tw = cx.text.measure_width_in(script, said) as i32;
     let baseline = chip.center_y() + cx.text.cap_height() as i32 / 2;
@@ -748,14 +770,15 @@ fn open_day_chip(cx: &mut Ctx, head: Rect) {
 fn grid_of(cx: &mut Ctx, inner: Rect) -> (i32, i32, Rect) {
     let theme: &Theme = cx.theme;
     cx.text.set_px(theme.small_px);
-    let under = cx.text.line_height() as i32 * 2 + theme.gap / 2;
+    let air = cover_air(theme);
+    let under = cx.text.line_height() as i32 * 2 + air;
     let least = theme.row_h * COVER_FLOOR + under;
 
-    let rows = ((inner.h + theme.gap) / (least + theme.gap)).max(1);
-    let cell_h = (inner.h - theme.gap * (rows - 1)) / rows;
+    let rows = ((inner.h + air) / (least + air)).max(1);
+    let cell_h = (inner.h - air * (rows - 1)) / rows;
     let cover_h = (cell_h - under).max(1);
     let cell_w = cover::width_for(cover_h);
-    let columns = ((inner.w + theme.gap) / (cell_w + theme.gap)).max(1);
+    let columns = ((inner.w + air) / (cell_w + air)).max(1);
     (rows, columns, Rect::new(0, 0, cell_w, cell_h))
 }
 
@@ -767,7 +790,7 @@ fn jacket(cx: &mut Ctx, box_: Rect, book: usize, secs: i64) {
     cx.text.set_px(theme.small_px);
     let line = cx.text.line_height() as i32;
     // The jacket keeps clear air under it before the figures start.
-    let under_h = line * 2 + theme.gap;
+    let under_h = line * 2 + cover_air(theme);
     let (art, under) = box_.split_top((box_.h - under_h).max(1));
     cx.covers
         .draw(cx.fb, art, &cx.stats.books[book].thumbnail.clone());
@@ -919,9 +942,10 @@ fn pager(cx: &mut Ctx, head: Rect, from: usize, to: usize, count: usize, deep: u
         ],
     );
     let of = format!("{}–{to} {} {count}", from + 1, cx.s().of);
+    let row = heading_row(cx, head);
     cx.text.set_px(theme.small_px);
     let w = cx.text.measure_width(&of) as i32;
-    let baseline = head.y + cx.text.cap_height() as i32;
+    let baseline = row.center_y() + cx.text.cap_height() as i32 / 2;
     let at = head.right() - w - theme.row_h * 3 / 2;
     cx.text.draw(cx.fb, at, baseline, &of, false);
 }
@@ -936,10 +960,11 @@ fn heading_chips(cx: &mut Ctx, head: Rect, of: [(&str, Hit, bool); 2]) {
         .iter()
         .map(|(label, _, _)| cx.text.measure_width_in(script, label) as i32 + pad * 2)
         .collect();
-    let h = (cx.text.line_height() as i32 + theme.gap / 2).min(head.h.max(1));
+    let row = heading_row(cx, head);
+    cx.text.set_px(theme.small_px);
     let mut x = head.right() - widths.iter().sum::<i32>() - theme.gap;
     for ((label, hit, on), w) in of.iter().zip(&widths) {
-        let chip = Rect::new(x, head.y, *w, h);
+        let chip = Rect::new(x, row.y, *w, row.h);
         match on {
             true => paint::fill(cx.fb, chip, INK),
             false => paint::stroke(cx.fb, chip, LIGHT, 1),
