@@ -4,7 +4,7 @@
 
 use crate::font::Script;
 use crate::lang::Lang;
-use crate::settings::{Settings, TextSize, WeekStart};
+use crate::settings::{ColorScheme, Settings, TextSize, WeekStart};
 use crate::ui::chrome;
 use crate::ui::paint::Rect;
 use crate::ui::theme::Theme;
@@ -64,7 +64,7 @@ struct Section<'a> {
 
 /// The page, built from what is set. Kept apart from the drawing: the shape
 /// of the page is asserted without a framebuffer.
-fn sections<'a>(lang: Lang, settings: &Settings) -> Vec<Section<'a>> {
+fn sections<'a>(lang: Lang, settings: &Settings, colour: bool) -> Vec<Section<'a>> {
     let s = lang.strings();
     let plain = Script::of_language(lang.language_tag());
 
@@ -120,6 +120,20 @@ fn sections<'a>(lang: Lang, settings: &Settings) -> Vec<Section<'a>> {
         hit: |i| Hit::TextSize(TextSize::ALL[i.min(TextSize::ALL.len() - 1)]),
     };
 
+    let scheme = colour.then(|| Row {
+        label: s.color_scheme,
+        options: s
+            .color_schemes
+            .iter()
+            .map(|name| (name.to_string(), plain))
+            .collect(),
+        on: ColorScheme::ALL
+            .iter()
+            .position(|c| *c == settings.color_scheme)
+            .unwrap_or(0),
+        hit: |i| Hit::ColorScheme(ColorScheme::ALL[i.min(ColorScheme::ALL.len() - 1)]),
+    });
+
     let unnamed = Row {
         label: s.unnamed_row,
         options: vec![
@@ -141,7 +155,10 @@ fn sections<'a>(lang: Lang, settings: &Settings) -> Vec<Section<'a>> {
     vec![
         Section {
             heading: s.interface,
-            lines: vec![Line::Set(language), Line::Set(size)],
+            lines: [Line::Set(language), Line::Set(size)]
+                .into_iter()
+                .chain(scheme.map(Line::Set))
+                .collect(),
         },
         Section {
             heading: s.the_calendar,
@@ -169,10 +186,10 @@ fn between(theme: &Theme) -> i32 {
     theme.row_h * 2 / 3
 }
 
-pub fn draw(cx: &mut Ctx, area: Rect, settings: &Settings) {
+pub fn draw(cx: &mut Ctx, area: Rect, settings: &Settings, colour: bool) {
     let theme: &Theme = cx.theme;
     let air = between(theme);
-    let page = sections(cx.lang, settings);
+    let page = sections(cx.lang, settings, colour);
 
     // Every line's second column starts at one place, taken from the widest
     // label and pulled back until the widest run fits. No row wraps that need
@@ -295,7 +312,7 @@ mod tests {
     #[test]
     fn the_page_holds_more_than_one_setting() {
         let settings = Settings::new(Lang::English);
-        let page = sections(Lang::English, &settings);
+        let page = sections(Lang::English, &settings, true);
         assert!(page.len() >= 2, "a page of one section is a stub");
         let lines: usize = page.iter().map(|s| s.lines.len()).sum();
         assert!(lines >= 2, "got {lines} lines");
@@ -313,7 +330,7 @@ mod tests {
         // No Automatic chip: the device's language is the default, and the
         // default is simply the one that starts out lit.
         let mut settings = Settings::new(Lang::Japanese);
-        let page = sections(Lang::English, &settings);
+        let page = sections(Lang::English, &settings, true);
         let language = row(&page, 0, 0);
         assert_eq!(
             language.options.len(),
@@ -323,7 +340,7 @@ mod tests {
         assert_eq!(language.on, 4, "the device's Japanese is what is lit");
 
         settings.language = Lang::TraditionalChinese;
-        let page = sections(Lang::English, &settings);
+        let page = sections(Lang::English, &settings, true);
         assert_eq!(row(&page, 0, 0).on, 3);
     }
 
@@ -331,7 +348,7 @@ mod tests {
     fn each_language_names_itself_in_its_own_script() {
         // 日本語 drawn from a Simplified face is the defect this prevents.
         let settings = Settings::new(Lang::English);
-        let page = sections(Lang::English, &settings);
+        let page = sections(Lang::English, &settings, true);
         let by_name = |want: &str| {
             row(&page, 0, 0)
                 .options
@@ -350,7 +367,7 @@ mod tests {
     fn the_size_row_offers_every_size_and_lights_the_set_one() {
         let mut settings = Settings::new(Lang::English);
         settings.text_size = TextSize::Large;
-        let page = sections(Lang::English, &settings);
+        let page = sections(Lang::English, &settings, true);
         let size = row(&page, 0, 1);
         assert_eq!(size.options.len(), TextSize::ALL.len());
         assert_eq!(size.on, 2);
@@ -360,7 +377,7 @@ mod tests {
     #[test]
     fn the_week_row_names_its_days_in_the_interface_s_language() {
         let settings = Settings::new(Lang::German);
-        let page = sections(Lang::German, &settings);
+        let page = sections(Lang::German, &settings, true);
         let week = row(&page, 1, 0);
         assert_eq!(week.options[0].0, "Mo");
         assert_eq!(week.options[1].0, "So");
@@ -369,7 +386,7 @@ mod tests {
     #[test]
     fn the_page_states_which_build_it_is_and_offers_a_newer_one() {
         let settings = Settings::new(Lang::English);
-        let page = sections(Lang::English, &settings);
+        let page = sections(Lang::English, &settings, true);
         let about = page.last().expect("a section");
 
         let Line::Says { label, value } = &about.lines[0] else {
@@ -390,7 +407,7 @@ mod tests {
     fn every_language_names_the_about_section_and_its_button() {
         for lang in Lang::ALL {
             let settings = Settings::new(lang);
-            let page = sections(lang, &settings);
+            let page = sections(lang, &settings, true);
             let about = page.last().expect("a section");
             assert_eq!(about.heading, lang.strings().about, "{lang:?}");
             let update = row(&page, page.len() - 1, 1);
@@ -401,7 +418,7 @@ mod tests {
     #[test]
     fn a_tap_names_the_option_under_it() {
         let settings = Settings::new(Lang::English);
-        let page = sections(Lang::English, &settings);
+        let page = sections(Lang::English, &settings, true);
         let language = row(&page, 0, 0);
         for (i, lang) in Lang::ALL.iter().enumerate() {
             assert_eq!((language.hit)(i), Hit::Language(*lang));

@@ -37,6 +37,8 @@ pub enum Hit {
     TextSize(crate::settings::TextSize),
     /// Whether a total counts reading on books the catalog names none of.
     ShowUnnamed(bool),
+    /// The colours the charts are drawn in.
+    ColorScheme(crate::settings::ColorScheme),
     /// Go looking for a newer release of this app.
     Update,
     Prev,
@@ -295,6 +297,8 @@ pub struct Ctx<'a> {
     pub theme: &'a Theme,
     pub lang: Lang,
     pub week: WeekStart,
+    /// What the charts draw in, from `crate::ui::paint::Palette::for_panel`.
+    pub palette: crate::ui::paint::Palette,
     pub stats: &'a Stats,
     /// The device's own local day, and the second of it.
     pub today: i64,

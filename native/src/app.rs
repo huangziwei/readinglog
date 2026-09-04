@@ -45,6 +45,8 @@ pub struct App {
     state: State,
     today: i64,
     now: i64,
+    /// What `eink::fb::has_cfa` answered at startup.
+    colour: bool,
     /// Where every touchable thing was on the last frame.
     hits: Vec<(Hit, crate::ui::paint::Rect)>,
 }
@@ -54,6 +56,14 @@ impl App {
         let (today, now) = date::now();
         let settings = Settings::load(Lang::detect());
         let stats = Stats::build(&store, today, settings.show_unnamed);
+        let colour = crate::eink::fb::has_cfa();
+        eprintln!(
+            "panel: {}",
+            match colour {
+                true => "colour filter present, schemes offered",
+                false => "no colour filter, drawing grey",
+            }
+        );
         Self {
             theme,
             lang: settings.language,
@@ -62,6 +72,7 @@ impl App {
             covers: Covers::default(),
             store,
             stats,
+            colour,
             state: State::new(today),
             today,
             now,
@@ -106,6 +117,16 @@ impl App {
     /// Open the week on `start`, whatever is stored.
     pub fn set_week_start(&mut self, start: crate::settings::WeekStart) {
         self.settings.week_start = start;
+    }
+
+    /// Draw in `scheme`, whatever is stored.
+    pub fn set_color_scheme(&mut self, scheme: crate::settings::ColorScheme) {
+        self.settings.color_scheme = scheme;
+    }
+
+    /// Draw with `colour`, whatever `eink::fb::has_cfa` answered.
+    pub fn set_colour(&mut self, colour: bool) {
+        self.colour = colour;
     }
 
     /// Draw as though the device's clock read `now` seconds into `today`.
@@ -186,11 +207,12 @@ impl App {
     /// Draw the whole screen and present it.
     pub fn draw(&mut self, fb: &mut Framebuffer) -> Result<()> {
         let settings = self.settings.clone();
+        let colour = self.colour;
         let state = self.state.clone();
         self.frame(fb, &mut |cx, area| match state.book {
             Some(index) => view::book::draw(cx, area, index),
             None => match state.tab {
-                Tab::Config => view::config::draw(cx, area, &settings),
+                Tab::Config => view::config::draw(cx, area, &settings, colour),
                 Tab::Home => view::home::draw(cx, area, state.list_from),
                 Tab::Rhythm => view::rhythm::draw(cx, area, &state),
                 Tab::Books => view::books::draw(cx, area, &state),
@@ -216,6 +238,7 @@ impl App {
             theme: &self.theme,
             lang: self.lang,
             week: self.settings.week_start,
+            palette: crate::ui::paint::Palette::for_panel(self.settings.color_scheme, self.colour),
             stats: &self.stats,
             today: self.today,
             now: self.now,
@@ -438,6 +461,13 @@ impl App {
                 // Every size on screen comes off `theme`.
                 self.theme =
                     Theme::sized(self.theme.screen.w as u32, self.theme.screen.h as u32, pick);
+                self.settings.save();
+            }
+            Hit::ColorScheme(pick) => {
+                if self.settings.color_scheme == pick {
+                    return Action::Nothing;
+                }
+                self.settings.color_scheme = pick;
                 self.settings.save();
             }
             Hit::ShowUnnamed(pick) => {

@@ -14,7 +14,7 @@ use readinglog_native::app::App;
 use readinglog_native::date;
 use readinglog_native::eink::fb::Framebuffer;
 use readinglog_native::lang::Lang;
-use readinglog_native::settings::{TextSize, WeekStart};
+use readinglog_native::settings::{ColorScheme, TextSize, WeekStart};
 use readinglog_native::stats::Stats;
 use readinglog_native::store::Store;
 use readinglog_native::ui::chrome::Tab;
@@ -133,6 +133,10 @@ struct Opts {
     /// invisible in a render, and a screen that looks right can still take a
     /// tap where it should take none.
     hits: bool,
+    /// The scheme drawn in.
+    scheme: ColorScheme,
+    /// What `eink::fb::has_cfa` is drawn as answering.
+    colour: bool,
     /// Whether a total counts the sittings no record names.
     unnamed: bool,
 }
@@ -145,6 +149,8 @@ impl Default for Opts {
             langs: vec![Lang::English],
             sizes: vec![TextSize::Medium],
             week: WeekStart::Monday,
+            scheme: ColorScheme::default(),
+            colour: true,
             day: date::days_from_civil(DAY.0, DAY.1, DAY.2),
             out: PathBuf::from(OUT),
             art: PathBuf::from(ART),
@@ -276,6 +282,8 @@ fn open(store: &Store, opts: &Opts, w: u32, h: u32, lang: Lang, size: TextSize) 
     app.set_language(lang);
     app.set_text_size(size);
     app.set_week_start(opts.week);
+    app.set_colour(opts.colour);
+    app.set_color_scheme(opts.scheme);
     app.set_unnamed(opts.unnamed);
     Ok(app)
 }
@@ -497,6 +505,8 @@ fn read_args(args: impl Iterator<Item = String>) -> Result<Opts> {
             "--lang" => langs.push(lang(&value()?)?),
             "--size" => sizes.push(size(&value()?)?),
             "--week" => opts.week = week(&value()?)?,
+            "--scheme" => opts.scheme = scheme(&value()?)?,
+            "--no-colour" => opts.colour = false,
             "--day" => opts.day = day(&value()?)?,
             "--hide-unnamed" => opts.unnamed = false,
             "--hits" => opts.hits = true,
@@ -593,6 +603,27 @@ fn size(name: &str) -> Result<TextSize> {
         .into_iter()
         .find(|s| size_name(*s) == name)
         .ok_or_else(|| anyhow!("no text size called {name} — small, medium or large"))
+}
+
+fn scheme(name: &str) -> Result<ColorScheme> {
+    ColorScheme::ALL
+        .into_iter()
+        .find(|s| scheme_name(*s) == name)
+        .ok_or_else(|| {
+            let names: Vec<&str> = ColorScheme::ALL.into_iter().map(scheme_name).collect();
+            anyhow!("no scheme called {name} — one of {}", names.join(", "))
+        })
+}
+
+fn scheme_name(scheme: ColorScheme) -> &'static str {
+    match scheme {
+        ColorScheme::Azure => "azure",
+        ColorScheme::AsagiShu => "asagi",
+        ColorScheme::TobiKogane => "tobi",
+        ColorScheme::SakuraWakatake => "wakatake",
+        ColorScheme::KurenaiKon => "kon",
+        ColorScheme::Grey => "grey",
+    }
 }
 
 fn week(name: &str) -> Result<WeekStart> {

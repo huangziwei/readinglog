@@ -5,7 +5,7 @@
 use crate::date;
 use crate::font::Script;
 use crate::settings::WeekStart;
-use crate::ui::paint::{self, BAR_RGB, INK, LIGHT, MARK_RGB, PALE, Rect, WHITE, WHITE_RGB};
+use crate::ui::paint::{self, INK, LIGHT, PALE, Rect, WHITE, WHITE_RGB};
 use crate::ui::{charts, chrome, cover, theme::Theme};
 
 use super::{Ctx, Hit, Span, State, alltime, daybooks, home};
@@ -372,7 +372,12 @@ fn day_bar(cx: &mut Ctx, area: Rect, day: i64, most: i64, on: bool) {
     let h = ((room as i64 * secs / most.max(1)) as i32).max(2);
     let bw = (area.w * WEEK_BAR_WIDTH.0 / WEEK_BAR_WIDTH.1).max(2);
     let bar = Rect::new(area.x + (area.w - bw) / 2, area.bottom() - h, bw, h);
-    paint::fill_rgb(cx.fb, bar, if on { MARK_RGB } else { BAR_RGB });
+    let ink = if on {
+        cx.palette.mark
+    } else {
+        cx.palette.bar()
+    };
+    paint::fill_rgb(cx.fb, bar, ink);
     let hours = cx.stats.hours_over(day..=day);
     let busiest = hours.iter().copied().max().unwrap_or(0);
     // The hours are cut out of the bar rather than drawn over it: the bar
@@ -411,7 +416,13 @@ fn month_grid(cx: &mut Ctx, area: Rect, day: i64) {
             head_line(cx, *cell, *day, &dom.to_string(), peak);
             let inner = cell.inset(theme.gap / 2);
             let hours = cx.stats.hours_over(*day..=*day);
-            charts::hour_shape(cx.fb, shape_box(theme, inner), &hours, tallest, BAR_RGB);
+            charts::hour_shape(
+                cx.fb,
+                shape_box(theme, inner),
+                &hours,
+                tallest,
+                cx.palette.bar(),
+            );
             cx.hit(Hit::Day(*day), *cell);
         }
         // A run reaches past its own cell; every bar of the week is drawn over
@@ -486,7 +497,7 @@ fn year_heatmap(cx: &mut Ctx, area: Rect, day: i64, picked: bool) {
         .unwrap_or(0);
     for (at, cell) in &map.cells {
         let secs = cx.stats.day_seconds(*at);
-        match charts::level_rgb(charts::level(secs, peak)) {
+        match cx.palette.level(charts::level(secs, peak)) {
             Some(rgb) => paint::fill_rgb(cx.fb, *cell, rgb),
             None => {
                 paint::fill(cx.fb, *cell, WHITE);
@@ -517,7 +528,7 @@ fn head_line(cx: &mut Ctx, cell: Rect, day: i64, date: &str, peak: i64) {
     paint::fill(cx.fb, cell, WHITE);
     paint::stroke(cx.fb, cell, if day == cx.today { INK } else { PALE }, 1);
     // A mark beside the date crowds a duration set in Japanese.
-    if let Some(rgb) = charts::level_rgb(charts::level(secs, peak)) {
+    if let Some(rgb) = cx.palette.level(charts::level(secs, peak)) {
         let rule = (theme.gap / 3).max(2);
         paint::fill_rgb(cx.fb, Rect::new(cell.x, cell.y, cell.w, rule), rgb);
     }

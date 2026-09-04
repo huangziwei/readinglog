@@ -102,6 +102,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
         cx.fb,
         cx.text,
         theme,
+        cx.palette,
         inner,
         &series,
         move |at| date::short_day(opened + at as i64 * each, s),

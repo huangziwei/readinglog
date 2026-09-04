@@ -61,6 +61,20 @@ fn wire_channels(conn: &RustConnection, screen: &Screen, bpp: usize) -> Option<[
     ])
 }
 
+/// Whether any `/sys/firmware/devicetree/base/*/epd/cfa_panel` exists.
+/// An unreadable `/sys` answers `false`.
+pub fn has_cfa() -> bool {
+    let Ok(entries) = std::fs::read_dir("/sys/firmware/devicetree/base") else {
+        return false;
+    };
+    entries.filter_map(Result::ok).any(|entry| {
+        let mut path = entry.path();
+        path.push("epd");
+        path.push("cfa_panel");
+        path.exists()
+    })
+}
+
 /// A rectangle to present, in screen coords.
 #[derive(Default, Debug, Clone, Copy)]
 pub struct MxcfbRect {

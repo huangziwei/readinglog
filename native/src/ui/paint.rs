@@ -2,6 +2,7 @@
 //! banded onto. Every size here is an argument; no dimension is a constant.
 
 use crate::eink::fb::Framebuffer;
+use crate::settings::ColorScheme;
 
 /// Ink levels, white through black.
 pub const WHITE: u8 = 0xFF;
@@ -10,25 +11,129 @@ pub const LIGHT: u8 = 0xC0;
 pub const DARK: u8 = 0x60;
 pub const INK: u8 = 0x00;
 
-/// The five steps a value is drawn at, lightest first, in one hue; their
-/// Rec. 601 lumas track [`PALE`] through [`INK`]. Zero is [`WHITE`], off this
-/// scale.
-pub const STEPS_RGB: [[u8; 3]; 5] = [
-    [0xCF, 0xE6, 0xF7],
-    [0x9F, 0xCB, 0xE8],
-    [0x5B, 0x9D, 0xCB],
-    [0x2F, 0x6B, 0x96],
-    [0x0A, 0x12, 0x18],
-];
-
-/// The ink a bar takes where the panel has colour, and the warm mark on the
-/// one the page is about. The Colorsoft is the panel this is drawn for.
-pub const BAR_RGB: [u8; 3] = STEPS_RGB[2];
-pub const MARK_RGB: [u8; 3] = [0xC4, 0x45, 0x36];
-
-/// [`WHITE`] where a fill wants the three channels, to cut a mark out of a
-/// coloured ground rather than draw one on the page.
+/// [`WHITE`] in three channels, for [`fill_rgb`].
 pub const WHITE_RGB: [u8; 3] = [WHITE; 3];
+
+/// The Rec. 601 luma of each [`Palette::steps`] entry, lightest first.
+/// [`PALE`], [`LIGHT`], [`DARK`] and [`INK`] carry all but the middle.
+pub const STEP_LUMAS: [u8; 5] = [225, 193, 142, 93, 16];
+
+/// The five steps a value is banded onto, lightest first, and the ink on the
+/// marked one. Level zero draws [`WHITE`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Palette {
+    pub steps: [[u8; 3]; 5],
+    pub mark: [u8; 3],
+}
+
+impl Palette {
+    /// The ink an unmarked bar takes.
+    pub fn bar(&self) -> [u8; 3] {
+        self.steps[2]
+    }
+
+    /// The [`Palette::steps`] entry at `level`, and `None` at zero.
+    pub fn level(&self, level: usize) -> Option<[u8; 3]> {
+        (level > 0)
+            .then(|| self.steps.get(level))
+            .flatten()
+            .copied()
+    }
+
+    /// [`STEP_LUMAS`] in three equal channels. `mark` sits 67 under
+    /// [`STEP_LUMAS`]`[2]`, where every other `mark` sits about 30 off it.
+    pub const GREY: Palette = Palette {
+        steps: [
+            [STEP_LUMAS[0]; 3],
+            [STEP_LUMAS[1]; 3],
+            [STEP_LUMAS[2]; 3],
+            [STEP_LUMAS[3]; 3],
+            [STEP_LUMAS[4]; 3],
+        ],
+        mark: [75; 3],
+    };
+
+    /// One azure hue across the ramp, marked in warm red.
+    pub const AZURE: Palette = Palette {
+        steps: [
+            [0xCF, 0xE6, 0xF7],
+            [0x9F, 0xCB, 0xE8],
+            [0x5B, 0x9D, 0xCB],
+            [0x2F, 0x6B, 0x96],
+            [0x0A, 0x12, 0x18],
+        ],
+        mark: [0xC4, 0x45, 0x36],
+    };
+
+    /// 浅葱 `#6B9BB0` at `steps[2]`, marked in 朱 `#D8453A`.
+    pub const ASAGI_SHU: Palette = Palette {
+        steps: [
+            [0xD6, 0xE5, 0xEB],
+            [0xAD, 0xC8, 0xD5],
+            [0x6B, 0x9B, 0xB0],
+            [0x3F, 0x67, 0x79],
+            [0x0B, 0x12, 0x14],
+        ],
+        mark: [0xD8, 0x45, 0x3A],
+    };
+
+    /// 鳶 `#8A5A3B` at `steps[3]`, marked in 黄金 `#D4AF37` — a `mark` lighter
+    /// than [`Palette::bar`].
+    pub const TOBI_KOGANE: Palette = Palette {
+        steps: [
+            [0xEE, 0xDE, 0xD3],
+            [0xDA, 0xBA, 0xA5],
+            [0xBA, 0x81, 0x5D],
+            [0x8A, 0x5A, 0x3B],
+            [0x16, 0x0F, 0x0A],
+        ],
+        mark: [0xD4, 0xAF, 0x37],
+    };
+
+    /// 若竹 and 松葉 across the ramp, marked at 桜's hue and luma 112.
+    pub const SAKURA_WAKATAKE: Palette = Palette {
+        steps: [
+            [0xDB, 0xE7, 0xD3],
+            [0xB4, 0xCD, 0xA5],
+            [0x79, 0xA2, 0x60],
+            [0x51, 0x69, 0x40],
+            [0x0E, 0x12, 0x0B],
+        ],
+        mark: [0xD2, 0x3F, 0x6B],
+    };
+
+    /// 紺's hue across the ramp, marked at 紅's hue and luma 108.
+    pub const KURENAI_KON: Palette = Palette {
+        steps: [
+            [0xDA, 0xE2, 0xF3],
+            [0xB3, 0xC2, 0xE6],
+            [0x74, 0x8F, 0xCF],
+            [0x3D, 0x5E, 0xAF],
+            [0x0A, 0x10, 0x1F],
+        ],
+        mark: [0xCC, 0x43, 0x43],
+    };
+
+    /// The colours `scheme` names.
+    pub fn of(scheme: ColorScheme) -> Self {
+        match scheme {
+            ColorScheme::Azure => Self::AZURE,
+            ColorScheme::AsagiShu => Self::ASAGI_SHU,
+            ColorScheme::TobiKogane => Self::TOBI_KOGANE,
+            ColorScheme::SakuraWakatake => Self::SAKURA_WAKATAKE,
+            ColorScheme::KurenaiKon => Self::KURENAI_KON,
+            ColorScheme::Grey => Self::GREY,
+        }
+    }
+
+    /// [`Palette::of`] under `colour`, and [`Palette::GREY`] without it.
+    pub fn for_panel(scheme: ColorScheme, colour: bool) -> Self {
+        match colour {
+            true => Self::of(scheme),
+            false => Self::GREY,
+        }
+    }
+}
 
 /// A box on the screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -205,6 +310,106 @@ pub fn progress(fb: &mut Framebuffer, track: Rect, value: i64, max: i64, ink: u8
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Rec. 601 luma, with the weights `eink::fb` collapses a pixel by.
+    fn luma(rgb: [u8; 3]) -> i32 {
+        (rgb[0] as i32 * 77 + rgb[1] as i32 * 150 + rgb[2] as i32 * 29) >> 8
+    }
+
+    /// A luma may sit this far from [`STEP_LUMAS`]. 鳶 sits 7 from
+    /// `STEP_LUMAS[3]` and 4 from [`DARK`].
+    const SLACK: i32 = 8;
+
+    /// Every [`Palette`] const in this module.
+    const SCHEMES: [(&str, Palette); 6] = [
+        ("grey", Palette::GREY),
+        ("azure", Palette::AZURE),
+        ("asagi-shu", Palette::ASAGI_SHU),
+        ("tobi-kogane", Palette::TOBI_KOGANE),
+        ("sakura-wakatake", Palette::SAKURA_WAKATAKE),
+        ("kurenai-kon", Palette::KURENAI_KON),
+    ];
+
+    #[test]
+    fn every_scheme_is_offered_and_every_scheme_is_checked() {
+        assert_eq!(SCHEMES.len(), ColorScheme::ALL.len());
+        for scheme in ColorScheme::ALL {
+            let want = Palette::of(scheme);
+            assert!(
+                SCHEMES.iter().any(|(_, pal)| *pal == want),
+                "{scheme:?} is drawn and no SCHEMES row holds it"
+            );
+        }
+    }
+
+    #[test]
+    fn every_scheme_bands_onto_the_lumas_a_grey_panel_draws() {
+        for (name, pal) in SCHEMES {
+            for (at, step) in pal.steps.iter().enumerate() {
+                let (got, want) = (luma(*step), STEP_LUMAS[at] as i32);
+                assert!(
+                    (got - want).abs() <= SLACK,
+                    "{name} step {at} is luma {got}, off the ladder's {want}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_ramp_shares_four_rungs_with_the_ink_scale() {
+        for (name, pal) in SCHEMES {
+            for (at, rung) in [(0, PALE), (1, LIGHT), (3, DARK)] {
+                let apart = (luma(pal.steps[at]) - rung as i32).abs();
+                assert!(apart <= 4, "{name} step {at} sits {apart} off its rung");
+            }
+            // `steps[4]` sits near [`INK`], off it by up to 20.
+            assert!(luma(pal.steps[4]) <= 20, "{name} step 4 is not near INK");
+        }
+    }
+
+    #[test]
+    fn a_ramp_never_steps_backwards() {
+        for (name, pal) in SCHEMES {
+            for (at, pair) in pal.steps.windows(2).enumerate() {
+                assert!(
+                    luma(pair[0]) > luma(pair[1]),
+                    "{name} is lighter at step {} than at {at}",
+                    at + 1
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_mark_is_never_mistaken_for_the_bar_beside_it() {
+        for (name, pal) in SCHEMES {
+            let apart = (luma(pal.mark) - luma(pal.bar())).abs();
+            assert!(apart >= 25, "{name}: mark and bar only {apart} lumas apart");
+        }
+    }
+
+    #[test]
+    fn the_grey_panel_s_mark_carries_the_whole_difference() {
+        let grey = Palette::GREY;
+        let below = luma(grey.bar()) - luma(grey.mark);
+        assert!(below >= 60, "the grey mark is only {below} below the bar");
+        assert!(
+            luma(grey.mark) >= 40,
+            "a mark this dark reads as the black body text is set in"
+        );
+    }
+
+    #[test]
+    fn a_grey_panel_is_given_grey_whatever_the_reader_picked() {
+        for scheme in ColorScheme::ALL {
+            assert_eq!(Palette::for_panel(scheme, false), Palette::GREY);
+            assert_eq!(Palette::for_panel(scheme, true), Palette::of(scheme));
+        }
+        // Every channel of `Palette::GREY` is equal.
+        for step in Palette::GREY.steps {
+            assert!(step[0] == step[1] && step[1] == step[2], "{step:?}");
+        }
+    }
 
     #[test]
     fn a_box_knows_what_is_inside_it() {

@@ -7,7 +7,7 @@ use crate::eink::fb::Framebuffer;
 use crate::lang::Strings;
 use crate::settings::WeekStart;
 
-use super::paint::{self, DARK, INK, LIGHT, PALE, Rect};
+use super::paint::{self, DARK, INK, LIGHT, PALE, Palette, Rect};
 use super::text::TextRenderer;
 use super::theme::Theme;
 
@@ -172,15 +172,6 @@ pub fn level(secs: i64, peak: i64) -> usize {
     }
 }
 
-/// The ink a [`level`] draws in, off the darker four of [`paint::STEPS_RGB`],
-/// and `None` at zero.
-pub fn level_rgb(level: usize) -> Option<[u8; 3]> {
-    (level > 0)
-        .then(|| paint::STEPS_RGB.get(level))
-        .flatten()
-        .copied()
-}
-
 /// One book's run down a lane of a week: which book, the column the run opens
 /// on, and how many columns it covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -267,6 +258,7 @@ pub fn columns(
     fb: &mut Framebuffer,
     text: &mut TextRenderer,
     theme: &Theme,
+    palette: Palette,
     area: Rect,
     values: &[i64],
     axis: impl Fn(usize) -> String,
@@ -317,8 +309,8 @@ pub fn columns(
         let bar = Rect::new(cell.x + (cell.w - bar_w) / 2, cell.bottom() - h, bar_w, h);
         if h > 0 {
             let ink = match highlight == Some(at) {
-                true => paint::MARK_RGB,
-                false => paint::BAR_RGB,
+                true => palette.mark,
+                false => palette.bar(),
             };
             paint::fill_rgb(fb, bar, ink);
         }
@@ -647,9 +639,10 @@ mod tests {
         assert_eq!(level(50, 100), 3);
         assert_eq!(level(100, 100), 4);
         // A day with nothing on it takes no ink at all.
-        assert!(level_rgb(0).is_none());
-        assert!(level_rgb(1).is_some());
-        assert_eq!(level_rgb(4), Some(paint::STEPS_RGB[4]));
+        let pal = paint::Palette::AZURE;
+        assert!(pal.level(0).is_none());
+        assert!(pal.level(1).is_some());
+        assert_eq!(pal.level(4), Some(pal.steps[4]));
     }
 
     #[test]

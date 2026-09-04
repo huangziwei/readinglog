@@ -55,6 +55,53 @@ impl TextSize {
     }
 }
 
+/// The colours a chart is drawn in. `ui::paint::Palette::for_panel` reads it
+/// only where `eink::fb::has_cfa` holds.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ColorScheme {
+    /// One azure hue across the ramp, marked in warm red.
+    #[default]
+    Azure,
+    /// 浅葱 across the ramp, marked in 朱.
+    AsagiShu,
+    /// 鳶 across the ramp, marked in 黄金.
+    TobiKogane,
+    /// 若竹 and 松葉 across the ramp, marked at 桜's hue.
+    SakuraWakatake,
+    /// 紺's hue across the ramp, marked at 紅's.
+    KurenaiKon,
+    /// The greys a panel without a colour filter draws, on one that has it.
+    Grey,
+}
+
+impl ColorScheme {
+    pub const ALL: [ColorScheme; 6] = [
+        ColorScheme::Azure,
+        ColorScheme::AsagiShu,
+        ColorScheme::TobiKogane,
+        ColorScheme::SakuraWakatake,
+        ColorScheme::KurenaiKon,
+        ColorScheme::Grey,
+    ];
+
+    fn token(self) -> &'static str {
+        match self {
+            ColorScheme::Azure => "azure",
+            ColorScheme::AsagiShu => "asagi",
+            ColorScheme::TobiKogane => "tobi",
+            ColorScheme::SakuraWakatake => "wakatake",
+            ColorScheme::KurenaiKon => "kon",
+            ColorScheme::Grey => "grey",
+        }
+    }
+
+    fn of_token(token: &str) -> Option<Self> {
+        ColorScheme::ALL
+            .into_iter()
+            .find(|scheme| scheme.token() == token)
+    }
+}
+
 /// Which day a week is drawn from.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WeekStart {
@@ -108,6 +155,8 @@ pub struct Settings {
     pub language: Lang,
     pub week_start: WeekStart,
     pub text_size: TextSize,
+    /// The colours a chart is drawn in.
+    pub color_scheme: ColorScheme,
     /// Whether a total counts reading on books the catalog names none of.
     pub show_unnamed: bool,
     /// Lines this build does not know, kept verbatim: a downgrade drops none
@@ -123,6 +172,7 @@ impl Settings {
             language: detected,
             week_start: WeekStart::default(),
             text_size: TextSize::default(),
+            color_scheme: ColorScheme::default(),
             show_unnamed: true,
             unknown: Vec::new(),
         }
@@ -171,6 +221,11 @@ impl Settings {
                         out.text_size = size;
                     }
                 }
+                "color_scheme" => {
+                    if let Some(scheme) = ColorScheme::of_token(value) {
+                        out.color_scheme = scheme;
+                    }
+                }
                 "show_unnamed" => out.show_unnamed = value != "no",
                 _ => out.unknown.push(line.to_string()),
             }
@@ -184,6 +239,7 @@ impl Settings {
         out.push_str(&format!("language={}\n", self.language.letter()));
         out.push_str(&format!("week_start={}\n", self.week_start.token()));
         out.push_str(&format!("text_size={}\n", self.text_size.token()));
+        out.push_str(&format!("color_scheme={}\n", self.color_scheme.token()));
         let unnamed = match self.show_unnamed {
             true => "yes",
             false => "no",
@@ -234,12 +290,39 @@ mod tests {
         s.language = Lang::TraditionalChinese;
         s.week_start = WeekStart::Sunday;
         s.text_size = TextSize::Large;
+        s.color_scheme = ColorScheme::TobiKogane;
         s.show_unnamed = false;
         let back = Settings::parse(&s.to_text(), Lang::English);
         assert_eq!(back.language, Lang::TraditionalChinese);
         assert_eq!(back.week_start, WeekStart::Sunday);
         assert_eq!(back.text_size, TextSize::Large);
+        assert_eq!(back.color_scheme, ColorScheme::TobiKogane);
         assert!(!back.show_unnamed);
+    }
+
+    #[test]
+    fn every_scheme_survives_a_write_and_none_shares_a_token() {
+        for scheme in ColorScheme::ALL {
+            let mut s = Settings::new(Lang::English);
+            s.color_scheme = scheme;
+            let back = Settings::parse(&s.to_text(), Lang::English);
+            assert_eq!(back.color_scheme, scheme, "{scheme:?} did not survive");
+        }
+        let mut tokens: Vec<&str> = ColorScheme::ALL.iter().map(|c| c.token()).collect();
+        tokens.sort_unstable();
+        let count = tokens.len();
+        tokens.dedup();
+        assert_eq!(tokens.len(), count, "two schemes share a token");
+    }
+
+    #[test]
+    fn a_file_written_before_the_schemes_existed_opens_on_the_default() {
+        let s = Settings::parse("language=e\ntext_size=large\n", Lang::English);
+        assert_eq!(s.color_scheme, ColorScheme::Azure);
+        assert_eq!(s.text_size, TextSize::Large, "the rest still reads");
+        // A scheme no `of_token` arm names.
+        let odd = Settings::parse("color_scheme=notacolour\n", Lang::English);
+        assert_eq!(odd.color_scheme, ColorScheme::Azure);
     }
 
     #[test]
