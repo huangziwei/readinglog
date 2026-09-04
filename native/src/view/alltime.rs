@@ -1,77 +1,127 @@
 //! The whole record as a board of figures: four rows of three over the span
 //! the log covers, one row each to the totals, the shelf, the streaks and the
-//! records.
+//! records. Three of the twelve carry a hit box onto what they name.
 
 use crate::date;
 use crate::lang::Strings;
-use crate::ui::paint::{self, PALE, Rect};
+use crate::ui::paint::{self, LIGHT, PALE, Rect};
 use crate::ui::theme::Theme;
 
-use super::Ctx;
+use super::{Ctx, Hit, Shelf};
 
 /// Rows of three the board holds.
 const ROWS: i32 = 4;
 
-/// A book this far through is finished.
-const FINISHED_PERCENT: f64 = 99.0;
+/// One figure of the board: what it states, what it is called, and the page it
+/// opens.
+struct Cell {
+    value: String,
+    label: &'static str,
+    opens: Option<Hit>,
+}
+
+/// The figure alone, opening nothing.
+fn plain(value: String, label: &'static str) -> Cell {
+    Cell {
+        value,
+        label,
+        opens: None,
+    }
+}
 
 pub fn draw(cx: &mut Ctx, area: Rect) {
     let theme: &Theme = cx.theme;
     let (since, board) = area.split_top(theme.small_px as i32 + theme.gap * 2);
     span_line(cx, since);
-    board_of(cx, board, &cells(cx));
+    let cells = cells(cx);
+    board_of(cx, board, &cells);
+}
+
+/// Books the shelf states as read through, longest first.
+fn finished_books(cx: &Ctx) -> Vec<usize> {
+    let mut out: Vec<usize> = (0..cx.stats.books.len())
+        .filter(|at| cx.stats.books[*at].is_finished())
+        .collect();
+    out.sort_by_key(|at| -cx.stats.books[*at].seconds);
+    out
 }
 
 /// The twelve figures, row by row.
-fn cells(cx: &Ctx) -> Vec<(String, &'static str)> {
+fn cells(cx: &Ctx) -> Vec<Cell> {
     let s = cx.s();
     let over = (cx.today - opened(cx) + 1).max(1);
     let read = cx.stats.days_read().max(1);
     let sittings = (cx.stats.sittings.len() as i64).max(1);
-    let books = (cx.stats.books.len() as i64).max(1);
-    let finished = cx
-        .stats
-        .books
-        .iter()
-        .filter(|b| b.has_percent() && b.percent >= FINISHED_PERCENT)
-        .count();
-    let best_day = cx
-        .stats
-        .days
-        .iter()
-        .map(|(_, secs)| *secs)
-        .max()
-        .unwrap_or(0);
-    let longest = cx
-        .stats
-        .sittings
-        .iter()
-        .map(|s| s.seconds)
-        .max()
-        .unwrap_or(0);
+    let books = cx.stats.books.len() as i64;
+    let finished = finished_books(cx);
+    let (best_day, best_day_secs) = best_day(cx);
+    let (sat_on, sat_secs) = longest_sitting(cx);
 
     vec![
-        (hours(cx.stats.total_seconds, s), s.total_read),
-        (read.to_string(), s.days_read),
-        (date::duration(cx.stats.total_seconds / over, s), s.a_day),
-        (books.to_string(), s.book_count),
-        (finished.to_string(), s.finished),
-        (hours(cx.stats.total_seconds / books, s), s.a_book),
-        (cx.stats.current_streak.to_string(), s.current_streak),
-        (cx.stats.longest_streak.to_string(), s.longest_streak),
-        (weeks_running(cx).to_string(), s.weeks_running),
-        (date::duration(best_day, s), s.best_day),
-        (date::duration(longest, s), s.longest_sitting),
-        (
+        plain(hours(cx.stats.total_seconds, s), s.total_read),
+        plain(read.to_string(), s.days_read),
+        plain(date::duration(cx.stats.total_seconds / over, s), s.a_day),
+        plain(books.to_string(), s.book_count),
+        Cell {
+            value: finished.len().to_string(),
+            label: s.finished,
+            opens: (!finished.is_empty()).then_some(Hit::Shelved(Shelf::Finished)),
+        },
+        plain(a_book(cx, &finished, s), s.a_book),
+        plain(cx.stats.current_streak.to_string(), s.current_streak),
+        plain(cx.stats.longest_streak.to_string(), s.longest_streak),
+        plain(weeks_running(cx).to_string(), s.weeks_running),
+        Cell {
+            value: date::duration(best_day_secs, s),
+            label: s.best_day,
+            opens: (best_day_secs > 0).then_some(Hit::Day(best_day)),
+        },
+        Cell {
+            value: date::duration(sat_secs, s),
+            label: s.longest_sitting,
+            opens: (sat_secs > 0).then_some(Hit::Day(sat_on)),
+        },
+        plain(
             date::duration(cx.stats.total_seconds / sittings, s),
             s.a_sitting,
         ),
     ]
 }
 
+/// How long a finished book took, averaged over the books in `finished`.
+///
+/// A shelf with none of them read through states no average.
+fn a_book(cx: &Ctx, finished: &[usize], s: &Strings) -> String {
+    if finished.is_empty() {
+        return "—".into();
+    }
+    let spent: i64 = finished.iter().map(|at| cx.stats.books[*at].seconds).sum();
+    hours(spent / finished.len() as i64, s)
+}
+
 /// The first day the record holds.
 fn opened(cx: &Ctx) -> i64 {
     cx.stats.days.first().map(|(d, _)| *d).unwrap_or(cx.today)
+}
+
+/// The fullest day of the record, and what was read on it.
+fn best_day(cx: &Ctx) -> (i64, i64) {
+    cx.stats
+        .days
+        .iter()
+        .max_by_key(|(_, secs)| *secs)
+        .map(|(day, secs)| (*day, *secs))
+        .unwrap_or((cx.today, 0))
+}
+
+/// The longest single sitting of the record, and the day it fell on.
+fn longest_sitting(cx: &Ctx) -> (i64, i64) {
+    cx.stats
+        .sittings
+        .iter()
+        .max_by_key(|s| s.seconds)
+        .map(|s| (s.day, s.seconds))
+        .unwrap_or((cx.today, 0))
 }
 
 /// Weeks back from the one holding today with a day read in each.
@@ -115,18 +165,21 @@ fn span_line(cx: &mut Ctx, area: Rect) {
         .draw_in(script, cx.fb, area.x, baseline, &line, false);
 }
 
-/// `figures` in rows of three down `area`, each row at its own size. Every
+/// `cells` in rows of three down `area`, each row at its own size. Every
 /// figure is centred in a fixed third, and the three column centres hold
 /// across rows of unequal size.
-fn board_of(cx: &mut Ctx, area: Rect, figures: &[(String, &'static str)]) {
+fn board_of(cx: &mut Ctx, area: Rect, cells: &[Cell]) {
     let theme: &Theme = cx.theme;
     let rows = area.rows(ROWS, 0);
     let column_w = area.w / 3 - theme.gap * 2;
 
-    for (line, band) in figures.chunks(3).zip(&rows) {
+    for (line, band) in cells.chunks(3).zip(&rows) {
         let px = fitting_px(cx, line, column_w);
-        for ((value, label), cell) in line.iter().zip(band.columns(3, 0)) {
-            figure(cx, cell, value, label, px);
+        for (cell, box_) in line.iter().zip(band.columns(3, 0)) {
+            figure(cx, box_, cell, px);
+            if let Some(hit) = cell.opens {
+                cx.hit(hit, box_);
+            }
         }
     }
     for row in rows.iter().skip(1) {
@@ -135,15 +188,15 @@ fn board_of(cx: &mut Ctx, area: Rect, figures: &[(String, &'static str)]) {
 }
 
 /// The largest size at or under [`Theme::display_px`] that sets every value in
-/// `figures` inside one column.
-fn fitting_px(cx: &mut Ctx, figures: &[(String, &'static str)], column_w: i32) -> f32 {
+/// `cells` inside one column.
+fn fitting_px(cx: &mut Ctx, cells: &[Cell], column_w: i32) -> f32 {
     let theme: &Theme = cx.theme;
     let mut px = theme.display_px;
     while px > theme.body_px {
         cx.text.set_px(px);
-        let widest = figures
+        let widest = cells
             .iter()
-            .map(|(value, _)| cx.text.measure_width(value) as i32)
+            .map(|cell| cx.text.measure_width(&cell.value) as i32)
             .max()
             .unwrap_or(0);
         if widest <= column_w {
@@ -158,30 +211,30 @@ fn fitting_px(cx: &mut Ctx, figures: &[(String, &'static str)], column_w: i32) -
     px
 }
 
-/// One figure centred in `cell`, its name under it.
-fn figure(cx: &mut Ctx, cell: Rect, value: &str, label: &str, px: f32) {
+/// One figure centred in `box_`, its name under it. A name carrying
+/// [`Cell::opens`] is underlined.
+fn figure(cx: &mut Ctx, box_: Rect, cell: &Cell, px: f32) {
     let theme: &Theme = cx.theme;
     cx.text.set_px(px);
     let cap = cx.text.cap_height() as i32;
     cx.text.set_px(theme.small_px);
     let line = cx.text.line_height() as i32;
     let block = cap + theme.gap + line;
-    let top = cell.y + (cell.h - block).max(0) / 2 + cap;
+    let top = box_.y + (box_.h - block).max(0) / 2 + cap;
     let script = cx.ui_script();
 
     cx.text.set_px(px);
-    let w = cx.text.measure_width(value) as i32;
+    let w = cx.text.measure_width(&cell.value) as i32;
     cx.text
-        .draw(cx.fb, cell.x + (cell.w - w) / 2, top, value, false);
+        .draw(cx.fb, box_.x + (box_.w - w) / 2, top, &cell.value, false);
 
     cx.text.set_px(theme.small_px);
-    let lw = cx.text.measure_width_in(script, label) as i32;
-    cx.text.draw_in(
-        script,
-        cx.fb,
-        cell.x + (cell.w - lw) / 2,
-        top + theme.gap + line,
-        label,
-        false,
-    );
+    let lw = cx.text.measure_width_in(script, cell.label) as i32;
+    let at = box_.x + (box_.w - lw) / 2;
+    let baseline = top + theme.gap + line;
+    cx.text
+        .draw_in(script, cx.fb, at, baseline, cell.label, false);
+    if cell.opens.is_some() {
+        paint::hline(cx.fb, at, baseline + theme.gap / 2, lw, LIGHT, 2);
+    }
 }

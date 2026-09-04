@@ -2,11 +2,13 @@
 //! catalog states.
 
 use crate::date;
+use crate::stats::Stats;
+use crate::ui::chrome;
 use crate::ui::cover;
 use crate::ui::paint::{self, INK, LIGHT, Rect};
 use crate::ui::theme::Theme;
 
-use super::{Ctx, Hit, State};
+use super::{Ctx, Hit, Shelf, State};
 
 /// Lines a title takes before the rest of it is ellipsized.
 const TITLE_LINES: usize = 2;
@@ -28,6 +30,30 @@ fn figures_width(cx: &mut Ctx, figure: &str) -> i32 {
     let pct = cx.text.measure_width("100%") as i32;
     cx.text.set_px(cx.theme.body_px);
     duration.max(pct)
+}
+
+/// Books on `shelf`, by their index in [`Stats::books`].
+pub fn on_shelf(stats: &Stats, shelf: Shelf) -> Vec<usize> {
+    (0..stats.books.len())
+        .filter(|at| match shelf {
+            Shelf::All => true,
+            Shelf::Finished => stats.books[*at].is_finished(),
+        })
+        .collect()
+}
+
+/// Whether the shelf chips are drawn. A shelf with nothing read through on it
+/// offers no choice.
+pub fn shelved(stats: &Stats) -> bool {
+    stats.books.iter().any(|b| b.is_finished())
+}
+
+/// The box the rows are drawn into, the shelf chips taken off the top.
+pub fn list_box(theme: &Theme, area: Rect, chips: bool) -> Rect {
+    match chips {
+        true => area.split_top(chrome::chip_height(theme) + theme.gap * 2).1,
+        false => area,
+    }
 }
 
 /// Rows one page of the list holds, [`foot_height`] taken off first.
@@ -53,25 +79,30 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
         empty(cx, area);
         return;
     }
+    let chips = shelved(cx.stats);
+    if chips {
+        let (head, _) = area.split_top(chrome::chip_height(theme) + theme.gap * 2);
+        shelf_chips(cx, head, state.shelf);
+    }
+    let area = list_box(theme, area, chips);
+    let shelf = on_shelf(cx.stats, state.shelf);
 
     let row_h = row_span(theme, area);
     let fits = rows_per_page(theme, area);
-    let from = state
-        .books_from
-        .min(last_page_at(theme, area, cx.stats.books.len()));
-    let to = (from + fits).min(cx.stats.books.len());
+    let from = state.books_from.min(last_page_at(theme, area, shelf.len()));
+    let to = (from + fits).min(shelf.len());
 
-    for (slot, index) in (from..to).enumerate() {
+    for (slot, index) in shelf[from..to].iter().enumerate() {
         let row = Rect::new(area.x, area.y + slot as i32 * row_h, area.w, row_h);
-        book_row(cx, row, index);
-        cx.hit(Hit::Book(index), row);
+        book_row(cx, row, *index);
+        cx.hit(Hit::Book(*index), row);
     }
 
     // `foot` takes a tap on either half.
     let (foot, _) = area.split_bottom(foot_height(theme));
-    if from > 0 || to < cx.stats.books.len() {
+    if from > 0 || to < shelf.len() {
         cx.text.set_px(theme.small_px);
-        let label = format!("{}–{} {} {}", from + 1, to, cx.s().of, cx.stats.books.len());
+        let label = format!("{}–{} {} {}", from + 1, to, cx.s().of, shelf.len());
         let w = cx.text.measure_width(&label) as i32;
         cx.text.draw(
             cx.fb,
@@ -84,9 +115,28 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
         if from > 0 {
             cx.hit(Hit::Prev, left);
         }
-        if to < cx.stats.books.len() {
+        if to < shelf.len() {
             cx.hit(Hit::Next, right);
         }
+    }
+}
+
+/// The shelves as a chip apiece, the one showing filled, each its own hit box.
+fn shelf_chips(cx: &mut Ctx, area: Rect, on: Shelf) {
+    let theme: &Theme = cx.theme;
+    let script = cx.ui_script();
+    let options: Vec<(&str, crate::font::Script)> = Shelf::ALL
+        .iter()
+        .map(|shelf| (shelf.label(cx.lang), script))
+        .collect();
+    let placed = chrome::chip_layout(cx.text, theme, &options, area.w);
+    let at = Shelf::ALL
+        .iter()
+        .position(|shelf| *shelf == on)
+        .unwrap_or(0);
+    let drawn = chrome::chips(cx.fb, cx.text, theme, area, &options, &placed, at);
+    for (slot, chip) in drawn.into_iter().enumerate() {
+        cx.hit(Hit::Shelved(Shelf::ALL[slot]), chip);
     }
 }
 

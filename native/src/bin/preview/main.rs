@@ -27,7 +27,7 @@ use readinglog_native::store::Store;
 use readinglog_native::ui::chrome::Tab;
 use readinglog_native::ui::text::TextRenderer;
 use readinglog_native::ui::theme::Theme;
-use readinglog_native::view::Span;
+use readinglog_native::view::{Shelf, Span};
 
 /// The day the preview is set to, and the second of it: a Wednesday evening in
 /// the middle of a month.
@@ -242,6 +242,7 @@ fn set_span(app: &mut App, shot: &Shot) -> Result<()> {
     };
     match of {
         "all" => app.set_span(Span::AllTime),
+        "finished" => app.set_shelf(Shelf::Finished),
         "week" => app.set_span(Span::Week),
         "month" => app.set_span(Span::Month),
         "year" => app.set_span(Span::Year),
@@ -291,6 +292,7 @@ fn list() {
             "rhythm" => "  (:all :week :month :year :day)",
             "today" => "  (:quiet :empty)",
             "book" => "  (:<index>)",
+            "books" => "  (:finished)",
             _ => "",
         };
         println!("  {name}{of}");
@@ -366,6 +368,7 @@ fn everything() -> Vec<Shot> {
         "rhythm:year",
         "rhythm:day",
         "books",
+        "books:finished",
         "book",
         "config",
     ]

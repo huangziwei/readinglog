@@ -247,7 +247,7 @@ const CHIP_PAD: i32 = 20;
 const CHIP_GAP: i32 = 14;
 
 /// How tall one chip is.
-fn chip_height(theme: &Theme) -> i32 {
+pub fn chip_height(theme: &Theme) -> i32 {
     theme.row_h * 2 / 3
 }
 

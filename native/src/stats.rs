@@ -37,10 +37,18 @@ pub struct BookStat {
     pub last_secs: i64,
 }
 
+/// How far through a book counts as read through.
+const FINISHED_PERCENT: f64 = 99.0;
+
 impl BookStat {
     /// Whether the catalog states a progress figure for this book.
     pub fn has_percent(&self) -> bool {
         self.percent >= 0.0
+    }
+
+    /// Whether the catalog states this book read through.
+    pub fn is_finished(&self) -> bool {
+        self.has_percent() && self.percent >= FINISHED_PERCENT
     }
 
     /// Over `days`, the days with reading on them.

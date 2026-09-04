@@ -1,10 +1,6 @@
-//! The screens.
-//!
-//! Each takes the box left above the tab strip and draws into it, recording a
-//! hit box for anything the reader can touch. A screen
-//! holds no state of its own: which day is showing, how wide a span is drawn
-//! around it and which book is open all live in [`State`], so a redraw after a
-//! tap is the same call with a different state.
+//! The screens. Each takes the box left above the tab strip and draws into it,
+//! recording a hit box for anything touchable. [`State`] holds the day, the
+//! span and the open book; a redraw after a tap is the same call.
 
 pub mod alltime;
 pub mod book;
@@ -25,7 +21,7 @@ use crate::ui::paint::Rect;
 use crate::ui::text::TextRenderer;
 use crate::ui::theme::Theme;
 
-/// Something the reader can touch.
+/// Something a touch lands on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hit {
     Tab(Tab),
@@ -43,11 +39,34 @@ pub enum Hit {
     Next,
     /// One span of the Rhythm screen.
     Span(Span),
-    /// The average day drawn over every span of its width, or over the one
-    /// showing.
+    /// The average day over every span of its width, or over the one showing.
     Average(bool),
     /// A page of the book list, forward or back.
     ListPage(i64),
+    /// The books tab, narrowed to one shelf.
+    Shelved(Shelf),
+}
+
+/// Which books the Books screen lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Shelf {
+    #[default]
+    All,
+    /// Books the catalog states read through.
+    Finished,
+}
+
+impl Shelf {
+    pub const ALL: [Shelf; 2] = [Shelf::All, Shelf::Finished];
+
+    /// What this shelf is called, in the interface's own language.
+    pub fn label(self, lang: Lang) -> &'static str {
+        let s = lang.strings();
+        match self {
+            Shelf::All => s.shelf_every,
+            Shelf::Finished => s.shelf_finished,
+        }
+    }
 }
 
 /// How wide a stretch of days the Rhythm screen draws around the one showing.
@@ -128,21 +147,21 @@ impl Span {
     }
 }
 
-/// Where the reader has navigated to.
+/// What the screens are drawn at: the tab, the day, the span, the open book.
 #[derive(Debug, Clone, PartialEq)]
 pub struct State {
     pub tab: Tab,
-    /// The day the Rhythm screen is looking at. The span holding it is what
-    /// the grid draws, and its own books are what the page lists.
+    /// The day Rhythm looks at. `span` holds it, and the grid draws that span.
     pub day: i64,
     pub span: Span,
-    /// Whether the reader has picked `day` off the grid. A week and a year
-    /// narrow their book list to it; a month draws it whole.
+    /// Whether `day` is picked off the grid, which a month and the board open whole.
     pub picked: bool,
     /// The book whose own screen is open, over whichever tab opened it.
     pub book: Option<usize>,
     /// How far down the book list has been paged.
     pub books_from: usize,
+    /// Which books the Books screen lists.
+    pub shelf: Shelf,
     /// Whether the average day covers every span of its width.
     pub average_all: bool,
     /// How far down Rhythm's own book list has been paged.
@@ -154,29 +173,27 @@ impl State {
         Self {
             tab: Tab::Home,
             day: today,
-            span: Span::Month,
+            span: Span::AllTime,
             picked: false,
             book: None,
             books_from: 0,
+            shelf: Shelf::default(),
             average_all: false,
             list_from: 0,
         }
     }
 
-    /// Go to `tab`, closing any book or day open over it. Answers whether that
-    /// moved anywhere: a tap on the tab already showing, with nothing open
-    /// over it, is not a navigation and costs no redraw.
-    ///
-    /// This is the only way out of a book — there is no back control, and the
-    /// tab a book was opened from stays lit while it is open, so tapping it
-    /// returns to that tab's own screen.
+    /// Go to `tab`, closing any book, day or shelf open over it. Answers
+    /// whether that moved anywhere: a tap on the tab showing, with nothing
+    /// open over it, is no navigation and costs no redraw.
     pub fn go(&mut self, tab: Tab) -> bool {
-        if self.tab == tab && self.book.is_none() && !self.picked {
+        if self.tab == tab && self.book.is_none() && !self.picked && self.shelf == Shelf::All {
             return false;
         }
         self.tab = tab;
         self.book = None;
         self.picked = false;
+        self.shelf = Shelf::All;
         true
     }
 
@@ -198,7 +215,7 @@ pub struct Ctx<'a> {
     pub lang: Lang,
     pub week: WeekStart,
     pub stats: &'a Stats,
-    /// The device's own local day, and the second of it now.
+    /// The device's own local day, and the second of it.
     pub today: i64,
     pub now: i64,
     pub hits: Vec<(Hit, Rect)>,
@@ -337,7 +354,7 @@ mod tests {
     fn a_state_opens_on_the_day_the_device_is_in() {
         let s = State::new(third());
         assert_eq!(s.day, third());
-        assert_eq!(s.span, Span::Month);
+        assert_eq!(s.span, Span::AllTime);
         assert_eq!(s.tab, Tab::Home);
         assert!(!s.picked);
         assert!(s.book.is_none());
@@ -356,6 +373,9 @@ mod tests {
     #[test]
     fn a_picked_day_steps_a_day_at_a_time() {
         let mut s = State::new(third());
+        s.shift(1);
+        assert_eq!(s.day, third(), "the whole record steps nowhere");
+        s.span = Span::Month;
         s.shift(1);
         assert_eq!(
             s.day,

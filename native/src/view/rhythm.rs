@@ -82,25 +82,22 @@ fn gutter(theme: &Theme) -> i32 {
 
 pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
     let theme: &Theme = cx.theme;
-    // `alltime::draw` takes the page under the picker.
-    if state.span == Span::AllTime {
-        let (bar, rest) = area.split_top(bar_height(theme) + theme.gap * 2);
-        picker(cx, Rect::new(bar.x, bar.y, bar.w, bar_height(theme)), state);
-        alltime::draw(cx, rest);
+    if !opens_page_whole(state) {
+        span_page(cx, area, state);
         return;
     }
-    // `Span::Month` has no room under its grid for a day, and opens one whole.
-    if state.picked && !lists_books(state.span) {
-        let (_, rest) = area.split_top(bar_height(theme) + theme.gap * 2);
-        picker(
-            cx,
-            Rect::new(area.x, area.y, area.w, bar_height(theme)),
-            state,
-        );
-        day_page(cx, rest, state.day);
-        return;
+    let (bar, rest) = area.split_top(bar_height(theme) + theme.gap * 2);
+    picker(cx, Rect::new(bar.x, bar.y, bar.w, bar_height(theme)), state);
+    match state.picked {
+        true => day_page(cx, rest, state.day),
+        false => alltime::draw(cx, rest),
     }
-    span_page(cx, area, state);
+}
+
+/// Whether `draw` gives the box under `picker` to one page: `Span::AllTime`,
+/// or a day picked off a span whose grid has no room to state it.
+fn opens_page_whole(state: &State) -> bool {
+    state.span == Span::AllTime || (state.picked && !lists_books(state.span))
 }
 
 /// The span holding `state.day`: its name, its grid, its average day, and the
@@ -178,7 +175,7 @@ fn picker(cx: &mut Ctx, area: Rect, state: &State) {
     let baseline = area.center_y() + cx.text.cap_height() as i32 / 2;
     let script = cx.ui_script();
     let lit = state.span;
-    let dark = state.picked && !lists_books(state.span);
+    let dark = state.picked && opens_page_whole(state);
     for (span, cell) in Span::ALL.iter().zip(cells) {
         let on = *span == lit && !dark;
         match on {

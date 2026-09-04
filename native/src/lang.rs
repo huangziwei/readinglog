@@ -203,6 +203,10 @@ pub struct Strings {
     pub best_day: &'static str,
     pub longest_sitting: &'static str,
     pub a_sitting: &'static str,
+
+    // The Books screen, whose two chips narrow the list to one shelf.
+    pub shelf_every: &'static str,
+    pub shelf_finished: &'static str,
     /// The heading over the columns each span cuts itself into: a week draws
     /// its hours, a month its weekdays, a year its months.
     pub an_average_day: &'static str,
@@ -305,6 +309,9 @@ const ENGLISH: Strings = Strings {
     best_day: "best day",
     longest_sitting: "longest sitting",
     a_sitting: "a sitting",
+
+    shelf_every: "All",
+    shelf_finished: "Finished",
     an_average_day: "AN AVERAGE DAY",
     an_average_week: "AN AVERAGE WEEK",
     an_average_month: "AN AVERAGE MONTH",
@@ -407,6 +414,9 @@ const GERMAN: Strings = Strings {
     best_day: "bester Tag",
     longest_sitting: "längste Sitzung",
     a_sitting: "pro Sitzung",
+
+    shelf_every: "Alle",
+    shelf_finished: "Fertig",
     an_average_day: "EIN DURCHSCHNITTSTAG",
     an_average_week: "EINE DURCHSCHNITTSWOCHE",
     an_average_month: "EIN DURCHSCHNITTSMONAT",
@@ -510,6 +520,9 @@ const JAPANESE: Strings = Strings {
     best_day: "最高の一日",
     longest_sitting: "最長の一回",
     a_sitting: "一回あたり",
+
+    shelf_every: "すべて",
+    shelf_finished: "読了",
     an_average_day: "平均的な一日",
     an_average_week: "平均的な一週間",
     an_average_month: "平均的な一か月",
@@ -600,6 +613,9 @@ const SIMPLIFIED: Strings = Strings {
     best_day: "最佳单日",
     longest_sitting: "最长单次",
     a_sitting: "每次",
+
+    shelf_every: "全部",
+    shelf_finished: "已读完",
     an_average_day: "平均的一天",
     an_average_week: "平均的一周",
     an_average_month: "平均的一个月",
@@ -701,6 +717,9 @@ const TRADITIONAL: Strings = Strings {
     best_day: "最佳單日",
     longest_sitting: "最長單次",
     a_sitting: "每次",
+
+    shelf_every: "全部",
+    shelf_finished: "已讀完",
     an_average_day: "平均的一天",
     an_average_week: "平均的一週",
     an_average_month: "平均的一個月",
