@@ -45,10 +45,9 @@ impl BookStat {
         self.percent >= 0.0
     }
 
-    /// The percentage a screen states, rounded once.
-    ///
-    /// Every figure and every bar drawn for this book takes this one number,
-    /// so a track and the figure beside it never state different percentages.
+    /// The percentage a screen states, rounded once. Every figure and every
+    /// bar drawn for this book takes this one number, so a track and the figure
+    /// beside it never disagree.
     pub fn percent_shown(&self) -> i64 {
         self.percent.round() as i64
     }
@@ -73,12 +72,9 @@ impl BookStat {
         }
     }
 
-    /// What is left to read, at this book's own rate. Zero on a book read
-    /// through.
-    ///
-    /// `None` is "no answer", not "none left": a book the catalog states no
-    /// percent for, one barely opened, and one with no time against it can
-    /// none of them be estimated.
+    /// What is left to read, at this book's own rate; zero on a book read
+    /// through. `None` is "no answer", not "none left": no percent, barely
+    /// opened, or no time against it cannot be estimated.
     pub fn time_left(&self) -> Option<i64> {
         if self.is_finished() {
             return Some(0);
@@ -119,10 +115,9 @@ pub struct Sitting {
 pub const SITTING_STEP_SECS: i64 = 5 * 60;
 pub const SITTING_BANDS: usize = 25;
 
-/// The shortest run the histogram counts as reading at all.
-///
-/// A book opened and shut again leaves a run of seconds, and there are enough
-/// of them to stand over every real sitting on the chart.
+/// The shortest run the histogram counts as reading at all. A book opened and
+/// shut again leaves a run of seconds, and there are enough of them to stand
+/// over every real sitting on the chart.
 pub const SITTING_FLOOR_SECS: i64 = 60;
 
 /// What a stretch of days came to, from [`Stats::tally`].
@@ -395,12 +390,9 @@ impl Stats {
         out
     }
 
-    /// One fold of the record onto a cycle: what each bucket of the cycle
-    /// holds, what one turn of it averages, and the fullest bucket.
-    ///
-    /// Every bucket is divided by however many of it the record covers, which
-    /// is what makes the buckets comparable: a record opening in July holds
-    /// four Augusts and three Februaries by its fourth spring.
+    /// One fold of the record onto a cycle: what each bucket holds, what one
+    /// turn averages, and the fullest bucket. Each bucket divides by however
+    /// many of it the record covers, which is what makes them comparable.
     pub fn fold(&self, values: Vec<i64>, each: i64) -> Fold {
         let busiest = values
             .iter()
@@ -426,10 +418,8 @@ impl Stats {
     }
 
     /// The record folded onto one day: the seconds each of the twenty-four
-    /// hours holds in an average day read on.
-    ///
-    /// Every such day holds all twenty-four hours, so every bucket takes the
-    /// same divisor.
+    /// hours holds in an average day read on. Every such day holds all
+    /// twenty-four, so every bucket takes the same divisor.
     pub fn average_day(&self, today: i64) -> Fold {
         let over = self.opened(today)..=today;
         // Over the days there was reading on, which is what `a day` means
@@ -460,20 +450,18 @@ impl Stats {
         self.fold(values, self.span_seconds(over) * 7 / days.max(1))
     }
 
-    /// The record laid out by month of the year: what was read in each,
-    /// summed over every occurrence of that month the record holds.
-    ///
-    /// A total, not an average. A month the record covers four times stands
-    /// against one it covers three, which is what a total of that month says.
+    /// The record laid out by month of the year, summed over every occurrence
+    /// the record holds. A total, not an average: a month covered four times
+    /// stands against one covered three.
     pub fn by_month(&self, today: i64) -> Fold {
         let counted = self.months_over(self.opened(today)..=today);
         let total = counted.iter().sum();
         self.fold(counted.to_vec(), total)
     }
 
-    /// How many sittings of the record ran each length    /// How many sittings of the record ran each length, one count per band of
-    /// [`SITTING_STEP_SECS`], the last holding every sitting past the top of
-    /// the scale. A run under [`SITTING_FLOOR_SECS`] is not counted at all.
+    /// How many sittings ran each length, one count per band of
+    /// [`SITTING_STEP_SECS`], the last holding everything past the top of the
+    /// scale. A run under [`SITTING_FLOOR_SECS`] is not counted at all.
     pub fn sitting_bands(&self) -> Vec<i64> {
         let mut out = vec![0i64; SITTING_BANDS];
         for sitting in &self.sittings {

@@ -1,10 +1,6 @@
-//! Turning a stream of log lines into sittings.
-//!
-//! A session is a run of page events on one book. It ends at a close, at a
-//! change of book, at a gap over [`SESSION_GAP_SECS`], and at midnight.
-//!
-//! Its duration is the span of the book's `TotalTime` counter across the run,
-//! never the wall clock between first and last event.
+//! Turning a stream of log lines into sittings. A session is a run of page
+//! events on one book, ended by a close, a change of book, a gap over
+//! [`SESSION_GAP_SECS`], or midnight. Its duration is the counter's span.
 
 use super::line::{
     Moment, Observation, end_position, observation, opened_at_counter, payloads, stamp,
@@ -99,8 +95,7 @@ struct Opened {
 
 /// Where a session begins: the counters it resumes from and the instant it
 /// started at — an `OpenBook` that vouched for them, or a midnight cut.
-///
-/// `counter_ms` is absent on a book the device does not time. `at` is not.
+/// `counter_ms` is absent on a book the device does not time; `at` is not.
 struct Start {
     counter_ms: Option<i64>,
     /// The word counter at that same instant, where it is known.
@@ -109,9 +104,8 @@ struct Start {
 }
 
 impl Opened {
-    /// This open as a session start, or `None` when it cannot be vouched for.
-    ///
-    /// Two guards: `counter_ms` at or under the first observation's, and the
+    /// This open as a session start, or `None` when it cannot be vouched for:
+    /// `counter_ms` must sit at or under the first observation's, and the
     /// reading it adds inside the wall clock since the open.
     fn vouch(self, now: &Moment, first_total: Option<i64>) -> Option<Start> {
         let total = first_total?;
@@ -126,11 +120,9 @@ impl Opened {
             })
     }
 
-    /// This open as the instant a run began, for a run with no counter to vouch
-    /// it against.
-    ///
-    /// `at` stands at most [`SESSION_GAP_SECS`] before `now`. [`Awake`] bounds
-    /// the figure the run produces.
+    /// This open as the instant a run began, for a run with no counter to
+    /// vouch it against. `at` stands at most [`SESSION_GAP_SECS`] before `now`,
+    /// and [`Awake`] bounds the figure the run produces.
     fn opened_run(&self, now: &Moment) -> Option<Start> {
         let elapsed = now.abs - self.at.abs;
         (self.at.day == now.day && (0..=SESSION_GAP_SECS).contains(&elapsed)).then(|| Start {
@@ -206,9 +198,8 @@ impl Open {
     }
 
     /// Book an interval's counted reading against the clock hours it ran
-    /// through, `from` and `to` being seconds into the day.
-    ///
-    /// Evenly across the interval, which is a page turn wide.
+    /// through, `from` and `to` being seconds into the day. Evenly across the
+    /// interval, which is a page turn wide.
     fn credit(hours_ms: &mut [i64; 24], from: i64, to: i64, advance_ms: i64) {
         if advance_ms <= 0 {
             return;
@@ -255,10 +246,9 @@ impl Open {
         // `Open` holds one run's counters; a reopen starts another.
     }
 
-    /// Fold one `fastmetrics` record into the run.
-    ///
-    /// `Metric::Page` closes the interval the page before it opened, and
-    /// [`dwell_ms`] says how much counts. Neither `last` nor `ended_at` moves.
+    /// Fold one `fastmetrics` record into the run. `Metric::Page` closes the
+    /// interval the page before it opened and [`dwell_ms`] says how much
+    /// counts; neither `last` nor `ended_at` moves.
     fn observe_metric(&mut self, now: &Moment, m: &Metric, awake: &Awake) {
         match m {
             Metric::Forward => self.metric_turns += 1,
@@ -326,10 +316,8 @@ impl Open {
     }
 
     /// Close the run at the midnight it was cut at, crediting this day the
-    /// share of the unfinished interval that fell before the boundary.
-    ///
-    /// The stored end is one second short of the boundary, that being the last
-    /// instant this day has: reading recorded at `T00:00:00` is the next day's.
+    /// share of the unfinished interval before the boundary. The stored end is
+    /// one second short of it: `T00:00:00` belongs to the next day.
     fn finish_at(mut self, boundary: &Start) -> Session {
         // `boundary.counter_ms` is absent where either side stated none.
         let at_boundary = boundary.counter_ms.unwrap_or(self.time_hi);
@@ -351,13 +339,9 @@ impl Open {
         self.finish(&Awake::default())
     }
 
-    /// The run as a session, under the best [`Measure`] its records support.
-    ///
-    /// [`Measure::Counted`] first, then [`Measure::Dwell`] where the counter
-    /// never moved, then [`Measure::Awake`] where the page records are absent
-    /// too.
-    ///
-    /// A run with none of the three keeps the counter's zero.
+    /// The run as a session, under the best [`Measure`] its records support:
+    /// [`Measure::Counted`], then [`Measure::Dwell`] where the counter never
+    /// moved, then [`Measure::Awake`]. None of the three keeps the zero.
     fn finish(self, awake: &Awake) -> Session {
         let counted = (self.time_hi - self.time_lo.unwrap_or(self.time_hi)) / 1000;
         let dwell = self.dwell_total_ms / 1000;
@@ -391,11 +375,9 @@ impl Open {
     }
 }
 
-/// Book `advance_ms` against the clock hours the device was awake in.
-///
-/// `from` and `to` bracket an interval a page was open across. [`Awake`] names
-/// the stretches inside it, and the advance splits between them in proportion
-/// to their length. Where it names none, the whole interval takes it.
+/// Book `advance_ms` against the clock hours the device was awake in. `from`
+/// and `to` bracket an interval a page was open across; the advance splits
+/// between [`Awake`]'s stretches in it, or takes the whole where it names none.
 fn credit_awake(
     hours_ms: &mut [i64; 24],
     awake: &Awake,
@@ -434,10 +416,8 @@ fn spread(awake: &Awake, from: &Moment, to: &Moment, seconds: i64) -> Vec<(u8, i
 }
 
 /// The hours a session's milliseconds fall in, as whole seconds summing to
-/// exactly `seconds`.
-///
-/// The running total is what truncates. A last correction covers what the
-/// milliseconds cannot account for.
+/// exactly `seconds`. The running total truncates, and a last correction covers
+/// what the milliseconds cannot account for.
 fn hours_in_seconds(hours_ms: &[i64; 24], seconds: i64) -> Vec<(u8, i64)> {
     let mut out = Vec::new();
     let (mut running, mut placed) = (0, 0);
@@ -589,10 +569,9 @@ pub fn parse_sessions<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<Sess
     out
 }
 
-/// A book's percentage read, off the reading-timer lines.
-///
-/// `%Left` is the fraction ahead, on the payload naming the book. Read only
-/// off a line whose book `end_position` names.
+/// A book's percentage read, off the reading-timer lines. `%Left` is the
+/// fraction ahead, on the payload naming the book; read only off a line whose
+/// book `end_position` names.
 fn percent_left(line: &str, book: i64) -> Option<f64> {
     payloads(line).find_map(|p| {
         if end_position(p)? != book {

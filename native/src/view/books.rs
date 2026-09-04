@@ -38,11 +38,9 @@ fn figures_width(cx: &mut Ctx, figure: &str) -> i32 {
     duration.max(pct)
 }
 
-/// Books on `shelf` in `order`, by their index in [`Stats::books`].
-///
-/// [`Stats::books`] is held most recently read first, so [`Sort::Recent`] is
-/// that order untouched and the sorts below — being stable — fall back to it
-/// wherever two books tie.
+/// Books on `shelf` in `order`, by their index in [`Stats::books`], which is
+/// held most recently read first. [`Sort::Recent`] is that order untouched, and
+/// the stable sorts below fall back to it on a tie.
 pub fn listed(stats: &Stats, shelf: Shelf, order: Sort) -> Vec<usize> {
     let mut out: Vec<usize> = (0..stats.books.len())
         .filter(|at| match shelf {
@@ -146,11 +144,9 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
     }
 }
 
-/// The order the list is in, at the right of the shelf chips' own row.
-///
-/// One chip, not one to an order: a row already carrying the shelf chips has
-/// no width for three more at every text size, and the order a tap opens is
-/// the one after this.
+/// The order the list is in, at the right of the shelf chips' own row. One
+/// chip, not one to an order: the row has no width for three more at every text
+/// size, so a tap opens the order after this one.
 fn sort_chip(cx: &mut Ctx, area: Rect, on: Sort) {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
@@ -184,10 +180,9 @@ fn jump_reach(cx: &mut Ctx) -> i32 {
     cx.text.measure_width(JUMP_LAST) as i32 + theme.gap * 4
 }
 
-/// A mark to one side of the page count, opening the list at `at`. Nothing is
-/// drawn where the list already stands at that end.
-///
-/// `count` is the box the count itself is set in; the mark stands clear of it.
+/// A mark to one side of the page count, opening the list at `at`, and nothing
+/// where the list already stands at that end. `count` is the box the count is
+/// set in; the mark stands clear of it.
 fn jump(cx: &mut Ctx, count: Rect, baseline: i32, at_left: bool, at: Option<usize>) {
     let theme: &Theme = cx.theme;
     let Some(at) = at else { return };

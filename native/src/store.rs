@@ -84,10 +84,9 @@ impl Store {
         dir.join(STORE_FILE)
     }
 
-    /// Read the store, or an empty one where there is none to read.
-    ///
-    /// A file that will not parse reads as empty. One stamped with an older
-    /// [`HEADER`] keeps `books` and `ends`, and gives up `sessions` and `mark`.
+    /// Read the store, or an empty one where there is none to read. A file
+    /// that will not parse reads as empty; one stamped with an older [`HEADER`]
+    /// keeps `books` and `ends` and gives up `sessions` and `mark`.
     pub fn load(dir: &Path) -> Self {
         let Ok(text) = std::fs::read_to_string(Self::file(dir)) else {
             return Self::default();
@@ -147,11 +146,9 @@ impl Store {
         std::fs::rename(&partial, &target)
     }
 
-    /// The instant a pass must start reading the log at.
-    ///
-    /// [`Self::mark`], except under [`Self::open_at_mark`]: the newest
-    /// sitting's own start, which a re-measurement of that sitting reads from.
-    /// An empty mark with no sitting reads the whole log.
+    /// The instant a pass must start reading the log at: [`Self::mark`], except
+    /// under [`Self::open_at_mark`], where it is the newest sitting's own start
+    /// so that sitting is re-measured whole.
     pub fn read_from(&self) -> String {
         let Some(newest) = self.sessions.last() else {
             return self.mark.clone();
@@ -174,10 +171,9 @@ impl Store {
         mark - ended < SESSION_GAP_SECS
     }
 
-    /// Fold a batch of log lines into the store.
-    ///
-    /// Every sitting at or after `from` is dropped and replaced by what `lines`
-    /// measured. A sitting in progress is re-measured whole on each pass.
+    /// Fold a batch of log lines into the store. Every sitting at or after
+    /// `from` is dropped and replaced by what `lines` measured, so a sitting in
+    /// progress is re-measured whole on each pass.
     pub fn absorb(&mut self, lines: &[String], from: &str) -> (usize, usize) {
         let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
         let parsed = crate::log::parse_sessions(refs.iter().copied());
@@ -228,10 +224,9 @@ impl Store {
         }
     }
 
-    /// Fold what `catalog` states into [`Self::books`].
-    ///
-    /// A book `catalog` names has its record merged; one `catalog` stops
-    /// naming keeps what it holds. Answers how many records changed.
+    /// Fold what `catalog` states into [`Self::books`], answering how many
+    /// records changed. A book `catalog` names has its record merged; one it
+    /// stops naming keeps what it holds.
     pub fn remember(&mut self, catalog: &[Book]) -> usize {
         let before = self.books.clone();
         for record in &mut self.books {
@@ -260,12 +255,8 @@ impl Store {
     }
 
     /// Give each record outside `stated` the percentage its newest sitting
-    /// states.
-    ///
-    /// `p_percentFinished` sits on the `p_isArchived = 0` row, which a deletion
-    /// drops. `%Left` on the reading-timer lines states the same figure, and
-    /// `sessions` ascends by `started_at`, so a record's last write is its
-    /// newest sitting's.
+    /// states. `p_percentFinished` sits on the row a deletion drops; `%Left`
+    /// states the same figure, and `sessions` ascends by `started_at`.
     fn note_progress(&mut self, stated: &[usize]) {
         for i in 0..self.sessions.len() {
             let Some(progress) = self.sessions[i].progress else {
@@ -283,9 +274,8 @@ impl Store {
     }
 
     /// Copy each book's `thumbnail` into `dir` and point its `cover` at the
-    /// copy. Answers how many records this changed.
-    ///
-    /// A record whose copy is on disk keeps it, `thumbnail` unread.
+    /// copy, answering how many records changed. A record whose copy is on disk
+    /// keeps it, `thumbnail` unread.
     pub fn keep_covers(&mut self, dir: &Path) -> usize {
         let mut kept = 0;
         for record in &mut self.books {
@@ -312,7 +302,6 @@ impl Store {
     }
 
     /// Where `book` sits in [`Self::books`]: under its `extent`, else its key.
-    ///
     /// A cloud row states no extent, and the record it belongs to may carry one
     /// from a pass that ran while the book was on the device.
     fn slot_of(&self, book: &Book) -> Option<usize> {
@@ -373,9 +362,8 @@ impl Store {
         self.sort_books();
     }
 
-    /// Orders and de-duplicates `books` on `extent` and `cde_key` together.
-    ///
-    /// Every cloud record carries an `extent` of zero, and a periodical's
+    /// Orders and de-duplicates `books` on `extent` and `cde_key` together:
+    /// every cloud record carries an `extent` of zero, and a periodical's
     /// issues share one `cde_key`.
     fn sort_books(&mut self) {
         self.books
@@ -405,10 +393,9 @@ fn taken(book: &Book) -> BookRecord {
     }
 }
 
-/// Take what `book` states over what `record` holds, field by field.
-///
-/// A cloud row states no extent and no percentage, and a record carrying either
-/// from a pass that ran while the book was on the device keeps it.
+/// Take what `book` states over what `record` holds, field by field. A cloud
+/// row states no extent and no percentage, and a record carrying either from an
+/// earlier pass keeps it.
 fn merge(record: &mut BookRecord, book: &Book) {
     for (field, stated) in [
         (&mut record.cde_key, &book.cde_key),

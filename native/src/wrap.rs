@@ -1,14 +1,9 @@
 //! Pure text-wrap utility, at the crate root: `ui::text::TextRenderer` pulls
 //! in `Framebuffer`, which `cargo test --lib` cannot build on the host.
 
-/// `text` wrapped to `max_width` per line, measured by `measure`.
-/// Whitespace splits a Latin line; a token wider than `max_width` — a CJK
-/// title, a URL — breaks at char boundaries.
-///
-/// Every candidate is measured whole. A face chain picks its face for the
-/// string it is given, and one that covers `token` alone need not cover the
-/// line `token` lands in: summing token widths reads narrower than the line
-/// draws.
+/// `text` wrapped to `max_width` per line, measured by `measure`. Whitespace
+/// splits a Latin line; a token wider than `max_width` breaks at char
+/// boundaries. Every candidate is measured whole, never summed from tokens.
 pub fn wrap_to_width<F>(text: &str, max_width: u32, mut measure: F) -> Vec<String>
 where
     F: FnMut(&str) -> u32,

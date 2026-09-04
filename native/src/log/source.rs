@@ -1,21 +1,6 @@
-//! Where the log lines are on the device, and how they are read off it.
-//!
-//! `LIVE_LOG` is appended to continuously and holds the sitting in progress.
-//! `tinyrot` gzips it into [`LOG_DIR`] on a size cap and prunes the oldest.
-//! `log_backup.sh` gzips a daily snapshot into [`DUMP_DIR`], where about a
-//! month accumulates. `showlog` reads the first two:
-//!
-//! ```text
-//! ALLFILES=`ls -1 $ARCHIVE_DIR/${LOG}_*.gz | xargs`
-//! cat $ALLFILES | zcat >> "$OUTFILE"
-//! cat /var/log/$LOG >> "$OUTFILE"
-//! ```
-//!
-//! `/var/log` is a directory on the tmpfs; `/var/local` is a symlink to the
-//! `/var/base-local` flash mount, and no file named `messages` sits in
-//! [`LOG_DIR`] beside the rotated chunks.
-//!
-//! All three overlap. Every pass sorts and de-duplicates what it took.
+//! Where the log lines are on the device. `LIVE_LOG` holds the sitting in
+//! progress, `tinyrot` gzips it into [`LOG_DIR`], and `log_backup.sh` gzips a
+//! daily snapshot into [`DUMP_DIR`]. All three overlap; a pass de-duplicates.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -57,12 +42,8 @@ pub struct Collected {
 }
 
 /// Every marker line at or after `watermark`, across the three sources.
-///
-/// `watermark` is `YYMMDD:HHMMSS`, the shape a log line begins with and a
-/// filename encodes; every comparison here is a plain string ordering. An empty
-/// one reads every file.
-///
-/// `on` takes the count of files opened and the count to open.
+/// `watermark` is `YYMMDD:HHMMSS` — the shape a line begins with and a filename
+/// encodes, so every comparison is string ordering. `on` takes opened, to open.
 pub fn collect_from(
     live: &Path,
     log_dir: &Path,
@@ -121,13 +102,9 @@ pub fn collect_from(
     out
 }
 
-/// The files in `dir` worth opening, oldest first.
-///
-/// `straddle` keeps the newest file at or before `watermark` alongside
-/// everything after it: a chunk name states its rotation instant, which sits
-/// past its own content. A dump name states when it was taken.
-///
-/// An unparseable name is read, at the cost of one gunzip.
+/// The files in `dir` worth opening, oldest first. `straddle` keeps the newest
+/// file at or before `watermark` too: a chunk name states its rotation instant,
+/// which sits past its own content. An unparseable name is read anyway.
 fn dated(
     dir: &Path,
     prefix: &str,
@@ -190,9 +167,7 @@ fn chunk_stamp(name: &str) -> Option<String> {
 }
 
 /// Append every marker line in `text` at or after `watermark`, and answer with
-/// how many that was.
-///
-/// At or after, not past: `watermark` names the first line a pass re-reads.
+/// how many. At or after, not past: `watermark` is the first line re-read.
 fn take_events(text: &str, watermark: &str, out: &mut Vec<String>) -> usize {
     let before = out.len();
     for line in text.lines() {
@@ -215,14 +190,9 @@ struct Decoded {
     complete: bool,
 }
 
-/// Decode a log file, gunzipping a gzipped one, and keep a truncated decode's
-/// intact prefix.
-///
-/// `log_backup.sh` gzips a dump while a pass reads it, and that same file
-/// decodes to the end a minute later under the same name.
-///
-/// Lossy, never `read_to_string`: the syslog carries bytes that are not valid
-/// UTF-8, on which a strict decode fails for the whole file.
+/// Decode a log file, gunzipping a gzipped one, keeping a truncated decode's
+/// intact prefix: `log_backup.sh` gzips a dump while a pass reads it. Lossy,
+/// never `read_to_string` — the syslog carries bytes that are not UTF-8.
 fn read_maybe_gzip(path: &Path) -> Option<Decoded> {
     let bytes = std::fs::read(path).ok()?;
     // An empty file is a created-and-unwritten dump.

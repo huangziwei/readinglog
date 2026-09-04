@@ -26,11 +26,9 @@ pub fn fits(theme: &Theme, h: i32, count: usize) -> usize {
     count.min(((h / row_floor(theme)).max(1)) as usize)
 }
 
-/// One day's books under their own heading, opened at `from`.
-///
-/// A day of more books than the band holds is paged from the heading, and
-/// `from` is held inside the list. Today and the Rhythm day page both draw
-/// this, so a day's books read and page the same from either.
+/// One day's books under their own heading, opened at `from`, which is held
+/// inside the list. Today and the Rhythm day page both draw this, so a day's
+/// books read and page the same from either.
 pub fn paged(cx: &mut Ctx, area: Rect, day: i64, from: usize) {
     let theme: &Theme = cx.theme;
     // The strip `section` sets its title in, taken before the call.
@@ -52,13 +50,9 @@ pub fn paged(cx: &mut Ctx, area: Rect, day: i64, from: usize) {
     draw_noting(cx, inner, day, &read[from..to]);
 }
 
-/// `from`–`to` of `count` at the right of the heading the list is under, a
-/// chip on either side of it stepping the list by `deep`. Each chip carries
-/// the index it opens the list at, held inside the list.
-///
-/// The two straddle the count so each is its own target — a thumb covers both
-/// where they sit shoulder to shoulder — and the count between them says which
-/// end of the list each opens.
+/// `from`–`to` of `count` at the right of the list's heading, a chip either
+/// side of it stepping by `deep` and carrying the index it opens at. They
+/// straddle the count so each is its own target.
 fn pager(cx: &mut Ctx, head: Rect, from: usize, to: usize, count: usize, deep: usize) {
     let theme: &Theme = cx.theme;
     let last = super::last_page_at(count, deep);

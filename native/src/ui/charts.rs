@@ -1,9 +1,6 @@
-//! The shapes a record is read in: a grid of days, the names around one, a
-//! day's hours as a strip, a row of columns, a stack of labelled bars, and one
-//! day's sittings laid along the clock.
-//!
-//! [`week_cells`], [`month_cells`] and [`heatmap`] state where a day lands,
-//! apart from any draw.
+//! The shapes a record is read in: grids of days, a day's hours as a strip, a
+//! row of columns, labelled bars, and a day's sittings along the clock.
+//! [`week_cells`], [`month_cells`] and [`heatmap`] place a day with no draw.
 
 use crate::date;
 use crate::eink::fb::Framebuffer;
@@ -14,10 +11,9 @@ use super::paint::{self, DARK, INK, LIGHT, PALE, Rect};
 use super::text::TextRenderer;
 use super::theme::Theme;
 
-/// One day of a month grid: which day, and the box it occupies.
-///
-/// Seven columns from whichever day `week` starts on, over as many rows as the
-/// month reaches into — five or six, and the rows fill `area` either way.
+/// One day of a month grid: which day, and the box it occupies. Seven columns
+/// from whichever day `week` starts on, over the five or six rows the month
+/// reaches into, filling `area` either way.
 pub fn month_cells(
     area: Rect,
     year: i64,
@@ -84,12 +80,9 @@ pub fn weekday_head(
     }
 }
 
-/// A year of days laid out one column to a week, seven rows deep from
-/// whichever day `week` starts on, in square cells.
-///
-/// The year's fifty-three weeks are cut into blocks stacked down the page: one
-/// block is the shape GitHub draws, and two of them set a cell twice the size
-/// on a panel this narrow.
+/// A year of days, one column to a week, seven rows deep from whichever day
+/// `week` starts on, in square cells. The fifty-three weeks are cut into blocks
+/// stacked down the page, which doubles the cell size on a narrow panel.
 pub struct Heatmap {
     /// Every day of the year and the box it occupies.
     pub cells: Vec<(i64, Rect)>,
@@ -197,11 +190,9 @@ pub struct Run {
     pub span: usize,
 }
 
-/// `days` — one entry per day of a week, each holding that day's books
-/// longest first — laid into `depth` lanes a column.
-///
-/// A book read on consecutive days holds one lane across them and carries the
-/// whole run, so the caller draws one bar where `start` is its own column.
+/// `days` — one entry per day of a week, each holding that day's books longest
+/// first — laid into `depth` lanes a column. A book read on consecutive days
+/// holds one lane across them, so the caller draws one bar for the run.
 pub fn lanes(days: &[Vec<usize>], depth: usize) -> Vec<Vec<Option<Run>>> {
     let mut out: Vec<Vec<Option<Run>>> = Vec::with_capacity(days.len());
     for (column, books) in days.iter().enumerate() {
@@ -244,11 +235,9 @@ pub fn lanes(days: &[Vec<usize>], depth: usize) -> Vec<Vec<Option<Run>>> {
     out
 }
 
-/// One day's twenty-four hours as bars across `area`, in `rgb`, against
-/// `peak`.
-///
-/// `peak` is the busiest hour of every day drawn beside this one, so a quiet
-/// day and a busy one are read off the same scale.
+/// One day's twenty-four hours as bars across `area`, in `rgb`, against `peak`
+/// — the busiest hour of every day drawn beside this one, so a quiet day and a
+/// busy one are read off the same scale.
 pub fn hour_shape(fb: &mut Framebuffer, area: Rect, hours: &[i64; 24], peak: i64, rgb: [u8; 3]) {
     if peak <= 0 || area.h <= 0 || area.w < 24 {
         return;
@@ -271,14 +260,8 @@ pub fn hour_shape(fb: &mut Framebuffer, area: Rect, hours: &[i64; 24], peak: i64
 pub type Figure<'a> = &'a dyn Fn(i64) -> Vec<String>;
 
 /// A row of columns, one per entry in `values`, each carrying its own figure.
-///
-/// `every` names one bucket of the axis in that many, and the last always,
-/// that being the one which can name an overflow. `highlight` marks the
-/// fullest bar of what is drawn.
-///
-/// A figure of two parts stacks inside its bar where the bar is tall enough
-/// for two lines, so `2h 22m` is fitted to the width of `22m` and not of both.
-/// A bar too short for the lines carries them over itself in ink instead.
+/// `every` names one bucket of the axis in that many, and the last always;
+/// `highlight` marks the fullest bar drawn.
 #[allow(clippy::too_many_arguments)]
 pub fn columns(
     fb: &mut Framebuffer,
@@ -392,10 +375,7 @@ fn bar_width(theme: &Theme, cell_w: i32) -> i32 {
 
 /// The largest size at or under [`Theme::small_px`] that sets every line of
 /// every figure inside `room`, floored where type stops being readable.
-///
-/// `width` measures a string at a size. Kept apart from the paint so a figure
-/// wider than the bar it stands in is caught by a test rather than by looking
-/// at a screenshot.
+/// `width` measures a string at a size.
 fn figure_px(
     theme: &Theme,
     said: &[Vec<String>],

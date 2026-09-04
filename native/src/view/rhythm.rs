@@ -217,12 +217,8 @@ fn span_figures(cx: &mut Ctx, area: Rect, days: std::ops::RangeInclusive<i64>) {
 }
 
 /// `title` between two arrows, each its own hit box. `back` draws the chip
-/// returning to the span that holds today, beside the name it replaces.
-///
-/// No rule under it: the air below is what separates the name from the
-/// figures, and a line there closes the two into one block. The chip keeps
-/// its distance from both arrows, a thumb's width and more, so a reach for
-/// one cannot land on the other.
+/// returning to the span that holds today. The chip keeps a thumb's width from
+/// both arrows, so a reach for one cannot land on the other.
 fn span_nav(cx: &mut Ctx, area: Rect, title: &str, back: bool) {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
@@ -343,13 +339,9 @@ fn day_head(cx: &mut Ctx, area: Rect, day: i64) {
     }
 }
 
-/// The box a day's hours are cut into, inside its own bar.
-///
-/// A whole number of hours wide, so each hour has its own column of pixels and
-/// a mark's distance along the box is a time. It is held clear of the bar's
-/// own edges: a mark reaching an edge would open onto the page and read as a
-/// bar broken in two rather than as an hour. An answer with no width or no
-/// height is a bar with no room for its hours.
+/// The box a day's hours are cut into, inside its own bar. A whole number of
+/// hours wide so each hour owns its pixels, and held clear of the bar's edges
+/// so a mark cannot open onto the page and read as a broken bar.
 fn clock_box(theme: &Theme, bar: Rect) -> Rect {
     let pad = (theme.gap / 2).max(1);
     let w = ((bar.w - pad * 2).max(0) / 24) * 24;
@@ -360,14 +352,9 @@ fn clock_box(theme: &Theme, bar: Rect) -> Rect {
     Rect::new(bar.x + (bar.w - w) / 2, bar.bottom() - pad - h, w, h.max(0))
 }
 
-/// One day's total, as a bar up its own column with the figure over it and
-/// the hours it was read in cut into its foot.
-///
-/// The bar's height says how much was read and is scaled against the week; the
-/// foot says when, and is scaled against the day's own busiest hour so a quiet
-/// day states its shape as plainly as a full one.
-///
-/// See [`clock_box`] for where the hours stand inside the bar.
+/// One day's total, as a bar up its own column with the figure over it and the
+/// hours cut into its foot — see [`clock_box`]. The bar scales against the
+/// week; the foot against the day's own busiest hour.
 fn day_bar(cx: &mut Ctx, area: Rect, day: i64, most: i64, on: bool) {
     let theme: &Theme = cx.theme;
     let secs = cx.stats.day_seconds(day);
@@ -582,10 +569,8 @@ fn cover_air(theme: &Theme) -> i32 {
 }
 
 /// Every book read over `days` as its cover, what was read of it under each.
-///
-/// As many to a row as the width holds and as many rows as the band has
-/// height for; a grid too small for them all is paged from its heading. The
-/// figures under a cover are set to the cover's own width.
+/// As many to a row as the width holds and as many rows as the band allows; a
+/// grid too small for them all is paged from its heading.
 fn cover_grid(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeInclusive<i64>) {
     let theme: &Theme = cx.theme;
     let s = cx.s();
@@ -753,11 +738,9 @@ fn open_day_chip(cx: &mut Ctx, head: Rect) {
     cx.hit(Hit::OpenDay, chip);
 }
 
-/// How the grid cuts `inner`: the rows and columns it holds, and one cell.
-///
-/// A cell is a cover with two lines under it, and the cover keeps its own
-/// two-to-three shape, so the columns follow from whatever height the rows
-/// leave.
+/// How the grid cuts `inner`: the rows and columns it holds, and one cell. A
+/// cell is a cover with two lines under it, and the cover keeps its own
+/// two-to-three shape, so the columns follow from the height the rows leave.
 fn grid_of(cx: &mut Ctx, inner: Rect) -> (i32, i32, Rect) {
     let theme: &Theme = cx.theme;
     cx.text.set_px(theme.small_px);

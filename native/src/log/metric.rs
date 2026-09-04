@@ -1,15 +1,6 @@
-//! The `fastmetrics` records the reader shell writes beside the reading timer.
-//!
-//! The reading timer counts words and a WPM, and times only a book it can count
-//! words in. These records come from the reader shell and are written for every
-//! book: `ereader_book_consume_content` spans a page with its `words_count`,
-//! `ereader_book_page_turn` and `ereader_book_linear_page_actions` name a turn,
-//! `ereader_open_book` and `ereader_close_book` bracket a book, and
-//! `ereader_reader_latency_ops` and `ereader_reader_page_turn_latency_ops`
-//! carry a `cde_key`.
-//!
-//! Bracketed in the marker strings: `ereader_open_book` is a prefix of
-//! `ereader_open_book_failure_backup`.
+//! The `fastmetrics` records the reader shell writes beside the reading timer,
+//! for every book including the ones the timer declines to count. Bracketed in
+//! the marker strings: `ereader_open_book` prefixes `..._failure_backup`.
 
 use super::line::{field_num, field_text};
 
@@ -24,12 +15,9 @@ pub const METRIC_MARKERS: [&str; 8] = [
     "SchemaName[ereader_reader_page_turn_latency_ops]",
 ];
 
-/// What one record contributes to the run open around it.
-///
-/// The records name no book. They state a page and a turn for whatever the
-/// reader had open, which is the run the reading-timer lines are already
-/// tracking — and those lines still open and position a book the timer declines
-/// to count.
+/// What one record contributes to the run open around it. The records name no
+/// book: they state a page and a turn for whatever the reader had open, which
+/// is the run the reading-timer lines are already tracking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Metric {
     /// `ereader_book_consume_content`: a page, with the words on it.
@@ -53,9 +41,7 @@ pub fn metric(line: &str) -> Option<Metric> {
         return Some(Metric::Close);
     }
     if line.contains(METRIC_MARKERS[3]) || line.contains(METRIC_MARKERS[4]) {
-        // The two records carrying an `action_id`, one per reader stack:
-        // `ereader_book_page_turn` names `NextPageTurnWithSWIPE` and
-        // `ereader_book_linear_page_actions` names `NextPageWithTap`. The
+        // The two records carrying an `action_id`, one per reader stack. The
         // `ereader_content_point` beside them carries a `point_type` and no
         // action, being a chapter boundary rather than a turn.
         return match field_text(line, "action_id") {
@@ -67,15 +53,9 @@ pub fn metric(line: &str) -> Option<Metric> {
     None
 }
 
-/// The `cde_key` a reader-shell record states for the book it is about.
-///
-/// The reading-timer lines redact the book on every one of them
-/// (`Title:<private>,Asin:<private>`), and these do not: the latency records
-/// name it outright, one per open, per close and per page turn. It is the
-/// catalog's own `p_cdeKey`, which makes it a second way into `cc.db` beside
-/// the book's end position.
-///
-/// `N/A` is the reader shell's own filler for a book it has no key for.
+/// The `cde_key` a reader-shell record states for the book it is about, which
+/// the reading-timer lines redact. It is the catalog's own `p_cdeKey`; `N/A` is
+/// the reader shell's filler for a book it has no key for.
 pub fn cde_key(line: &str) -> Option<&str> {
     if !METRIC_MARKERS.iter().any(|m| line.contains(m)) {
         return None;
@@ -101,13 +81,9 @@ const WPM_MAX: f64 = 500.0;
 const WORDLESS_FLOOR: f64 = 3.0;
 const WORDLESS_CEILING: f64 = 120.0;
 
-/// How much of a page's dwell counts as reading, in milliseconds.
-///
-/// The device's own rule, from `PageHeuristicsImpl` in
-/// `ReadingDataAggregatorService.jar` with the `KFTResources` defaults. Applied
-/// verbatim: it has a defined answer for a page carrying no words, which is
-/// exactly the content the reading timer refuses, and matching it keeps these
-/// figures comparable with the ones the device shows for itself.
+/// How much of a page's dwell counts as reading, in milliseconds. The device's
+/// own rule, from `PageHeuristicsImpl` with the `KFTResources` defaults,
+/// applied verbatim so these figures stay comparable with the device's own.
 pub fn dwell_ms(wpm: Option<f64>, words: i64, dwell_ms: i64) -> i64 {
     let secs = dwell_ms as f64 / 1000.0;
     match wpm {

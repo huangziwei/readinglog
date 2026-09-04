@@ -32,6 +32,34 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 # libxcb and breaks the static musl link.
 x11rb = { version = "0.13", default-features = false }
 
+# ureq: small sync HTTP client, for `update`. Must stay at 3 with
+# `rustls-no-provider`: 2's only TLS feature pulls rustls with ring, whose C
+# build script ends the rust-lld cross path in .cargo/config.toml.
+ureq = { version = "3", default-features = false, features = [
+    "rustls-no-provider",
+    "rustls-webpki-roots",
+] }
+# rustls with no provider features of its own, for the same reason. `tls12` is
+# off: api.github.com and objects.githubusercontent.com both negotiate TLS 1.3.
+rustls = { version = "0.23", default-features = false, features = ["std"] }
+# The crypto provider, so the graph stays pure Rust and the static musl link
+# needs no C toolchain. Pinned to git: the crates.io release is far behind.
+# Glue onto rustls' provider traits, under the RustCrypto org, not audited.
+rustls-rustcrypto = { git = "https://github.com/RustCrypto/rustls-rustcrypto", rev = "7b44a2de957b6596d267a920d3aec0d4137defb1" }
+# webpki-roots: bundled Mozilla root store. A Kindle's own CA bundle is years
+# stale and would reject GitHub's current chain, so the roots ship with the
+# binary and the system store is never consulted.
+webpki-roots = "1"
+# serde + serde_json: the GitHub release list `update::pick_release` reads.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# crc32fast: `update::archive` checks each zip entry against its recorded CRC.
+# Already in the graph through `image`'s PNG decoder.
+crc32fast = "1"
+# sha2: the `.sha256` sidecar the release workflow publishes beside the zip.
+# Already in the graph through rustls-rustcrypto.
+sha2 = "0.11"
+
 # Draws every screen to a PNG on the host. Off the device build: build.sh names
 # the binary it cross-compiles.
 [[bin]]

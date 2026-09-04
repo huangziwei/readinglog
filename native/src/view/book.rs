@@ -249,10 +249,9 @@ fn where_note(book: &BookStat, s: &Strings) -> String {
     }
 }
 
-/// Which of the three regimes produced this book's figure.
-///
-/// `seconds`, `dwell_seconds` and `awake_seconds` are not one claim: a counter,
-/// a per-page measurement, and an upper bound.
+/// Which of the three regimes produced this book's figure. `seconds`,
+/// `dwell_seconds` and `awake_seconds` are not one claim: a counter, a per-page
+/// measurement, and an upper bound.
 fn measure_note(book: &BookStat, s: &Strings) -> String {
     let measured = book.seconds - book.dwell_seconds - book.awake_seconds;
     match (measured, book.dwell_seconds, book.awake_seconds) {

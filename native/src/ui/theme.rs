@@ -1,8 +1,6 @@
-//! Every size on screen, from the panel and the text size the reader set.
-//!
-//! Type is a fixed pixel size — see [`BODY_PX`] — and every size derived from
-//! it is too. [`Theme::pad`] and [`Theme::gap`] are the only fields the
-//! panel's own width reaches.
+//! Every size on screen, from the panel and the text size the reader set. Type
+//! is a fixed pixel size — see [`BODY_PX`] — and so is everything derived from
+//! it; [`Theme::pad`] and [`Theme::gap`] alone read the panel's width.
 
 use crate::settings::TextSize;
 
@@ -29,14 +27,9 @@ pub struct Theme {
     pub tabs_h: i32,
 }
 
-/// A row of the UI, in pixels of em.
-///
-/// Fixed, not a share of the panel. Every Kindle this runs on is a ~300 ppi
-/// display — 300 on the Colorsoft and the Paperwhite, 304 on the Scribe — so a
-/// pixel is the same fraction of a millimetre on all of them and a size in
-/// pixels is a size on the page. Scaling type with `xres` instead would set
-/// the Scribe's text half again as large as the Paperwhite's for no reason:
-/// the larger panel's job is to show *more*, not bigger.
+/// A row of the UI, in pixels of em. Fixed, not a share of the panel: every
+/// Kindle this runs on is ~300 ppi, so a size in pixels is a size on the page.
+/// The larger panel's job is to show *more*, not bigger.
 const BODY_PX: f32 = 38.0;
 
 /// A section heading.

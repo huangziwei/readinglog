@@ -1,9 +1,6 @@
-//! Reading one syslog line.
-//!
-//! The reading-timer lines are a flat `key:value,` list inside one or more
-//! `;`-terminated payloads, each headed by an event name. The `fastmetrics`
-//! records beside them carry a JSON-ish body instead. Everything here reads one
-//! line and answers about that line alone.
+//! Reading one syslog line. The reading-timer lines are a flat `key:value,`
+//! list inside `;`-terminated payloads, each headed by an event name; the
+//! `fastmetrics` records beside them carry a JSON-ish body instead.
 
 use crate::date;
 
@@ -18,11 +15,9 @@ pub struct Moment {
     pub day: String,
     /// Seconds into `day`.
     pub secs: i64,
-    /// The same instant as a single running count of seconds.
-    ///
-    /// Elapsed time is measured on this and never on `secs`, which runs
-    /// backwards at midnight: subtracting there reads a whole night's absence
-    /// as no time at all.
+    /// The same instant as a single running count of seconds. Elapsed time is
+    /// measured on this and never on `secs`, which runs backwards at midnight
+    /// and reads a whole night's absence as no time at all.
     pub abs: i64,
     /// `YYYY-MM-DDTHH:MM:SS` — the form a session stores.
     pub at: String,
@@ -58,12 +53,9 @@ pub fn stamp(line: &str) -> Option<Moment> {
     })
 }
 
-/// The `YYMMDD:HHMMSS` a line begins with, or `None` when it begins with
-/// something else.
-///
-/// The form a watermark travels in: it compares against raw log prefixes and
-/// against dump filenames, both of which are this shape, so the comparison is a
-/// plain string ordering with no date arithmetic.
+/// The `YYMMDD:HHMMSS` a line begins with, or `None`. The form a watermark
+/// travels in: log prefixes and dump filenames are both this shape, so every
+/// comparison is string ordering with no date arithmetic.
 pub fn line_stamp(line: &str) -> Option<&str> {
     stamp(line).map(|_| &line[..13])
 }
@@ -88,10 +80,9 @@ pub fn log_stamp(iso: &str) -> Option<String> {
         .then_some(out)
 }
 
-/// A whole-number field of a reading-timer payload.
-///
-/// The name must start a field — the line's own separator or a `,` before it —
-/// so `Time` does not match inside `IntervalTime`.
+/// A whole-number field of a reading-timer payload. The name must start a
+/// field — the line's separator or a `,` — so `Time` does not match inside
+/// `IntervalTime`.
 pub fn field(line: &str, name: &str) -> Option<i64> {
     let needle = format!("{name}:");
     let bytes = line.as_bytes();
@@ -107,12 +98,8 @@ pub fn field(line: &str, name: &str) -> Option<i64> {
 }
 
 /// The payloads a line carries, each `<Event>,<fields>` with the event name
-/// possibly missing.
-///
-/// Usually one. A line carries two when the head of the first was cut, leaving
-/// its tail in front of the `;` that begins the next. Fields have to be read
-/// from a single payload: each states its own positions, so reading across the
-/// boundary pairs one event's counter with another's book.
+/// possibly missing. Fields must be read from one payload: reading across pairs
+/// one event's counter with another's book.
 pub fn payloads(line: &str) -> impl Iterator<Item = &str> {
     line.split_once("Information::")
         .map_or("", |(_, rest)| rest)
@@ -120,22 +107,9 @@ pub fn payloads(line: &str) -> impl Iterator<Item = &str> {
         .filter(|p| !p.is_empty())
 }
 
-/// The book's own end position within one payload, or `None` when the payload
-/// states only the chapter's.
-///
-/// A payload states `EndPos` twice — the book's, then the current chapter's —
-/// with the `NextTOCEntry…` group between them. What distinguishes them is
-/// which side of that group they fall on, not which comes first: a payload can
-/// arrive with its head cut away and the book's `EndPos` gone with it, leaving
-/// the chapter's leading a payload it does not describe.
-///
-/// The book's is the **last** `EndPos` before that group. A cut lands
-/// mid-payload, so a line can open with the tail of the payload before it — a
-/// chapter block, `NextTOCEntry` long gone — and the book's own block then sits
-/// second, still correctly ahead of this payload's group. Taking the first
-/// reads a chapter boundary as the book's identity, and since that boundary
-/// moves as the reader advances, the sitting is cut into a fresh run at every
-/// chapter and each fragment measures nothing.
+/// The book's own end position within one payload, the **last** `EndPos` before
+/// the `NextTOCEntry…` group. Taking the first reads a moving chapter boundary
+/// as the book's identity, cutting the sitting into a run per chapter.
 pub fn end_position(payload: &str) -> Option<i64> {
     const KEY: &str = "EndPos:YJPosition: ";
     let at = match payload.find("NextTOCEntry") {
@@ -158,14 +132,9 @@ pub fn book_position(line: &str) -> Option<i64> {
     payloads(line).find_map(end_position)
 }
 
-/// True when the line names `event` as an event rather than merely containing
-/// the word.
-///
-/// An event is written `<sep><Event>,`, where `<sep>` is the `Information::`
-/// prefix or the `;` that terminates the payload before it. Requiring a
-/// separator is what stops `CloseBook` matching inside a field value, and
-/// accepting `;` is what finds an event that is not first on its line — which
-/// on one firmware is where most of them are.
+/// True when the line names `event` rather than merely containing the word: an
+/// event is `<sep><Event>,`, `<sep>` being the `Information::` prefix or the
+/// `;` ending the payload before it. Both separators are load-bearing.
 pub fn names(line: &str, event: &str) -> bool {
     let bytes = line.as_bytes();
     line.match_indices(event).any(|(at, _)| {
@@ -187,17 +156,9 @@ pub struct Observation {
     pub closes: bool,
 }
 
-/// Read a line as an observation of some book's reading counter, or `None` when
-/// the line is not about a book.
-///
-/// A line qualifies on what it carries — a running counter beside a book's end
-/// position — rather than on being a named page event, because a mangled
-/// payload keeps its fields and loses its name. Only page events and closes
-/// carry `TotalTime`, so this selects the same lines on a log where every event
-/// *is* named, and recovers the rest on one where they are not.
-///
-/// The name is still read wherever it survives: nothing else can say that a
-/// close ended the session or that an advance was forward rather than back.
+/// Read a line as an observation of some book's reading counter, or `None`. A
+/// line qualifies on what it carries — a counter beside an end position — not
+/// on a named event, which a mangled payload loses while keeping its fields.
 pub fn observation(line: &str) -> Option<Observation> {
     let page_turn = names(line, "NextPage");
     let closes = names(line, "CloseBook");
@@ -229,11 +190,9 @@ pub fn observation(line: &str) -> Option<Observation> {
     })
 }
 
-/// A book's reading counter at the instant it was opened, in milliseconds, from
-/// an `OpenBook` line's `StoredBookData`.
-///
-/// `TimeRead:9,229 sec.` — whole seconds, thousands-separated. `null` means a
-/// book with no history, which is a counter of zero, not an absent one.
+/// A book's reading counter when it was opened, in milliseconds, from an
+/// `OpenBook` line's `StoredBookData`. `TimeRead:9,229 sec.` is whole seconds,
+/// thousands-separated; `null` is a counter of zero, not an absent one.
 pub fn opened_at_counter(line: &str) -> Option<i64> {
     let rest = line.split_once("StoredBookData:")?.1;
     if rest.starts_with("null") {
@@ -269,26 +228,9 @@ pub fn field_num(line: &str, name: &str) -> Option<i64> {
     rest[..end].parse().ok()
 }
 
-/// Map each book's per-line fingerprint to the number the device catalog knows
-/// it by.
-///
-/// The device states **two** different end-of-book constants. Page events
-/// repeat `EndPos`, the last *word* position — good for grouping, but a few
-/// positions short of the book's end. Only the occasional `BookEndPosition`
-/// event states `FromBook`, the last valid position, and that is the one
-/// `cc.db` carries as `p_contentSize`. They are not interchangeable: joining on
-/// the former silently matches nothing.
-///
-/// `BookEndPosition` fires on most book opens, so a stretch of log that
-/// contains a book's sessions almost always contains its mapping too; the first
-/// sighting wins, since two builds of one title differ in both numbers
-/// together.
-///
-/// The pending value is dropped at every `OpenBook`. A book that states no
-/// `BookEndPosition` would otherwise inherit whichever one was last seen and be
-/// filed as an entirely different book. Dropping it leaves such a book keyed by
-/// its own `EndPos`: unnamed until a later stretch shows its mapping, which is
-/// the answer that is at least true.
+/// Map each book's per-line `EndPos` fingerprint to the `FromBook` the catalog
+/// knows it by as `p_contentSize`; joining on `EndPos` matches nothing. The
+/// pending value drops at every `OpenBook`, or a book inherits another's.
 pub fn frombook_map<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<(i64, i64)> {
     const KEY: &str = "BookEndPosition.FromBook:YJPosition: ";
     let mut map: Vec<(i64, i64)> = Vec::new();

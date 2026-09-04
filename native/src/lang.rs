@@ -5,10 +5,8 @@
 use std::path::Path;
 
 /// `template` with `{d}` set to `count`, and an ending in brackets kept only
-/// where `count` is not one.
-///
-/// `{d} DAY[S]` reads "1 DAY" and "30 DAYS"; a language whose noun does not
-/// change with the number writes no brackets and gets the one form.
+/// where `count` is not one: `{d} DAY[S]` reads "1 DAY" and "30 DAYS". A
+/// language with one form writes no brackets.
 pub fn counted(template: &str, count: i64) -> String {
     let mut out = String::with_capacity(template.len());
     let mut dropping = false;
@@ -21,6 +19,13 @@ pub fn counted(template: &str, count: i64) -> String {
         }
     }
     out.replace("{d}", &count.to_string())
+}
+
+/// `template` with `{v}` set to `version`. Beside [`counted`] so the
+/// convention is one thing: a language whose word order puts the number
+/// elsewhere moves the brace rather than the code.
+pub fn at_version(template: &str, version: &str) -> String {
+    template.replace("{v}", version)
 }
 
 /// The languages the interface is written in.
@@ -294,6 +299,38 @@ pub struct Strings {
     pub size_medium: &'static str,
     pub size_large: &'static str,
 
+    // Updating.
+    /// The About section of the config page: the version this build is, and
+    /// the button that goes looking for a newer one.
+    pub about: &'static str,
+    pub version_row: &'static str,
+    pub update_row: &'static str,
+    pub update_check: &'static str,
+    /// The banner, while an update runs. `update_tap_to_stop` is the only way
+    /// out of it: the screen is one banner and has no room for a button.
+    pub update_asking: &'static str,
+    pub update_downloading: &'static str,
+    pub update_checking: &'static str,
+    pub update_placing: &'static str,
+    pub update_tap_to_stop: &'static str,
+    /// How it ended. `{v}` is a version — see [`at_version`].
+    pub update_up_to_date: &'static str,
+    pub update_this_version: &'static str,
+    pub update_installed: &'static str,
+    pub update_reopen: &'static str,
+    pub update_stopped: &'static str,
+    /// Why it did not, and where to go instead. Every failure draws
+    /// `update_by_hand` and the address under it: this app has no browser, and
+    /// the release page opened on a computer always works.
+    pub update_failed: &'static str,
+    pub update_by_hand: &'static str,
+    pub update_offline: &'static str,
+    pub update_no_answer: &'static str,
+    pub update_no_release: &'static str,
+    pub update_bad_download: &'static str,
+    pub update_wrong_build: &'static str,
+    pub update_not_placed: &'static str,
+
     /// Hours and minutes, appended to a number with no space in English and
     /// CJK, with one in German.
     pub hours: &'static str,
@@ -401,6 +438,29 @@ const ENGLISH: Strings = Strings {
     size_small: "Small",
     size_medium: "Medium",
     size_large: "Large",
+
+    about: "ABOUT",
+    version_row: "Version",
+    update_row: "Update",
+    update_check: "Check now",
+    update_asking: "Asking GitHub…",
+    update_downloading: "Downloading…",
+    update_checking: "Checking it runs here…",
+    update_placing: "Putting it in place…",
+    update_tap_to_stop: "Tap to stop",
+    update_up_to_date: "Up to date",
+    update_this_version: "Reading Log {v}",
+    update_installed: "Updated to {v}",
+    update_reopen: "Close Reading Log and open it again.",
+    update_stopped: "Stopped",
+    update_failed: "The update did not go through",
+    update_by_hand: "Get it on a computer instead:",
+    update_offline: "No route off this Kindle. Turn Wi-Fi on.",
+    update_no_answer: "GitHub could not be reached.",
+    update_no_release: "No release carries an archive.",
+    update_bad_download: "The download did not arrive whole.",
+    update_wrong_build: "That build does not run on this Kindle.",
+    update_not_placed: "The new copy would not go into place.",
 
     hours: "h",
     minutes: "m",
@@ -521,6 +581,29 @@ const GERMAN: Strings = Strings {
     size_small: "Klein",
     size_medium: "Mittel",
     size_large: "Groß",
+
+    about: "ÜBER",
+    version_row: "Version",
+    update_row: "Aktualisierung",
+    update_check: "Jetzt suchen",
+    update_asking: "GitHub wird gefragt …",
+    update_downloading: "Wird heruntergeladen …",
+    update_checking: "Läuft es hier? Wird geprüft …",
+    update_placing: "Wird eingesetzt …",
+    update_tap_to_stop: "Zum Abbrechen tippen",
+    update_up_to_date: "Aktuell",
+    update_this_version: "Reading Log {v}",
+    update_installed: "Aktualisiert auf {v}",
+    update_reopen: "Reading Log schließen und neu öffnen.",
+    update_stopped: "Abgebrochen",
+    update_failed: "Die Aktualisierung ist fehlgeschlagen",
+    update_by_hand: "Stattdessen am Computer holen:",
+    update_offline: "Kein Weg aus diesem Kindle heraus. WLAN einschalten.",
+    update_no_answer: "GitHub war nicht erreichbar.",
+    update_no_release: "Keine Veröffentlichung mit einem Archiv.",
+    update_bad_download: "Der Download kam nicht vollständig an.",
+    update_wrong_build: "Diese Fassung läuft nicht auf diesem Kindle.",
+    update_not_placed: "Die neue Fassung ließ sich nicht einsetzen.",
 
     // `5 Std 8 Min` sets the Book screen's three figures 1258 px across a row
     // 1186 px wide. `h`/`m` are read in German and are what fits.
@@ -643,6 +726,29 @@ const JAPANESE: Strings = Strings {
     size_medium: "中",
     size_large: "大",
 
+    about: "このアプリ",
+    version_row: "バージョン",
+    update_row: "更新",
+    update_check: "今すぐ確認",
+    update_asking: "GitHub に問い合わせ中…",
+    update_downloading: "ダウンロード中…",
+    update_checking: "この端末で動くか確認中…",
+    update_placing: "入れ替え中…",
+    update_tap_to_stop: "タップで中止",
+    update_up_to_date: "最新です",
+    update_this_version: "Reading Log {v}",
+    update_installed: "{v} に更新しました",
+    update_reopen: "Reading Log を閉じて開き直してください。",
+    update_stopped: "中止しました",
+    update_failed: "更新できませんでした",
+    update_by_hand: "パソコンから入手してください：",
+    update_offline: "ネットワークに接続していません。Wi-Fi を入れてください。",
+    update_no_answer: "GitHub に接続できませんでした。",
+    update_no_release: "配布物のあるリリースがありません。",
+    update_bad_download: "ダウンロードが完全ではありませんでした。",
+    update_wrong_build: "この Kindle では動かないビルドです。",
+    update_not_placed: "新しいファイルを入れ替えられませんでした。",
+
     hours: "時間",
     minutes: "分",
     unit_space: false,
@@ -750,6 +856,29 @@ const SIMPLIFIED: Strings = Strings {
     size_small: "小",
     size_medium: "中",
     size_large: "大",
+
+    about: "关于",
+    version_row: "版本",
+    update_row: "更新",
+    update_check: "立即检查",
+    update_asking: "正在询问 GitHub…",
+    update_downloading: "正在下载…",
+    update_checking: "正在检查能否在此运行…",
+    update_placing: "正在替换…",
+    update_tap_to_stop: "点击停止",
+    update_up_to_date: "已是最新",
+    update_this_version: "Reading Log {v}",
+    update_installed: "已更新到 {v}",
+    update_reopen: "请关闭 Reading Log 后重新打开。",
+    update_stopped: "已停止",
+    update_failed: "更新未能完成",
+    update_by_hand: "请在电脑上获取：",
+    update_offline: "此 Kindle 没有网络。请打开 Wi-Fi。",
+    update_no_answer: "无法连接 GitHub。",
+    update_no_release: "没有带安装包的发布。",
+    update_bad_download: "下载不完整。",
+    update_wrong_build: "该版本无法在此 Kindle 上运行。",
+    update_not_placed: "新文件无法就位。",
 
     hours: "小时",
     minutes: "分",
@@ -869,6 +998,29 @@ const TRADITIONAL: Strings = Strings {
     size_small: "小",
     size_medium: "中",
     size_large: "大",
+
+    about: "關於",
+    version_row: "版本",
+    update_row: "更新",
+    update_check: "立即檢查",
+    update_asking: "正在詢問 GitHub…",
+    update_downloading: "正在下載…",
+    update_checking: "正在檢查能否在此執行…",
+    update_placing: "正在替換…",
+    update_tap_to_stop: "點擊停止",
+    update_up_to_date: "已是最新",
+    update_this_version: "Reading Log {v}",
+    update_installed: "已更新至 {v}",
+    update_reopen: "請關閉 Reading Log 後重新開啟。",
+    update_stopped: "已停止",
+    update_failed: "更新未能完成",
+    update_by_hand: "請在電腦上取得：",
+    update_offline: "此 Kindle 沒有網路。請開啟 Wi-Fi。",
+    update_no_answer: "無法連線 GitHub。",
+    update_no_release: "沒有附安裝檔的版本。",
+    update_bad_download: "下載不完整。",
+    update_wrong_build: "此版本無法在這台 Kindle 上執行。",
+    update_not_placed: "新檔案無法就位。",
 
     hours: "小時",
     minutes: "分",

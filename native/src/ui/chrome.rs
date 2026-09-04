@@ -45,12 +45,9 @@ pub fn clear(fb: &mut Framebuffer, theme: &Theme) {
 // and the only close marks that exist sit in `code2000` and the display faces,
 // where they would stand against Ember's letters in another face's weight.
 
-/// The bottom strip: Exit, then the four tabs, in five cells of one width.
-/// Answers the hit box for Exit and one per tab.
-///
-/// The tab for the screen showing is drawn in reverse, which is what names the
-/// screen. A book is shown over the tab it was opened from, so that tab stays
-/// lit and tapping it closes the book.
+/// The bottom strip: Exit, then the four tabs, in five cells of one width,
+/// answering a hit box each. The tab showing is drawn in reverse; a book is
+/// shown over the tab it was opened from, so tapping that tab closes it.
 pub fn tabs(
     fb: &mut Framebuffer,
     text: &mut TextRenderer,
@@ -130,13 +127,9 @@ pub fn section(
     rest
 }
 
-/// The height [`section`] takes above the box it answers with.
 /// The row a figure or a chip stands on at the right of a section heading,
-/// centred on the title's own ink.
-///
-/// A chip is a box taller than the line inside it, so everything on the row —
-/// the title, a count, a chip — takes this one centre, and a baseline derived
-/// from it lands on the title's own baseline.
+/// centred on the title's own ink. Everything on the row takes this one centre,
+/// so a baseline derived from it lands on the title's own.
 pub fn heading_row(text: &mut TextRenderer, theme: &Theme, head: Rect) -> Rect {
     text.set_px(theme.small_px);
     let cap = text.cap_height() as i32;
@@ -197,13 +190,9 @@ fn figure(
     );
 }
 
-/// `stated` spread across `row`, the first flush left and the last flush right.
-///
-/// The set is drawn at [`Theme::display_px`] where it fits `row` at that size,
-/// and at the largest size down to [`Theme::body_px`] that does where it does
-/// not: a book of a hundred hours states its total in full.
-///
-/// [`figures_at`] caps the size lower, for a row standing among other bands.
+/// `stated` spread across `row`, the first flush left and the last flush right,
+/// at [`Theme::display_px`] or the largest size down to [`Theme::body_px`] that
+/// fits. [`figures_at`] caps it lower for a row standing among other bands.
 pub fn figures(
     fb: &mut Framebuffer,
     text: &mut TextRenderer,
@@ -244,9 +233,8 @@ pub fn figures_at(
 }
 
 /// The size a row of figures is set at: `display` where the set fits `room`,
-/// else the largest size down to `floor` that does.
-///
-/// `needed` states the width the set takes at a size.
+/// else the largest size down to `floor` that does. `needed` states the width
+/// the set takes at a size.
 fn figures_px(display: f32, floor: f32, room: i32, mut needed: impl FnMut(f32) -> i32) -> f32 {
     let mut px = display;
     let mut takes = needed(px);
@@ -291,13 +279,9 @@ pub fn chip_height(theme: &Theme) -> i32 {
     theme.row_h * 2 / 3
 }
 
-/// Where the second column starts on every row. Taken from the widest label,
-/// pulled back until the widest chip run fits, and held between `width / 3`
-/// and `width / 2`.
-///
-/// One column for the whole page, so the rows line up: a per-row column reads
-/// as a ragged edge, and a flat fraction either wastes the page or wraps the
-/// longest run.
+/// Where the second column starts on every row: from the widest label, pulled
+/// back until the widest chip run fits, held between `width / 3` and
+/// `width / 2`. One column for the whole page, so the rows line up.
 pub fn chip_column(
     text: &mut TextRenderer,
     theme: &Theme,
@@ -337,9 +321,8 @@ fn run_width(
 }
 
 /// Where every chip of a row lands, wrapped to `width`, laid out from `(0, 0)`.
-///
 /// Separated from the paint so a dropped chip — a setting the reader cannot
-/// reach — is caught by a test rather than by looking at a screenshot.
+/// reach — is caught by a test.
 pub fn chip_layout(
     text: &mut TextRenderer,
     theme: &Theme,
@@ -376,13 +359,8 @@ pub fn setting(
 }
 
 /// Every option of a setting, side by side, the one in use filled and the rest
-/// outlined, at the places [`chip_layout`] put them.
-///
-/// All of them are shown at once and each is its own tap target: a control
-/// that cycles hides how many values it has, and there is room here. The
-/// caller lays out first and sizes the row from the same answer, so a chip is
-/// never drawn where the row has no height for it. Answers one box per option,
-/// in window coordinates.
+/// outlined, at the places [`chip_layout`] put them, answering one box each.
+/// The caller must size the row from that same layout.
 pub fn chips(
     fb: &mut Framebuffer,
     text: &mut TextRenderer,
@@ -474,10 +452,8 @@ mod tests {
 
     #[test]
     fn the_language_row_stands_on_one_line() {
-        // What the abbreviations are for. 简体 says what 简体中文 does in half
-        // the width, and with the column taken from the labels rather than a
-        // flat third, all five languages stand on one line on the narrow
-        // panel. A row that wraps still draws — this is fit, not safety.
+        // What the abbreviations are for: all five languages stand on one
+        // line on the narrow panel. A row that wraps still draws.
         let theme = Theme::for_screen(1264, 1680);
         let names: Vec<(&str, Script)> = Lang::ALL
             .iter()

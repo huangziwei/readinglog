@@ -1,9 +1,6 @@
-//! Where a candidate screen is drawn from.
-//!
-//! The drafts themselves live under `artifacts/sketch/`, which git ignores: a
-//! candidate is a picture to look at, not code to keep. `preview.sh` writes an
-//! empty register there when none exists, and a draft reaches the repository
-//! by being written into `view`.
+//! Where a candidate screen is drawn from. The drafts live under
+//! `artifacts/sketch/`, which git ignores; `preview.sh` writes an empty
+//! register there when none exists.
 
 #[path = "../../../../artifacts/sketch/mod.rs"]
 mod drafts;

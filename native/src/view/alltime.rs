@@ -1,12 +1,6 @@
-//! All Time, in two pages.
-//!
-//! The board is four rows of three figures over the span the log covers, three
-//! of the twelve carrying a hit box onto what they name. Trends is the record
-//! folded onto a day, a week and a year, over how long a sitting runs.
-//!
-//! One line at the head of each page tells them apart and pages between them:
-//! what the record covers and a `›` on the board, a `‹` and the page's name on
-//! Trends. A swipe does the same thing.
+//! All Time, in two pages: a board of four rows of three figures, three of them
+//! carrying a hit box, and Trends, the record folded onto a day, a week and a
+//! year. One line at the head of each pages between them, as does a swipe.
 
 use crate::date;
 use crate::lang::Strings;
@@ -165,10 +159,9 @@ fn band(cx: &mut Ctx, area: Rect, name: &str, fold: &Fold, axis: &[String], ever
     );
 }
 
-/// A duration over its bar, as the rows it is set in: an hour part and a
-/// minute part stack, so `2h 22m` is fitted to the width of `22m` and not of
-/// both. A bucket holding under a minute states nothing, its bar being a
-/// hairline that a figure would stand over as a speck of dirt.
+/// A duration over its bar, as the rows it is set in: the hour and minute
+/// parts stack, so `2h 22m` fits the width of `22m`. A bucket under a minute
+/// states nothing.
 pub(super) fn duration_rows(secs: i64, s: &Strings) -> Vec<String> {
     if secs < 60 {
         return Vec::new();

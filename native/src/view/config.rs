@@ -8,8 +8,14 @@ use crate::settings::{Settings, TextSize, WeekStart};
 use crate::ui::chrome;
 use crate::ui::paint::Rect;
 use crate::ui::theme::Theme;
+use crate::update;
 
 use super::{Ctx, Hit};
+
+/// The index no option is drawn filled at. A row of one chip that is a button
+/// rather than a setting takes it: nothing it does is a state this page could
+/// be showing.
+const NONE_ON: usize = usize::MAX;
 
 /// One setting: what it is called, and the values it takes.
 struct Row<'a> {
@@ -20,10 +26,40 @@ struct Row<'a> {
     hit: fn(usize) -> Hit,
 }
 
+/// One line of a section.
+enum Line<'a> {
+    /// A setting: its name, its values, and which is in use.
+    Set(Row<'a>),
+    /// A fact the page states and does not set. Its value stands at the same
+    /// column the chips do, so a stated line and a set one read as one list.
+    Says { label: &'a str, value: String },
+}
+
+impl<'a> Line<'a> {
+    fn label(&self) -> &'a str {
+        match self {
+            Line::Set(row) => row.label,
+            Line::Says { label, .. } => label,
+        }
+    }
+
+    /// The chips this line lays out, which a stated line has none of.
+    fn options(&self) -> Vec<(&str, Script)> {
+        match self {
+            Line::Set(row) => row
+                .options
+                .iter()
+                .map(|(text, script)| (text.as_str(), *script))
+                .collect(),
+            Line::Says { .. } => Vec::new(),
+        }
+    }
+}
+
 /// A section of the page.
 struct Section<'a> {
     heading: &'a str,
-    rows: Vec<Row<'a>>,
+    lines: Vec<Line<'a>>,
 }
 
 /// The page, built from what is set. Kept apart from the drawing: the shape
@@ -94,18 +130,36 @@ fn sections<'a>(lang: Lang, settings: &Settings) -> Vec<Section<'a>> {
         hit: |i| Hit::ShowUnnamed(i == 0),
     };
 
+    // Never filled: it is a button rather than a setting.
+    let update = Row {
+        label: s.update_row,
+        options: vec![(s.update_check.to_string(), plain)],
+        on: NONE_ON,
+        hit: |_| Hit::Update,
+    };
+
     vec![
         Section {
             heading: s.interface,
-            rows: vec![language, size],
+            lines: vec![Line::Set(language), Line::Set(size)],
         },
         Section {
             heading: s.the_calendar,
-            rows: vec![week],
+            lines: vec![Line::Set(week)],
         },
         Section {
             heading: s.the_record,
-            rows: vec![unnamed],
+            lines: vec![Line::Set(unnamed)],
+        },
+        Section {
+            heading: s.about,
+            lines: vec![
+                Line::Says {
+                    label: s.version_row,
+                    value: update::VERSION.to_string(),
+                },
+                Line::Set(update),
+            ],
         },
     ]
 }
@@ -120,21 +174,16 @@ pub fn draw(cx: &mut Ctx, area: Rect, settings: &Settings) {
     let air = between(theme);
     let page = sections(cx.lang, settings);
 
-    // Every row's chips start at one column, taken from the widest label and
-    // pulled back until the widest run fits. No row wraps that need not.
+    // Every line's second column starts at one place, taken from the widest
+    // label and pulled back until the widest run fits. No row wraps that need
+    // not.
     let labels: Vec<&str> = page
         .iter()
-        .flat_map(|s| s.rows.iter().map(|r| r.label))
+        .flat_map(|s| s.lines.iter().map(Line::label))
         .collect();
     let runs: Vec<Vec<(&str, Script)>> = page
         .iter()
-        .flat_map(|s| s.rows.iter())
-        .map(|row| {
-            row.options
-                .iter()
-                .map(|(t, script)| (t.as_str(), *script))
-                .collect()
-        })
+        .flat_map(|s| s.lines.iter().map(Line::options))
         .collect();
     let column = chrome::chip_column(cx.text, theme, &labels, &runs, area.w);
     let width = (area.w - column).max(1);
@@ -143,16 +192,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, settings: &Settings) {
     for section in page {
         // Laid out once. The same answer sizes the row and places the chips:
         // a wrapped option never falls outside the height it was given.
-        let borrowed: Vec<Vec<(&str, Script)>> = section
-            .rows
-            .iter()
-            .map(|row| {
-                row.options
-                    .iter()
-                    .map(|(text, script)| (text.as_str(), *script))
-                    .collect()
-            })
-            .collect();
+        let borrowed: Vec<Vec<(&str, Script)>> = section.lines.iter().map(Line::options).collect();
         let placed: Vec<Vec<Rect>> = borrowed
             .iter()
             .map(|options| chrome::chip_layout(cx.text, theme, options, width))
@@ -173,22 +213,33 @@ pub fn draw(cx: &mut Ctx, area: Rect, settings: &Settings) {
         rest = left;
 
         let mut inner = chrome::section(cx.fb, cx.text, theme, band, section.heading);
-        for (at, row) in section.rows.iter().enumerate() {
+        for (at, stated) in section.lines.iter().enumerate() {
             let (line, below) = inner.split_top(heights[at].min(inner.h));
             inner = below;
-            chrome::setting(cx.fb, cx.text, theme, line, row.label);
+            chrome::setting(cx.fb, cx.text, theme, line, stated.label());
             let box_ = chip_box(line, column, blocks[at]);
-            let chips = chrome::chips(
-                cx.fb,
-                cx.text,
-                theme,
-                box_,
-                &borrowed[at],
-                &placed[at],
-                row.on,
-            );
-            for (i, chip) in chips.into_iter().enumerate() {
-                cx.hit((row.hit)(i), chip);
+            match stated {
+                Line::Says { value, .. } => {
+                    // On the chips' own column and on the label's own line: a
+                    // fact reads as one of the list, not as a chip that will
+                    // not light.
+                    let said = Rect::new(box_.x, line.y, (line.right() - box_.x).max(1), line.h);
+                    chrome::setting(cx.fb, cx.text, theme, said, value);
+                }
+                Line::Set(row) => {
+                    let chips = chrome::chips(
+                        cx.fb,
+                        cx.text,
+                        theme,
+                        box_,
+                        &borrowed[at],
+                        &placed[at],
+                        row.on,
+                    );
+                    for (i, chip) in chips.into_iter().enumerate() {
+                        cx.hit((row.hit)(i), chip);
+                    }
+                }
             }
         }
     }
@@ -206,6 +257,15 @@ fn chip_box(row: Rect, column: i32, block: i32) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The setting at line `at` of section `of`. Panics where that line is a
+    /// fact rather than a setting, which is what the caller meant to read.
+    fn row<'a>(page: &'a [Section<'a>], of: usize, at: usize) -> &'a Row<'a> {
+        match &page[of].lines[at] {
+            Line::Set(row) => row,
+            Line::Says { label, .. } => panic!("{label} states, it does not set"),
+        }
+    }
 
     #[test]
     fn a_rows_chips_centre_against_its_label() {
@@ -237,11 +297,14 @@ mod tests {
         let settings = Settings::new(Lang::English);
         let page = sections(Lang::English, &settings);
         assert!(page.len() >= 2, "a page of one section is a stub");
-        let rows: usize = page.iter().map(|s| s.rows.len()).sum();
-        assert!(rows >= 2, "got {rows} rows");
+        let lines: usize = page.iter().map(|s| s.lines.len()).sum();
+        assert!(lines >= 2, "got {lines} lines");
         for section in &page {
             assert!(!section.heading.is_empty());
-            assert!(!section.rows.is_empty(), "a heading with nothing under it");
+            assert!(!section.lines.is_empty(), "a heading with nothing under it");
+            for line in &section.lines {
+                assert!(!line.label().is_empty(), "an unnamed line");
+            }
         }
     }
 
@@ -251,13 +314,17 @@ mod tests {
         // default is simply the one that starts out lit.
         let mut settings = Settings::new(Lang::Japanese);
         let page = sections(Lang::English, &settings);
-        let row = &page[0].rows[0];
-        assert_eq!(row.options.len(), Lang::ALL.len(), "one chip per language");
-        assert_eq!(row.on, 4, "the device's Japanese is what is lit");
+        let language = row(&page, 0, 0);
+        assert_eq!(
+            language.options.len(),
+            Lang::ALL.len(),
+            "one chip per language"
+        );
+        assert_eq!(language.on, 4, "the device's Japanese is what is lit");
 
         settings.language = Lang::TraditionalChinese;
         let page = sections(Lang::English, &settings);
-        assert_eq!(page[0].rows[0].on, 3);
+        assert_eq!(row(&page, 0, 0).on, 3);
     }
 
     #[test]
@@ -266,7 +333,7 @@ mod tests {
         let settings = Settings::new(Lang::English);
         let page = sections(Lang::English, &settings);
         let by_name = |want: &str| {
-            page[0].rows[0]
+            row(&page, 0, 0)
                 .options
                 .iter()
                 .find(|(text, _)| text == want)
@@ -284,7 +351,7 @@ mod tests {
         let mut settings = Settings::new(Lang::English);
         settings.text_size = TextSize::Large;
         let page = sections(Lang::English, &settings);
-        let size = &page[0].rows[1];
+        let size = row(&page, 0, 1);
         assert_eq!(size.options.len(), TextSize::ALL.len());
         assert_eq!(size.on, 2);
         assert_eq!((size.hit)(0), Hit::TextSize(TextSize::Small));
@@ -294,21 +361,53 @@ mod tests {
     fn the_week_row_names_its_days_in_the_interface_s_language() {
         let settings = Settings::new(Lang::German);
         let page = sections(Lang::German, &settings);
-        let week = &page[1].rows[0];
+        let week = row(&page, 1, 0);
         assert_eq!(week.options[0].0, "Mo");
         assert_eq!(week.options[1].0, "So");
+    }
+
+    #[test]
+    fn the_page_states_which_build_it_is_and_offers_a_newer_one() {
+        let settings = Settings::new(Lang::English);
+        let page = sections(Lang::English, &settings);
+        let about = page.last().expect("a section");
+
+        let Line::Says { label, value } = &about.lines[0] else {
+            panic!("the version is stated, not set");
+        };
+        assert_eq!(*label, Lang::English.strings().version_row);
+        assert_eq!(value, crate::update::VERSION);
+
+        // One chip, never lit: it is a button, and nothing it does is a state
+        // this page could be showing.
+        let update = row(&page, page.len() - 1, 1);
+        assert_eq!(update.options.len(), 1);
+        assert_eq!((update.hit)(0), Hit::Update);
+        assert!(update.on >= update.options.len(), "a button drawn filled");
+    }
+
+    #[test]
+    fn every_language_names_the_about_section_and_its_button() {
+        for lang in Lang::ALL {
+            let settings = Settings::new(lang);
+            let page = sections(lang, &settings);
+            let about = page.last().expect("a section");
+            assert_eq!(about.heading, lang.strings().about, "{lang:?}");
+            let update = row(&page, page.len() - 1, 1);
+            assert!(!update.options[0].0.is_empty(), "{lang:?}");
+        }
     }
 
     #[test]
     fn a_tap_names_the_option_under_it() {
         let settings = Settings::new(Lang::English);
         let page = sections(Lang::English, &settings);
-        let row = &page[0].rows[0];
+        let language = row(&page, 0, 0);
         for (i, lang) in Lang::ALL.iter().enumerate() {
-            assert_eq!((row.hit)(i), Hit::Language(*lang));
+            assert_eq!((language.hit)(i), Hit::Language(*lang));
         }
         // A chip index past the end cannot panic: the row is drawn from the
         // same list, but the two are separated by the paint.
-        assert_eq!((row.hit)(99), Hit::Language(Lang::Japanese));
+        assert_eq!((language.hit)(99), Hit::Language(Lang::Japanese));
     }
 }

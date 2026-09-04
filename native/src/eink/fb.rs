@@ -229,11 +229,9 @@ impl Framebuffer {
         })
     }
 
-    /// A white `xres` by `yres` surface with no server behind it.
-    ///
-    /// Everything draws into it the way it draws into a window, and
-    /// [`Framebuffer::capture_png`] takes the frame off it.
-    /// [`Framebuffer::send_update`] presents nothing.
+    /// A white `xres` by `yres` surface with no server behind it. Everything
+    /// draws into it as into a window and [`Framebuffer::capture_png`] takes
+    /// the frame off it; [`Framebuffer::send_update`] presents nothing.
     pub fn offscreen(xres: u32, yres: u32) -> Self {
         Self {
             surface: None,

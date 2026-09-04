@@ -21,6 +21,7 @@ use readinglog_native::ui::chrome::Tab;
 use readinglog_native::ui::paint;
 use readinglog_native::ui::text::TextRenderer;
 use readinglog_native::ui::theme::Theme;
+use readinglog_native::update::{Doing, Failure, Outcome};
 use readinglog_native::view::{Shelf, Sort, Span};
 
 /// The day the preview is set to, and the second of it: a Wednesday evening in
@@ -38,11 +39,42 @@ const PANELS: &[(&str, u32, u32)] = &[
 /// Where the PNGs land under `--out`.
 const OUT: &str = "artifacts/preview";
 
-/// Where the fixture's jackets are drawn, under `--art`.
-///
-/// An input the store's records point at, and the same sixteen files whatever
-/// a run draws, so one set stands apart from any run's own output directory.
+/// Where the fixture's jackets are drawn, under `--art`. An input the store's
+/// records point at, and the same files whatever a run draws, so one set stands
+/// apart from any run's output directory.
 const ART: &str = "artifacts/preview/art";
+
+/// The update banner a shot can name, and what it is saying. The one screen
+/// with no tab under it, drawn over the whole panel, and where a translation
+/// that runs long shows.
+const BANNERS: &[(&str, Said)] = &[
+    ("asking", || Banner::Doing(Doing::Asking)),
+    ("downloading", || {
+        Banner::Doing(Doing::Downloading {
+            got: 1_400_000,
+            total: Some(3_300_000),
+        })
+    }),
+    ("checking", || Banner::Doing(Doing::Checking)),
+    ("done", || {
+        Banner::Ended(Outcome::Installed("v0.2.0".into()))
+    }),
+    ("current", || Banner::Ended(Outcome::UpToDate)),
+    ("offline", || Banner::Ended(Outcome::Offline)),
+    ("failed", || {
+        Banner::Ended(Outcome::Failed(Failure::WrongBuild))
+    }),
+];
+
+/// What one of them is saying, made on demand: an [`Outcome`] holds a
+/// `String` and a `const` cannot.
+type Said = fn() -> Banner;
+
+/// Either half of the banner's life: running, or over.
+enum Banner {
+    Doing(Doing),
+    Ended(Outcome),
+}
 
 /// The screens a shot can name, and the tab each sits under.
 const SCREENS: &[(&str, Tab)] = &[
@@ -268,6 +300,9 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
         let draw = sketch.draw;
         return app.frame(fb, &mut |cx, area| draw(cx, area, &state));
     }
+    if shot.name == "update" {
+        return banner(app, fb, shot.of.as_deref().unwrap_or("asking"));
+    }
     let Some((_, tab)) = SCREENS.iter().find(|(name, _)| *name == shot.name) else {
         return Err(anyhow!("no screen or sketch called {}", shot.name));
     };
@@ -278,6 +313,25 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
     app.show(*tab, book);
     set_span(app, shot, week)?;
     app.draw(fb)
+}
+
+/// The update banner, at whichever of its lines `of` names.
+fn banner(app: &mut App, fb: &mut Framebuffer, of: &str) -> Result<()> {
+    let Some((_, said)) = BANNERS.iter().find(|(name, _)| *name == of) else {
+        return Err(anyhow!("no update banner called {of}"));
+    };
+    let s = app.language().strings();
+    let (headline, note, step) = match said() {
+        Banner::Doing(doing) => {
+            let (headline, note) = doing.banner(s);
+            (headline, note, s.update_tap_to_stop)
+        }
+        Banner::Ended(outcome) => {
+            let (headline, note) = outcome.banner(s);
+            (headline, note, "")
+        }
+    };
+    app.banner(fb, &headline, &note, step, true)
 }
 
 /// Every hit box the frame recorded, outlined over it.
@@ -409,6 +463,10 @@ fn list() {
         };
         println!("  {name}{of}");
     }
+    // Named off `BANNERS` rather than written out: it is the only list here
+    // the code can state for itself.
+    let banners: Vec<&str> = BANNERS.iter().map(|(name, _)| *name).collect();
+    println!("  update  (:{})", banners.join(" :"));
     println!("sketches:");
     match sketch::ALL.is_empty() {
         true => println!("  (none)"),
@@ -498,6 +556,9 @@ fn everything() -> Vec<Shot> {
         "books:mid",
         "book",
         "config",
+        "update:downloading",
+        "update:done",
+        "update:failed",
     ]
     .iter()
     .map(|spec| Shot::read(spec))

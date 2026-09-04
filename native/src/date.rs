@@ -1,16 +1,12 @@
-//! Proleptic Gregorian date arithmetic on a day count from 1970-01-01.
-//!
-//! The device has no date library and this needs four things of one: a real
-//! calendar to reject a stamp naming no day, a day number to measure elapsed
-//! time on across midnight, a weekday, and month lengths for the calendar grid.
+//! Proleptic Gregorian date arithmetic on a day count from 1970-01-01: a real
+//! calendar to reject a stamp naming no day, a day number that survives
+//! midnight, a weekday, and month lengths for the calendar grid.
 
 use crate::lang::Strings;
 use crate::settings::WeekStart;
 
-/// `(year, month, day)` as days since 1970-01-01, negative before it.
-///
-/// Howard Hinnant's `days_from_civil`, shifted to the Unix epoch. Exact for
-/// every year this will ever see and for a wide margin either side.
+/// `(year, month, day)` as days since 1970-01-01, negative before it. Howard
+/// Hinnant's `days_from_civil`, shifted to the Unix epoch.
 pub fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = y - if m <= 2 { 1 } else { 0 };
     let era = if y >= 0 { y } else { y - 399 } / 400;
@@ -85,10 +81,8 @@ pub fn secs_of(at: &str) -> i64 {
 }
 
 /// Now, as `(day count, seconds into the day)` on the device's own clock.
-///
-/// Local and never UTC. Every stamp in the log is local wall clock with no zone
-/// on it, so a reading log compared against a UTC "today" would file a late
-/// night west of Greenwich a day early and one east of it a day late.
+/// Local and never UTC: every stamp in the log is local wall clock with no zone
+/// on it, and a UTC "today" would file a late night on the wrong day.
 pub fn now() -> (i64, i64) {
     // SAFETY: `localtime_r` fills a caller-owned `tm` and takes the zone from
     // the process environment. No pointer outlives the call.
@@ -142,13 +136,9 @@ pub fn month_name(year: i64, month: i64, s: &Strings) -> String {
     }
 }
 
-/// The week `day` falls in: the year that owns it, and its number in that
-/// year, counting from one.
-///
-/// A week belongs to the year holding four of its seven days, so the week
-/// across New Year is numbered once and in one place — the ISO 8601 rule,
-/// taken from the week's own fourth day rather than from Thursday, so a
-/// reader whose weeks start on Sunday gets the same answer for their weeks.
+/// The week `day` falls in: the year that owns it, and its number from one. A
+/// week belongs to the year holding four of its seven days — the ISO 8601 rule,
+/// taken from the week's own fourth day so a Sunday start reads the same way.
 pub fn week_of_year(day: i64, week: WeekStart) -> (i64, i64) {
     let opens = |d: i64| d - week.column_of(weekday(d)) as i64;
     let first = opens(day);
@@ -159,11 +149,9 @@ pub fn week_of_year(day: i64, week: WeekStart) -> (i64, i64) {
     (year, (first - one) / 7 + 1)
 }
 
-/// `day` moved `by` months.
-///
-/// A date the shorter month has no room for lands on the last of it: stepping
-/// back from 31 March reaches the end of February, and stepping on from there
-/// reaches the end of March again.
+/// `day` moved `by` months. A date the shorter month has no room for lands on
+/// the last of it, so stepping back from 31 March reaches the end of February
+/// and stepping on from there reaches the end of March again.
 pub fn shift_months(day: i64, by: i64) -> i64 {
     let (y, m, d) = civil_from_days(day);
     let months = y * 12 + (m - 1) + by;
@@ -171,12 +159,9 @@ pub fn shift_months(day: i64, by: i64) -> i64 {
     days_from_civil(year, month, d.min(days_in_month(year, month)))
 }
 
-/// Durations read as "4h 12m", "37m", "2m" — and "4小时12分", "4 h 12 min".
-/// Seconds are never shown: the counters behind these figures are not that
-/// precise, and a reading log measured to the second would claim an accuracy
-/// it does not have.
-/// `secs` as whole hours and the minutes left over, rounded to the nearest
-/// minute and carried where the rounding fills the hour.
+/// `secs` as whole hours and the minutes left over — "4h 12m", "4小时12分" —
+/// rounded to the nearest minute and carried where that fills the hour. Never
+/// seconds: the counters behind these figures are not that precise.
 pub fn hours_and_minutes(secs: i64) -> (i64, i64) {
     let hours = secs / 3600;
     let mins = (secs % 3600 + 30) / 60;

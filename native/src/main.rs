@@ -1,6 +1,6 @@
 //! Reading Log — reading statistics on a Kindle, from the Kindle's own logs.
-//! Three modes: no argument collects then draws, `--collect` collects alone,
-//! `--dump` prints what the store holds.
+//! Four modes: no argument collects then draws, `--collect` collects alone,
+//! `--dump` prints the store, `--version` states which build this is.
 
 use std::path::Path;
 
@@ -13,19 +13,28 @@ use readinglog_native::eink::touch::Touch;
 use readinglog_native::orientation::Orientation;
 use readinglog_native::stats::Stats;
 use readinglog_native::store::Store;
-use readinglog_native::{app, catalog, date, lang, settings, store, ui};
+use readinglog_native::{app, catalog, date, font, lang, settings, store, ui};
 
 fn main() {
     let mode = std::env::args().nth(1).unwrap_or_default();
     let result = match mode.as_str() {
         "--collect" => collect().map(|_| ()),
         "--dump" => dump(),
+        "--version" => version(),
         _ => show(),
     };
     if let Err(err) = result {
         eprintln!("readinglog: {err:#}");
         std::process::exit(1);
     }
+}
+
+/// Which build this is, on one line. The one mode that opens nothing — no
+/// display, no log, no store — which is why `update` runs a freshly downloaded
+/// copy this way before it moves anything into place.
+fn version() -> Result<()> {
+    println!("{}", readinglog_native::update::VERSION);
+    Ok(())
 }
 
 /// Read the log and the catalog into the store, and answer with the store.
@@ -104,6 +113,17 @@ fn dump() -> Result<()> {
     Ok(())
 }
 
+/// The launch banner: the same headline and note, at whatever `step` the
+/// collect has reached.
+fn launching<'a>(script: font::Script, note: &'a [String], step: &'a str) -> ui::splash::Words<'a> {
+    ui::splash::Words {
+        script,
+        headline: "Reading Log",
+        note,
+        step,
+    }
+}
+
 /// Collect, then put it on the screen.
 fn show() -> Result<()> {
     let mut fb = Framebuffer::open().context("open the display")?;
@@ -127,7 +147,14 @@ fn show() -> Result<()> {
     // `splash` draws before `App` and detects for itself.
     let splash_lang = lang::Lang::detect();
     let note = ui::splash::note(&store.mark, splash_lang.strings());
-    ui::splash::show(&mut fb, &mut text, &theme, "Reading Log", &note, "", true)?;
+    let script = font::Script::of_language(splash_lang.language_tag());
+    ui::splash::show(
+        &mut fb,
+        &mut text,
+        &theme,
+        &launching(script, &note, ""),
+        true,
+    )?;
 
     let mut painted = 0;
     collect_into(&mut store, dir, &mut |done, total| {
@@ -136,15 +163,8 @@ fn show() -> Result<()> {
         }
         painted = done;
         let step = format!("log {done} of {total}");
-        let _ = ui::splash::show(
-            &mut fb,
-            &mut text,
-            &theme,
-            "Reading Log",
-            &note,
-            &step,
-            false,
-        );
+        let said = launching(script, &note, &step);
+        let _ = ui::splash::show(&mut fb, &mut text, &theme, &said, false);
     });
 
     let mut app = app::App::new(store, theme, text);

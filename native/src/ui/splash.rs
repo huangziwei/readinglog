@@ -1,40 +1,78 @@
-//! A headline, a note and a step, centred on [`Theme::screen`].
+//! A headline, a note and a step, centred on [`Theme::screen`]. Every line
+//! wraps to the panel: these are translated five ways, and a line that runs off
+//! the screen in one language cannot be read.
 
 use crate::lang::Strings;
 use anyhow::Result;
 
 use crate::eink::fb::{Framebuffer, MxcfbRect, WAVEFORM_MODE_DU, WAVEFORM_MODE_GC16};
+use crate::font::Script;
 use crate::ui::paint::{self, WHITE};
 use crate::ui::text::TextRenderer;
 use crate::ui::theme::Theme;
 
-/// Draw `headline`, `note` and `step` centred, and present the screen.
+/// Lines the headline takes, and lines each line of the note takes, before
+/// what is left of it is ellipsized. Past these it is not a banner.
+const HEADLINE_LINES: usize = 2;
+const NOTE_LINES: usize = 3;
+
+/// What a banner says: a headline, the lines under it, and the way out while
+/// there is one. `script` is the convention the words are set in — 日本語 drawn
+/// from a Simplified face is the defect carrying it here prevents.
+pub struct Words<'a> {
+    pub script: Script,
+    pub headline: &'a str,
+    pub note: &'a [String],
+    pub step: &'a str,
+}
+
+/// Draw `said` centred, and present the screen.
 ///
 /// `first` picks [`WAVEFORM_MODE_GC16`] over [`WAVEFORM_MODE_DU`].
 pub fn show(
     fb: &mut Framebuffer,
     text: &mut TextRenderer,
     theme: &Theme,
-    headline: &str,
-    note: &[String],
-    step: &str,
+    said: &Words,
     first: bool,
 ) -> Result<()> {
+    let script = said.script;
     paint::fill(fb, theme.screen, WHITE);
-    let mid = theme.screen.y + theme.screen.h / 3;
+    let room = (theme.screen.w - theme.pad * 2).max(1) as u32;
+    let mut y = theme.screen.y + theme.screen.h / 3;
 
     text.set_px(theme.head_px);
-    centre(fb, text, theme, mid, headline);
+    for (at, line) in text
+        .wrap_and_clamp_in(script, said.headline, room, HEADLINE_LINES)
+        .iter()
+        .enumerate()
+    {
+        if at > 0 {
+            y += text.line_height() as i32;
+        }
+        centre(fb, text, theme, script, y, line);
+    }
+    y += theme.head_px as i32;
 
     text.set_px(theme.body_px);
-    let mut y = mid + theme.head_px as i32;
-    for line in note {
-        y += text.line_height() as i32;
-        centre(fb, text, theme, y, line);
+    for line in said.note {
+        // An empty line still takes one: a banner whose figure comes and goes
+        // would otherwise walk the line above it up and down the screen.
+        if line.is_empty() {
+            y += text.line_height() as i32;
+            continue;
+        }
+        for wrapped in text.wrap_and_clamp_in(script, line, room, NOTE_LINES) {
+            y += text.line_height() as i32;
+            centre(fb, text, theme, script, y, &wrapped);
+        }
     }
 
     text.set_px(theme.small_px);
-    centre(fb, text, theme, y + theme.head_px as i32, step);
+    let y = y + theme.head_px as i32;
+    for line in text.wrap_and_clamp_in(script, said.step, room, 1) {
+        centre(fb, text, theme, script, y, &line);
+    }
 
     fb.send_update(
         MxcfbRect {
@@ -52,9 +90,17 @@ pub fn show(
 }
 
 /// `s` on the baseline `y`, centred across [`Theme::screen`].
-fn centre(fb: &mut Framebuffer, text: &mut TextRenderer, theme: &Theme, y: i32, s: &str) {
-    let w = text.measure_width(s) as i32;
-    text.draw(fb, theme.screen.x + (theme.screen.w - w) / 2, y, s, false);
+fn centre(
+    fb: &mut Framebuffer,
+    text: &mut TextRenderer,
+    theme: &Theme,
+    script: Script,
+    y: i32,
+    s: &str,
+) {
+    let w = text.measure_width_in(script, s) as i32;
+    let x = theme.screen.x + (theme.screen.w - w) / 2;
+    text.draw_in(script, fb, x, y, s, false);
 }
 
 /// The lines under the headline, for a store at `mark`.

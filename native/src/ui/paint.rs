@@ -1,7 +1,5 @@
 //! `Rect`, the fills and rules drawn into one, and the ink scale a value is
-//! banded onto.
-//!
-//! Every size here is an argument. No dimension is a constant.
+//! banded onto. Every size here is an argument; no dimension is a constant.
 
 use crate::eink::fb::Framebuffer;
 
@@ -12,9 +10,8 @@ pub const LIGHT: u8 = 0xC0;
 pub const DARK: u8 = 0x60;
 pub const INK: u8 = 0x00;
 
-/// The five steps a value is drawn at, lightest first, in one hue. Their
-/// Rec. 601 lumas sit within a few of [`PALE`], [`LIGHT`], half way between
-/// the two remaining levels, [`DARK`] and [`INK`]. Zero is [`WHITE`], off this
+/// The five steps a value is drawn at, lightest first, in one hue; their
+/// Rec. 601 lumas track [`PALE`] through [`INK`]. Zero is [`WHITE`], off this
 /// scale.
 pub const STEPS_RGB: [[u8; 3]; 5] = [
     [0xCF, 0xE6, 0xF7],
@@ -112,9 +109,8 @@ impl Rect {
     }
 
     /// Boxes of the given widths laid across this one: the first flush left,
-    /// the last flush right, and the same air between every pair.
-    ///
-    /// A single width centres. `min_gap` floors the air when `widths` overrun.
+    /// the last flush right, the same air between every pair. A single width
+    /// centres, and `min_gap` floors the air when `widths` overrun.
     pub fn spread(&self, widths: &[i32], min_gap: i32) -> Vec<Self> {
         let Some(last) = widths.len().checked_sub(1) else {
             return Vec::new();

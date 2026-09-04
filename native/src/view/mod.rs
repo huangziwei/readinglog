@@ -37,6 +37,8 @@ pub enum Hit {
     TextSize(crate::settings::TextSize),
     /// Whether a total counts reading on books the catalog names none of.
     ShowUnnamed(bool),
+    /// Go looking for a newer release of this app.
+    Update,
     Prev,
     Next,
     /// One span of the Rhythm screen.
@@ -214,7 +216,6 @@ pub struct State {
     /// reader wants the shelf read, not where they are in it.
     pub sort: Sort,
     /// Whether the day picked off the grid was asked to open as its own page.
-    ///
     /// A span whose books are listed under its grid narrows that list to the
     /// picked day instead, and opens the day only on this.
     pub opened_day: bool,
@@ -259,10 +260,8 @@ impl State {
     }
 
     /// Step Rhythm on: a day at a time where one is open, a page of All Time
-    /// where that is the span, else a whole span.
-    ///
-    /// Answers whether anything moved. All Time holds the whole record and has
-    /// no span either side of it, so its pages are what stepping moves there.
+    /// where that is the span, else a whole span, answering whether anything
+    /// moved. All Time has no span either side, so its pages are what step.
     pub fn shift(&mut self, by: i64) -> bool {
         if self.picked {
             self.day += by;

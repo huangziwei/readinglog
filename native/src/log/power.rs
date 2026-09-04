@@ -1,17 +1,12 @@
-//! The stretches `powerd` recorded as `ACTIVE`, in absolute seconds.
-//!
-//! `powerd` writes a state machine: `ACTIVE`, `SCREEN SAVER`, `READY TO
-//! SUSPEND`, `SUSPENDED`, `HIBERNATE`. [`Awake`] keeps the `ACTIVE` spans.
-//!
-//! [`Awake::between`] bounds a sitting the reading timer left uncounted.
+//! The stretches `powerd` recorded as `ACTIVE`, in absolute seconds, out of
+//! its state machine — `ACTIVE`, `SCREEN SAVER`, `READY TO SUSPEND`,
+//! `SUSPENDED`, `HIBERNATE`. [`Awake::between`] bounds an uncounted sitting.
 
 use super::line::{field_text, stamp};
 
 /// The tags on the lines `powerd` writes at a change of state.
-///
-/// `ereader_powerd_state_change` transcribes the state machine whole.
-/// `outOfScreenSaver` and `goingToScreenSaver` bracket `ACTIVE`; `suspending`
-/// closes a span skipping the screensaver.
+/// `ereader_powerd_state_change` transcribes the machine whole;
+/// `outOfScreenSaver`/`goingToScreenSaver` bracket `ACTIVE`.
 pub const POWER_MARKERS: [&str; 4] = [
     "ereader_powerd_state_change",
     "lipc:evts:name=outOfScreenSaver, origin=com.lab126.powerd",
@@ -36,10 +31,8 @@ enum Woke {
 }
 
 /// Read a line as a change into or out of `ACTIVE`.
-///
-/// `ereader_powerd_state_change` states both ends of a move, read on both.
-/// `outOfScreenSaver` opens a span; `goingToScreenSaver` and `suspending`
-/// close one.
+/// `ereader_powerd_state_change` states both ends of a move, read on both;
+/// `outOfScreenSaver` opens a span, `goingToScreenSaver`/`suspending` close.
 fn change(line: &str) -> Option<(Family, Woke)> {
     if line.contains(POWER_MARKERS[0]) {
         return match (
@@ -71,13 +64,9 @@ pub struct Awake {
 }
 
 impl Awake {
-    /// Read the power lines out of an event stream.
-    ///
-    /// A span opens at `Woke::Active` and closes at the next `Woke::Idle`. One
-    /// open at the end of the batch is dropped.
-    ///
-    /// One `Family` at a time, `Family::Record` preferred. Both families state
-    /// the same move at the same second.
+    /// Read the power lines out of an event stream. A span opens at
+    /// `Woke::Active` and closes at the next `Woke::Idle`; one left open is
+    /// dropped. One `Family` at a time, since both state the same move.
     pub fn from_events<'a>(events: impl IntoIterator<Item = &'a str>) -> Self {
         let changes: Vec<(Family, i64, Woke)> = events
             .into_iter()

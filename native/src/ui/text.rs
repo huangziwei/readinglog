@@ -48,12 +48,9 @@ impl TextRenderer {
             .join(" -> ")
     }
 
-    /// Set the size the next draws are at.
-    ///
-    /// `px` is the em, whichever face draws the row — see [`font::scale_of`].
-    /// A screen mixes half a dozen sizes and one chain serves them all: the
-    /// glyph cache is keyed by size as well as by codepoint, face and band, so
-    /// switching back and forth costs nothing after the first pass.
+    /// Set the size the next draws are at. `px` is the em, whichever face
+    /// draws the row — see [`font::scale_of`] — and the glyph cache is keyed by
+    /// size, so switching back and forth costs nothing after the first pass.
     pub fn set_px(&mut self, px: f32) {
         self.px = px;
     }
@@ -66,11 +63,9 @@ impl TextRenderer {
     }
 
     pub fn line_height(&self) -> u32 {
-        // The face's own vertical metrics; round up so adjacent rows don't
-        // tear into each other. Always the primary face's, so a row keeps its
-        // height whichever face draws the text — which holds because every
-        // face is scaled to the same em, and CJK ink is centred on the Latin
-        // cap rather than hung off the baseline.
+        // Always the primary face's metrics, rounded up, so a row keeps its
+        // height whichever face draws the text: every face is scaled to the
+        // same em and CJK ink is centred on the Latin cap.
         let face = self
             .chain
             .primary()
@@ -154,9 +149,8 @@ impl TextRenderer {
     }
 
     /// [`TextRenderer::draw`] under a known `script`, which decides the Han
-    /// convention the run is set in and the order faces are tried in. Each
-    /// character is drawn from the band its own script belongs to, so the
-    /// Latin inside a CJK title still comes off the UI face.
+    /// convention and the order faces are tried in. Each character comes from
+    /// its own band, so Latin inside a CJK title still comes off the UI face.
     pub fn draw_in(
         &mut self,
         script: font::Script,

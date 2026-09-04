@@ -2,6 +2,11 @@
 //! redraws the whole screen and presents it in one
 //! [`Framebuffer::send_update`].
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
+
 use anyhow::Result;
 
 use crate::date;
@@ -16,7 +21,17 @@ use crate::ui::chrome::{self, Tab};
 use crate::ui::cover::Covers;
 use crate::ui::text::TextRenderer;
 use crate::ui::theme::Theme;
+use crate::update::{self, Doing, Outcome};
 use crate::view::{self, Ctx, Hit, State};
+
+/// The shortest time between two repaints of the update banner. Every one is a
+/// whole-screen [`WAVEFORM_MODE_GC16`] and a percentage moves several times a
+/// second; this is what keeps that from flashing the panel.
+const BANNER_REDRAW: Duration = Duration::from_millis(700);
+
+/// How long an update's last word stays up before the settings come back. A
+/// tap ends it sooner.
+const OUTCOME_LINGER: Duration = Duration::from_secs(12);
 
 pub struct App {
     theme: Theme,
@@ -158,6 +173,11 @@ impl App {
         &self.hits
     }
 
+    /// The language every screen is drawn in.
+    pub fn language(&self) -> Lang {
+        self.lang
+    }
+
     /// The tab, day, span and open book the screens are drawn at.
     pub fn state(&self) -> &State {
         &self.state
@@ -220,6 +240,115 @@ impl App {
         Ok(())
     }
 
+    /// Go looking for a newer release, over the whole screen. The transfer
+    /// blocks a worker thread while this drains `input`, repaints the banner as
+    /// steps arrive, and sets the flag the download reads between chunks.
+    fn update(&mut self, fb: &mut Framebuffer, input: &mut Input) -> Result<()> {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel::<Doing>();
+        let flag = Arc::clone(&cancel);
+        let worker = std::thread::spawn(move || {
+            update::run(&flag, &|doing| {
+                let _ = tx.send(doing);
+            })
+        });
+
+        let mut doing = Doing::Asking;
+        self.doing(fb, doing, true)?;
+        let mut painted = Instant::now();
+        let mut stale = false;
+        // Once the screen says it is stopping, nothing draws over that.
+        let mut stopping = false;
+
+        loop {
+            while let Ok(step) = rx.try_recv() {
+                doing = step;
+                stale = !stopping;
+            }
+            if stale && painted.elapsed() >= BANNER_REDRAW {
+                self.doing(fb, doing, false)?;
+                painted = Instant::now();
+                stale = false;
+            }
+            // Every step sent is drained above before this is read, so nothing
+            // the worker said is lost by leaving here.
+            if worker.is_finished() {
+                break;
+            }
+            // Waking when the next repaint is due rather than a whole
+            // interval from here: a step that arrived a moment ago would
+            // otherwise wait out most of a second interval before it is drawn.
+            let due = match stale {
+                true => painted + BANNER_REDRAW,
+                false => Instant::now() + BANNER_REDRAW,
+            };
+            // A tap anywhere stops it: the banner is the whole screen and has
+            // no room for a button that would only ever be pressed once.
+            if let InputEvent::Touch(TouchEvent::Up { .. }) = input.next_deadline(Some(due))?
+                && doing.stoppable()
+                && !cancel.swap(true, Ordering::Relaxed)
+            {
+                let headline = self.lang.strings().update_row;
+                let said = vec![self.lang.strings().update_stopped.to_string()];
+                self.banner(fb, headline, &said, "", true)?;
+                (painted, stale, stopping) = (Instant::now(), false, true);
+            }
+        }
+
+        // A worker that panicked left nothing in place: moving the new copy in
+        // is the last thing it does, and every step of that answers rather
+        // than unwinds.
+        let outcome = worker
+            .join()
+            .unwrap_or(Outcome::Failed(update::Failure::NotPlaced));
+        let (headline, note) = outcome.banner(self.lang.strings());
+        eprintln!("update: {outcome:?}");
+        self.banner(fb, &headline, &note, "", true)?;
+        self.hold(input, OUTCOME_LINGER)
+    }
+
+    /// One frame of an update banner, over the whole screen. `headline` and
+    /// `note` are what [`Doing::banner`] and [`Outcome::banner`] answer; `step`
+    /// is the way out while there is one. Public for the preview.
+    pub fn banner(
+        &mut self,
+        fb: &mut Framebuffer,
+        headline: &str,
+        note: &[String],
+        step: &str,
+        first: bool,
+    ) -> Result<()> {
+        let said = crate::ui::splash::Words {
+            script: crate::font::Script::of_language(self.lang.language_tag()),
+            headline,
+            note,
+            step,
+        };
+        crate::ui::splash::show(fb, &mut self.text, &self.theme, &said, first)
+    }
+
+    /// [`App::banner`] at a step of the update running now. The way out is
+    /// offered only while [`Doing::stoppable`] says there is one.
+    fn doing(&mut self, fb: &mut Framebuffer, doing: Doing, first: bool) -> Result<()> {
+        let (headline, note) = doing.banner(self.lang.strings());
+        let step = match doing.stoppable() {
+            true => self.lang.strings().update_tap_to_stop,
+            false => "",
+        };
+        self.banner(fb, &headline, &note, step, first)
+    }
+
+    /// Leave what is on screen up for `linger`, or until it is tapped.
+    fn hold(&self, input: &mut Input, linger: Duration) -> Result<()> {
+        let until = Instant::now() + linger;
+        while Instant::now() < until {
+            if let InputEvent::Touch(TouchEvent::Up { .. }) = input.next_deadline(Some(until))? {
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
     /// Run until [`Action::Quit`].
     pub fn run(&mut self, fb: &mut Framebuffer, input: &mut Input) -> Result<()> {
         self.draw(fb)?;
@@ -239,6 +368,11 @@ impl App {
                     match acted {
                         Action::Redraw => self.draw(fb)?,
                         Action::Quit => return Ok(()),
+                        // Blocking: the banner is the screen until it ends.
+                        Action::Update => {
+                            self.update(fb, input)?;
+                            self.draw(fb)?;
+                        }
                         Action::Nothing => {}
                     }
                 }
@@ -380,6 +514,7 @@ impl App {
                 }
                 self.state.books_from = at;
             }
+            Hit::Update => return Action::Update,
             Hit::Prev => return self.paged(-1),
             Hit::Next => return self.paged(1),
         }
@@ -443,4 +578,6 @@ enum Action {
     Redraw,
     Nothing,
     Quit,
+    /// Go looking for a newer release, over the whole screen.
+    Update,
 }

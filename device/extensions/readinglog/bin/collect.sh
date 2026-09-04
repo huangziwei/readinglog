@@ -1,13 +1,7 @@
 #!/bin/sh
-# bin/collect.sh — folds the log into the store and draws nothing.
-#
-# The syslog is a stream: `tinyrot` prunes its rotated chunks and the firmware
-# keeps about a month of daily snapshots. Running this from cron keeps the store
-# current for a reader who opens the app less often than that.
-#
-#     */30 * * * * /mnt/us/extensions/readinglog/bin/collect.sh
-#
-# Launching the app collects too, so this is only needed to cover a long gap.
+# bin/collect.sh — folds the log into the store and draws nothing. The syslog
+# is pruned as it rotates, so a cron entry keeps the store current for a reader
+# who opens the app less often than that. Launching the app collects too.
 
 EXT=/mnt/us/extensions/readinglog
 LOG=/mnt/us/logs/readinglog.log

@@ -1,10 +1,6 @@
-//! Font fallback over the faces the device ships.
-//!
-//! A character is drawn from the [`Band`] its script belongs to, not from
-//! whichever face happens to cover the whole string: Latin comes from the UI
-//! face, Han from the face setting the run's regional convention, kana and
-//! Hangul from their own. [`FontChain::load`] reads the first candidate and
-//! leaves the rest `Pending`.
+//! Font fallback over the faces the device ships. A character is drawn from
+//! the [`Band`] its script belongs to, never from whichever face covers the
+//! whole string. [`FontChain::load`] leaves every candidate but one `Pending`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -51,10 +47,9 @@ impl Script {
         }
     }
 
-    /// The convention `text` is set in: the catalog's tag where it names one,
-    /// else what the characters themselves say. Kana settles a run for
-    /// Japanese and Hangul for Korean; Han alone cannot be told apart, and
-    /// takes the same default as a bare `zh`.
+    /// The convention `text` is set in: the catalog's tag, else the
+    /// characters. Kana settles a run for Japanese and Hangul for Korean; Han
+    /// alone cannot be told apart and takes a bare `zh`'s default.
     pub fn resolve(hint: Script, text: &str) -> Script {
         if hint != Script::Unknown {
             return hint;
@@ -87,11 +82,9 @@ impl Script {
     }
 }
 
-/// The faces a character is drawn from, and the order they are tried in.
-///
-/// Han is cut three ways because the conventions disagree on the same
-/// codepoint — 者 carries a dot in Chinese and none in Japanese — so the band
-/// carries the convention with it.
+/// The faces a character is drawn from, and the order they are tried in. Han
+/// is cut three ways because the conventions disagree on one codepoint — 者
+/// carries a dot in Chinese and none in Japanese — so the band carries it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Band {
     Latin,
@@ -195,10 +188,8 @@ pub struct Candidate {
     pub script: Script,
 }
 
-/// Directories the firmware keeps faces in.
-///
-/// Scanned by [`discover`], after `READINGLOG_FONTS` where that is set,
-/// colon-separated. A missing directory costs one failed `read_dir`.
+/// Directories the firmware keeps faces in. Scanned by [`discover`], after
+/// `READINGLOG_FONTS` where that is set, colon-separated.
 const FONT_DIRS: &[&str] = &[
     // The firmware set.
     "/usr/java/lib/fonts",
@@ -216,13 +207,9 @@ const FONT_DIRS: &[&str] = &[
 /// filename. `ember` is the device's own UI face and leads.
 const PREFERRED: &[&str] = &["ember", "bookerly", "baskerville", "caecilia", "helvetica"];
 
-/// The CJK families, by the convention each sets. Matched the same way, and
-/// ranked in the order written: a regular cut before its bold, and the face
-/// the framework itself sets a book in before the alternates.
-///
-/// Amazon's `code2000` is **not** among them — its copy carries kana and
-/// Hangul but not one Han ideograph, so it is a [`CATCH_ALL`], never a Han
-/// face.
+/// The CJK families, by the convention each sets, ranked in the order written.
+/// Amazon's `code2000` is **not** among them: its copy carries kana and Hangul
+/// but not one Han ideograph, so it is a [`CATCH_ALL`], never a Han face.
 const CJK_FAMILIES: &[(Script, &[&str])] = &[
     (
         Script::TraditionalChinese,
@@ -244,10 +231,8 @@ const CJK_FAMILIES: &[(Script, &[&str])] = &[
 const CATCH_ALL: &[&str] = &["code2000", "mtchinesesurrogates"];
 
 /// Distance from the plain upright, lower better. The tokens overlap on real
-/// filenames: `Amazon-Ember-RegularItalic` rules out on italic first,
-/// `AmazonEmberBold-Regular` on weight, `-Heavy` and `-Medium` below "regular".
-/// `serif` demotes the eleven `AmazonEmberSerif_*` cuts, which name no weight
-/// this reads and would otherwise stand between Ember and every other face.
+/// filenames, so the order they are tested in is load-bearing: italic, then
+/// weight, then `serif` to demote the `AmazonEmberSerif_*` cuts.
 fn weight_rank(lower: &str) -> usize {
     if lower.contains("italic") || lower.contains("oblique") {
         return 3;
@@ -433,10 +418,9 @@ impl FontChain {
         &self.primary
     }
 
-    /// Where in the chain `ch` is drawn from for `band`, reading faces until
-    /// one has the character. `None` when nothing in the chain has it. The
-    /// index is part of the glyph cache's key: two faces rasterize the same
-    /// codepoint differently.
+    /// Where in the chain `ch` is drawn from for `band`, or `None` when
+    /// nothing has it. The index is part of the glyph cache's key: two faces
+    /// rasterize the same codepoint differently.
     pub fn face_for(&mut self, band: Band, ch: char) -> Option<usize> {
         // The order is owned back for the walk: `ensure` reads faces, and the
         // orders are fixed for the life of the chain.
@@ -461,14 +445,9 @@ impl FontChain {
         }
     }
 
-    /// How far `face` drops `band`'s ink for it to sit on the centre of a
-    /// Latin cap, in ems, positive downward.
-    ///
-    /// Nothing about where CJK ink lands is in a face's metrics: `hhea` says
-    /// where the face claims to reach and the ink is somewhere else, and the
-    /// two do not track between faces. So the answer is outlined once per
-    /// face and cached. Latin is exempt — a Latin glyph sits *on* the
-    /// baseline, which is what a baseline is for.
+    /// How far `face` drops `band`'s ink to sit on the centre of a Latin cap,
+    /// in ems, positive downward. Nothing about where CJK ink lands is in the
+    /// metrics, so it is outlined once per face. Latin is exempt.
     pub fn centring(&mut self, face: usize, band: Band) -> f32 {
         if !band.is_cjk() {
             return 0.0;
@@ -540,14 +519,9 @@ const CJK_CENTRE: f32 = CAP / 2.0;
 /// The em [`FontChain::centring`] measures at. Large, and never drawn.
 const CENTRING_PX: f32 = 512.0;
 
-/// The [`PxScale`] that draws `font` with an em `px` pixels tall.
-///
-/// ab_glyph scales a face so that `hhea.ascender - hhea.descender` measures
-/// `PxScale`, and that span is not the em: it is 1.000 em in STHeiti and
-/// TBGothic, 1.254 in Amazon Ember, 1.270 in code2000 and 1.480 in NotoSansKR.
-/// One bare `PxScale` therefore hands every face a different em, and sets a
-/// line of `abcABC中日언문` in three sizes. Dividing the span back out holds
-/// every face's em at `px`.
+/// The [`PxScale`] that draws `font` with an em `px` pixels tall. ab_glyph
+/// scales `hhea.ascender - hhea.descender` to `PxScale`, and that span is not
+/// the em — it runs 1.000 to 1.480 across these faces — so it is divided out.
 pub fn scale_of(font: &FontVec, px: f32) -> PxScale {
     let height = font.height_unscaled();
     let upem = font.units_per_em().unwrap_or(height);
@@ -861,9 +835,8 @@ mod tests {
     }
 
     /// The real faces, where `READINGLOG_FONTS` points at a device's own font
-    /// directories. `None` where it is unset, which skips the assertions
-    /// below: they are about what a specific device's files contain, not
-    /// about the ranking.
+    /// directories. `None` where it is unset, which skips the assertions below:
+    /// they are about a device's files, not about the ranking.
     fn device_chain_on_disk() -> Option<FontChain> {
         let dirs = std::env::var("READINGLOG_FONTS").ok()?;
         let candidates: Vec<Candidate> = dirs

@@ -1,9 +1,6 @@
-//! The device's content catalog, `cc.db`.
-//!
-//! `p_contentSize` equals a reading line's `BookEndPosition.FromBook` to the
-//! digit. `p_cdeKey` equals a reader-shell record's `cde_key`.
-//!
-//! Every read here runs the `sqlite3` binary the firmware ships.
+//! The device's content catalog, `cc.db`, read through the `sqlite3` binary the
+//! firmware ships. `p_contentSize` equals a reading line's
+//! `BookEndPosition.FromBook`, and `p_cdeKey` a reader-shell record's key.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -21,12 +18,9 @@ const CATALOG_PATHS: [&str; 3] = [
 const COL: &str = "\u{1}";
 const ROW: &str = "\u{2}";
 
-/// `p_location` names a file on a book the device holds and is empty on a
-/// cloud row. A cloud row states no `p_contentSize` and no `p_percentFinished`,
-/// and states `p_titles_0_nominal`, `p_credits_0_name_collation` and usually
-/// `p_thumbnail`. `p_contentState` is 1 on a store book and 0 on a sideload.
-///
-/// A `*`-prefixed `p_cdeKey` is read and kept — see [`Book::is_book`].
+/// `p_location` is empty on a cloud row, which also states no `p_contentSize`
+/// and no `p_percentFinished`. `p_contentState` is 1 on a store book, 0 on a
+/// sideload. A `*`-prefixed `p_cdeKey` is kept — see [`Book::is_book`].
 const QUERY: &str = "select coalesce(p_contentSize, 0), p_cdeKey, p_cdeType, \
      coalesce(p_titles_0_nominal, ''), coalesce(p_credits_0_name_collation, ''), \
      coalesce(p_percentFinished, -1), coalesce(p_thumbnail, ''), \
@@ -75,10 +69,9 @@ pub fn read() -> Vec<Book> {
     }
 }
 
-/// [`read`] against a named file.
-///
-/// Opened plain. On a WAL database `mode=ro` and `-readonly` fail for want of
-/// a `-shm` file, and `immutable=1` reads pre-WAL state.
+/// [`read`] against a named file. Opened plain: on a WAL database `mode=ro`
+/// and `-readonly` fail for want of a `-shm` file, and `immutable=1` reads
+/// pre-WAL state.
 pub fn read_from(db: &Path) -> Vec<Book> {
     let out = match Command::new("sqlite3")
         .arg("-separator")
