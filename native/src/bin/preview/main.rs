@@ -21,7 +21,7 @@ use readinglog_native::ui::chrome::Tab;
 use readinglog_native::ui::paint;
 use readinglog_native::ui::text::TextRenderer;
 use readinglog_native::ui::theme::Theme;
-use readinglog_native::view::{Shelf, Span};
+use readinglog_native::view::{Shelf, Sort, Span};
 
 /// The day the preview is set to, and the second of it: a Wednesday evening in
 /// the middle of a month.
@@ -299,7 +299,11 @@ fn set_span(app: &mut App, shot: &Shot, week: WeekStart) -> Result<()> {
             app.set_alltime_page(1);
         }
         "finished" => app.set_shelf(Shelf::Finished),
+        "longest" => app.set_sort(Sort::Longest),
+        "furthest" => app.set_sort(Sort::Furthest),
         "last" => app.open_books(usize::MAX),
+        // A page with a list either side of it, where both jump marks stand.
+        "mid" => app.open_books(5),
         "week" => app.set_span(Span::Week),
         // A span stepped off the one holding today, where the way back to it
         // is drawn. The week is the tightest of them: its name is the longest
@@ -400,7 +404,7 @@ fn list() {
             }
             "today" => "  (:quiet :empty :busy)",
             "book" => "  (:<index>)",
-            "books" => "  (:finished :last)",
+            "books" => "  (:finished :longest :furthest :mid :last)",
             _ => "",
         };
         println!("  {name}{of}");
@@ -489,6 +493,9 @@ fn everything() -> Vec<Shot> {
         "rhythm:day",
         "books",
         "books:finished",
+        "books:longest",
+        "books:furthest",
+        "books:mid",
         "book",
         "config",
     ]

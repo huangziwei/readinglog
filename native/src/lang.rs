@@ -214,6 +214,10 @@ pub struct Strings {
     // The Books screen, whose two chips narrow the list to one shelf.
     pub shelf_every: &'static str,
     pub shelf_finished: &'static str,
+    /// The orders the Books screen lists in.
+    pub by_recent: &'static str,
+    pub by_longest: &'static str,
+    pub by_furthest: &'static str,
     /// The heading over each band of the Trends page: an average day and an
     /// average week, then what the record holds in each month of the year.
     pub an_average_day: &'static str,
@@ -339,6 +343,9 @@ const ENGLISH: Strings = Strings {
 
     shelf_every: "All",
     shelf_finished: "Finished",
+    by_recent: "Recent",
+    by_longest: "Longest",
+    by_furthest: "Furthest",
     an_average_day: "AN AVERAGE DAY",
     an_average_week: "AN AVERAGE WEEK",
     by_month: "BY MONTH",
@@ -456,6 +463,9 @@ const GERMAN: Strings = Strings {
 
     shelf_every: "Alle",
     shelf_finished: "Fertig",
+    by_recent: "Zuletzt",
+    by_longest: "Längste",
+    by_furthest: "Weiteste",
     an_average_day: "EIN DURCHSCHNITTSTAG",
     an_average_week: "EINE DURCHSCHNITTSWOCHE",
     by_month: "NACH MONAT",
@@ -574,6 +584,9 @@ const JAPANESE: Strings = Strings {
 
     shelf_every: "すべて",
     shelf_finished: "読了",
+    by_recent: "最近",
+    by_longest: "時間順",
+    by_furthest: "進捗",
     an_average_day: "平均的な一日",
     an_average_week: "平均的な一週間",
     by_month: "月ごと",
@@ -679,6 +692,9 @@ const SIMPLIFIED: Strings = Strings {
 
     shelf_every: "全部",
     shelf_finished: "已读完",
+    by_recent: "最近",
+    by_longest: "时长",
+    by_furthest: "进度",
     an_average_day: "平均的一天",
     an_average_week: "平均的一周",
     by_month: "按月",
@@ -795,6 +811,9 @@ const TRADITIONAL: Strings = Strings {
 
     shelf_every: "全部",
     shelf_finished: "已讀完",
+    by_recent: "最近",
+    by_longest: "時長",
+    by_furthest: "進度",
     an_average_day: "平均的一天",
     an_average_week: "平均的一週",
     by_month: "按月",

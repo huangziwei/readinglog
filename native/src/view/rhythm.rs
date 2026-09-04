@@ -789,7 +789,7 @@ fn jacket(cx: &mut Ctx, box_: Rect, book: usize, secs: i64) {
     let read = date::duration_tight(secs, s);
     let stat = &cx.stats.books[book];
     let percent = match stat.has_percent() {
-        true => format!("{}%", stat.percent.round() as i64),
+        true => format!("{}%", stat.percent_shown()),
         false => String::new(),
     };
     // Both lines are set to the cover's own width: a title read for a hundred

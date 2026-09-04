@@ -50,6 +50,10 @@ pub enum Hit {
     ListPage(usize),
     /// The books tab, narrowed to one shelf.
     Shelved(Shelf),
+    /// Where the Books list opens, as an index into it.
+    BooksPage(usize),
+    /// The order the Books screen lists in.
+    Sorted(Sort),
 }
 
 /// Which books the Books screen lists.
@@ -71,6 +75,38 @@ impl Shelf {
             Shelf::All => s.shelf_every,
             Shelf::Finished => s.shelf_finished,
         }
+    }
+}
+
+/// The order the Books screen lists in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Sort {
+    /// Last put down first, which is where a reader left off.
+    #[default]
+    Recent,
+    /// Most time read first.
+    Longest,
+    /// Furthest through first.
+    Furthest,
+}
+
+impl Sort {
+    pub const ALL: [Sort; 3] = [Sort::Recent, Sort::Longest, Sort::Furthest];
+
+    /// What this order is called, in the interface's own language.
+    pub fn label(self, lang: Lang) -> &'static str {
+        let s = lang.strings();
+        match self {
+            Sort::Recent => s.by_recent,
+            Sort::Longest => s.by_longest,
+            Sort::Furthest => s.by_furthest,
+        }
+    }
+
+    /// The order the chip stating this one opens.
+    pub fn next(self) -> Sort {
+        let at = Sort::ALL.iter().position(|o| *o == self).unwrap_or(0);
+        Sort::ALL[(at + 1) % Sort::ALL.len()]
     }
 }
 
@@ -174,6 +210,9 @@ pub struct State {
     pub books_from: usize,
     /// Which books the Books screen lists.
     pub shelf: Shelf,
+    /// The order it lists them in, which a tab change keeps: it is how the
+    /// reader wants the shelf read, not where they are in it.
+    pub sort: Sort,
     /// Whether the day picked off the grid was asked to open as its own page.
     ///
     /// A span whose books are listed under its grid narrows that list to the
@@ -195,6 +234,7 @@ impl State {
             book: None,
             books_from: 0,
             shelf: Shelf::default(),
+            sort: Sort::default(),
             opened_day: false,
             alltime_page: 0,
             list_from: 0,

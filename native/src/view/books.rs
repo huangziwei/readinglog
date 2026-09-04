@@ -8,10 +8,15 @@ use crate::ui::cover;
 use crate::ui::paint::{self, INK, LIGHT, Rect};
 use crate::ui::theme::Theme;
 
-use super::{Ctx, Hit, Shelf, State};
+use super::{Ctx, Hit, Shelf, Sort, State};
 
 /// Lines a title takes before the rest of it is ellipsized.
 const TITLE_LINES: usize = 2;
+
+/// The marks either side of the page count, opening the first page and the
+/// last. The bar is the end of the list, the chevron the way to it.
+const JUMP_FIRST: &str = "|‹";
+const JUMP_LAST: &str = "›|";
 
 /// The height one book takes, set by the cover it carries.
 fn row_height(theme: &Theme) -> i32 {
@@ -33,18 +38,29 @@ fn figures_width(cx: &mut Ctx, figure: &str) -> i32 {
     duration.max(pct)
 }
 
-/// Books on `shelf`, by their index in [`Stats::books`].
-pub fn on_shelf(stats: &Stats, shelf: Shelf) -> Vec<usize> {
-    (0..stats.books.len())
+/// Books on `shelf` in `order`, by their index in [`Stats::books`].
+///
+/// [`Stats::books`] is held most recently read first, so [`Sort::Recent`] is
+/// that order untouched and the sorts below — being stable — fall back to it
+/// wherever two books tie.
+pub fn listed(stats: &Stats, shelf: Shelf, order: Sort) -> Vec<usize> {
+    let mut out: Vec<usize> = (0..stats.books.len())
         .filter(|at| match shelf {
             Shelf::All => true,
             Shelf::Finished => stats.books[*at].is_finished(),
         })
-        .collect()
+        .collect();
+    match order {
+        Sort::Recent => {}
+        Sort::Longest => out.sort_by_key(|at| -stats.books[*at].seconds),
+        // A book the catalog states no percent for sorts as though unopened.
+        Sort::Furthest => out.sort_by_key(|at| -stats.books[*at].percent_shown().max(0)),
+    }
+    out
 }
 
-/// Whether the shelf chips are drawn. A shelf with nothing read through on it
-/// offers no choice.
+/// Whether a shelf holds anything read through, which is what the `Finished`
+/// chip narrows to.
 pub fn shelved(stats: &Stats) -> bool {
     stats.books.iter().any(|b| b.is_finished())
 }
@@ -80,13 +96,15 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
         empty(cx, area);
         return;
     }
-    let chips = shelved(cx.stats);
-    if chips {
-        let (head, _) = area.split_top(chrome::chip_height(theme) + theme.gap * 2);
+    // The row stands whenever there are books: a shelf with nothing read
+    // through offers no `Finished` chip, but every shelf can be reordered.
+    let (head, _) = area.split_top(chrome::chip_height(theme) + theme.gap * 2);
+    if shelved(cx.stats) {
         shelf_chips(cx, head, state.shelf);
     }
-    let area = list_box(theme, area, chips);
-    let shelf = on_shelf(cx.stats, state.shelf);
+    sort_chip(cx, head, state.sort);
+    let area = list_box(theme, area, true);
+    let shelf = listed(cx.stats, state.shelf, state.sort);
 
     let row_h = row_span(theme, area);
     let fits = rows_per_page(theme, area);
@@ -114,11 +132,79 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
         if to < shelf.len() {
             cx.hit(Hit::Next, right);
         }
+        // Drawn after the halves, so a tap on one of these takes the whole
+        // way rather than the single step the half under it would.
+        let last = last_page_at(theme, area, shelf.len());
+        let width = cx.text.measure_width(&label) as i32;
+        let ends = Rect::new(foot.x + (foot.w - width) / 2, foot.y, width, foot.h);
+        jump(cx, ends, counted, true, (from > 0).then_some(0));
+        jump(cx, ends, counted, false, (to < shelf.len()).then_some(last));
     }
     // The record's own count closes the last page of the whole shelf.
     if to == shelf.len() && state.shelf == Shelf::All {
         record_line(cx, foot, counted + line);
     }
+}
+
+/// The order the list is in, at the right of the shelf chips' own row.
+///
+/// One chip, not one to an order: a row already carrying the shelf chips has
+/// no width for three more at every text size, and the order a tap opens is
+/// the one after this.
+fn sort_chip(cx: &mut Ctx, area: Rect, on: Sort) {
+    let theme: &Theme = cx.theme;
+    let script = cx.ui_script();
+    let said = on.label(cx.lang);
+    cx.text.set_px(theme.body_px);
+    let w = cx.text.measure_width_in(script, said) as i32 + chrome::chip_pad() * 2;
+    let chip = Rect::new(
+        area.right() - w,
+        area.y,
+        w.min(area.w),
+        chrome::chip_height(theme),
+    );
+    paint::stroke(cx.fb, chip, INK, 2);
+    let tw = cx.text.measure_width_in(script, said) as i32;
+    let baseline = chip.center_y() + cx.text.cap_height() as i32 / 2;
+    cx.text.draw_in(
+        script,
+        cx.fb,
+        chip.x + (chip.w - tw) / 2,
+        baseline,
+        said,
+        false,
+    );
+    cx.hit(Hit::Sorted(on.next()), chip);
+}
+
+/// The width a jump mark beside the page count takes, its air included.
+fn jump_reach(cx: &mut Ctx) -> i32 {
+    let theme: &Theme = cx.theme;
+    cx.text.set_px(theme.head_px);
+    cx.text.measure_width(JUMP_LAST) as i32 + theme.gap * 4
+}
+
+/// A mark to one side of the page count, opening the list at `at`. Nothing is
+/// drawn where the list already stands at that end.
+///
+/// `count` is the box the count itself is set in; the mark stands clear of it.
+fn jump(cx: &mut Ctx, count: Rect, baseline: i32, at_left: bool, at: Option<usize>) {
+    let theme: &Theme = cx.theme;
+    let Some(at) = at else { return };
+    let reach = jump_reach(cx);
+    let said = match at_left {
+        true => JUMP_FIRST,
+        false => JUMP_LAST,
+    };
+    let box_ = match at_left {
+        true => Rect::new(count.x - reach, count.y, reach, count.h),
+        false => Rect::new(count.right(), count.y, reach, count.h),
+    };
+    cx.text.set_px(theme.head_px);
+    let w = cx.text.measure_width(said) as i32;
+    cx.text
+        .draw(cx.fb, box_.x + (box_.w - w) / 2, baseline, said, false);
+    cx.hit(Hit::BooksPage(at), box_);
 }
 
 /// How many books the record holds, and how many of them no row can name.
@@ -239,9 +325,10 @@ fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
     let track = Rect::new(words.x, y + theme.gap, words.w, bar_h);
     // A book the catalog states no progress for draws no track.
     if book.has_percent() {
-        paint::progress(cx.fb, track, book.percent as i64, 100, INK);
+        let shown = book.percent_shown();
+        paint::progress(cx.fb, track, shown, 100, INK);
         cx.text.set_px(theme.small_px);
-        let pct = format!("{}%", book.percent.round() as i64);
+        let pct = format!("{shown}%");
         let pw = cx.text.measure_width(&pct) as i32;
         cx.text
             .draw(cx.fb, figures.right() - pw, track.bottom(), &pct, false);

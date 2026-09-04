@@ -45,6 +45,14 @@ impl BookStat {
         self.percent >= 0.0
     }
 
+    /// The percentage a screen states, rounded once.
+    ///
+    /// Every figure and every bar drawn for this book takes this one number,
+    /// so a track and the figure beside it never state different percentages.
+    pub fn percent_shown(&self) -> i64 {
+        self.percent.round() as i64
+    }
+
     /// Whether the catalog states this book read through.
     pub fn is_finished(&self) -> bool {
         self.has_percent() && self.percent >= FINISHED_PERCENT
@@ -682,6 +690,17 @@ mod tests {
             });
         }
         store
+    }
+    #[test]
+    fn a_bar_and_the_figure_beside_it_state_one_percentage() {
+        let record = BookRecord::default();
+        let mut book = fresh(1, &record, 0);
+        // The pairs straddle the rounding, which is where a truncated value
+        // and a rounded one part company.
+        for (raw, shown) in [(99.6, 100), (99.4, 99), (0.4, 0), (100.0, 100)] {
+            book.percent = raw;
+            assert_eq!(book.percent_shown(), shown, "{raw}");
+        }
     }
 
     #[test]

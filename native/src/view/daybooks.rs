@@ -207,7 +207,7 @@ fn row(cx: &mut Ctx, area: Rect, day: i64, index: usize, secs: i64) {
     let script = Script::of_language(&book.language);
     let title = book.title.clone();
     let author = book.author.clone();
-    let percent = book.has_percent().then_some(book.percent);
+    let percent = book.has_percent().then(|| book.percent_shown());
 
     // `spans` takes the full width of `area`; `over` holds the book.
     let (spans, over) = area.split_bottom(theme.gap * 3);
@@ -274,9 +274,9 @@ fn row(cx: &mut Ctx, area: Rect, day: i64, index: usize, secs: i64) {
     // `track` takes the width of `words`, under the last line drawn.
     if let Some(percent) = percent {
         let track = Rect::new(words.x, y + theme.gap, words.w, bar_h);
-        paint::progress(cx.fb, track, percent as i64, 100, INK);
+        paint::progress(cx.fb, track, percent, 100, INK);
         cx.text.set_px(theme.small_px);
-        let pct = format!("{}%", percent.round() as i64);
+        let pct = format!("{percent}%");
         let pw = cx.text.measure_width(&pct) as i32;
         cx.text
             .draw(cx.fb, figures.right() - pw, track.bottom(), &pct, false);

@@ -181,9 +181,10 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat) {
             foot.w,
             bar_height(theme),
         );
-        paint::progress(cx.fb, track, book.percent as i64, 100, INK);
+        let shown = book.percent_shown();
+        paint::progress(cx.fb, track, shown, 100, INK);
         cx.text.set_px(theme.small_px);
-        let pct = format!("{}% {}", book.percent.round() as i64, s.read);
+        let pct = format!("{shown}% {}", s.read);
         let baseline = track.y - theme.gap / 2;
         cx.text.draw(cx.fb, foot.x, baseline, &pct, false);
         if book.is_finished() {

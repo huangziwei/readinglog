@@ -281,6 +281,11 @@ pub fn row(
 const CHIP_PAD: i32 = 20;
 const CHIP_GAP: i32 = 14;
 
+/// The air a chip keeps either side of its label.
+pub fn chip_pad() -> i32 {
+    CHIP_PAD
+}
+
 /// How tall one chip is.
 pub fn chip_height(theme: &Theme) -> i32 {
     theme.row_h * 2 / 3

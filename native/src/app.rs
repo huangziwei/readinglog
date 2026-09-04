@@ -118,6 +118,12 @@ impl App {
         self.state.picked = false;
     }
 
+    /// List the books in `order`.
+    pub fn set_sort(&mut self, order: crate::view::Sort) {
+        self.state.sort = order;
+        self.state.books_from = 0;
+    }
+
     /// List the books on `shelf`, whatever the Books screen was left on.
     pub fn set_shelf(&mut self, shelf: crate::view::Shelf) {
         self.state.shelf = shelf;
@@ -326,6 +332,13 @@ impl App {
                 self.state.opened_day = true;
                 self.state.list_from = 0;
             }
+            Hit::Sorted(order) => {
+                if self.state.sort == order {
+                    return Action::Nothing;
+                }
+                self.state.sort = order;
+                self.state.books_from = 0;
+            }
             // A shelf is reached from the board, and lands on the Books tab.
             Hit::Shelved(shelf) => {
                 if self.state.tab == Tab::Books && self.state.shelf == shelf {
@@ -360,6 +373,12 @@ impl App {
                 self.state.picked = false;
                 self.state.opened_day = false;
                 self.state.list_from = 0;
+            }
+            Hit::BooksPage(at) => {
+                if at == self.state.books_from {
+                    return Action::Nothing;
+                }
+                self.state.books_from = at;
             }
             Hit::Prev => return self.paged(-1),
             Hit::Next => return self.paged(1),
@@ -400,10 +419,11 @@ impl App {
             }
             Tab::Books => {
                 // `rows_per_page` states the step.
-                let chips = view::books::shelved(&self.stats);
+                let chips = !self.stats.books.is_empty();
                 let area =
                     view::books::list_box(&self.theme, chrome::content_box(&self.theme), chips);
-                let count = view::books::on_shelf(&self.stats, self.state.shelf).len();
+                let count =
+                    view::books::listed(&self.stats, self.state.shelf, self.state.sort).len();
                 let step = view::books::rows_per_page(&self.theme, area) as i64;
                 let last = view::books::last_page_at(&self.theme, area, count);
                 let from = self.state.books_from as i64 + by * step;
