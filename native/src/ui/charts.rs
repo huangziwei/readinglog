@@ -1,7 +1,8 @@
-//! Four shapes: a month grid, a row of columns, a stack of labelled bars, and
-//! one day's sittings laid along the clock.
+//! Five shapes: a grid of days, the names around one, a row of columns, a
+//! stack of labelled bars, and one day's sittings laid along the clock.
 //!
-//! [`month_cells`] states where a cell lands, apart from any draw.
+//! [`week_cells`], [`month_cells`] and [`year_cells`] state where a day lands,
+//! apart from any draw; [`day_cells`] inks whatever they answer.
 
 use crate::date;
 use crate::eink::fb::Framebuffer;
@@ -9,13 +10,14 @@ use crate::font::Script;
 use crate::lang::Strings;
 use crate::settings::WeekStart;
 
-use super::paint::{self, DARK, INK, LIGHT, MID, PALE, Rect, WHITE};
+use super::paint::{self, DARK, INK, LIGHT, PALE, Rect};
 use super::text::TextRenderer;
 use super::theme::Theme;
 
 /// One day of a month grid: which day, and the box it occupies.
 ///
-/// Always six rows of seven, from whichever day `week` starts on.
+/// Seven columns from whichever day `week` starts on, over as many rows as the
+/// month reaches into — five or six, and the rows fill `area` either way.
 pub fn month_cells(
     area: Rect,
     year: i64,
@@ -26,7 +28,7 @@ pub fn month_cells(
     let first = date::days_from_civil(year, month, 1);
     let lead = week.column_of(date::weekday(first)) as i64;
     let cols = area.columns(7, gap);
-    let rows = area.rows(6, gap);
+    let rows = area.rows(month_rows(year, month, week), gap);
     let mut out = Vec::new();
     for d in 1..=date::days_in_month(year, month) {
         let slot = lead + d - 1;
@@ -38,88 +40,228 @@ pub fn month_cells(
     out
 }
 
-/// A month, each day inked by how long was read on it. Answers with the hit box
-/// of every day drawn.
-///
-/// `duration_tight` sits inside the cell beside the day number.
-#[allow(clippy::too_many_arguments)]
-pub fn month(
+/// A week's seven days, one column each, starting at `first`.
+pub fn week_cells(area: Rect, first: i64, gap: i32) -> Vec<(i64, Rect)> {
+    area.columns(7, gap)
+        .into_iter()
+        .enumerate()
+        .map(|(column, cell)| (first + column as i64, cell))
+        .collect()
+}
+
+/// Rows of seven a month reaches into, from whichever day `week` starts on.
+pub fn month_rows(year: i64, month: i64, week: WeekStart) -> i32 {
+    let first = date::days_from_civil(year, month, 1);
+    let lead = week.column_of(date::weekday(first)) as i64;
+    ((lead + date::days_in_month(year, month) + 6) / 7) as i32
+}
+
+/// The height [`weekday_head`] draws into.
+pub fn weekday_head_height(theme: &Theme) -> i32 {
+    theme.small_px as i32 * 2
+}
+
+/// The weekday names across the head of a grid, each over its own column.
+pub fn weekday_head(
     fb: &mut Framebuffer,
     text: &mut TextRenderer,
     theme: &Theme,
     s: &Strings,
     area: Rect,
-    year: i64,
-    month: i64,
-    seconds_of: impl Fn(i64) -> i64,
-    today: i64,
-    selected: Option<i64>,
     week: WeekStart,
-) -> Vec<(i64, Rect)> {
-    let head_h = theme.small_px as i32 * 2;
-    let (head, grid) = area.split_top(head_h);
+) {
     text.set_px(theme.small_px);
-    for (column, cell) in head.columns(7, theme.gap).into_iter().enumerate() {
+    for (column, cell) in area.columns(7, theme.gap).into_iter().enumerate() {
         let name = s.weekdays_short[week.day_in(column)];
         let w = text.measure_width(name) as i32;
         text.draw(
             fb,
             cell.x + (cell.w - w) / 2,
-            head.y + text.line_height() as i32,
+            area.y + text.line_height() as i32,
             name,
             false,
         );
     }
+}
 
-    let cells = month_cells(grid, year, month, theme.gap, week);
-    let busiest = cells
-        .iter()
-        .map(|(day, _)| seconds_of(*day))
-        .max()
-        .unwrap_or(0);
+/// A year of days laid out one column to a week, seven rows deep from
+/// whichever day `week` starts on, in square cells.
+///
+/// The year's fifty-three weeks are cut into blocks stacked down the page: one
+/// block is the shape GitHub draws, and two of them set a cell twice the size
+/// on a panel this narrow.
+pub struct Heatmap {
+    /// Every day of the year and the box it occupies.
+    pub cells: Vec<(i64, Rect)>,
+    /// Each month, and the box its name stands in over the first week column
+    /// opening inside it.
+    pub months: Vec<(i64, Rect)>,
+    /// Seven weekday rows for each block, in order, for the names beside them.
+    pub rows: Vec<Rect>,
+    /// The side of one cell, which the blocks are cut to widen.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub side: i32,
+    /// The height the blocks come to, the air between them included.
+    pub height: i32,
+}
 
-    for (day, cell) in &cells {
-        let secs = seconds_of(*day);
-        let ink = paint::ink_step(secs, busiest);
-        match paint::ink_step_rgb(secs, busiest) {
-            Some(rgb) => paint::fill_rgb(fb, *cell, rgb),
-            None => {
-                paint::fill(fb, *cell, WHITE);
-                paint::stroke(fb, *cell, PALE, 1);
+/// [`Heatmap`] over `year` in `blocks` bands, each headed by `label` px of
+/// month names and set `air` apart. The cell is sized by `area`'s width.
+#[allow(clippy::too_many_arguments)]
+pub fn heatmap(
+    area: Rect,
+    year: i64,
+    gap: i32,
+    week: WeekStart,
+    blocks: i32,
+    label: i32,
+    air: i32,
+) -> Heatmap {
+    let first = date::days_from_civil(year, 1, 1);
+    let last = date::days_from_civil(year, 12, 31);
+    let start = first - week.column_of(date::weekday(first)) as i64;
+    let columns = ((last - start) / 7 + 1).max(1) as i32;
+    let blocks = blocks.max(1);
+    let per = (columns + blocks - 1) / blocks;
+    let side = ((area.w - gap * (per - 1)) / per).max(1);
+    let step = side + gap;
+    let block_h = label + side * 7 + gap * 6;
+
+    let mut cells = Vec::new();
+    let mut months = Vec::new();
+    let mut rows = Vec::new();
+    for block in 0..blocks {
+        let top = area.y + block * (block_h + air);
+        for at in 0..per {
+            let column = block * per + at;
+            if column >= columns {
+                break;
+            }
+            let x = area.x + at * step;
+            let opens = start + column as i64 * 7;
+            let (_, month, dom) = date::civil_from_days(opens);
+            // A month is named over the first week opening inside its own
+            // first seven days, which every month has exactly one of.
+            if dom <= 7 && (first..=last).contains(&opens) {
+                months.push((month, Rect::new(x, top, side * 3, label)));
+            }
+            for row in 0..7 {
+                let day = opens + row as i64;
+                if (first..=last).contains(&day) {
+                    cells.push((day, Rect::new(x, top + label + row * step, side, side)));
+                }
             }
         }
-        // `inverted` on the two darkest steps.
-        let inverted = matches!(ink, Some(DARK) | Some(INK));
-        if *day == today {
-            paint::stroke(fb, *cell, if inverted { WHITE } else { INK }, 2);
-        }
-        if Some(*day) == selected {
-            paint::stroke(fb, cell.inset(2), if inverted { WHITE } else { INK }, 3);
-        }
+        rows.extend((0..7).map(|row| Rect::new(area.x, top + label + row * step, area.w, side)));
+    }
+    cells.sort_unstable_by_key(|(day, _)| *day);
+    Heatmap {
+        cells,
+        months,
+        rows,
+        side,
+        height: block_h * blocks + air * (blocks - 1),
+    }
+}
 
-        let (_, _, dom) = date::civil_from_days(*day);
-        text.set_px(theme.small_px);
-        let pad = theme.gap / 2 + 2;
-        text.draw(
-            fb,
-            cell.x + pad,
-            cell.y + pad + text.cap_height() as i32,
-            &dom.to_string(),
-            inverted,
-        );
-        if secs > 0 {
-            let label = date::duration_tight(secs, s);
-            let w = text.measure_width(&label) as i32;
-            text.draw(
-                fb,
-                cell.right() - pad - w,
-                cell.bottom() - pad,
-                &label,
-                inverted,
-            );
+/// Which of four steps a day sits on against the busiest beside it, or zero
+/// where nothing was read.
+pub fn level(secs: i64, peak: i64) -> usize {
+    if secs <= 0 || peak <= 0 {
+        return 0;
+    }
+    let ratio = secs as f64 / peak as f64;
+    match ratio {
+        r if r > 0.66 => 4,
+        r if r > 0.4 => 3,
+        r if r > 0.15 => 2,
+        _ => 1,
+    }
+}
+
+/// The ink a [`level`] draws in, off the darker four of [`paint::STEPS_RGB`],
+/// and `None` at zero.
+pub fn level_rgb(level: usize) -> Option<[u8; 3]> {
+    (level > 0)
+        .then(|| paint::STEPS_RGB.get(level))
+        .flatten()
+        .copied()
+}
+
+/// One book's run down a lane of a week: which book, the column the run opens
+/// on, and how many columns it covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Run {
+    pub book: usize,
+    pub start: usize,
+    pub span: usize,
+}
+
+/// `days` — one entry per day of a week, each holding that day's books
+/// longest first — laid into `depth` lanes a column.
+///
+/// A book read on consecutive days holds one lane across them and carries the
+/// whole run, so the caller draws one bar where `start` is its own column.
+pub fn lanes(days: &[Vec<usize>], depth: usize) -> Vec<Vec<Option<Run>>> {
+    let mut out: Vec<Vec<Option<Run>>> = Vec::with_capacity(days.len());
+    for (column, books) in days.iter().enumerate() {
+        let mut here: Vec<Option<Run>> = (0..depth)
+            .map(|lane| {
+                books.get(lane).map(|book| Run {
+                    book: *book,
+                    start: column,
+                    span: 1,
+                })
+            })
+            .collect();
+        if column > 0 {
+            for (lane, before) in out[column - 1].clone().into_iter().enumerate() {
+                let Some(before) = before else {
+                    continue;
+                };
+                let Some(found) = here
+                    .iter()
+                    .position(|r| r.is_some_and(|r| r.book == before.book))
+                else {
+                    continue;
+                };
+                let span = before.span + 1;
+                if let Some(run) = &mut here[found] {
+                    run.start = before.start;
+                    run.span = span;
+                }
+                // Every column the run covers carries its new length.
+                for back in 1..span {
+                    if let Some(run) = &mut out[column - back][lane] {
+                        run.span = span;
+                    }
+                }
+                here.swap(found, lane);
+            }
+        }
+        out.push(here);
+    }
+    out
+}
+
+/// One day's twenty-four hours as bars across `area`, against `peak`.
+///
+/// `peak` is the busiest hour of every day drawn beside this one, so a quiet
+/// day and a busy one are read off the same scale.
+pub fn hour_shape(fb: &mut Framebuffer, area: Rect, hours: &[i64; 24], peak: i64) {
+    if peak <= 0 || area.h <= 0 {
+        return;
+    }
+    // A bar takes the whole hour it stands for, so the hours run together
+    // into one shape and not a row of needles.
+    let step = (area.w / 24).max(1);
+    for (hour, secs) in hours.iter().enumerate() {
+        let h = ((area.h as i64 * secs / peak) as i32).max(2 * (*secs > 0) as i32);
+        if h > 0 {
+            let x = area.x + hour as i32 * step;
+            paint::fill_rgb(fb, Rect::new(x, area.bottom() - h, step, h), paint::BAR_RGB);
         }
     }
-    cells
 }
 
 /// A row of columns, one per entry in `values`.
@@ -150,11 +292,14 @@ pub fn columns(
     for (i, (value, cell)) in values.iter().zip(&cells).enumerate() {
         let h = (plot.h as i64 * value / max) as i32;
         if h > 0 {
-            let ink = if highlight == Some(i) { INK } else { MID };
+            let ink = match highlight == Some(i) {
+                true => paint::MARK_RGB,
+                false => paint::BAR_RGB,
+            };
             // Three quarters of the cell, and no wider than `theme.row_h`.
             let w = (cell.w * 3 / 4).min(theme.row_h).max(1);
             let x = cell.x + (cell.w - w) / 2;
-            paint::fill(fb, Rect::new(x, cell.bottom() - h, w, h), ink);
+            paint::fill_rgb(fb, Rect::new(x, cell.bottom() - h, w, h), ink);
         }
         if i % every.max(1) == 0 {
             let name = label(i);
@@ -201,7 +346,11 @@ pub fn bars(
             each - theme.gap,
         );
         let filled = (track.w as i64 * value / max) as i32;
-        paint::fill(fb, Rect::new(track.x, track.y, filled, track.h), PALE);
+        paint::fill_rgb(
+            fb,
+            Rect::new(track.x, track.y, filled, track.h),
+            paint::STEPS_RGB[0],
+        );
         let clipped = text.wrap_and_clamp_in(*script, name, (track.w - theme.gap) as u32, 1);
         text.draw_in(
             *script,
@@ -261,6 +410,141 @@ pub fn timeline(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_month_takes_the_rows_it_reaches_into_and_fills_them() {
+        // September 2026 opens on a Tuesday and needs five; August 2026 opens
+        // on a Saturday and needs six.
+        assert_eq!(month_rows(2026, 9, WeekStart::Monday), 5);
+        assert_eq!(month_rows(2026, 8, WeekStart::Monday), 6);
+        // A Sunday-first week pushes that Saturday into a seventh column.
+        assert_eq!(month_rows(2026, 8, WeekStart::Sunday), 6);
+        // February on the day it starts on takes four.
+        assert_eq!(month_rows(2027, 2, WeekStart::Monday), 4);
+
+        let area = Rect::new(0, 40, 700, 600);
+        for (year, month) in [(2026, 9), (2026, 8), (2027, 2)] {
+            let cells = month_cells(area, year, month, 0, WeekStart::Monday);
+            let last = cells.last().expect("a day").1;
+            assert_eq!(last.bottom(), area.bottom(), "{year}-{month} leaves a void");
+        }
+    }
+
+    /// The blocks the assertions below are written against.
+    const BLOCKS: i32 = 2;
+
+    #[test]
+    fn a_year_of_weeks_holds_every_day_once_in_square_cells() {
+        for year in [2024, 2026] {
+            let area = Rect::new(20, 30, 1100, 700);
+            let week = WeekStart::Monday;
+            let map = heatmap(area, year, 2, week, BLOCKS, 20, 10);
+            let want: i64 = (1..=12).map(|m| date::days_in_month(year, m)).sum();
+            assert_eq!(map.cells.len(), want as usize, "{year}");
+            for pair in map.cells.windows(2) {
+                assert_eq!(pair[1].0, pair[0].0 + 1, "{year} skips a day");
+            }
+            for (_, cell) in &map.cells {
+                assert_eq!(cell.w, cell.h, "{year}: a cell is not square");
+                assert!(cell.x >= area.x && cell.right() <= area.right(), "{cell:?}");
+                assert!(cell.y >= area.y, "{cell:?}");
+                assert!(cell.bottom() <= area.y + map.height, "{cell:?}");
+            }
+
+            // A day sits on the weekday row it fell on, in the block its own
+            // week was cut into.
+            let jan = date::days_from_civil(year, 1, 1);
+            let lead = week.column_of(date::weekday(jan)) as i64;
+            let columns = map.rows.len() as i64 / 7;
+            let per = (map.cells.last().expect("a day").0 - jan + lead) / 7 / columns + 1;
+            for (day, cell) in &map.cells {
+                let slot = day - jan + lead;
+                let row = slot.rem_euclid(7) as usize;
+                let block = (slot / 7 / per).min(columns - 1) as usize;
+                assert_eq!(
+                    cell.y,
+                    map.rows[block * 7 + row].y,
+                    "{year}: {day} is off its weekday row"
+                );
+            }
+
+            assert_eq!(map.months.len(), 12, "{year} names {:?}", map.months);
+            for pair in map.months.windows(2) {
+                let (before, after) = (pair[0].1, pair[1].1);
+                assert!(
+                    after.y > before.y || after.x > before.x,
+                    "{year} names its months out of order"
+                );
+            }
+            assert_eq!(map.rows.len(), 7 * BLOCKS as usize);
+        }
+    }
+
+    #[test]
+    fn cutting_a_year_into_blocks_doubles_the_cell() {
+        // What the blocks buy: a day a finger can find.
+        let area = Rect::new(0, 0, 1100, 900);
+        let one = heatmap(area, 2026, 2, WeekStart::Monday, 1, 20, 10);
+        let two = heatmap(area, 2026, 2, WeekStart::Monday, 2, 20, 10);
+        assert!(
+            two.side >= one.side * 2,
+            "one block sets {} px, two set {}",
+            one.side,
+            two.side
+        );
+        assert_eq!(one.cells.len(), two.cells.len());
+        assert!(two.height > one.height);
+    }
+
+    #[test]
+    fn a_days_level_bands_it_against_the_busiest_of_the_span() {
+        assert_eq!(level(0, 100), 0);
+        assert_eq!(level(100, 0), 0);
+        assert_eq!(level(10, 100), 1);
+        assert_eq!(level(20, 100), 2);
+        assert_eq!(level(50, 100), 3);
+        assert_eq!(level(100, 100), 4);
+        // A day with nothing on it takes no ink at all.
+        assert!(level_rgb(0).is_none());
+        assert!(level_rgb(1).is_some());
+        assert_eq!(level_rgb(4), Some(paint::STEPS_RGB[4]));
+    }
+
+    #[test]
+    fn a_book_read_two_days_running_holds_one_lane_across_them() {
+        // Three days: the same book on the first two, another under it.
+        let days = vec![vec![7usize, 3], vec![7], vec![3]];
+        let out = lanes(&days, 4);
+        let run = out[0][0].expect("a run");
+        assert_eq!((run.book, run.start, run.span), (7, 0, 2));
+        assert_eq!(out[1][0].expect("the same run"), run);
+        // The run is drawn once, where it opens.
+        let drawn: Vec<Run> = out
+            .iter()
+            .enumerate()
+            .flat_map(|(col, lane)| {
+                lane.iter()
+                    .flatten()
+                    .filter(move |r| r.start == col)
+                    .copied()
+            })
+            .collect();
+        assert_eq!(drawn.len(), 3, "{drawn:?}");
+        assert_eq!(drawn.iter().filter(|r| r.book == 7).count(), 1);
+
+        // A day between breaks the run in two.
+        let out = lanes(&[vec![7usize], vec![], vec![7]], 4);
+        assert_eq!(out[0][0].expect("a run").span, 1);
+        assert_eq!(out[2][0].expect("a run").span, 1);
+    }
+
+    #[test]
+    fn a_lane_never_holds_more_books_than_it_has_depth_for() {
+        let out = lanes(&[vec![1usize, 2, 3, 4, 5, 6]], 3);
+        assert_eq!(out[0].len(), 3);
+        let books: Vec<usize> = out[0].iter().flatten().map(|r| r.book).collect();
+        assert_eq!(books, vec![1, 2, 3], "the longest read come first");
+    }
 
     #[test]
     fn a_sunday_week_moves_every_day_one_column_right() {

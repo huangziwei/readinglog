@@ -15,6 +15,7 @@ use crate::store::{BookRecord, Store};
 use crate::ui::chrome::Tab;
 use crate::ui::text::TextRenderer;
 use crate::ui::theme::Theme;
+use crate::view::Span;
 
 /// Days of reading [`fixture`] lays down behind `today`.
 const DAYS: i64 = 40;
@@ -212,9 +213,8 @@ fn preview_every_screen() {
     let screens = [
         ("config", Tab::Config, None),
         ("today", Tab::Home, None),
-        ("calendar", Tab::Calendar, None),
+        ("rhythm", Tab::Rhythm, None),
         ("books", Tab::Books, None),
-        ("clock", Tab::Clock, None),
         ("book", Tab::Books, Some(0)),
     ];
     // Every screen in every language: German is where a row collides first,
@@ -250,16 +250,47 @@ fn preview_every_screen() {
         println!("preview: {}", path.display());
     }
 
+    // Rhythm at each zoom: the grid changes shape and the page holds.
+    app.set_language(Lang::English);
+    app.show(Tab::Rhythm, None);
+    for span in Span::ALL {
+        app.set_span(span);
+        app.draw(&mut fb).expect("a drawn screen");
+        let path = out.join(format!("rhythm-{}.png", span_token(span)));
+        fb.capture_png(&path).expect("a written screen");
+        println!("preview: {}", path.display());
+    }
+    // A day opened off the calendar, which is where its books are read.
+    app.open_day(today);
+    app.draw(&mut fb).expect("a drawn screen");
+    let path = out.join("rhythm-day.png");
+    fb.capture_png(&path).expect("a written screen");
+    println!("preview: {}", path.display());
+    app.set_span(Span::Month);
+
     // The size ladder, in English: the content grows and the strip does not.
     for size in TextSize::ALL {
         app.set_text_size(size);
-        for (name, tab, book) in [("today", Tab::Home, None), ("config", Tab::Config, None)] {
+        for (name, tab, book) in [
+            ("today", Tab::Home, None),
+            ("rhythm", Tab::Rhythm, None),
+            ("config", Tab::Config, None),
+        ] {
             app.show(tab, book);
             app.draw(&mut fb).expect("a drawn screen");
             let path = out.join(format!("{name}-{}.png", size_token(size)));
             fb.capture_png(&path).expect("a written screen");
             println!("preview: {}", path.display());
         }
+    }
+}
+
+/// What a span is called in a filename.
+fn span_token(span: Span) -> &'static str {
+    match span {
+        Span::Week => "week",
+        Span::Month => "month",
+        Span::Year => "year",
     }
 }
 

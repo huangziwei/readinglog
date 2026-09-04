@@ -98,10 +98,6 @@ pub struct Stats {
     pub days: Vec<(i64, i64)>,
     /// Ascending by day then by start.
     pub sittings: Vec<Sitting>,
-    /// Everything, cut by hour of day, by weekday (Monday first) and by month.
-    pub hours: [i64; 24],
-    pub weekdays: [i64; 7],
-    pub months: [i64; 12],
     pub total_seconds: i64,
     pub total_turns: i64,
     pub total_words: i64,
@@ -168,12 +164,6 @@ impl Stats {
             out.total_seconds += s.seconds;
             out.total_turns += s.page_turns;
             out.total_words += s.words;
-            out.weekdays[date::weekday(day)] += s.seconds;
-            let (_, month, _) = date::civil_from_days(day);
-            out.months[(month - 1).clamp(0, 11) as usize] += s.seconds;
-            for (hour, secs) in &s.hours {
-                out.hours[(*hour as usize).min(23)] += secs;
-            }
             match out.days.binary_search_by_key(&day, |(d, _)| *d) {
                 Ok(i) => out.days[i].1 += s.seconds,
                 Err(i) => out.days.insert(i, (day, s.seconds)),
@@ -261,6 +251,49 @@ impl Stats {
         }
         out.sort_by_key(|(_, secs)| -secs);
         out
+    }
+
+    /// Everything read over `days`, cut by the clock hour it happened in.
+    ///
+    /// A sitting states its own seconds per hour, so one running past midnight
+    /// is counted where it was read and not where it started.
+    pub fn hours_over(&self, days: std::ops::RangeInclusive<i64>) -> [i64; 24] {
+        let mut out = [0i64; 24];
+        for sitting in self.sittings.iter().filter(|s| days.contains(&s.day)) {
+            for (hour, secs) in &sitting.hours {
+                out[(*hour as usize).min(23)] += secs;
+            }
+        }
+        out
+    }
+
+    /// Everything read over `days`, cut by the weekday it fell on, Monday
+    /// first.
+    pub fn weekdays_over(&self, days: std::ops::RangeInclusive<i64>) -> [i64; 7] {
+        let mut out = [0i64; 7];
+        for (day, secs) in self.days.iter().filter(|(d, _)| days.contains(d)) {
+            out[date::weekday(*day)] += secs;
+        }
+        out
+    }
+
+    /// The same, cut by the month of the year it fell in.
+    pub fn months_over(&self, days: std::ops::RangeInclusive<i64>) -> [i64; 12] {
+        let mut out = [0i64; 12];
+        for (day, secs) in self.days.iter().filter(|(d, _)| days.contains(d)) {
+            let (_, month, _) = date::civil_from_days(*day);
+            out[(month - 1).clamp(0, 11) as usize] += secs;
+        }
+        out
+    }
+
+    /// Seconds read over `days`.
+    pub fn span_seconds(&self, days: std::ops::RangeInclusive<i64>) -> i64 {
+        self.days
+            .iter()
+            .filter(|(d, _)| days.contains(d))
+            .map(|(_, secs)| secs)
+            .sum()
     }
 
     /// Days with any reading at all.
@@ -568,7 +601,6 @@ mod tests {
         // The totals are the ones from `store()` alone.
         assert_eq!(stats.total_seconds, 1_800 + 1_200 + 1_800 + 600);
         assert_eq!(stats.day_seconds(day(2026, 8, 7)), 600);
-        assert_eq!(stats.hours[12], 0);
     }
 
     #[test]
@@ -687,15 +719,33 @@ mod tests {
     }
 
     #[test]
-    fn the_clock_cuts_the_same_total_three_ways() {
+    fn a_span_cuts_its_own_reading_by_the_hour_of_it() {
         let stats = Stats::build(&store(), day(2026, 8, 7));
-        assert_eq!(stats.hours.iter().sum::<i64>(), stats.total_seconds);
-        assert_eq!(stats.weekdays.iter().sum::<i64>(), stats.total_seconds);
-        assert_eq!(stats.months.iter().sum::<i64>(), stats.total_seconds);
-        assert_eq!(stats.hours[9], 1_800 + 600);
-        assert_eq!(stats.hours[22], 1_800);
-        // August.
-        assert_eq!(stats.months[7], stats.total_seconds);
+        let all = stats.hours_over(i64::MIN..=i64::MAX);
+        assert_eq!(all.iter().sum::<i64>(), stats.total_seconds);
+        assert_eq!(all[9], 1_800 + 600);
+        assert_eq!(all[22], 1_800);
+
+        // The 7th alone holds the one sitting read on it.
+        let seventh = day(2026, 8, 7)..=day(2026, 8, 7);
+        let one = stats.hours_over(seventh.clone());
+        assert_eq!(one.iter().sum::<i64>(), 600);
+        assert_eq!(one[9], 600);
+        assert_eq!(stats.span_seconds(seventh), 600);
+        assert_eq!(
+            stats.span_seconds(day(2026, 8, 1)..=day(2026, 8, 31)),
+            stats.total_seconds
+        );
+        assert_eq!(stats.span_seconds(day(2026, 9, 1)..=day(2026, 9, 30)), 0);
+
+        // The same total, cut two more ways. August 2026, a Saturday first.
+        let august = day(2026, 8, 1)..=day(2026, 8, 31);
+        let weekdays = stats.weekdays_over(august.clone());
+        assert_eq!(weekdays.iter().sum::<i64>(), stats.total_seconds);
+        let months = stats.months_over(august);
+        assert_eq!(months.iter().sum::<i64>(), stats.total_seconds);
+        assert_eq!(months[7], stats.total_seconds, "all of it fell in August");
+        assert_eq!(months[0], 0);
     }
 
     #[test]

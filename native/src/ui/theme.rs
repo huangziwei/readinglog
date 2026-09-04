@@ -17,8 +17,8 @@ pub struct Theme {
     /// A section heading.
     pub head_px: f32,
     pub body_px: f32,
-    /// The strip along the bottom, which never scales: its six cells hold
-    /// カレンダー at [`BODY_PX`] and nothing wider.
+    /// The strip along the bottom, which never scales: its five cells hold
+    /// Rhythmus at [`BODY_PX`] and nothing wider.
     pub tab_px: f32,
     /// An axis label, a date under a bar, a unit beside a figure.
     pub small_px: f32,

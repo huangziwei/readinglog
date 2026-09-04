@@ -121,15 +121,36 @@ pub fn short_day(days: i64, s: &Strings) -> String {
     }
 }
 
-/// "Sun, 9 August 2026", or "2026年8月9日（日）".
+/// "Sun, 9 August 2026", or "2026年8月9日 日".
 pub fn long_day(days: i64, s: &Strings) -> String {
     let (y, m, d) = civil_from_days(days);
     let weekday = s.weekdays_short[weekday(days)];
-    let month = s.months[(m - 1).clamp(0, 11) as usize];
+    let at = (m - 1).clamp(0, 11) as usize;
     match s.date_ymd {
-        true => format!("{y}年{}{d}日 {weekday}", (m - 1).clamp(0, 11) + 1),
-        false => format!("{weekday}, {d} {month} {y}"),
+        true => format!("{y}年{}{d}日 {weekday}", s.months_short[at]),
+        false => format!("{weekday}, {d} {} {y}", s.months[at]),
     }
+}
+
+/// "August 2026", or "2026年8月".
+pub fn month_name(year: i64, month: i64, s: &Strings) -> String {
+    let at = (month - 1).clamp(0, 11) as usize;
+    match s.date_ymd {
+        true => format!("{year}年{}", s.months_short[at]),
+        false => format!("{} {year}", s.months[at]),
+    }
+}
+
+/// `day` moved `by` months.
+///
+/// A date the shorter month has no room for lands on the last of it: stepping
+/// back from 31 March reaches the end of February, and stepping on from there
+/// reaches the end of March again.
+pub fn shift_months(day: i64, by: i64) -> i64 {
+    let (y, m, d) = civil_from_days(day);
+    let months = y * 12 + (m - 1) + by;
+    let (year, month) = (months.div_euclid(12), months.rem_euclid(12) + 1);
+    days_from_civil(year, month, d.min(days_in_month(year, month)))
 }
 
 /// Durations read as "4h 12m", "37m", "2m" — and "4小时12分", "4 h 12 min".
@@ -246,6 +267,37 @@ mod tests {
         assert_eq!(duration(3570, en()), "1h");
         assert_eq!(duration_tight(4 * 3600 + 12 * 60, en()), "4h12");
         assert_eq!(duration_tight(30, en()), "·");
+    }
+
+    #[test]
+    fn a_year_first_date_names_its_month() {
+        let day = days_from_civil(2026, 9, 3);
+        let ja = Lang::Japanese.strings();
+        assert_eq!(long_day(day, ja), "2026年9月3日 木");
+        assert_eq!(month_name(2026, 9, ja), "2026年9月");
+        assert_eq!(long_day(day, en()), "Thu, 3 September 2026");
+        assert_eq!(month_name(2026, 9, en()), "September 2026");
+    }
+
+    #[test]
+    fn a_month_step_lands_on_a_day_the_month_has() {
+        let end = days_from_civil(2026, 3, 31);
+        assert_eq!(shift_months(end, -1), days_from_civil(2026, 2, 28));
+        assert_eq!(
+            shift_months(days_from_civil(2024, 3, 31), -1),
+            days_from_civil(2024, 2, 29)
+        );
+        // Across both year boundaries, and twelve at a time.
+        assert_eq!(
+            shift_months(days_from_civil(2026, 1, 15), -1),
+            days_from_civil(2025, 12, 15)
+        );
+        assert_eq!(
+            shift_months(days_from_civil(2026, 12, 15), 1),
+            days_from_civil(2027, 1, 15)
+        );
+        assert_eq!(shift_months(end, 12), days_from_civil(2027, 3, 31));
+        assert_eq!(shift_months(end, 0), end);
     }
 
     #[test]

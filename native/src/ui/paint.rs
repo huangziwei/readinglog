@@ -9,16 +9,12 @@ use crate::eink::fb::Framebuffer;
 pub const WHITE: u8 = 0xFF;
 pub const PALE: u8 = 0xE0;
 pub const LIGHT: u8 = 0xC0;
-pub const MID: u8 = 0x90;
 pub const DARK: u8 = 0x60;
 pub const INK: u8 = 0x00;
 
-/// The five steps a value is drawn at, lightest first. Zero is [`WHITE`],
-/// off this scale.
-pub const STEPS: [u8; 5] = [PALE, LIGHT, MID, DARK, INK];
-
-/// [`STEPS`] in one hue. Each entry's Rec. 601 luma sits within a few of the
-/// grey at the same index.
+/// The five steps a value is drawn at, lightest first, in one hue. Each
+/// entry's Rec. 601 luma sits within a few of [`PALE`], [`LIGHT`], [`MID`],
+/// [`DARK`] and [`INK`]. Zero is [`WHITE`], off this scale.
 pub const STEPS_RGB: [[u8; 3]; 5] = [
     [0xCF, 0xE6, 0xF7],
     [0x9F, 0xCB, 0xE8],
@@ -26,6 +22,11 @@ pub const STEPS_RGB: [[u8; 3]; 5] = [
     [0x2F, 0x6B, 0x96],
     [0x0A, 0x12, 0x18],
 ];
+
+/// The ink a bar takes where the panel has colour, and the warm mark on the
+/// one the page is about. The Colorsoft is the panel this is drawn for.
+pub const BAR_RGB: [u8; 3] = STEPS_RGB[2];
+pub const MARK_RGB: [u8; 3] = [0xC4, 0x45, 0x36];
 
 /// A box on the screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -200,28 +201,6 @@ pub fn progress(fb: &mut Framebuffer, track: Rect, value: i64, max: i64, ink: u8
     fill(fb, Rect::new(track.x, track.y, filled, track.h), ink);
 }
 
-/// Which of [`STEPS`] a value falls on against the busiest one beside it.
-///
-/// Banded. A `value` above zero lands on [`PALE`] at least.
-pub fn ink_step(value: i64, max: i64) -> Option<u8> {
-    ink_band(value, max).map(|i| STEPS[i])
-}
-
-/// [`ink_step`] in three channels, off [`STEPS_RGB`].
-pub fn ink_step_rgb(value: i64, max: i64) -> Option<[u8; 3]> {
-    ink_band(value, max).map(|i| STEPS_RGB[i])
-}
-
-/// The index into [`STEPS`] a value falls on, or `None` below one.
-fn ink_band(value: i64, max: i64) -> Option<usize> {
-    if value <= 0 || max <= 0 {
-        return None;
-    }
-    let steps = STEPS.len() as i64;
-    let band = (value * steps + max - 1) / max;
-    Some((band.clamp(1, steps) - 1) as usize)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,49 +267,5 @@ mod tests {
         assert!(Rect::new(0, 0, 100, 10).spread(&[], 6).is_empty());
         // One width centres.
         assert_eq!(Rect::new(0, 0, 100, 10).spread(&[40], 6)[0].x, 30);
-    }
-
-    #[test]
-    fn anything_read_at_all_lands_on_at_least_the_palest_step() {
-        assert_eq!(ink_step(0, 100), None);
-        assert_eq!(ink_step(100, 0), None);
-        assert_eq!(ink_step(1, 10_000), Some(PALE));
-        assert_eq!(ink_step(10_000, 10_000), Some(INK));
-        // Every value in the range lands on a band.
-        for v in 1..=10_000 {
-            assert!(ink_step(v, 10_000).is_some());
-        }
-        assert_eq!(ink_step(999, 100), Some(INK), "clamped, not out of bounds");
-    }
-
-    #[test]
-    fn the_colour_ramp_bands_with_the_grey_one_and_matches_its_luma() {
-        // Rec. 601 luma.
-        let luma = |[r, g, b]: [u8; 3]| (77 * r as u32 + 150 * g as u32 + 29 * b as u32) / 256;
-        for (grey, rgb) in STEPS.iter().zip(STEPS_RGB) {
-            let (want, got) = (*grey as u32, luma(rgb));
-            assert!(
-                want.abs_diff(got) <= 20,
-                "{rgb:?} reads {got} where {grey:#04x} reads {want}"
-            );
-        }
-        // `ink_step` and `ink_step_rgb` answer on the same bands.
-        for (v, max) in [
-            (0, 100),
-            (100, 0),
-            (1, 10_000),
-            (10_000, 10_000),
-            (999, 100),
-        ] {
-            assert_eq!(
-                ink_step(v, max).is_some(),
-                ink_step_rgb(v, max).is_some(),
-                "{v} of {max}"
-            );
-        }
-        // `STEPS_RGB` descends at every step.
-        for pair in STEPS_RGB.windows(2) {
-            assert!(luma(pair[1]) < luma(pair[0]), "{pair:?} is not descending");
-        }
     }
 }

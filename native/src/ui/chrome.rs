@@ -1,5 +1,5 @@
 //! The frame every screen sits in: one strip along the bottom holding Exit and
-//! the five tabs. There is no title bar — the tab drawn in reverse names the
+//! the four tabs. There is no title bar — the tab drawn in reverse names the
 //! screen, and every screen states its own figures in its body.
 
 use crate::eink::fb::Framebuffer;
@@ -17,19 +17,12 @@ pub enum Tab {
     /// figure about reading.
     Config,
     Home,
-    Calendar,
+    Rhythm,
     Books,
-    Clock,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 5] = [
-        Tab::Config,
-        Tab::Home,
-        Tab::Calendar,
-        Tab::Books,
-        Tab::Clock,
-    ];
+    pub const ALL: [Tab; 4] = [Tab::Config, Tab::Home, Tab::Rhythm, Tab::Books];
 
     /// What this tab is called, in the interface's own language.
     pub fn label(self, lang: Lang) -> &'static str {
@@ -37,9 +30,8 @@ impl Tab {
         match self {
             Tab::Config => s.config,
             Tab::Home => s.today,
-            Tab::Calendar => s.calendar,
+            Tab::Rhythm => s.rhythm,
             Tab::Books => s.books,
-            Tab::Clock => s.clock,
         }
     }
 }
@@ -53,7 +45,7 @@ pub fn clear(fb: &mut Framebuffer, theme: &Theme) {
 // and the only close marks that exist sit in `code2000` and the display faces,
 // where they would stand against Ember's letters in another face's weight.
 
-/// The bottom strip: Exit, then the five tabs, in six cells of one width.
+/// The bottom strip: Exit, then the four tabs, in five cells of one width.
 /// Answers the hit box for Exit and one per tab.
 ///
 /// The tab for the screen showing is drawn in reverse, which is what names the
@@ -70,7 +62,7 @@ pub fn tabs(
     paint::fill(fb, strip, WHITE);
     paint::hline(fb, 0, strip.y, strip.w, LIGHT, 2);
 
-    // Exit takes the first of six equal cells; the tabs take the rest.
+    // Exit takes the first of five equal cells; the tabs take the rest.
     let mut cells = strip.columns(Tab::ALL.len() as i32 + 1, 0).into_iter();
     let exit = cells.next().unwrap_or(strip);
 

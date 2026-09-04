@@ -17,7 +17,7 @@ use crate::ui::chrome::{self, Tab};
 use crate::ui::cover::Covers;
 use crate::ui::text::TextRenderer;
 use crate::ui::theme::Theme;
-use crate::view::{self, Ctx, Cut, Hit, State};
+use crate::view::{self, Ctx, Hit, State};
 
 pub struct App {
     theme: Theme,
@@ -74,6 +74,20 @@ impl App {
         self.state.book = book;
     }
 
+    /// Draw Rhythm at `span`, whatever it was left on.
+    #[cfg(test)]
+    pub fn set_span(&mut self, span: crate::view::Span) {
+        self.state.span = span;
+        self.state.picked = false;
+    }
+
+    /// Draw Rhythm with `day` picked off the grid.
+    #[cfg(test)]
+    pub fn open_day(&mut self, day: i64) {
+        self.state.day = day;
+        self.state.picked = true;
+    }
+
     /// Draw the whole screen and present it.
     pub fn draw(&mut self, fb: &mut Framebuffer) -> Result<()> {
         chrome::clear(fb, &self.theme);
@@ -97,9 +111,8 @@ impl App {
             None => match self.state.tab {
                 Tab::Config => view::config::draw(&mut cx, area, &settings),
                 Tab::Home => view::home::draw(&mut cx, area),
-                Tab::Calendar => view::calendar::draw(&mut cx, area, &self.state),
+                Tab::Rhythm => view::rhythm::draw(&mut cx, area, &self.state),
                 Tab::Books => view::books::draw(&mut cx, area, &self.state),
-                Tab::Clock => view::clock::draw(&mut cx, area, &self.state),
             },
         }
         self.hits = std::mem::take(&mut cx.hits);
@@ -207,14 +220,33 @@ impl App {
                 self.settings.save();
             }
             Hit::Book(index) => self.state.book = Some(index),
+            // A second tap on the day picked drops it again.
             Hit::Day(day) => {
-                // A second tap on `state.day` clears it.
-                self.state.day = match self.state.day == Some(day) {
-                    true => None,
-                    false => Some(day),
-                };
+                self.state.picked = !(self.state.picked && self.state.day == day);
+                self.state.day = day;
+                self.state.list_from = 0;
             }
-            Hit::Cut(cut) => self.state.cut = cut,
+            Hit::Average(all) => {
+                if self.state.average_all == all {
+                    return Action::Nothing;
+                }
+                self.state.average_all = all;
+            }
+            Hit::ListPage(by) => {
+                let at = self.state.list_from as i64 + by;
+                if at < 0 {
+                    return Action::Nothing;
+                }
+                self.state.list_from = at as usize;
+            }
+            Hit::Span(span) => {
+                if self.state.span == span && !self.state.picked {
+                    return Action::Nothing;
+                }
+                self.state.span = span;
+                self.state.picked = false;
+                self.state.list_from = 0;
+            }
             Hit::Prev => return self.paged(-1),
             Hit::Next => return self.paged(1),
         }
@@ -229,8 +261,8 @@ impl App {
         }
     }
 
-    /// One step forward or back: a month on the calendar, a page of the list,
-    /// the next book.
+    /// One step forward or back: a span on Rhythm, a page of the list, the
+    /// next book.
     fn paged(&mut self, by: i64) -> Action {
         if self.state.book.is_some() {
             let count = self.stats.books.len() as i64;
@@ -245,9 +277,9 @@ impl App {
         match self.state.tab {
             // Neither has anything to page through.
             Tab::Config | Tab::Home => Action::Nothing,
-            Tab::Calendar => {
-                self.state.shift_month(by);
-                self.state.day = None;
+            Tab::Rhythm => {
+                self.state.shift(by);
+                self.state.list_from = 0;
                 Action::Redraw
             }
             Tab::Books => {
@@ -261,15 +293,6 @@ impl App {
                     return Action::Nothing;
                 }
                 self.state.books_from = capped;
-                Action::Redraw
-            }
-            Tab::Clock => {
-                let at = Cut::ALL
-                    .iter()
-                    .position(|c| *c == self.state.cut)
-                    .unwrap_or(0) as i64;
-                let next = (at + by).rem_euclid(Cut::ALL.len() as i64) as usize;
-                self.state.cut = Cut::ALL[next];
                 Action::Redraw
             }
         }

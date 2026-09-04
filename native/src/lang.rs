@@ -172,9 +172,8 @@ pub struct Strings {
     pub exit: &'static str,
     pub config: &'static str,
     pub today: &'static str,
-    pub calendar: &'static str,
+    pub rhythm: &'static str,
     pub books: &'static str,
-    pub clock: &'static str,
 
     // Today. The three figures, then the heading over the day's books — the
     // day's own date heads its timeline, so it needs no word here.
@@ -183,8 +182,21 @@ pub struct Strings {
     pub current_streak: &'static str,
     pub what_was_read: &'static str,
 
-    // Calendar.
-    pub the_month: &'static str,
+    // Rhythm. The three spans the picker offers, the heading over the hour
+    // columns, and the word before the busiest hour of them.
+    pub week: &'static str,
+    pub month: &'static str,
+    pub year: &'static str,
+    /// The heading over the columns each span cuts itself into: a week draws
+    /// its hours, a month its weekdays, a year its months.
+    pub an_average_day: &'static str,
+    pub an_average_week: &'static str,
+    pub an_average_month: &'static str,
+    /// The word before the fullest column of them.
+    pub most: &'static str,
+    /// The other half of the average day's toggle: every span of this width
+    /// against the one showing.
+    pub every: &'static str,
     pub nothing_read: &'static str,
 
     // Books. `{a}–{b} of {c}`, where `of` is this word.
@@ -216,17 +228,6 @@ pub struct Strings {
     pub time_awake: &'static str,
     pub part_bounded: &'static str,
     pub page_by_page: &'static str,
-
-    // Clock.
-    pub hour_of_day: &'static str,
-    pub weekday: &'static str,
-    pub month: &'static str,
-    pub shape_of_it: &'static str,
-    pub busiest: &'static str,
-    pub then: &'static str,
-    pub in_the_busiest: &'static str,
-
-    pub counted_over: &'static str,
 
     // Splash.
     pub first_run_1: &'static str,
@@ -263,16 +264,22 @@ const ENGLISH: Strings = Strings {
     exit: "Exit",
     config: "Config",
     today: "Today",
-    calendar: "Calendar",
+    rhythm: "Rhythm",
     books: "Books",
-    clock: "Clock",
 
     read_today: "read today",
     pages_turned: "pages turned",
     current_streak: "current streak",
     what_was_read: "WHAT WAS READ",
 
-    the_month: "THE MONTH",
+    week: "Week",
+    month: "Month",
+    year: "Year",
+    an_average_day: "AN AVERAGE DAY",
+    an_average_week: "AN AVERAGE WEEK",
+    an_average_month: "AN AVERAGE MONTH",
+    most: "MOST",
+    every: "Every",
     nothing_read: "Nothing read.",
 
     of: "of",
@@ -300,15 +307,6 @@ const ENGLISH: Strings = Strings {
     time_awake: "time awake, a bound",
     part_bounded: "part bounded",
     page_by_page: "page by page",
-
-    hour_of_day: "Hour of day",
-    weekday: "Weekday",
-    month: "Month",
-    shape_of_it: "THE SHAPE OF IT",
-    busiest: "Busiest",
-    then: "Then",
-    in_the_busiest: "In the busiest",
-    counted_over: "Counted over",
 
     first_run_1: "First run: every log the device still holds",
     first_run_2: "is read once. This can take a few minutes.",
@@ -354,16 +352,22 @@ const GERMAN: Strings = Strings {
     // `Einstellungen` sets 235 px, and a cell on the 1264 px panel holds 196.
     config: "Optionen",
     today: "Heute",
-    calendar: "Kalender",
+    rhythm: "Rhythmus",
     books: "Bücher",
-    clock: "Uhr",
 
     read_today: "heute gelesen",
     pages_turned: "Seiten",
     current_streak: "aktuelle Serie",
     what_was_read: "WAS GELESEN WURDE",
 
-    the_month: "DER MONAT",
+    week: "Woche",
+    month: "Monat",
+    year: "Jahr",
+    an_average_day: "EIN DURCHSCHNITTSTAG",
+    an_average_week: "EINE DURCHSCHNITTSWOCHE",
+    an_average_month: "EIN DURCHSCHNITTSMONAT",
+    most: "AM MEISTEN",
+    every: "Alle",
     nothing_read: "Nichts gelesen.",
 
     of: "von",
@@ -391,15 +395,6 @@ const GERMAN: Strings = Strings {
     time_awake: "Wachzeit, eine Schranke",
     part_bounded: "teils geschätzt",
     page_by_page: "Seite für Seite",
-
-    hour_of_day: "Tageszeit",
-    weekday: "Wochentag",
-    month: "Monat",
-    shape_of_it: "DIE FORM",
-    busiest: "Am meisten",
-    then: "Dann",
-    in_the_busiest: "In der aktivsten",
-    counted_over: "Gezählt über",
 
     first_run_1: "Erster Start: jedes Protokoll auf dem Gerät",
     first_run_2: "wird einmal gelesen. Das dauert einige Minuten.",
@@ -446,16 +441,22 @@ const JAPANESE: Strings = Strings {
     exit: "終了",
     config: "設定",
     today: "今日",
-    calendar: "カレンダー",
+    rhythm: "リズム",
     books: "本",
-    clock: "時計",
 
     read_today: "今日の読書",
     pages_turned: "めくったページ",
     current_streak: "継続日数",
     what_was_read: "読んだ本",
 
-    the_month: "この月",
+    week: "週",
+    month: "月",
+    year: "年",
+    an_average_day: "平均的な一日",
+    an_average_week: "平均的な一週間",
+    an_average_month: "平均的な一か月",
+    most: "最も多い",
+    every: "全体",
     nothing_read: "読書なし。",
 
     of: "/",
@@ -483,15 +484,6 @@ const JAPANESE: Strings = Strings {
     time_awake: "起動時間、上限値",
     part_bounded: "一部は上限値",
     page_by_page: "ページ単位",
-
-    hour_of_day: "時刻",
-    weekday: "曜日",
-    month: "月",
-    shape_of_it: "その形",
-    busiest: "最多",
-    then: "次に",
-    in_the_busiest: "最多の時間帯",
-    counted_over: "集計対象",
 
     first_run_1: "初回起動：端末に残るすべての記録を",
     first_run_2: "一度読み込みます。数分かかります。",
@@ -525,16 +517,22 @@ const SIMPLIFIED: Strings = Strings {
     exit: "退出",
     config: "设置",
     today: "今天",
-    calendar: "日历",
+    rhythm: "节奏",
     books: "书",
-    clock: "时钟",
 
     read_today: "今日阅读",
     pages_turned: "翻页",
     current_streak: "当前连续",
     what_was_read: "读了什么",
 
-    the_month: "本月",
+    week: "周",
+    month: "月",
+    year: "年",
+    an_average_day: "平均的一天",
+    an_average_week: "平均的一周",
+    an_average_month: "平均的一个月",
+    most: "最多",
+    every: "全部",
     nothing_read: "没有阅读。",
 
     of: "/",
@@ -562,15 +560,6 @@ const SIMPLIFIED: Strings = Strings {
     time_awake: "唤醒时长，上限",
     part_bounded: "部分为上限",
     page_by_page: "逐页计量",
-
-    hour_of_day: "时段",
-    weekday: "星期",
-    month: "月份",
-    shape_of_it: "分布",
-    busiest: "最多",
-    then: "其次",
-    in_the_busiest: "最多时段占",
-    counted_over: "统计范围",
 
     first_run_1: "首次运行：设备上保留的每份记录",
     first_run_2: "都会读取一次，需要几分钟。",
@@ -615,16 +604,22 @@ const TRADITIONAL: Strings = Strings {
     exit: "結束",
     config: "設定",
     today: "今天",
-    calendar: "日曆",
+    rhythm: "節奏",
     books: "書",
-    clock: "時鐘",
 
     read_today: "今日閱讀",
     pages_turned: "翻頁",
     current_streak: "目前連續",
     what_was_read: "讀了什麼",
 
-    the_month: "本月",
+    week: "週",
+    month: "月",
+    year: "年",
+    an_average_day: "平均的一天",
+    an_average_week: "平均的一週",
+    an_average_month: "平均的一個月",
+    most: "最多",
+    every: "全部",
     nothing_read: "沒有閱讀。",
 
     of: "/",
@@ -652,15 +647,6 @@ const TRADITIONAL: Strings = Strings {
     time_awake: "喚醒時長，上限",
     part_bounded: "部分為上限",
     page_by_page: "逐頁計量",
-
-    hour_of_day: "時段",
-    weekday: "星期",
-    month: "月份",
-    shape_of_it: "分布",
-    busiest: "最多",
-    then: "其次",
-    in_the_busiest: "最多時段佔",
-    counted_over: "統計範圍",
 
     first_run_1: "首次執行：裝置上保留的每份記錄",
     first_run_2: "都會讀取一次，需要幾分鐘。",
@@ -806,13 +792,12 @@ mod tests {
         // field filled in with nothing.
         for lang in Lang::ALL {
             let s = lang.strings();
-            let named: [(&str, &str); 11] = [
+            let named: [(&str, &str); 10] = [
                 ("exit", s.exit),
                 ("config", s.config),
                 ("today", s.today),
-                ("calendar", s.calendar),
+                ("rhythm", s.rhythm),
                 ("books", s.books),
-                ("clock", s.clock),
                 ("language_row", s.language_row),
                 ("week_starts_on", s.week_starts_on),
                 ("hours", s.hours),
@@ -834,13 +819,13 @@ mod tests {
 
     #[test]
     fn the_nav_labels_fit_the_narrowest_panel() {
-        // Six cells of 210 px on a 1264 px panel, 196 usable inside the
+        // Five cells of 252 px on a 1264 px panel, 238 usable inside the
         // inverted block. Measured at BODY_PX against the real faces: the
-        // worst are Japanese カレンダー at 190 px and German Optionen at 163.
+        // worst are German Rhythmus at 182 px and Optionen at 163.
         // `Einstellungen` sets 235 and is why German says Optionen.
         for lang in Lang::ALL {
             let s = lang.strings();
-            for label in [s.exit, s.config, s.today, s.calendar, s.books, s.clock] {
+            for label in [s.exit, s.config, s.today, s.rhythm, s.books] {
                 // A Latin cell at 0.6 em a character is the pessimistic
                 // metric; CJK is one em and shorter in characters.
                 let em: f32 = if label.chars().any(|c| c as u32 > 0x2E80) {
@@ -849,7 +834,7 @@ mod tests {
                     0.6
                 };
                 let width = label.chars().count() as f32 * em * 38.0;
-                assert!(width <= 196.0, "{lang:?} {label:?} sets {width} px");
+                assert!(width <= 238.0, "{lang:?} {label:?} sets {width} px");
             }
         }
     }
