@@ -110,9 +110,14 @@ fn sections<'a>(lang: Lang, settings: &Settings) -> Vec<Section<'a>> {
     ]
 }
 
+/// The air under one section's rows, before the next heading.
+fn between(theme: &Theme) -> i32 {
+    theme.row_h * 2 / 3
+}
+
 pub fn draw(cx: &mut Ctx, area: Rect, settings: &Settings) {
     let theme: &Theme = cx.theme;
-    let air = theme.gap * 2;
+    let air = between(theme);
     let page = sections(cx.lang, settings);
 
     // Every row's chips start at one column, taken from the widest label and
@@ -152,12 +157,15 @@ pub fn draw(cx: &mut Ctx, area: Rect, settings: &Settings) {
             .iter()
             .map(|options| chrome::chip_layout(cx.text, theme, options, width))
             .collect();
-        let heights: Vec<i32> = placed
+        // The height one row's chips take, wrapped runs included.
+        let blocks: Vec<i32> = placed
             .iter()
-            .map(|row| {
-                // Plus air: a row that wrapped clears the next one's chips.
-                (row.iter().map(|c| c.bottom()).max().unwrap_or(0) + theme.gap).max(theme.row_h)
-            })
+            .map(|row| row.iter().map(|c| c.bottom()).max().unwrap_or(0))
+            .collect();
+        // Plus air: a row that wrapped clears the next one's chips.
+        let heights: Vec<i32> = blocks
+            .iter()
+            .map(|block| (block + theme.gap).max(theme.row_h))
             .collect();
 
         let need = chrome::section_height(cx.text, theme) + heights.iter().sum::<i32>() + air;
@@ -165,18 +173,20 @@ pub fn draw(cx: &mut Ctx, area: Rect, settings: &Settings) {
         rest = left;
 
         let mut inner = chrome::section(cx.fb, cx.text, theme, band, section.heading);
-        for (((row, options), at), height) in section
-            .rows
-            .iter()
-            .zip(&borrowed)
-            .zip(&placed)
-            .zip(&heights)
-        {
-            let (line, below) = inner.split_top((*height).min(inner.h));
+        for (at, row) in section.rows.iter().enumerate() {
+            let (line, below) = inner.split_top(heights[at].min(inner.h));
             inner = below;
             chrome::setting(cx.fb, cx.text, theme, line, row.label);
-            let box_ = chip_box(line, column);
-            let chips = chrome::chips(cx.fb, cx.text, theme, box_, options, at, row.on);
+            let box_ = chip_box(line, column, blocks[at]);
+            let chips = chrome::chips(
+                cx.fb,
+                cx.text,
+                theme,
+                box_,
+                &borrowed[at],
+                &placed[at],
+                row.on,
+            );
             for (i, chip) in chips.into_iter().enumerate() {
                 cx.hit((row.hit)(i), chip);
             }
@@ -184,15 +194,43 @@ pub fn draw(cx: &mut Ctx, area: Rect, settings: &Settings) {
     }
 }
 
-/// Where a row's chips sit: right of the shared label column.
-fn chip_box(row: Rect, column: i32) -> Rect {
+/// Where a row's chips sit: right of the shared label column, and a `block`
+/// tall run centred against the label, which `chrome::setting` centres in the
+/// row.
+fn chip_box(row: Rect, column: i32, block: i32) -> Rect {
     let left = row.x + column;
-    Rect::new(left, row.y, (row.right() - left).max(1), row.h)
+    let top = row.y + (row.h - block).max(0) / 2;
+    Rect::new(left, top, (row.right() - left).max(1), row.h)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rows_chips_centre_against_its_label() {
+        let theme = Theme::for_screen(1264, 1680);
+        let row = Rect::new(0, 100, 1186, theme.row_h);
+        // `chrome::setting` sets the label on `row.center_y()`.
+        for block in [theme.row_h / 3, chrome::chip_height(&theme), theme.row_h] {
+            let box_ = chip_box(row, 300, block);
+            assert_eq!(box_.y + block / 2, row.center_y(), "a {block} px run");
+            assert_eq!(box_.x, row.x + 300, "a {block} px run");
+        }
+        // A run taller than its row opens at the top of it.
+        let tall = chip_box(row, 300, theme.row_h * 2);
+        assert_eq!(tall.y, row.y);
+    }
+
+    #[test]
+    fn the_sections_stand_a_half_row_apart() {
+        for (w, h) in [(1264, 1680), (1272, 1696), (1860, 2480)] {
+            let theme = Theme::for_screen(w, h);
+            let air = between(&theme);
+            assert!(air >= theme.row_h / 2, "{w}x{h}: {air} px between sections");
+            assert!(air < theme.row_h, "{w}x{h}: {air} px reads as a blank row");
+        }
+    }
 
     #[test]
     fn the_page_holds_more_than_one_setting() {
