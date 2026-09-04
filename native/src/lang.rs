@@ -190,16 +190,20 @@ pub struct Strings {
     // The Books screen, whose two chips narrow the list to one shelf.
     pub shelf_every: &'static str,
     pub shelf_finished: &'static str,
-    /// The heading over the columns each span cuts itself into: a week draws
-    /// its hours, a month its weekdays, a year its months.
+    /// The heading over each fold of the record on the Trends page: the
+    /// hours of a day, the days of a week, the months of a year.
     pub an_average_day: &'static str,
     pub an_average_week: &'static str,
-    pub an_average_month: &'static str,
-    /// The word before the fullest column of them.
+    pub an_average_year: &'static str,
+    /// The heading over the sitting histogram, and the word closing its count.
+    pub sitting_lengths: &'static str,
+    pub in_all: &'static str,
+    /// The word before the fullest column of a fold.
     pub most: &'static str,
-    /// The other half of the average day's toggle: every span of this width
-    /// against the one showing.
-    pub every: &'static str,
+    /// The second page of All Time, named at the right of its own top line.
+    pub trends: &'static str,
+    /// What a span of this width usually comes to, under the one showing.
+    pub usually: &'static str,
     pub nothing_read: &'static str,
 
     // Books. `{a}–{b} of {c}`, where `of` is this word.
@@ -307,9 +311,12 @@ const ENGLISH: Strings = Strings {
     shelf_finished: "Finished",
     an_average_day: "AN AVERAGE DAY",
     an_average_week: "AN AVERAGE WEEK",
-    an_average_month: "AN AVERAGE MONTH",
+    an_average_year: "AN AVERAGE YEAR",
+    sitting_lengths: "HOW MANY SITTINGS RAN THAT LONG",
+    in_all: "in all",
     most: "MOST",
-    every: "Every",
+    trends: "TRENDS",
+    usually: "usually",
     nothing_read: "Nothing read.",
 
     of: "of",
@@ -418,9 +425,12 @@ const GERMAN: Strings = Strings {
     shelf_finished: "Fertig",
     an_average_day: "EIN DURCHSCHNITTSTAG",
     an_average_week: "EINE DURCHSCHNITTSWOCHE",
-    an_average_month: "EIN DURCHSCHNITTSMONAT",
+    an_average_year: "EIN DURCHSCHNITTSJAHR",
+    sitting_lengths: "WIE LANGE EINE SITZUNG DAUERTE",
+    in_all: "insgesamt",
     most: "AM MEISTEN",
-    every: "Alle",
+    trends: "VERLAUF",
+    usually: "sonst",
     nothing_read: "Nichts gelesen.",
 
     of: "von",
@@ -530,9 +540,12 @@ const JAPANESE: Strings = Strings {
     shelf_finished: "読了",
     an_average_day: "平均的な一日",
     an_average_week: "平均的な一週間",
-    an_average_month: "平均的な一か月",
+    an_average_year: "平均的な一年",
+    sitting_lengths: "一回の読書の長さ",
+    in_all: "回",
     most: "最も多い",
-    every: "全体",
+    trends: "傾向",
+    usually: "通常",
     nothing_read: "読書なし。",
 
     of: "/",
@@ -629,9 +642,12 @@ const SIMPLIFIED: Strings = Strings {
     shelf_finished: "已读完",
     an_average_day: "平均的一天",
     an_average_week: "平均的一周",
-    an_average_month: "平均的一个月",
+    an_average_year: "平均的一年",
+    sitting_lengths: "每次阅读持续多久",
+    in_all: "次",
     most: "最多",
-    every: "全部",
+    trends: "趋势",
+    usually: "通常",
     nothing_read: "没有阅读。",
 
     of: "/",
@@ -739,9 +755,12 @@ const TRADITIONAL: Strings = Strings {
     shelf_finished: "已讀完",
     an_average_day: "平均的一天",
     an_average_week: "平均的一週",
-    an_average_month: "平均的一個月",
+    an_average_year: "平均的一年",
+    sitting_lengths: "每次閱讀持續多久",
+    in_all: "次",
     most: "最多",
-    every: "全部",
+    trends: "趨勢",
+    usually: "通常",
     nothing_read: "沒有閱讀。",
 
     of: "/",

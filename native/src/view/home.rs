@@ -65,7 +65,7 @@ pub fn draw(cx: &mut Ctx, area: Rect) {
     let box_ = daybooks::rows_box(cx, Rect::new(list.x, list.y, list.w, list.h - head), today);
     let shown = daybooks::fits(theme, box_.h, read.len());
     let title = match shown < read.len() {
-        true => format!("{} — {shown} {} {}", s.what_was_read, s.of, read.len()),
+        true => format!("{} · {shown} {} {}", s.what_was_read, s.of, read.len()),
         false => s.what_was_read.to_string(),
     };
     let inner = chrome::section(cx.fb, cx.text, theme, list, &title);

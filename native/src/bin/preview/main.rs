@@ -271,6 +271,10 @@ fn set_span(app: &mut App, shot: &Shot) -> Result<()> {
     };
     match of {
         "all" => app.set_span(Span::AllTime),
+        "trends" => {
+            app.set_span(Span::AllTime);
+            app.set_alltime_page(1);
+        }
         "finished" => app.set_shelf(Shelf::Finished),
         "last" => app.open_books(usize::MAX),
         "week" => app.set_span(Span::Week),
@@ -330,7 +334,7 @@ fn list() {
     println!("screens:");
     for (name, _) in SCREENS {
         let of = match *name {
-            "rhythm" => "  (:all :week :month :year :day :busy :busy2 :busyend)",
+            "rhythm" => "  (:all :trends :week :month :year :day :busy :busy2 :busyend)",
             "today" => "  (:quiet :empty)",
             "book" => "  (:<index>)",
             "books" => "  (:finished :last)",
@@ -406,6 +410,7 @@ fn everything() -> Vec<Shot> {
         "today:quiet",
         "today:empty",
         "rhythm:all",
+        "rhythm:trends",
         "rhythm:week",
         "rhythm:month",
         "rhythm:year",

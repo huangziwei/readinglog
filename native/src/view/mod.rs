@@ -41,8 +41,6 @@ pub enum Hit {
     Next,
     /// One span of the Rhythm screen.
     Span(Span),
-    /// The average day over every span of its width, or over the one showing.
-    Average(bool),
     /// Where a book list opens, as an index into it. The screen drawing the
     /// list holds the index inside the list: a step past either end is no step.
     ListPage(usize),
@@ -165,8 +163,8 @@ pub struct State {
     pub books_from: usize,
     /// Which books the Books screen lists.
     pub shelf: Shelf,
-    /// Whether the average day covers every span of its width.
-    pub average_all: bool,
+    /// Which page of All Time is showing, of [`alltime::PAGES`].
+    pub alltime_page: usize,
     /// How far down Rhythm's own book list has been paged.
     pub list_from: usize,
 }
@@ -181,7 +179,7 @@ impl State {
             book: None,
             books_from: 0,
             shelf: Shelf::default(),
-            average_all: false,
+            alltime_page: 0,
             list_from: 0,
         }
     }
@@ -197,15 +195,30 @@ impl State {
         self.book = None;
         self.picked = false;
         self.shelf = Shelf::All;
+        self.alltime_page = 0;
         true
     }
 
-    /// Step Rhythm on: a day at a time where one is open, else a whole span.
-    pub fn shift(&mut self, by: i64) {
-        self.day = match self.picked {
-            true => self.day + by,
-            false => self.span.step(self.day, by),
-        };
+    /// Step Rhythm on: a day at a time where one is open, a page of All Time
+    /// where that is the span, else a whole span.
+    ///
+    /// Answers whether anything moved. All Time holds the whole record and has
+    /// no span either side of it, so its pages are what stepping moves there.
+    pub fn shift(&mut self, by: i64) -> bool {
+        if self.picked {
+            self.day += by;
+            return true;
+        }
+        if self.span == Span::AllTime {
+            let last = alltime::PAGES as i64 - 1;
+            let page = (self.alltime_page as i64 + by).clamp(0, last) as usize;
+            let moved = page != self.alltime_page;
+            self.alltime_page = page;
+            return moved;
+        }
+        let was = self.day;
+        self.day = self.span.step(self.day, by);
+        self.day != was
     }
 }
 
@@ -381,10 +394,49 @@ mod tests {
     }
 
     #[test]
+    fn all_time_steps_through_its_pages_and_stops_at_either_end() {
+        let mut s = State::new(third());
+        assert_eq!(s.span, Span::AllTime);
+        assert_eq!(s.alltime_page, 0);
+        assert!(!s.shift(-1), "the first page has nothing before it");
+        assert_eq!(s.alltime_page, 0);
+
+        for page in 1..alltime::PAGES {
+            assert!(s.shift(1), "page {page} is a step");
+            assert_eq!(s.alltime_page, page);
+            assert_eq!(s.day, third(), "paging never moves the day");
+        }
+        assert!(!s.shift(1), "the last page has nothing after it");
+        assert_eq!(s.alltime_page, alltime::PAGES - 1);
+
+        assert!(s.shift(-1));
+        assert_eq!(s.alltime_page, alltime::PAGES - 2);
+    }
+
+    #[test]
+    fn leaving_all_time_comes_back_to_its_first_page() {
+        let mut s = State::new(third());
+        s.shift(1);
+        assert_ne!(s.alltime_page, 0);
+        s.go(Tab::Books);
+        s.go(Tab::Rhythm);
+        assert_eq!(s.alltime_page, 0, "a tab tap opens the board again");
+    }
+
+    #[test]
+    fn a_calendar_span_steps_a_span_and_leaves_the_page_alone() {
+        let mut s = State::new(third());
+        s.span = Span::Month;
+        assert!(s.shift(1));
+        assert_eq!(s.day, date::days_from_civil(2026, 10, 3));
+        assert_eq!(s.alltime_page, 0);
+    }
+
+    #[test]
     fn a_picked_day_steps_a_day_at_a_time() {
         let mut s = State::new(third());
         s.shift(1);
-        assert_eq!(s.day, third(), "the whole record steps nowhere");
+        assert_eq!(s.day, third(), "paging All Time moves no day");
         s.span = Span::Month;
         s.shift(1);
         assert_eq!(

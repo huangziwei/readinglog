@@ -1,16 +1,30 @@
-//! The whole record as a board of figures: four rows of three over the span
-//! the log covers, one row each to the totals, the shelf, the streaks and the
-//! records. Three of the twelve carry a hit box onto what they name.
+//! All Time, in two pages.
+//!
+//! The board is four rows of three figures over the span the log covers, three
+//! of the twelve carrying a hit box onto what they name. Trends is the record
+//! folded onto a day, a week and a year, over how long a sitting runs.
+//!
+//! One line at the head of each page tells them apart and pages between them:
+//! what the record covers and a `›` on the board, a `‹` and the page's name on
+//! Trends. A swipe does the same thing.
 
 use crate::date;
 use crate::lang::Strings;
+use crate::stats::{Fold, SITTING_BANDS, SITTING_STEP_SECS};
 use crate::ui::paint::{self, LIGHT, PALE, Rect};
 use crate::ui::theme::Theme;
+use crate::ui::{charts, chrome};
 
 use super::{Ctx, Hit, Shelf};
 
+/// How many pages All Time holds.
+pub const PAGES: usize = 2;
+
 /// Rows of three the board holds.
 const ROWS: i32 = 4;
+
+/// Bands the Trends page stacks: the three folds and the sittings.
+const BANDS: i32 = 4;
 
 /// One figure of the board: what it states, what it is called, and the page it
 /// opens.
@@ -29,12 +43,198 @@ fn plain(value: String, label: &'static str) -> Cell {
     }
 }
 
-pub fn draw(cx: &mut Ctx, area: Rect) {
+/// The page at `page`, and the arrows onto the one either side of it.
+pub fn draw(cx: &mut Ctx, area: Rect, page: usize) {
+    let (line, body) = area.split_top(edge_height(cx.theme));
+    match page {
+        0 => {
+            span_line(cx, line);
+            edges(cx, line, None, Some(FORWARD));
+            let cells = cells(cx);
+            board_of(cx, body, &cells);
+        }
+        _ => {
+            let name = cx.s().trends.to_string();
+            edges(cx, line, Some(BACK), Some(&name));
+            trends(cx, body);
+        }
+    }
+}
+
+/// The arrows onto the page either side. Each is its own hit box, and a swipe
+/// does the same thing.
+const BACK: &str = "‹";
+const FORWARD: &str = "›";
+
+/// The height of the line at the head of a page, which the board sets what the
+/// record covers in.
+fn edge_height(theme: &Theme) -> i32 {
+    theme.small_px as i32 + theme.gap * 2
+}
+
+/// A marker at each end of `line`: an arrow onto the page either side, and the
+/// page's own name where it has one.
+fn edges(cx: &mut Ctx, line: Rect, left: Option<&str>, right: Option<&str>) {
     let theme: &Theme = cx.theme;
-    let (since, board) = area.split_top(theme.small_px as i32 + theme.gap * 2);
-    span_line(cx, since);
-    let cells = cells(cx);
-    board_of(cx, board, &cells);
+    let script = cx.ui_script();
+    // One baseline for both ends, taken from the type the line is set in, so
+    // an arrow and a name stand on the same line whatever size each takes.
+    cx.text.set_px(theme.small_px);
+    let baseline = line.y + cx.text.cap_height() as i32;
+    for (said, at_left) in [(left, true), (right, false)] {
+        let Some(said) = said else { continue };
+        // An arrow takes the size the span pages set theirs at; a name sits
+        // with the line's own type.
+        let arrow = said == BACK || said == FORWARD;
+        cx.text.set_px(match arrow {
+            true => theme.head_px,
+            false => theme.small_px,
+        });
+        let w = cx.text.measure_width_in(script, said) as i32;
+        let x = match at_left {
+            true => line.x,
+            false => line.right() - w,
+        };
+        cx.text.draw_in(script, cx.fb, x, baseline, said, false);
+        if arrow {
+            // The hit box reaches past the arrow's own width, as it does on
+            // the span pages.
+            let reach = line.w / 6;
+            let at = match at_left {
+                true => line.x,
+                false => line.right() - reach,
+            };
+            let hit = match at_left {
+                true => Hit::Prev,
+                false => Hit::Next,
+            };
+            cx.hit(hit, Rect::new(at, line.y, reach, line.h));
+        }
+    }
+}
+
+/// The three folds over the sitting histogram, in equal bands down the page.
+fn trends(cx: &mut Ctx, area: Rect) {
+    let rows = area.rows(BANDS, cx.theme.gap * 3);
+
+    let day = cx.stats.average_day(cx.today);
+    let names: Vec<String> = (0..24).map(|at| format!("{at:02}")).collect();
+    band(cx, rows[0], cx.s().an_average_day, &day, &names, 3);
+
+    let week = cx.stats.average_week(cx.today, cx.week);
+    let names: Vec<String> = (0..7)
+        .map(|at| cx.s().weekdays_short[cx.week.day_in(at)].to_string())
+        .collect();
+    band(cx, rows[1], cx.s().an_average_week, &week, &names, 1);
+
+    let year = cx.stats.average_year(cx.today);
+    let names: Vec<String> = cx.s().months_short.iter().map(|m| m.to_string()).collect();
+    band(cx, rows[2], cx.s().an_average_year, &year, &names, 1);
+
+    sittings(cx, rows[3]);
+}
+
+/// One fold under its own heading: the name, what one turn of the cycle
+/// averages, and the fullest bucket.
+fn band(cx: &mut Ctx, area: Rect, name: &str, fold: &Fold, axis: &[String], every: usize) {
+    let theme: &Theme = cx.theme;
+    let s = cx.s();
+    let short = format!("{name} · {}", date::duration(fold.each, s));
+    let title = match fold.busiest {
+        Some(at) => format!("{short} · {} {}", s.most, axis[at]),
+        None => short.clone(),
+    };
+    // The fullest bucket is named only where the row has the width for it.
+    cx.text.set_px(theme.small_px);
+    let title = match cx.text.measure_width(&title) as i32 <= area.w {
+        true => title,
+        false => short,
+    };
+    let inner = chrome::section(cx.fb, cx.text, theme, area, &title);
+    let names = axis.to_vec();
+    charts::columns(
+        cx.fb,
+        cx.text,
+        theme,
+        inner,
+        &fold.values,
+        |at| names[at].clone(),
+        &|secs| duration_rows(secs, s),
+        every,
+        fold.busiest,
+    );
+}
+
+/// A duration over its bar, as the rows it is set in: an hour part and a
+/// minute part stack, so `2h 22m` is fitted to the width of `22m` and not of
+/// both. A bucket holding under a minute states nothing, its bar being a
+/// hairline that a figure would stand over as a speck of dirt.
+fn duration_rows(secs: i64, s: &Strings) -> Vec<String> {
+    if secs < 60 {
+        return Vec::new();
+    }
+    let space = if s.unit_space { " " } else { "" };
+    let (hours, mins) = (secs / 3600, (secs % 3600) / 60);
+    let hour = format!("{hours}{space}{}", s.hours);
+    let min = format!("{mins}{space}{}", s.minutes);
+    match (hours, mins) {
+        (0, _) => vec![min],
+        (_, 0) => vec![hour],
+        _ => vec![hour, min],
+    }
+}
+
+/// How many sittings of the record ran each length, five minutes to a band.
+fn sittings(cx: &mut Ctx, area: Rect) {
+    let theme: &Theme = cx.theme;
+    let s = cx.s();
+    let counted = cx.stats.sitting_bands();
+    let total: i64 = counted.iter().sum();
+    let names: Vec<String> = (0..SITTING_BANDS).map(|at| sitting_name(at, s)).collect();
+    let busiest = counted
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, n)| **n)
+        .filter(|(_, n)| **n > 0)
+        .map(|(at, _)| at);
+    let head = format!("{} · {total} {}", s.sitting_lengths, s.in_all);
+    let title = match busiest {
+        Some(at) => format!("{head} · {} {}", s.most, names[at]),
+        None => head,
+    };
+    let inner = chrome::section(cx.fb, cx.text, theme, area, &title);
+    let axis = names.clone();
+    charts::columns(
+        cx.fb,
+        cx.text,
+        theme,
+        inner,
+        &counted,
+        |at| axis[at].clone(),
+        &|n| match n {
+            0 => Vec::new(),
+            n => vec![n.to_string()],
+        },
+        6,
+        busiest,
+    );
+}
+
+/// The length the band at `at` opens at, for the axis under it. The last band
+/// holds everything above its own opening, and says so.
+fn sitting_name(at: usize, s: &Strings) -> String {
+    if at == 0 {
+        return "0".into();
+    }
+    let secs = at as i64 * SITTING_STEP_SECS;
+    let opens = match secs % 3600 {
+        0 => format!("{}{}", secs / 3600, s.hours),
+        _ => date::duration_tight(secs, s),
+    };
+    match at + 1 == SITTING_BANDS {
+        true => format!("{opens}+"),
+        false => opens,
+    }
 }
 
 /// Books the shelf states as read through, longest first.

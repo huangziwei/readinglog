@@ -111,6 +111,8 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
             let (_, _, dom) = date::civil_from_days(day);
             dom.to_string()
         },
+        // A fortnight of bars this narrow has no room for figures on them.
+        &|_| Vec::new(),
         7,
         None,
     );

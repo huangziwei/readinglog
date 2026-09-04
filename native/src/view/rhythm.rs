@@ -13,43 +13,39 @@ use super::{Ctx, Hit, Span, State, alltime, daybooks, home};
 /// Books a day of a month names, the rest counted in `+n`.
 const LANES: usize = 4;
 
-/// Rows of `theme.row_h` the average day takes under its heading.
-const HOURS_ROWS: i32 = 2;
-
-/// The bar the picker and the span's name each stand in.
+/// The bar the picker stands in. The span's name takes that and the line
+/// under it stating what a span of its width usually comes to.
 fn bar_height(theme: &Theme) -> i32 {
     theme.row_h * 3 / 4
 }
 
-/// The height the average day takes, its heading included.
-fn hours_height(theme: &Theme, head: i32) -> i32 {
-    head + theme.row_h * HOURS_ROWS
+/// The height the span's name and its comparison take together.
+fn nav_height(theme: &Theme) -> i32 {
+    bar_height(theme) + theme.small_px as i32 + theme.gap
 }
 
-/// The five bands of the page, top to bottom: the picker, the span's name
-/// between its arrows, the grid, the average day, and the books. `grid` is
-/// what the span asks for, clamped to what the average day leaves.
-fn bands(area: Rect, theme: &Theme, head: i32, grid: i32, listed: bool) -> [Rect; 5] {
+/// The four bands of the page, top to bottom: the picker, the span's name
+/// between its arrows, the grid, and the books. `grid` is what the span asks
+/// for, clamped to what the page holds.
+fn bands(area: Rect, theme: &Theme, grid: i32, listed: bool) -> [Rect; 4] {
     let air = theme.gap * 2;
     let bar = bar_height(theme);
     let (picker, rest) = area.split_top(bar + air);
-    let (nav, rest) = rest.split_top(bar + air);
+    let (nav, rest) = rest.split_top(nav_height(theme) + air);
 
-    let hours = hours_height(theme, head).min(rest.h);
-    let body = (rest.h - hours - air).max(0);
-    let under = rest.y + body + air;
     let grid = match listed {
-        true => grid.clamp(0, body),
-        false => body,
+        true => grid.clamp(0, rest.h),
+        false => rest.h,
     };
-    // `list` stands between the grid and the average day, which takes the foot.
-    let list = (body - grid - air).max(0) * listed as i32;
+    let list = (rest.h - grid - air).max(0) * listed as i32;
+    // A span listing no books still answers with a band, which stands at the
+    // foot of the page rather than past it.
+    let under = (rest.y + grid + air).min(rest.bottom());
     [
         Rect::new(picker.x, picker.y, picker.w, bar),
-        Rect::new(nav.x, nav.y, nav.w, bar),
+        Rect::new(nav.x, nav.y, nav.w, nav_height(theme)),
         Rect::new(rest.x, rest.y, rest.w, grid),
-        Rect::new(rest.x, under, rest.w, hours.min(rest.bottom() - under)),
-        Rect::new(rest.x, rest.y + grid + air, rest.w, list),
+        Rect::new(rest.x, under, rest.w, list),
     ]
 }
 
@@ -63,7 +59,9 @@ fn lists_books(span: Span) -> bool {
 fn grid_height(span: Span, area: Rect, theme: &Theme, day: i64, week: WeekStart) -> i32 {
     match span {
         Span::AllTime | Span::Month => area.h,
-        Span::Week => week_height(theme),
+        // A week has seven columns and a short list under them, so the grid
+        // takes whatever the page has over its own height.
+        Span::Week => week_height(theme).max(area.h * 2 / 5),
         Span::Year => {
             let (year, _, _) = date::civil_from_days(day);
             let box_ = Rect::new(area.x, area.y, area.w - gutter(theme), area.h);
@@ -90,7 +88,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
     picker(cx, Rect::new(bar.x, bar.y, bar.w, bar_height(theme)), state);
     match state.picked {
         true => day_page(cx, rest, state),
-        false => alltime::draw(cx, rest),
+        false => alltime::draw(cx, rest, state.alltime_page),
     }
 }
 
@@ -108,15 +106,14 @@ fn span_page(cx: &mut Ctx, area: Rect, state: &State) {
     let (span, day) = (state.span, state.day);
     let days = span.days(day, cx.week);
 
-    let head = chrome::section_height(cx.text, theme);
     let listed = lists_books(span);
     let want = grid_height(span, area, theme, day, cx.week);
-    let [bar, nav, grid, hours, list] = bands(area, theme, head, want, listed);
+    let [bar, nav, grid, list] = bands(area, theme, want, listed);
 
     picker(cx, bar, state);
     let name = span.name(day, cx.week, s);
     let total = date::duration(cx.stats.span_seconds(days.clone()), s);
-    span_nav(cx, nav, &format!("{name} · {total}"));
+    span_nav(cx, nav, &format!("{name} · {total}"), usually(cx, span));
 
     match span {
         // `alltime::draw` takes the page ahead of `span_page`.
@@ -125,7 +122,6 @@ fn span_page(cx: &mut Ctx, area: Rect, state: &State) {
         Span::Month => month_grid(cx, grid, day),
         Span::Year => year_heatmap(cx, grid, day, state.picked),
     }
-    average_of(cx, hours, state, days.clone());
     if listed {
         book_list(cx, list, state, days);
     }
@@ -206,22 +202,50 @@ fn picker(cx: &mut Ctx, area: Rect, state: &State) {
     }
 }
 
-/// `title` between two arrows, each its own hit box, over a rule.
-fn span_nav(cx: &mut Ctx, area: Rect, title: &str) {
+/// What a span of this width usually comes to, over the whole record. The one
+/// thing the grid cannot answer: whether the span showing is a lot.
+fn usually(cx: &Ctx, span: Span) -> String {
+    let s = cx.s();
+    let over = cx.stats.covered(cx.today);
+    let each = match span {
+        Span::Week => over / 7,
+        Span::Month => over * 12 / 365,
+        Span::Year => over / 365,
+        Span::AllTime => 1,
+    };
+    let secs = cx.stats.total_seconds / each.max(1);
+    format!("{} {}", s.usually, date::duration(secs, s))
+}
+
+/// `title` between two arrows, each its own hit box, over a rule, with `under`
+/// set small beneath it.
+fn span_nav(cx: &mut Ctx, area: Rect, title: &str, under: String) {
     let theme: &Theme = cx.theme;
+    let (top, foot) = area.split_top(bar_height(theme));
     cx.text.set_px(theme.head_px);
-    let baseline = area.center_y() + cx.text.cap_height() as i32 / 2;
+    let baseline = top.center_y() + cx.text.cap_height() as i32 / 2;
     let script = cx.ui_script();
     let w = cx.text.measure_width_in(script, title) as i32;
     cx.text.draw_in(
         script,
         cx.fb,
-        area.x + (area.w - w) / 2,
+        top.x + (top.w - w) / 2,
         baseline,
         title,
         false,
     );
+    cx.text.set_px(theme.small_px);
+    let w = cx.text.measure_width_in(script, &under) as i32;
+    cx.text.draw_in(
+        script,
+        cx.fb,
+        foot.x + (foot.w - w) / 2,
+        foot.y + cx.text.cap_height() as i32,
+        &under,
+        false,
+    );
     paint::hline(cx.fb, area.x, area.bottom(), area.w, PALE, 1);
+    let area = top;
 
     // The hit box is `area.w / 6`, past the arrow's own width.
     let reach = area.w / 6;
@@ -242,11 +266,15 @@ const WEEK_HOURS: (i32, i32) = (2, 3);
 
 /// The three rows a week's grid stacks: the dates, one bar to a day, and each
 /// day's own hours under its bar.
+///
+/// The hours are a strip of fixed height and the bars take whatever the grid
+/// is given past it. [`charts::hour_shape`] scales against the busiest hour of
+/// the week, so its box must stay a strip whatever the grid is given.
 fn week_rows(area: Rect, theme: &Theme) -> [Rect; 3] {
     let head = theme.small_px as i32 * 2;
-    let bars = theme.row_h * WEEK_BARS.0 / WEEK_BARS.1;
+    let strip = theme.row_h * WEEK_HOURS.0 / WEEK_HOURS.1;
     let (head, rest) = area.split_top(head);
-    let (bars, hours) = rest.split_top(bars);
+    let (bars, hours) = rest.split_top((rest.h - strip).max(1));
     [head, bars, hours]
 }
 
@@ -518,7 +546,7 @@ fn book_list(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeInclu
     let (title, totals) = match picked {
         Some(day) => (
             format!(
-                "{} — {}",
+                "{} · {}",
                 date::long_day(day, s).to_uppercase(),
                 date::duration(cx.stats.day_seconds(day), s)
             ),
@@ -526,7 +554,7 @@ fn book_list(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeInclu
         ),
         None => (
             format!(
-                "{} — {}",
+                "{} · {}",
                 s.what_was_read,
                 date::duration(cx.stats.span_seconds(days.clone()), s)
             ),
@@ -722,101 +750,6 @@ fn book_bar(cx: &mut Ctx, bar: Rect, index: usize) {
     );
 }
 
-/// The columns one span cuts itself into, and how many of them have gone by
-/// over `days`: a week hour by hour, a month weekday by weekday, a year and
-/// `Span::AllTime` month by month.
-fn buckets(cx: &Ctx, span: Span, days: std::ops::RangeInclusive<i64>) -> (Vec<i64>, i64, usize) {
-    let over = (cx.today.min(*days.end()) - *days.start() + 1).max(1);
-    match span {
-        Span::Week => (cx.stats.hours_over(days).to_vec(), over, 3),
-        // `weekdays_over` counts from Monday; the columns run from whichever
-        // day the week is set to start on.
-        Span::Month => {
-            let counted = cx.stats.weekdays_over(days);
-            let week = cx.week;
-            (
-                (0..7).map(|at| counted[week.day_in(at)]).collect(),
-                over.div_euclid(7).max(1),
-                1,
-            )
-        }
-        Span::AllTime | Span::Year => (
-            cx.stats.months_over(days).to_vec(),
-            over.div_euclid(30).max(1),
-            1,
-        ),
-    }
-}
-
-/// What each column of a span is called, and the heading over them.
-fn bucket_names(cx: &Ctx, span: Span) -> (&'static str, fn(usize, &Ctx) -> String) {
-    let s = cx.s();
-    match span {
-        Span::Week => (s.an_average_day, |at, _| format!("{at:02}")),
-        Span::Month => (s.an_average_week, |at, cx| {
-            cx.s().weekdays_short[cx.week.day_in(at.min(6))].to_string()
-        }),
-        Span::AllTime | Span::Year => (s.an_average_month, |at, cx| {
-            cx.s().months_short[at.min(11)].to_string()
-        }),
-    }
-}
-
-/// The reading of a span cut into its own columns, under a figure dividing it
-/// by however many have gone by. The columns keep the seconds themselves, and
-/// the chips at the right swap the span showing for every span of its width.
-fn average_of(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeInclusive<i64>) {
-    let theme: &Theme = cx.theme;
-    let s = cx.s();
-    let span = state.span;
-    let all = state.average_all;
-    let over = match all {
-        true => cx.stats.days.first().map_or(cx.today, |(d, _)| *d)..=cx.today,
-        false => days,
-    };
-    let (counted, elapsed, every) = buckets(cx, span, over);
-    let (heading, name) = bucket_names(cx, span);
-    let busiest = counted
-        .iter()
-        .enumerate()
-        .max_by_key(|(_, secs)| **secs)
-        .filter(|(_, secs)| **secs > 0)
-        .map(|(at, _)| at);
-
-    let each = date::duration(counted.iter().sum::<i64>() / elapsed, s);
-    let title = match busiest {
-        Some(at) => format!("{heading} — {each} · {} {}", s.most, name(at, cx)),
-        None => format!("{heading} — {each}"),
-    };
-    let head = Rect::new(
-        area.x,
-        area.y,
-        area.w,
-        chrome::section_height(cx.text, theme),
-    );
-    let inner = chrome::section(cx.fb, cx.text, theme, area, &title);
-    heading_chips(
-        cx,
-        head,
-        [
-            (span.label(cx.lang), Hit::Average(false), !all),
-            (s.every, Hit::Average(true), all),
-        ],
-    );
-    // `name` reads `cx`, which the draw below borrows.
-    let labels: Vec<String> = (0..counted.len()).map(|at| name(at, cx)).collect();
-    charts::columns(
-        cx.fb,
-        cx.text,
-        theme,
-        inner,
-        &counted,
-        |at| labels[at].clone(),
-        every,
-        busiest,
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -845,39 +778,52 @@ mod tests {
             let (theme, area) = page(w, h);
             for span in Span::CALENDAR {
                 let listed = lists_books(span);
-                let out = bands(area, &theme, HEAD, wanted(span, area, &theme), listed);
-                let [picker, nav, grid, hours, list] = out;
+                let [picker, nav, grid, list] =
+                    bands(area, &theme, wanted(span, area, &theme), listed);
                 assert_eq!(picker.y, area.y, "{w}x{h} {span:?}");
                 let order = match listed {
-                    true => [picker, nav, grid, list, hours],
-                    false => [picker, nav, grid, hours, hours],
+                    true => [picker, nav, grid, list],
+                    false => [picker, nav, grid, grid],
                 };
                 for pair in order.windows(2).filter(|p| p[0] != p[1]) {
                     let air = pair[1].y - pair[0].bottom();
                     assert!(air >= theme.gap, "{w}x{h} {span:?}: bands touch, {air}");
                 }
-                assert_eq!(hours.h, hours_height(&theme, HEAD), "{w}x{h} {span:?}");
-                assert!(hours.bottom() <= area.bottom(), "{w}x{h} {span:?}");
+                assert!(list.bottom() <= area.bottom(), "{w}x{h} {span:?}");
                 assert_eq!(list.h > 0, listed, "{w}x{h} {span:?}");
             }
         }
     }
 
     #[test]
-    fn a_month_gives_its_grid_the_page_and_a_short_chart_the_foot() {
+    fn the_span_name_leaves_room_for_the_line_under_it() {
+        // The name is set at `head_px` and what a span of its width usually
+        // comes to at `small_px`, one over the other.
         for (w, h) in PANELS {
             let (theme, area) = page(w, h);
-            let [_, nav, grid, hours, list] = bands(area, &theme, HEAD, area.h, false);
+            let [_, nav, _, _] = bands(area, &theme, area.h, true);
+            assert_eq!(nav.h, nav_height(&theme), "{w}x{h}");
+            assert!(
+                nav.h >= bar_height(&theme) + theme.small_px as i32,
+                "{w}x{h}: {} px for a name and a line",
+                nav.h
+            );
+        }
+    }
+
+    #[test]
+    fn a_month_gives_its_grid_the_whole_page() {
+        for (w, h) in PANELS {
+            let (theme, area) = page(w, h);
+            let [_, nav, grid, list] = bands(area, &theme, area.h, false);
             assert_eq!(list.h, 0, "{w}x{h}");
-            assert_eq!(hours.bottom(), area.bottom(), "{w}x{h}");
+            assert_eq!(grid.bottom(), area.bottom(), "{w}x{h}");
             assert!(
                 grid.h > (nav.bottom() - area.y) * 2,
                 "{w}x{h}: the grid takes {} of {}",
                 grid.h,
                 area.h
             );
-            // The chart never takes a quarter of the page off the calendar.
-            assert!(hours.h * 4 < area.h, "{w}x{h}: {} px of chart", hours.h);
         }
     }
 
@@ -887,12 +833,12 @@ mod tests {
             let (theme, area) = page(w, h);
             for span in [Span::Week, Span::Year] {
                 let want = wanted(span, area, &theme);
-                let [_, _, grid, _, list] = bands(area, &theme, HEAD, want, true);
+                let [_, _, grid, list] = bands(area, &theme, want, true);
                 assert_eq!(grid.h, want, "{w}x{h} {span:?}: the grid was cut");
                 let rows = (list.h - HEAD) / theme.row_h;
                 let want = match span {
-                    Span::Year => 2,
-                    _ => 3,
+                    Span::Year => 4,
+                    _ => 5,
                 };
                 assert!(rows >= want, "{w}x{h} {span:?}: room for {rows} books");
             }
@@ -904,7 +850,7 @@ mod tests {
         for (w, h) in PANELS {
             let (theme, area) = page(w, h);
             let want = wanted(Span::Week, area, &theme);
-            let [_, _, grid, _, _] = bands(area, &theme, HEAD, want, true);
+            let [_, _, grid, _] = bands(area, &theme, want, true);
             let (_, cells) = grid.split_top(charts::weekday_head_height(&theme));
             let laid = charts::week_cells(cells, 0, theme.gap);
             assert_eq!(laid.len(), 7, "{w}x{h}");
@@ -927,7 +873,7 @@ mod tests {
     fn a_month_cell_stacks_its_date_its_lanes_and_its_hours() {
         for (w, h) in PANELS {
             let (theme, area) = page(w, h);
-            let [_, _, grid, _, _] = bands(area, &theme, HEAD, area.h, false);
+            let [_, _, grid, _] = bands(area, &theme, area.h, false);
             let (_, cells) = grid.split_top(charts::weekday_head_height(&theme));
             let laid = charts::month_cells(cells, 2026, 8, theme.gap, WeekStart::Monday);
             let inner = laid[0].1.inset(theme.gap / 2);
@@ -997,7 +943,7 @@ mod tests {
         let theme = Theme::for_screen(1264, 1680);
         let area = Rect::new(0, 0, 1186, 300);
         for listed in [true, false] {
-            let out = bands(area, &theme, HEAD, 900, listed);
+            let out = bands(area, &theme, 900, listed);
             for band in out {
                 assert!(band.h >= 0, "{band:?}");
                 assert!(band.y >= area.y, "{band:?} starts above the page");

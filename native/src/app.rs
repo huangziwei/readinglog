@@ -107,6 +107,11 @@ impl App {
         self.state.book = book;
     }
 
+    /// Draw All Time at `page`, whatever it was left on.
+    pub fn set_alltime_page(&mut self, page: usize) {
+        self.state.alltime_page = page;
+    }
+
     /// Draw Rhythm at `span`, whatever it was left on.
     pub fn set_span(&mut self, span: crate::view::Span) {
         self.state.span = span;
@@ -302,12 +307,6 @@ impl App {
                 self.state.day = day;
                 self.state.list_from = 0;
             }
-            Hit::Average(all) => {
-                if self.state.average_all == all {
-                    return Action::Nothing;
-                }
-                self.state.average_all = all;
-            }
             // A shelf is reached from the board, and lands on the Books tab.
             Hit::Shelved(shelf) => {
                 if self.state.tab == Tab::Books && self.state.shelf == shelf {
@@ -331,6 +330,7 @@ impl App {
                 self.state.span = span;
                 self.state.picked = false;
                 self.state.list_from = 0;
+                self.state.alltime_page = 0;
             }
             Hit::Prev => return self.paged(-1),
             Hit::Next => return self.paged(1),
@@ -363,11 +363,7 @@ impl App {
             // Neither has anything to page through.
             Tab::Config | Tab::Home => Action::Nothing,
             Tab::Rhythm => {
-                let was = self.state.day;
-                self.state.shift(by);
-                // `Span::AllTime` holds the whole record and has nothing on
-                // either side of it.
-                if self.state.day == was {
+                if !self.state.shift(by) {
                     return Action::Nothing;
                 }
                 self.state.list_from = 0;
