@@ -29,6 +29,10 @@ pub const STEPS_RGB: [[u8; 3]; 5] = [
 pub const BAR_RGB: [u8; 3] = STEPS_RGB[2];
 pub const MARK_RGB: [u8; 3] = [0xC4, 0x45, 0x36];
 
+/// [`WHITE`] where a fill wants the three channels, to cut a mark out of a
+/// coloured ground rather than draw one on the page.
+pub const WHITE_RGB: [u8; 3] = [WHITE; 3];
+
 /// A box on the screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Rect {

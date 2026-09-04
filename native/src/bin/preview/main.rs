@@ -158,7 +158,7 @@ fn run() -> Result<()> {
                     let store = store.as_ref().unwrap_or(&library);
                     let mut fb = Framebuffer::offscreen(w, h);
                     let mut app = open(store, &opts, w, h, lang, size)?;
-                    draw(&mut app, &mut fb, shot)?;
+                    draw(&mut app, &mut fb, shot, opts.week)?;
                     if opts.hits {
                         outline_hits(&app, &mut fb);
                     }
@@ -259,10 +259,10 @@ fn thinned_for(shot: &Shot, opts: &Opts, art: &Path) -> Option<Store> {
 }
 
 /// Set `app` to what `shot` names and draw it into `fb`.
-fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot) -> Result<()> {
+fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Result<()> {
     if let Some(sketch) = sketch::ALL.iter().find(|s| s.name == shot.name) {
         app.show(sketch.tab, None);
-        set_span(app, shot)?;
+        set_span(app, shot, week)?;
         let state = app.state().clone();
         let draw = sketch.draw;
         return app.frame(fb, &mut |cx, area| draw(cx, area, &state));
@@ -275,7 +275,7 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot) -> Result<()> {
         _ => None,
     };
     app.show(*tab, book);
-    set_span(app, shot)?;
+    set_span(app, shot, week)?;
     app.draw(fb)
 }
 
@@ -287,7 +287,7 @@ fn outline_hits(app: &App, fb: &mut Framebuffer) {
 }
 
 /// Rhythm's zoom, where the shot names one.
-fn set_span(app: &mut App, shot: &Shot) -> Result<()> {
+fn set_span(app: &mut App, shot: &Shot, week: WeekStart) -> Result<()> {
     let Some(of) = shot.of.as_deref() else {
         return Ok(());
     };
@@ -326,6 +326,20 @@ fn set_span(app: &mut App, shot: &Shot) -> Result<()> {
         "yearbusy" => {
             app.set_span(Span::Year);
             busy(app, 0);
+        }
+        // The same day picked off its own week's bars, where the grid runs to
+        // more than one row.
+        "weekbusy" => {
+            app.set_span(Span::Week);
+            busy(app, 0);
+        }
+        // A day with nothing on it picked off the week. Its columns take a tap
+        // where a year's cells do not, and the record ends part way through
+        // the week showing, so its last day is always one of these.
+        "weekempty" => {
+            app.set_span(Span::Week);
+            let day = app.state().day;
+            app.open_day(*Span::Week.days(day, week).end());
         }
         "busy" => busy(app, 0),
         "busy2" => busy(app, 3),
@@ -381,7 +395,7 @@ fn list() {
     for (name, _) in SCREENS {
         let of = match *name {
             "rhythm" => {
-                "  (:all :trends :week :month :year :back :weekback :picked :day :yearbusy :busy :busy2 :busyend)"
+                "  (:all :trends :week :month :year :back :weekback :picked :day\n   :yearbusy :weekbusy :weekempty :busy :busy2 :busyend)"
             }
             "today" => "  (:quiet :empty)",
             "book" => "  (:<index>)",
@@ -468,6 +482,8 @@ fn everything() -> Vec<Shot> {
         "rhythm:weekback",
         "rhythm:picked",
         "rhythm:yearbusy",
+        "rhythm:weekbusy",
+        "rhythm:weekempty",
         "rhythm:day",
         "books",
         "books:finished",

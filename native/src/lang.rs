@@ -169,6 +169,11 @@ pub struct Strings {
     // columns, and the word before the busiest hour of them.
     pub all_time: &'static str,
     pub week: &'static str,
+    /// The week's number in its year, written around the digits: `W38`,
+    /// `KW 38`, `第38週`. A language that puts nothing after them leaves
+    /// [`Strings::week_no_after`] empty.
+    pub week_no: &'static str,
+    pub week_no_after: &'static str,
     pub month: &'static str,
     pub year: &'static str,
 
@@ -293,6 +298,8 @@ const ENGLISH: Strings = Strings {
 
     all_time: "All Time",
     week: "Week",
+    week_no: "W",
+    week_no_after: "",
     month: "Month",
     year: "Year",
 
@@ -408,6 +415,8 @@ const GERMAN: Strings = Strings {
 
     all_time: "Gesamt",
     week: "Woche",
+    week_no: "KW ",
+    week_no_after: "",
     month: "Monat",
     year: "Jahr",
 
@@ -524,6 +533,8 @@ const JAPANESE: Strings = Strings {
 
     all_time: "全期間",
     week: "週",
+    week_no: "第",
+    week_no_after: "週",
     month: "月",
     year: "年",
 
@@ -627,6 +638,8 @@ const SIMPLIFIED: Strings = Strings {
 
     all_time: "全部时间",
     week: "周",
+    week_no: "第",
+    week_no_after: "周",
     month: "月",
     year: "年",
 
@@ -741,6 +754,8 @@ const TRADITIONAL: Strings = Strings {
 
     all_time: "全部時間",
     week: "週",
+    week_no: "第",
+    week_no_after: "週",
     month: "月",
     year: "年",
 

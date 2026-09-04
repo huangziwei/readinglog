@@ -5,7 +5,7 @@
 use crate::date;
 use crate::font::Script;
 use crate::settings::WeekStart;
-use crate::ui::paint::{self, BAR_RGB, INK, LIGHT, MARK_RGB, PALE, Rect, WHITE};
+use crate::ui::paint::{self, BAR_RGB, INK, LIGHT, MARK_RGB, PALE, Rect, WHITE, WHITE_RGB};
 use crate::ui::{charts, chrome, cover, theme::Theme};
 
 use super::{Ctx, Hit, Span, State, alltime, daybooks, home};
@@ -57,8 +57,8 @@ fn lists_books(span: Span) -> bool {
 fn grid_height(span: Span, area: Rect, theme: &Theme, day: i64, week: WeekStart) -> i32 {
     match span {
         Span::AllTime | Span::Month => area.h,
-        // A week has seven columns and a short list under them, so the grid
-        // takes whatever the page has over its own height.
+        // A week has seven columns and a shelf of covers under them, so the
+        // grid takes a share of the page and never less than its own height.
         Span::Week => week_height(theme).max(area.h * 2 / 5),
         Span::Year => {
             let (year, _, _) = date::civil_from_days(day);
@@ -123,12 +123,10 @@ fn span_page(cx: &mut Ctx, area: Rect, state: &State) {
         Span::Month => month_grid(cx, grid, day),
         Span::Year => year_heatmap(cx, grid, day, state.picked),
     }
-    match (listed, span) {
-        // A year names its books by their jackets; a week has room to name
-        // them in full.
-        (true, Span::Year) => cover_grid(cx, list, state, days),
-        (true, _) => book_list(cx, list, state, days),
-        (false, _) => {}
+    // A year and a week both name their books by their jackets under the grid.
+    // A month names them in its own cells and lists none.
+    if listed {
+        cover_grid(cx, list, state, days);
     }
 }
 
@@ -286,61 +284,49 @@ fn now_chip(cx: &mut Ctx, area: Rect, x: i32) -> Rect {
     chip
 }
 
-/// Rows of `theme.row_h` a week gives the day totals and the hours under them.
-const WEEK_BARS: (i32, i32) = (3, 2);
-const WEEK_HOURS: (i32, i32) = (2, 3);
+/// Rows of `theme.row_h` a week's bars are never drawn shorter than.
+const WEEK_BARS: (i32, i32) = (2, 1);
 
-/// The three rows a week's grid stacks: the dates, one bar to a day, and each
-/// day's own hours under its bar.
-///
-/// The hours are a strip of fixed height and the bars take whatever the grid
-/// is given past it. [`charts::hour_shape`] scales against the busiest hour of
-/// the week, so its box must stay a strip whatever the grid is given.
-fn week_rows(area: Rect, theme: &Theme) -> [Rect; 3] {
-    let head = theme.small_px as i32 * 2;
-    let strip = theme.row_h * WEEK_HOURS.0 / WEEK_HOURS.1;
-    let (head, rest) = area.split_top(head);
-    let (bars, hours) = rest.split_top((rest.h - strip).max(1));
-    [head, bars, hours]
+/// The share of a bar its own hours are cut into, at its foot, and the rows of
+/// `theme.row_h` that share never passes.
+const WEEK_CLOCK: (i32, i32) = (1, 3);
+const WEEK_CLOCK_CAP: (i32, i32) = (2, 5);
+
+/// The share of its column a day's bar is drawn at. Wide enough to carry the
+/// day's hours inside it, and short of the whole so the columns read as seven
+/// bars and not as one band broken by gaps.
+const WEEK_BAR_WIDTH: (i32, i32) = (7, 8);
+
+/// The two rows a week's grid stacks: the dates, and one bar to a day with
+/// that day's own hours in its foot.
+fn week_rows(area: Rect, theme: &Theme) -> [Rect; 2] {
+    let (head, bars) = area.split_top(theme.small_px as i32 * 2);
+    [head, bars]
 }
 
-/// The height [`week_rows`] asks for.
+/// The least [`week_rows`] is drawn into, which a taller page passes.
 fn week_height(theme: &Theme) -> i32 {
-    theme.small_px as i32 * 2
-        + theme.row_h * WEEK_BARS.0 / WEEK_BARS.1
-        + theme.row_h * WEEK_HOURS.0 / WEEK_HOURS.1
+    theme.small_px as i32 * 2 + theme.row_h * WEEK_BARS.0 / WEEK_BARS.1
 }
 
-/// The week holding `day`: its dates, how long was read on each, and the
-/// hours that reading fell in.
+/// The week holding `day`: its dates, and how long was read on each with the
+/// hours that reading fell in drawn inside the bar.
 fn week_columns(cx: &mut Ctx, area: Rect, day: i64, picked: bool) {
     let theme: &Theme = cx.theme;
-    let [head, bars, hours] = week_rows(area, theme);
+    let [head, bars] = week_rows(area, theme);
     let first = day - cx.week.column_of(date::weekday(day)) as i64;
     let most = peak_of(cx, first..=first + 6);
-    let tallest = hour_peak(cx, first..=first + 6);
 
     let names = charts::week_cells(head, first, theme.gap);
     let plots = charts::week_cells(bars, first, theme.gap);
-    let clocks = charts::week_cells(hours, first, theme.gap);
-    for ((at, name), (_, plot), (_, clock)) in names
-        .into_iter()
-        .zip(plots)
-        .zip(clocks)
-        .map(|((a, b), c)| (a, b, c))
-    {
+    for ((at, name), (_, plot)) in names.into_iter().zip(plots) {
         let on = picked && at == day;
-        let column = Rect::new(name.x, name.y, name.w, clock.bottom() - name.y);
+        let column = Rect::new(name.x, name.y, name.w, plot.bottom() - name.y);
         if on {
             paint::fill(cx.fb, column, PALE);
         }
         day_head(cx, name, at);
         day_bar(cx, plot, at, most, on);
-        // `ground` reads as a strip of the day under `counted`.
-        let counted = cx.stats.hours_over(at..=at);
-        let ground = clock.inset(theme.gap / 2);
-        paint::fill(cx.fb, ground, PALE);
-        charts::hour_shape(cx.fb, ground, &counted, tallest);
         cx.hit(Hit::Day(at), column);
     }
 }
@@ -368,7 +354,31 @@ fn day_head(cx: &mut Ctx, area: Rect, day: i64) {
     }
 }
 
-/// One day's total, as a bar up its own column with the figure over it.
+/// The box a day's hours are cut into, inside its own bar.
+///
+/// A whole number of hours wide, so each hour has its own column of pixels and
+/// a mark's distance along the box is a time. It is held clear of the bar's
+/// own edges: a mark reaching an edge would open onto the page and read as a
+/// bar broken in two rather than as an hour. An answer with no width or no
+/// height is a bar with no room for its hours.
+fn clock_box(theme: &Theme, bar: Rect) -> Rect {
+    let pad = (theme.gap / 2).max(1);
+    let w = ((bar.w - pad * 2).max(0) / 24) * 24;
+    // A share of the bar, so a short day keeps a bar and not a row of notches,
+    // and never past a strip, so a long one keeps a bar and not a comb.
+    let cap = theme.row_h * WEEK_CLOCK_CAP.0 / WEEK_CLOCK_CAP.1;
+    let h = (bar.h * WEEK_CLOCK.0 / WEEK_CLOCK.1).min(cap) - pad;
+    Rect::new(bar.x + (bar.w - w) / 2, bar.bottom() - pad - h, w, h.max(0))
+}
+
+/// One day's total, as a bar up its own column with the figure over it and
+/// the hours it was read in cut into its foot.
+///
+/// The bar's height says how much was read and is scaled against the week; the
+/// foot says when, and is scaled against the day's own busiest hour so a quiet
+/// day states its shape as plainly as a full one.
+///
+/// See [`clock_box`] for where the hours stand inside the bar.
 fn day_bar(cx: &mut Ctx, area: Rect, day: i64, most: i64, on: bool) {
     let theme: &Theme = cx.theme;
     let secs = cx.stats.day_seconds(day);
@@ -384,10 +394,14 @@ fn day_bar(cx: &mut Ctx, area: Rect, day: i64, most: i64, on: bool) {
     // The bar takes what the figure over it leaves.
     let room = (area.h - label_h).max(1);
     let h = ((room as i64 * secs / most.max(1)) as i32).max(2);
-    let w = (area.w * 3 / 4).max(2);
-    let x = area.x + (area.w - w) / 2;
-    let bar = Rect::new(x, area.bottom() - h, w, h);
+    let bw = (area.w * WEEK_BAR_WIDTH.0 / WEEK_BAR_WIDTH.1).max(2);
+    let bar = Rect::new(area.x + (area.w - bw) / 2, area.bottom() - h, bw, h);
     paint::fill_rgb(cx.fb, bar, if on { MARK_RGB } else { BAR_RGB });
+    let hours = cx.stats.hours_over(day..=day);
+    let busiest = hours.iter().copied().max().unwrap_or(0);
+    // The hours are cut out of the bar rather than drawn over it: the bar
+    // keeps its own weight on the page and the marks read as part of it.
+    charts::hour_shape(cx.fb, clock_box(theme, bar), &hours, busiest, WHITE_RGB);
     cx.text.draw(
         cx.fb,
         area.x + (area.w - lw) / 2,
@@ -421,7 +435,7 @@ fn month_grid(cx: &mut Ctx, area: Rect, day: i64) {
             head_line(cx, *cell, *day, &dom.to_string(), peak);
             let inner = cell.inset(theme.gap / 2);
             let hours = cx.stats.hours_over(*day..=*day);
-            charts::hour_shape(cx.fb, shape_box(theme, inner), &hours, tallest);
+            charts::hour_shape(cx.fb, shape_box(theme, inner), &hours, tallest, BAR_RGB);
             cx.hit(Hit::Day(*day), *cell);
         }
         // A run reaches past its own cell; every bar of the week is drawn over
@@ -728,8 +742,9 @@ fn counted(cx: &mut Ctx, head: Rect, from: usize, to: usize, count: usize, chipp
 /// The band a heading's chips and figures stand in.
 ///
 /// Centred on the ink of the title [`chrome::section`] sets at the head of
-/// `head`, so a chip — a box taller than the line inside it — and a figure
-/// beside it share that one centre rather than each taking its own top edge.
+/// `head`. A chip is a box taller than the line inside it, so everything on
+/// the row — the title, a figure, a chip — takes this one centre, and a
+/// figure computed from it lands on the title's own baseline.
 fn heading_row(cx: &mut Ctx, head: Rect) -> Rect {
     let theme: &Theme = cx.theme;
     cx.text.set_px(theme.small_px);
@@ -838,93 +853,6 @@ fn fitting_px(cx: &mut Ctx, said: &[&str], room: i32) -> f32 {
             .max(floor);
     }
     px
-}
-
-/// What was read over `days`, longest first, each row a hit box onto its
-/// book. `picked` narrows the list to one day; the chips at the right of the
-/// heading step through a list deeper than the page.
-fn book_list(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeInclusive<i64>) {
-    let theme: &Theme = cx.theme;
-    let s = cx.s();
-    let picked = state.picked.then_some(state.day);
-    let (title, totals) = match picked {
-        Some(day) => (
-            format!(
-                "{} · {}",
-                date::long_day(day, s).to_uppercase(),
-                date::duration(cx.stats.day_seconds(day), s)
-            ),
-            cx.stats.book_totals(day..=day),
-        ),
-        None => (
-            format!(
-                "{} · {}",
-                s.what_was_read,
-                date::duration(cx.stats.span_seconds(days.clone()), s)
-            ),
-            cx.stats.book_totals(days.clone()),
-        ),
-    };
-    let head = Rect::new(
-        area.x,
-        area.y,
-        area.w,
-        chrome::section_height(cx.text, theme),
-    );
-    let whole = chrome::section(cx.fb, cx.text, theme, area, &title);
-    let over = picked.map_or(days, |day| day..=day);
-    let (unnamed, seconds) = cx.stats.unnamed_over(over);
-    let foot = (unnamed > 0) as i32 * daybooks::note_height(cx);
-    let inner = Rect::new(whole.x, whole.y, whole.w, (whole.h - foot).max(0));
-    if totals.is_empty() {
-        cx.text.set_px(theme.body_px);
-        let baseline = inner.y + cx.text.line_height() as i32;
-        let script = cx.ui_script();
-        cx.text
-            .draw_in(script, cx.fb, inner.x, baseline, s.nothing_read, false);
-        daybooks::note(
-            cx,
-            Rect::new(whole.x, baseline + theme.gap * 2, whole.w, foot),
-            unnamed,
-            seconds,
-        );
-        return;
-    }
-
-    // `from` holds at the last page of the list.
-    let deep = ((inner.h / theme.row_h).max(1) as usize).min(totals.len());
-    let from = state.list_from.min(super::last_page_at(totals.len(), deep));
-    let to = (from + deep).min(totals.len());
-    let page = &totals[from..to];
-    if totals.len() > deep {
-        pager(cx, head, from, to, totals.len(), deep);
-    }
-
-    let rows: Vec<(Script, String, i64)> = page
-        .iter()
-        .map(|(book, secs)| {
-            let book = &cx.stats.books[*book];
-            (
-                Script::of_language(&book.language),
-                book.title.clone(),
-                *secs,
-            )
-        })
-        .collect();
-    charts::bars(cx.fb, cx.text, theme, s, inner, &rows);
-
-    let each = (inner.h / page.len().max(1) as i32).min(theme.row_h);
-    for (slot, (book, _)) in page.iter().enumerate() {
-        let row = Rect::new(inner.x, inner.y + slot as i32 * each, inner.w, each);
-        cx.hit(Hit::Book(*book), row);
-    }
-    let under = inner.y + page.len() as i32 * each;
-    daybooks::note(
-        cx,
-        Rect::new(whole.x, under, whole.w, whole.bottom() - under),
-        unnamed,
-        seconds,
-    );
 }
 
 /// `from`–`to` of `count` at the right of the heading the list is under,
@@ -1181,25 +1109,59 @@ mod tests {
     }
 
     #[test]
-    fn a_week_column_is_mostly_the_hours_of_its_day() {
+    fn a_week_bar_holds_its_own_hours_inside_it() {
         for (w, h) in PANELS {
             let (theme, area) = page(w, h);
             let want = wanted(Span::Week, area, &theme);
             let [_, _, _, grid, _] = bands(area, &theme, FIGURES, want, true);
-            let (_, cells) = grid.split_top(charts::weekday_head_height(&theme));
-            let laid = charts::week_cells(cells, 0, theme.gap);
+            let [dates, bars] = week_rows(grid, &theme);
+            assert_eq!(dates.bottom(), bars.y, "{w}x{h}");
+            assert_eq!(bars.bottom(), grid.bottom(), "{w}x{h}");
+
+            let laid = charts::week_cells(bars, 0, theme.gap);
             assert_eq!(laid.len(), 7, "{w}x{h}");
-            let inner = laid[0].1.inset(theme.gap / 2);
-            let (_, plot) = inner.split_top(theme.small_px as i32 * 3 / 2);
+
+            let cell = laid[0].1;
+            let bw = cell.w * WEEK_BAR_WIDTH.0 / WEEK_BAR_WIDTH.1;
+            assert!(bw < cell.w, "{w}x{h}: bar {bw} fills its column {}", cell.w);
+            assert!(bw > cell.w * 3 / 4, "{w}x{h}: bar {bw} of {}", cell.w);
+            for tall in [2, 8, 30, bars.h / 2, bars.h] {
+                let bar = Rect::new(cell.x, cell.bottom() - tall, bw, tall);
+                let clock = clock_box(&theme, bar);
+                if clock.w <= 0 || clock.h <= 0 {
+                    continue;
+                }
+                // Every hour of the day gets its own column of pixels, and
+                // none of the box is left over past the last of them.
+                assert_eq!(clock.w % 24, 0, "{w}x{h} {tall}: {} wide", clock.w);
+                // Blue on all four sides, so no mark opens onto the page.
+                assert!(clock.x > bar.x, "{w}x{h} {tall}");
+                assert!(clock.right() < bar.right(), "{w}x{h} {tall}");
+                assert!(clock.y > bar.y, "{w}x{h} {tall}");
+                assert!(clock.bottom() < bar.bottom(), "{w}x{h} {tall}");
+            }
+            // A bar wide enough to state its hours at every height it reaches.
+            let tallest = Rect::new(cell.x, cell.y, bw, bars.h);
+            assert!(clock_box(&theme, tallest).w >= 24, "{w}x{h}: too narrow");
+        }
+    }
+
+    /// A jacket is as tall as the band it stands in, so the week's grid must
+    /// leave one deep enough to draw a cover at.
+    #[test]
+    fn a_week_leaves_its_covers_a_band_a_jacket_fits() {
+        for (w, h) in PANELS {
+            let (theme, area) = page(w, h);
+            let want = wanted(Span::Week, area, &theme);
+            let [_, _, _, grid, list] = bands(area, &theme, FIGURES, want, true);
+            assert_eq!(grid.h, want, "{w}x{h}: the grid took what it was given");
+            let under = theme.small_px as i32 * 2 + cover_air(&theme);
+            let least = theme.row_h * COVER_FLOOR + under;
             assert!(
-                plot.h > inner.h / 2,
-                "{w}x{h}: the histogram gets {} of {}",
-                plot.h,
-                inner.h
-            );
-            assert!(
-                laid[0].1.w >= 24,
-                "{w}x{h}: a column of 24 hours is too narrow"
+                list.h >= least,
+                "{w}x{h}: {} under a grid of {}",
+                list.h,
+                grid.h
             );
         }
     }

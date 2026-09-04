@@ -137,11 +137,18 @@ impl Span {
             Span::AllTime => s.all_time.to_string(),
             Span::Week => {
                 let days = self.days(day, week);
-                format!(
-                    "{} – {}",
+                let (of, no) = date::week_of_year(day, week);
+                let (from, to) = (
                     date::short_day(*days.start(), s),
-                    date::short_day(*days.end(), s)
-                )
+                    date::short_day(*days.end(), s),
+                );
+                let numbered = format!("{}{no}{}", s.week_no, s.week_no_after);
+                // Two dates alone name no year, and a week in a record of
+                // several is read by its number as often as by its dates.
+                match s.date_ymd {
+                    true => format!("{of}年 {from} – {to} · {numbered}"),
+                    false => format!("{from} – {to}, {of} · {numbered}"),
+                }
             }
             Span::Month => date::month_name(year, month, s),
             Span::Year => match s.date_ymd {

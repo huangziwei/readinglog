@@ -7,7 +7,6 @@
 
 use crate::date;
 use crate::eink::fb::Framebuffer;
-use crate::font::Script;
 use crate::lang::Strings;
 use crate::settings::WeekStart;
 
@@ -245,12 +244,13 @@ pub fn lanes(days: &[Vec<usize>], depth: usize) -> Vec<Vec<Option<Run>>> {
     out
 }
 
-/// One day's twenty-four hours as bars across `area`, against `peak`.
+/// One day's twenty-four hours as bars across `area`, in `rgb`, against
+/// `peak`.
 ///
 /// `peak` is the busiest hour of every day drawn beside this one, so a quiet
 /// day and a busy one are read off the same scale.
-pub fn hour_shape(fb: &mut Framebuffer, area: Rect, hours: &[i64; 24], peak: i64) {
-    if peak <= 0 || area.h <= 0 {
+pub fn hour_shape(fb: &mut Framebuffer, area: Rect, hours: &[i64; 24], peak: i64, rgb: [u8; 3]) {
+    if peak <= 0 || area.h <= 0 || area.w < 24 {
         return;
     }
     // A bar takes the whole hour it stands for, so the hours run together
@@ -260,7 +260,7 @@ pub fn hour_shape(fb: &mut Framebuffer, area: Rect, hours: &[i64; 24], peak: i64
         let h = ((area.h as i64 * secs / peak) as i32).max(2 * (*secs > 0) as i32);
         if h > 0 {
             let x = area.x + hour as i32 * step;
-            paint::fill_rgb(fb, Rect::new(x, area.bottom() - h, step, h), paint::BAR_RGB);
+            paint::fill_rgb(fb, Rect::new(x, area.bottom() - h, step, h), rgb);
         }
     }
 }
@@ -440,55 +440,6 @@ fn draw_figure(
         let w = text.measure_width(row) as i32;
         text.draw(fb, bar.x + (bar.w - w) / 2, baseline, row, inside);
         baseline += line;
-    }
-}
-
-/// A stack of named bars with the figure at the right. Each row carries the
-/// convention its name is set in, so a book's title takes the same face here
-/// as it does on its own screen.
-pub fn bars(
-    fb: &mut Framebuffer,
-    text: &mut TextRenderer,
-    theme: &Theme,
-    s: &Strings,
-    area: Rect,
-    rows: &[(Script, String, i64)],
-) {
-    if rows.is_empty() {
-        return;
-    }
-    let max = rows.iter().map(|(_, _, v)| *v).max().unwrap_or(0).max(1);
-    let each = (area.h / rows.len() as i32).min(theme.row_h);
-    text.set_px(theme.body_px);
-    for (i, (script, name, value)) in rows.iter().enumerate() {
-        let row = Rect::new(area.x, area.y + i as i32 * each, area.w, each);
-        let figure = date::duration(*value, s);
-        let fw = text.measure_width(&figure) as i32;
-        let baseline = row.center_y() + text.cap_height() as i32 / 2;
-
-        // The bar draws behind `name`.
-        let track = Rect::new(
-            row.x,
-            row.y + theme.gap / 2,
-            row.w - fw - theme.gap * 2,
-            each - theme.gap,
-        );
-        let filled = (track.w as i64 * value / max) as i32;
-        paint::fill_rgb(
-            fb,
-            Rect::new(track.x, track.y, filled, track.h),
-            paint::STEPS_RGB[0],
-        );
-        let clipped = text.wrap_and_clamp_in(*script, name, (track.w - theme.gap) as u32, 1);
-        text.draw_in(
-            *script,
-            fb,
-            row.x + theme.gap / 2,
-            baseline,
-            clipped.first().map(String::as_str).unwrap_or(name),
-            false,
-        );
-        text.draw(fb, row.right() - fw, baseline, &figure, false);
     }
 }
 

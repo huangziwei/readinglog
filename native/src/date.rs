@@ -5,6 +5,7 @@
 //! time on across midnight, a weekday, and month lengths for the calendar grid.
 
 use crate::lang::Strings;
+use crate::settings::WeekStart;
 
 /// `(year, month, day)` as days since 1970-01-01, negative before it.
 ///
@@ -139,6 +140,23 @@ pub fn month_name(year: i64, month: i64, s: &Strings) -> String {
         true => format!("{year}年{}", s.months_short[at]),
         false => format!("{} {year}", s.months[at]),
     }
+}
+
+/// The week `day` falls in: the year that owns it, and its number in that
+/// year, counting from one.
+///
+/// A week belongs to the year holding four of its seven days, so the week
+/// across New Year is numbered once and in one place — the ISO 8601 rule,
+/// taken from the week's own fourth day rather than from Thursday, so a
+/// reader whose weeks start on Sunday gets the same answer for their weeks.
+pub fn week_of_year(day: i64, week: WeekStart) -> (i64, i64) {
+    let opens = |d: i64| d - week.column_of(weekday(d)) as i64;
+    let first = opens(day);
+    let (year, _, _) = civil_from_days(first + 3);
+    // Week one is the first whose fourth day is in the year, which is the
+    // week the year's own fourth day falls in.
+    let one = opens(days_from_civil(year, 1, 1) + 3);
+    (year, (first - one) / 7 + 1)
 }
 
 /// `day` moved `by` months.
@@ -313,6 +331,40 @@ mod tests {
         );
         assert_eq!(shift_months(end, 12), days_from_civil(2027, 3, 31));
         assert_eq!(shift_months(end, 0), end);
+    }
+
+    #[test]
+    fn a_week_takes_its_number_from_the_year_holding_most_of_it() {
+        let mon = WeekStart::Monday;
+        let of = |y, m, d| week_of_year(days_from_civil(y, m, d), mon);
+        // The ISO 8601 answers: 2026 opens on a Thursday, so the week across
+        // that New Year is 2026's first, and 2016 opens on a Friday, so its
+        // own first days close 2015.
+        assert_eq!(of(2026, 1, 1), (2026, 1));
+        assert_eq!(of(2025, 12, 29), (2026, 1));
+        assert_eq!(of(2025, 12, 28), (2025, 52));
+        assert_eq!(of(2016, 1, 1), (2015, 53));
+        assert_eq!(of(2026, 9, 16), (2026, 38));
+    }
+
+    #[test]
+    fn every_week_of_a_year_is_numbered_once_and_in_order() {
+        for week in [WeekStart::Monday, WeekStart::Sunday] {
+            let mut day = days_from_civil(2020, 1, 1);
+            let mut seen = week_of_year(day, week);
+            while day < days_from_civil(2030, 1, 1) {
+                let now = week_of_year(day, week);
+                assert!(now.1 >= 1 && now.1 <= 53, "{now:?} at {day}");
+                // A week is numbered once: the number holds for all seven days
+                // and then steps by one, or the year turns over.
+                let stepped = now == seen
+                    || now == (seen.0, seen.1 + 1)
+                    || (now.0 == seen.0 + 1 && now.1 == 1);
+                assert!(stepped, "{seen:?} to {now:?} at {day}");
+                seen = now;
+                day += 1;
+            }
+        }
     }
 
     #[test]
