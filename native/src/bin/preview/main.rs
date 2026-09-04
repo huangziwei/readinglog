@@ -1,13 +1,6 @@
-//! Every screen drawn to a PNG, with no display behind it.
-//!
-//! ```text
-//! cargo run --bin preview -- rhythm:week rhythm:month --sheet spans
-//! ```
-//!
-//! A shot names a screen, and after a colon what it is showing:
-//! `rhythm:year`, `today:empty`, `book:3`. `--list` names them all.
-//! `--sheet` puts the run’s shots on one captioned sheet beside each other,
-//! and `--crop WxH+X+Y` cuts every shot down to the band worth looking at.
+//! Every screen drawn to a PNG, with no display behind it. A shot names a
+//! screen and, after a colon, what it is showing: `rhythm:year`, `book:3`.
+//! `--list` names them all, `--sheet` sheets a run, `--crop` cuts each shot.
 
 mod fixture;
 mod sheet;
@@ -243,12 +236,14 @@ fn set_span(app: &mut App, shot: &Shot) -> Result<()> {
     match of {
         "all" => app.set_span(Span::AllTime),
         "finished" => app.set_shelf(Shelf::Finished),
+        "last" => app.open_books(usize::MAX),
         "week" => app.set_span(Span::Week),
         "month" => app.set_span(Span::Month),
         "year" => app.set_span(Span::Year),
         "day" => app.open_day(app.state().day),
         "busy" => busy(app, 0),
         "busy2" => busy(app, 3),
+        "busyend" => busy(app, usize::MAX),
         // `today:quiet`, `today:empty` and `book:3` name no span.
         _ => {}
     }
@@ -299,10 +294,10 @@ fn list() {
     println!("screens:");
     for (name, _) in SCREENS {
         let of = match *name {
-            "rhythm" => "  (:all :week :month :year :day :busy :busy2)",
+            "rhythm" => "  (:all :week :month :year :day :busy :busy2 :busyend)",
             "today" => "  (:quiet :empty)",
             "book" => "  (:<index>)",
-            "books" => "  (:finished)",
+            "books" => "  (:finished :last)",
             _ => "",
         };
         println!("  {name}{of}");
@@ -366,7 +361,7 @@ fn read_args(args: impl Iterator<Item = String>) -> Result<Opts> {
     Ok(opts)
 }
 
-/// Every screen worth a look, in the order a reader meets them.
+/// Every shot `--all` draws, in the order the tab strip names their screens.
 fn everything() -> Vec<Shot> {
     [
         "today",

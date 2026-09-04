@@ -167,7 +167,7 @@ fn day_page(cx: &mut Ctx, area: Rect, state: &State) {
     let inner = chrome::section(cx.fb, cx.text, theme, list, s.what_was_read);
     let read = cx.stats.book_totals(day..=day);
     let deep = daybooks::fits(theme, inner.h, read.len());
-    let from = state.list_from.min(read.len().saturating_sub(deep));
+    let from = state.list_from.min(super::last_page_at(read.len(), deep));
     let to = (from + deep).min(read.len());
     if read.len() > deep {
         pager(cx, bar, from, to, read.len(), deep);
@@ -281,8 +281,7 @@ fn week_columns(cx: &mut Ctx, area: Rect, day: i64, picked: bool) {
         }
         day_head(cx, name, at);
         day_bar(cx, plot, at, most, on);
-        // The hours stand on a ground of their own, which reads as a strip
-        // of the day.
+        // `ground` reads as a strip of the day under `counted`.
         let counted = cx.stats.hours_over(at..=at);
         let ground = clock.inset(theme.gap / 2);
         paint::fill(cx.fb, ground, PALE);
@@ -551,7 +550,7 @@ fn book_list(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeInclu
 
     // `from` holds at the last page of the list.
     let deep = ((inner.h / theme.row_h).max(1) as usize).min(totals.len());
-    let from = state.list_from.min(totals.len().saturating_sub(deep));
+    let from = state.list_from.min(super::last_page_at(totals.len(), deep));
     let to = (from + deep).min(totals.len());
     let page = &totals[from..to];
     if totals.len() > deep {
@@ -583,7 +582,7 @@ fn book_list(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeInclu
 /// opens the list at, held inside the list.
 fn pager(cx: &mut Ctx, head: Rect, from: usize, to: usize, count: usize, deep: usize) {
     let theme: &Theme = cx.theme;
-    let last = count.saturating_sub(deep);
+    let last = super::last_page_at(count, deep);
     heading_chips(
         cx,
         head,
@@ -600,9 +599,7 @@ fn pager(cx: &mut Ctx, head: Rect, from: usize, to: usize, count: usize, deep: u
     cx.text.draw(cx.fb, at, baseline, &of, false);
 }
 
-/// A pair of chips at the right of a heading, the one in use filled.
-///
-/// The controls belong to the section they head, and not to the page.
+/// A pair of chips at the right of `head`, the one in use filled.
 fn heading_chips(cx: &mut Ctx, head: Rect, of: [(&str, Hit, bool); 2]) {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
@@ -649,9 +646,8 @@ fn peak_of(cx: &Ctx, days: std::ops::RangeInclusive<i64>) -> i64 {
     days.map(|day| cx.stats.day_seconds(day)).max().unwrap_or(0)
 }
 
-/// The busiest single hour of any day of a span, one scale under the whole
-/// grid: a day's shape says how much was read in that hour, and not merely
-/// which of its own hours was the fullest.
+/// The busiest single hour of any day of `days`. One scale under the whole
+/// grid: a day's shape states how much was read in that hour.
 fn hour_peak(cx: &Ctx, days: std::ops::RangeInclusive<i64>) -> i64 {
     days.filter_map(|day| cx.stats.hours_over(day..=day).into_iter().max())
         .max()
@@ -956,24 +952,25 @@ mod tests {
     }
 
     #[test]
-    fn paging_a_day_reaches_every_book_and_ends_on_a_full_page() {
-        const BOOKS: usize = 9;
+    fn paging_a_day_tiles_its_books_and_repeats_none() {
         for (w, h) in PANELS {
             let (theme, list) = day_list(w, h);
-            let deep = daybooks::fits(&theme, list.h, BOOKS);
-            let last = BOOKS - deep;
-
-            let (mut from, mut seen) = (0usize, 0usize);
-            loop {
-                seen = seen.max((from + deep).min(BOOKS));
-                let next = (from + deep).min(last);
-                if next == from {
-                    break;
+            for books in 0..=20usize {
+                let deep = daybooks::fits(&theme, list.h, books);
+                let last = super::super::last_page_at(books, deep);
+                let (mut from, mut seen) = (0usize, 0usize);
+                loop {
+                    assert_eq!(from, seen, "{w}x{h}, {books} books: {from} repeats");
+                    seen = (from + deep).min(books);
+                    let next = (from + deep).min(last);
+                    if next == from {
+                        break;
+                    }
+                    from = next;
                 }
-                from = next;
+                assert_eq!(seen, books, "{w}x{h}: {seen} of {books} books reached");
+                assert_eq!(from, last, "{w}x{h}: paging stops short of {last}");
             }
-            assert_eq!(seen, BOOKS, "{w}x{h}: {seen} of {BOOKS} books reached");
-            assert_eq!(from, last, "{w}x{h}: the last page is a short one");
         }
     }
 

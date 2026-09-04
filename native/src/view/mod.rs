@@ -207,6 +207,13 @@ impl State {
     }
 }
 
+/// The index the last page of `count` rows opens at, `deep` rows to a page.
+/// The pages tile the list, and the last one is the short one.
+pub fn last_page_at(count: usize, deep: usize) -> usize {
+    let deep = deep.max(1);
+    count.saturating_sub(1) / deep * deep
+}
+
 /// What a screen draws with.
 pub struct Ctx<'a> {
     pub fb: &'a mut Framebuffer,

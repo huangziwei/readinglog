@@ -1,8 +1,6 @@
-//! An invented library: a shelf in three scripts and three years of reading
-//! over it.
-//!
-//! Every number comes off [`Rng`], seeded once, so two runs draw the same
-//! picture and two rounds of a design can be held against each other.
+//! An invented library: a shelf in three scripts and [`DAYS`] of reading over
+//! it. Every number comes off [`Rng`], seeded once: the same picture every
+//! run, and two rounds of a design held against each other.
 
 use std::path::Path;
 
@@ -143,7 +141,7 @@ const SHELF: &[Shelved] = &[
 ];
 
 /// The hours a sitting opens in, each written as many times as it is common:
-/// an evening reader with a morning habit and the odd late night.
+/// evenings mostly, a morning habit, and the odd late night.
 const CLOCK: &[i64] = &[
     0, 1, 6, 7, 7, 8, 8, 12, 13, 13, 16, 17, 19, 20, 20, 21, 21, 21, 22, 22, 22, 23,
 ];
@@ -247,12 +245,12 @@ fn sitting(day: i64, at: i64, secs: i64, extent: i64, measure: Measure) -> Sessi
 const BINGE_DAY: i64 = 40;
 
 /// Books read on the binge day, one to an hour from [`BINGE_OPENS`].
-const BINGE_BOOKS: usize = 9;
+const BINGE_BOOKS: usize = 10;
 const BINGE_OPENS: i64 = 8;
 
 /// One day of [`BINGE_BOOKS`] short sittings, in place of whatever the
-/// generator left on it: a list of more books than a page holds. Every sitting
-/// stays under half an hour, under both records the board states.
+/// generator left on it: a list of more books than a page holds. Every
+/// sitting stays under half an hour.
 fn binge(store: &mut Store, last: i64) {
     let day = last - BINGE_DAY;
     store

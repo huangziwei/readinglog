@@ -1,6 +1,5 @@
-//! The run loop: what is drawn, and what a touch does to it.
-//!
-//! [`App::draw`] redraws the whole screen and presents it in one
+//! The run loop: what is drawn, and what a touch does to it. [`App::draw`]
+//! redraws the whole screen and presents it in one
 //! [`Framebuffer::send_update`].
 
 use anyhow::Result;
@@ -21,7 +20,7 @@ use crate::view::{self, Ctx, Hit, State};
 
 pub struct App {
     theme: Theme,
-    /// The language drawn in: the reader's pick, else [`App::detected`].
+    /// The language drawn in: [`Settings::language`], else [`App::detected`].
     lang: Lang,
     settings: Settings,
     text: TextRenderer,
@@ -106,7 +105,12 @@ impl App {
         self.state.list_from = from;
     }
 
-    /// Where the reader has navigated to.
+    /// Open the Books screen's own list at `from`, held the same way.
+    pub fn open_books(&mut self, from: usize) {
+        self.state.books_from = from;
+    }
+
+    /// The tab, day, span and open book the screens are drawn at.
     pub fn state(&self) -> &State {
         &self.state
     }
@@ -249,7 +253,7 @@ impl App {
                     return Action::Nothing;
                 }
                 self.settings.text_size = pick;
-                // Every size on screen comes off the theme, so it is rebuilt.
+                // Every size on screen comes off `theme`.
                 self.theme =
                     Theme::sized(self.theme.screen.w as u32, self.theme.screen.h as u32, pick);
                 self.settings.save();

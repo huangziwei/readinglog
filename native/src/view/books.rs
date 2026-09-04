@@ -61,9 +61,9 @@ pub fn rows_per_page(theme: &Theme, area: Rect) -> usize {
     (((area.h - foot_height(theme)) / row_height(theme)).max(1)) as usize
 }
 
-/// The largest `books_from` that fills a page, for `count` books.
+/// Where the last page of `count` books opens, in `area`.
 pub fn last_page_at(theme: &Theme, area: Rect, count: usize) -> usize {
-    count.saturating_sub(rows_per_page(theme, area))
+    super::last_page_at(count, rows_per_page(theme, area))
 }
 
 /// The height a row is drawn at: the page's rows share `area`, capped at
@@ -290,11 +290,13 @@ mod tests {
     }
 
     #[test]
-    fn the_last_page_is_a_full_one() {
+    fn the_last_page_is_the_short_one() {
         let theme = Theme::for_screen(1264, 1680);
         let area = area_for(&theme, 6);
-        // 20 books, 6 to a page: the last page opens at 14 and holds 14..20.
-        assert_eq!(last_page_at(&theme, area, 20), 14);
+        // 20 books, 6 to a page: 0..6, 6..12, 12..18, and 18..20 to close.
+        assert_eq!(last_page_at(&theme, area, 20), 18);
+        // A page and one over opens its second page on that one book.
+        assert_eq!(last_page_at(&theme, area, 7), 6);
         // Fewer books than a page: the list never scrolls.
         assert_eq!(last_page_at(&theme, area, 6), 0);
         assert_eq!(last_page_at(&theme, area, 2), 0);
@@ -302,24 +304,24 @@ mod tests {
     }
 
     #[test]
-    fn paging_walks_the_whole_list_without_a_stranded_row() {
+    fn the_pages_tile_the_list_and_repeat_no_book() {
         let theme = Theme::for_screen(1264, 1680);
         let area = area_for(&theme, 6);
-        let (count, step) = (20usize, rows_per_page(&theme, area));
-        let last = last_page_at(&theme, area, count);
-
-        let mut from = 0usize;
-        let mut seen = 0usize;
-        loop {
-            let to = (from + step).min(count);
-            seen = seen.max(to);
-            let next = (from + step).min(last);
-            if next == from {
-                break;
+        let step = rows_per_page(&theme, area);
+        for count in 0..=40usize {
+            let last = last_page_at(&theme, area, count);
+            let (mut from, mut seen) = (0usize, 0usize);
+            loop {
+                assert_eq!(from, seen, "{count} books: {from} repeats a row");
+                seen = (from + step).min(count);
+                let next = (from + step).min(last);
+                if next == from {
+                    break;
+                }
+                from = next;
             }
-            from = next;
+            assert_eq!(seen, count, "{count} books: {seen} of them reachable");
+            assert_eq!(from, last, "{count} books: paging stops short of {last}");
         }
-        assert_eq!(seen, count, "every book is reachable");
-        assert_eq!(from, last);
     }
 }
