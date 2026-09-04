@@ -1,8 +1,6 @@
-//! Where a candidate screen is drawn from. The drafts live under
-//! `artifacts/sketch/`, which git ignores; `preview.sh` writes an empty
-//! register there when none exists.
+//! What a candidate screen is drawn with. [`drafts`] registers the candidates
+//! themselves, and is empty in the repository.
 
-#[path = "../../../../artifacts/sketch/mod.rs"]
 mod drafts;
 
 use readinglog_native::ui::chrome::Tab;
