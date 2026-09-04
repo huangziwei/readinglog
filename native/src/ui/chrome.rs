@@ -136,12 +136,17 @@ pub fn section_height(text: &mut TextRenderer, theme: &Theme) -> i32 {
     text.line_height() as i32 + theme.gap + theme.gap / 2
 }
 
-/// The height [`figure`] draws into.
-pub fn figure_height(text: &mut TextRenderer, theme: &Theme) -> i32 {
-    text.set_px(theme.display_px);
+/// The height [`figure`] draws into, set no larger than `ceiling`.
+pub fn figure_height_at(text: &mut TextRenderer, theme: &Theme, ceiling: f32) -> i32 {
+    text.set_px(ceiling);
     let value = text.cap_height() as i32;
     text.set_px(theme.small_px);
     value + theme.gap + text.line_height() as i32
+}
+
+/// The height [`figure`] draws into at [`Theme::display_px`].
+pub fn figure_height(text: &mut TextRenderer, theme: &Theme) -> i32 {
+    figure_height_at(text, theme, theme.display_px)
 }
 
 /// The width a figure set at `px` needs: the wider of the number and the name
@@ -184,12 +189,27 @@ fn figure(
 /// The set is drawn at [`Theme::display_px`] where it fits `row` at that size,
 /// and at the largest size down to [`Theme::body_px`] that does where it does
 /// not: a book of a hundred hours states its total in full.
+///
+/// [`figures_at`] caps the size lower, for a row standing among other bands.
 pub fn figures(
     fb: &mut Framebuffer,
     text: &mut TextRenderer,
     theme: &Theme,
     row: Rect,
     stated: &[(String, &str)],
+) {
+    figures_at(fb, text, theme, row, stated, theme.display_px);
+}
+
+/// [`figures`] set no larger than `ceiling`, for a row that is one band of a
+/// page rather than its head.
+pub fn figures_at(
+    fb: &mut Framebuffer,
+    text: &mut TextRenderer,
+    theme: &Theme,
+    row: Rect,
+    stated: &[(String, &str)],
+    ceiling: f32,
 ) {
     // Air enough that two figures read as two and not as one long number.
     // The size gives way to it, never the air.
@@ -201,7 +221,7 @@ pub fn figures(
             .map(|(value, label)| figure_width(text, theme, value, label, px))
             .collect()
     };
-    let px = figures_px(theme.display_px, theme.body_px, row.w, |px| {
+    let px = figures_px(ceiling, theme.body_px, row.w, |px| {
         measure(text, px).iter().sum::<i32>() + between
     });
     let widths = measure(text, px);

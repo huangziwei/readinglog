@@ -202,6 +202,10 @@ pub struct Strings {
     pub most: &'static str,
     /// The second page of All Time, named at the right of its own top line.
     pub trends: &'static str,
+    /// The chip returning a span page to the one holding today.
+    pub now: &'static str,
+    /// The chip opening the day picked off a grid as its own page.
+    pub open_day: &'static str,
     pub nothing_read: &'static str,
 
     // Books. `{a}–{b} of {c}`, where `of` is this word.
@@ -314,6 +318,8 @@ const ENGLISH: Strings = Strings {
     in_all: "in all",
     most: "MOST",
     trends: "TRENDS",
+    now: "Now",
+    open_day: "Open",
     nothing_read: "Nothing read.",
 
     of: "of",
@@ -427,6 +433,8 @@ const GERMAN: Strings = Strings {
     in_all: "insgesamt",
     most: "AM MEISTEN",
     trends: "VERLAUF",
+    now: "Jetzt",
+    open_day: "Öffnen",
     nothing_read: "Nichts gelesen.",
 
     of: "von",
@@ -541,6 +549,8 @@ const JAPANESE: Strings = Strings {
     in_all: "回",
     most: "最も多い",
     trends: "傾向",
+    now: "現在",
+    open_day: "開く",
     nothing_read: "読書なし。",
 
     of: "/",
@@ -642,6 +652,8 @@ const SIMPLIFIED: Strings = Strings {
     in_all: "次",
     most: "最多",
     trends: "趋势",
+    now: "现在",
+    open_day: "打开",
     nothing_read: "没有阅读。",
 
     of: "/",
@@ -754,6 +766,8 @@ const TRADITIONAL: Strings = Strings {
     in_all: "次",
     most: "最多",
     trends: "趨勢",
+    now: "現在",
+    open_day: "開啟",
     nothing_read: "沒有閱讀。",
 
     of: "/",

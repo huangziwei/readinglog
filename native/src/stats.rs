@@ -295,6 +295,28 @@ impl Stats {
         out
     }
 
+    /// The same, ordered by the last sitting each book had inside `days`:
+    /// what was picked up most recently, first.
+    pub fn book_totals_recent(&self, days: std::ops::RangeInclusive<i64>) -> Vec<(usize, i64)> {
+        // Seconds, and the instant the book was last put down inside `days`.
+        let mut out: Vec<(usize, i64, (i64, i64))> = Vec::new();
+        for sitting in self.sittings.iter().filter(|s| days.contains(&s.day)) {
+            let Some(book) = sitting.book else { continue };
+            let at = (sitting.day, sitting.to_secs);
+            match out.iter_mut().find(|(b, _, _)| *b == book) {
+                Some((_, secs, last)) => {
+                    *secs += sitting.seconds;
+                    *last = (*last).max(at);
+                }
+                None => out.push((book, sitting.seconds, at)),
+            }
+        }
+        out.sort_by_key(|(_, _, last)| (-last.0, -last.1));
+        out.into_iter()
+            .map(|(book, secs, _)| (book, secs))
+            .collect()
+    }
+
     /// Books read over `days` that no record names, and the seconds on them.
     /// A book is one [`Sitting::key`]: two sittings whose catalog number no
     /// line ever stated carry a word position apiece and count as two.
@@ -692,6 +714,48 @@ mod tests {
         assert_eq!(whole.days_read, days.len() as i64);
         // The figure beside it: what was read over the days it was read on.
         assert_eq!(whole.a_day, whole.read / whole.days_read);
+    }
+
+    #[test]
+    fn what_was_read_can_be_ordered_by_what_was_put_down_last() {
+        // Two books: one read longer, the other read later.
+        let mut store = Store::default();
+        let long = at(2026, 3, 1);
+        let late = at(2026, 3, 5);
+        for (pos, name) in [(100, "The Long One"), (200, "The Late One")] {
+            store.books.push(BookRecord {
+                extent: pos,
+                cde_key: format!("KEY{pos}"),
+                title: name.into(),
+                ..BookRecord::default()
+            });
+        }
+        for (day, secs, pos) in [(long, 7200, 100), (late, 600, 200)] {
+            let (y, m, d) = date::civil_from_days(day);
+            store.sessions.push(Session {
+                started_at: format!("{y:04}-{m:02}-{d:02}T09:00:00"),
+                ended_at: format!("{y:04}-{m:02}-{d:02}T10:00:00"),
+                end_position: pos,
+                seconds: secs,
+                page_turns: 1,
+                words: 100,
+                hours: vec![(9, secs)],
+                measure: Measure::Counted,
+                asin: None,
+                progress: None,
+            });
+        }
+        let today = at(2026, 3, 6);
+        let stats = Stats::build(&store, today, true);
+        let over = long..=today;
+
+        let longest = stats.book_totals(over.clone());
+        let recent = stats.book_totals_recent(over);
+        assert_eq!(longest.len(), 2);
+        assert_eq!(longest[0].1, 7200, "longest first states the long one");
+        assert_eq!(recent[0].1, 600, "most recent first states the late one");
+        assert_ne!(longest[0].0, recent[0].0);
+        assert_eq!(stats.books[recent[0].0].title, "The Late One");
     }
 
     #[test]

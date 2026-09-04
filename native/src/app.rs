@@ -124,6 +124,12 @@ impl App {
         self.state.books_from = 0;
     }
 
+    /// Draw Rhythm at `day`, with no day picked off the grid.
+    pub fn set_day(&mut self, day: i64) {
+        self.state.day = day;
+        self.state.picked = false;
+    }
+
     /// Draw Rhythm with `day` picked off the grid.
     pub fn open_day(&mut self, day: i64) {
         self.state.day = day;
@@ -305,6 +311,14 @@ impl App {
             Hit::Day(day) => {
                 self.state.picked = !(self.state.picked && self.state.day == day);
                 self.state.day = day;
+                self.state.opened_day = false;
+                self.state.list_from = 0;
+            }
+            Hit::OpenDay => {
+                if self.state.opened_day {
+                    return Action::Nothing;
+                }
+                self.state.opened_day = true;
                 self.state.list_from = 0;
             }
             // A shelf is reached from the board, and lands on the Books tab.
@@ -329,8 +343,18 @@ impl App {
                 }
                 self.state.span = span;
                 self.state.picked = false;
+                self.state.opened_day = false;
                 self.state.list_from = 0;
                 self.state.alltime_page = 0;
+            }
+            Hit::Now => {
+                if self.state.day == self.today && !self.state.picked {
+                    return Action::Nothing;
+                }
+                self.state.day = self.today;
+                self.state.picked = false;
+                self.state.opened_day = false;
+                self.state.list_from = 0;
             }
             Hit::Prev => return self.paged(-1),
             Hit::Next => return self.paged(1),

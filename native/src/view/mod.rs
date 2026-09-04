@@ -41,6 +41,10 @@ pub enum Hit {
     Next,
     /// One span of the Rhythm screen.
     Span(Span),
+    /// The span of the width showing that holds today.
+    Now,
+    /// The day picked off the grid, opened as its own page.
+    OpenDay,
     /// Where a book list opens, as an index into it. The screen drawing the
     /// list holds the index inside the list: a step past either end is no step.
     ListPage(usize),
@@ -163,6 +167,11 @@ pub struct State {
     pub books_from: usize,
     /// Which books the Books screen lists.
     pub shelf: Shelf,
+    /// Whether the day picked off the grid was asked to open as its own page.
+    ///
+    /// A span whose books are listed under its grid narrows that list to the
+    /// picked day instead, and opens the day only on this.
+    pub opened_day: bool,
     /// Which page of All Time is showing, of [`alltime::PAGES`].
     pub alltime_page: usize,
     /// How far down Rhythm's own book list has been paged.
@@ -179,6 +188,7 @@ impl State {
             book: None,
             books_from: 0,
             shelf: Shelf::default(),
+            opened_day: false,
             alltime_page: 0,
             list_from: 0,
         }
@@ -194,6 +204,7 @@ impl State {
         self.tab = tab;
         self.book = None;
         self.picked = false;
+        self.opened_day = false;
         self.shelf = Shelf::All;
         self.alltime_page = 0;
         true

@@ -284,9 +284,22 @@ fn set_span(app: &mut App, shot: &Shot) -> Result<()> {
         "finished" => app.set_shelf(Shelf::Finished),
         "last" => app.open_books(usize::MAX),
         "week" => app.set_span(Span::Week),
+        // A span stepped off the one holding today, where the way back to it
+        // is drawn.
+        "back" => {
+            app.set_span(Span::Year);
+            let day = app.state().day;
+            app.set_day(Span::Year.step(day, -1));
+        }
         "month" => app.set_span(Span::Month),
         "year" => app.set_span(Span::Year),
         "day" => app.open_day(app.state().day),
+        // The year with a day picked off its heatmap, which narrows the
+        // covers to that day and offers the way into it.
+        "picked" => {
+            app.set_span(Span::Year);
+            app.open_day(app.state().day);
+        }
         "busy" => busy(app, 0),
         "busy2" => busy(app, 3),
         "busyend" => busy(app, usize::MAX),
@@ -340,7 +353,9 @@ fn list() {
     println!("screens:");
     for (name, _) in SCREENS {
         let of = match *name {
-            "rhythm" => "  (:all :trends :week :month :year :day :busy :busy2 :busyend)",
+            "rhythm" => {
+                "  (:all :trends :week :month :year :back :picked :day :busy :busy2 :busyend)"
+            }
             "today" => "  (:quiet :empty)",
             "book" => "  (:<index>)",
             "books" => "  (:finished :last)",
@@ -421,6 +436,8 @@ fn everything() -> Vec<Shot> {
         "rhythm:week",
         "rhythm:month",
         "rhythm:year",
+        "rhythm:back",
+        "rhythm:picked",
         "rhythm:day",
         "books",
         "books:finished",

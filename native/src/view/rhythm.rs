@@ -26,7 +26,9 @@ fn bands(area: Rect, theme: &Theme, figures: i32, grid: i32, listed: bool) -> [R
     let bar = bar_height(theme);
     let (picker, rest) = area.split_top(bar + air);
     let (nav, rest) = rest.split_top(bar + air);
-    let (stated, rest) = rest.split_top(figures + air);
+    // The span's name stands clear of the figures under it: the two are a
+    // heading and its body, not one block.
+    let (stated, rest) = rest.split_top(figures + air * 2);
 
     let grid = match listed {
         true => grid.clamp(0, rest.h),
@@ -91,7 +93,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
 /// Whether `draw` gives the box under `picker` to one page: `Span::AllTime`,
 /// or a day picked off a span whose grid has no room to state it.
 fn opens_page_whole(state: &State) -> bool {
-    state.span == Span::AllTime || (state.picked && !lists_books(state.span))
+    state.span == Span::AllTime || (state.picked && (state.opened_day || !lists_books(state.span)))
 }
 
 /// The span holding `state.day`: its name, its grid, its average day, and the
@@ -103,12 +105,15 @@ fn span_page(cx: &mut Ctx, area: Rect, state: &State) {
     let days = span.days(day, cx.week);
 
     let listed = lists_books(span);
-    let figures = chrome::figure_height(cx.text, theme);
+    let figures = chrome::figure_height_at(cx.text, theme, span_figure_px(theme));
     let want = grid_height(span, area, theme, day, cx.week);
     let [bar, nav, stated, grid, list] = bands(area, theme, figures, want, listed);
 
     picker(cx, bar, state);
-    span_nav(cx, nav, &span.name(day, cx.week, s));
+    // The chip stands only where there is somewhere to go: the span holding
+    // today needs no way back to itself.
+    let adrift = !days.contains(&cx.today);
+    span_nav(cx, nav, &span.name(day, cx.week, s), adrift);
     span_figures(cx, stated, days.clone());
 
     match span {
@@ -202,6 +207,13 @@ fn picker(cx: &mut Ctx, area: Rect, state: &State) {
     }
 }
 
+/// The largest a span's figures are set, which is under
+/// [`Theme::display_px`]: they stand as one band over a grid and a list, not
+/// as the head of the page, and the band is sized to what they take.
+fn span_figure_px(theme: &Theme) -> f32 {
+    theme.head_px
+}
+
 /// What the span holding `days` came to: the reading, the days it fell on,
 /// what one of those days averaged, and the books read through inside it.
 fn span_figures(cx: &mut Ctx, area: Rect, days: std::ops::RangeInclusive<i64>) {
@@ -213,11 +225,16 @@ fn span_figures(cx: &mut Ctx, area: Rect, days: std::ops::RangeInclusive<i64>) {
         (date::duration(span.a_day, s), s.a_day),
         (span.finished.to_string(), s.finished),
     ];
-    chrome::figures(cx.fb, cx.text, cx.theme, area, &stated);
+    let ceiling = span_figure_px(cx.theme);
+    chrome::figures_at(cx.fb, cx.text, cx.theme, area, &stated, ceiling);
 }
 
-/// `title` between two arrows, each its own hit box, over a rule.
-fn span_nav(cx: &mut Ctx, area: Rect, title: &str) {
+/// `title` between two arrows, each its own hit box. `back` draws the chip
+/// returning to the span that holds today, at the right.
+///
+/// No rule under it: the air below is what separates the name from the
+/// figures, and a line there closes the two into one block.
+fn span_nav(cx: &mut Ctx, area: Rect, title: &str, back: bool) {
     let theme: &Theme = cx.theme;
     cx.text.set_px(theme.head_px);
     let baseline = area.center_y() + cx.text.cap_height() as i32 / 2;
@@ -231,19 +248,49 @@ fn span_nav(cx: &mut Ctx, area: Rect, title: &str) {
         title,
         false,
     );
-    paint::hline(cx.fb, area.x, area.bottom(), area.w, PALE, 1);
-
-    // The hit box is `area.w / 6`, past the arrow's own width.
-    let reach = area.w / 6;
-    cx.text.draw(cx.fb, area.x, baseline, "‹", false);
-    cx.hit(Hit::Prev, Rect::new(area.x, area.y, reach, area.h));
+    cx.text.set_px(theme.head_px);
     let next = cx.text.measure_width("›") as i32;
+    cx.text.draw(cx.fb, area.x, baseline, "‹", false);
     cx.text
         .draw(cx.fb, area.right() - next, baseline, "›", false);
+
+    // A chip beside the forward arrow narrows what that arrow may take, so
+    // the two never share a pixel.
+    if back {
+        now_chip(cx, area, next);
+    }
+    let reach = match back {
+        true => next + theme.gap,
+        false => area.w / 6,
+    };
+    cx.hit(Hit::Prev, Rect::new(area.x, area.y, area.w / 6, area.h));
     cx.hit(
         Hit::Next,
         Rect::new(area.right() - reach, area.y, reach, area.h),
     );
+}
+
+/// The chip returning to the span holding today, set left of the forward
+/// arrow.
+fn now_chip(cx: &mut Ctx, area: Rect, arrow: i32) {
+    let theme: &Theme = cx.theme;
+    let script = cx.ui_script();
+    let said = cx.s().now;
+    cx.text.set_px(theme.small_px);
+    let w = cx.text.measure_width_in(script, said) as i32;
+    let pad = theme.gap;
+    let h = cx.text.line_height() as i32 + theme.gap / 2;
+    let chip = Rect::new(
+        area.right() - arrow - theme.gap - w - pad * 2,
+        area.center_y() - h / 2,
+        w + pad * 2,
+        h,
+    );
+    paint::stroke(cx.fb, chip, LIGHT, 1);
+    let baseline = chip.center_y() + cx.text.cap_height() as i32 / 2;
+    cx.text
+        .draw_in(script, cx.fb, chip.x + pad, baseline, said, false);
+    cx.hit(Hit::Now, chip);
 }
 
 /// Rows of `theme.row_h` a week gives the day totals and the hours under them.
@@ -534,8 +581,14 @@ const COVER_FLOOR: i32 = 3;
 fn cover_grid(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeInclusive<i64>) {
     let theme: &Theme = cx.theme;
     let s = cx.s();
-    let total = date::duration(cx.stats.span_seconds(days.clone()), s);
-    let title = format!("{} · {total}", s.what_was_read);
+    // A day picked off the heatmap narrows the grid to that day.
+    let picked = state.picked.then_some(state.day);
+    let over = picked.map_or(days, |day| day..=day);
+    let total = date::duration(cx.stats.span_seconds(over.clone()), s);
+    let title = match picked {
+        Some(day) => format!("{} · {total}", date::long_day(day, s).to_uppercase()),
+        None => format!("{} · {total}", s.what_was_read),
+    };
     let head = Rect::new(
         area.x,
         area.y,
@@ -543,9 +596,13 @@ fn cover_grid(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeIncl
         chrome::section_height(cx.text, theme),
     );
     let whole = chrome::section(cx.fb, cx.text, theme, area, &title);
-    let read = cx.stats.book_totals(days.clone());
+    // Most recently put down first, which is the order a shelf is read in.
+    let read = cx.stats.book_totals_recent(over.clone());
+    if picked.is_some() {
+        open_day_chip(cx, head);
+    }
 
-    let (unnamed, seconds) = cx.stats.unnamed_over(days);
+    let (unnamed, seconds) = cx.stats.unnamed_over(over);
     let foot = (unnamed > 0) as i32 * daybooks::note_height(cx);
     let inner = Rect::new(whole.x, whole.y, whole.w, (whole.h - foot).max(0));
 
@@ -564,19 +621,43 @@ fn cover_grid(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeIncl
         return;
     }
 
-    let (rows, columns, cell) = grid_of(cx, inner);
+    // The arrows stand at the ends of the grid's own row, where a thumb
+    // reaches without covering a jacket. The grid keeps the middle.
+    let reach = arrow_reach(cx);
+    let grid = Rect::new(
+        inner.x + reach,
+        inner.y,
+        (inner.w - reach * 2).max(1),
+        inner.h,
+    );
+    let (rows, columns, cell) = grid_of(cx, grid);
     let deep = (rows * columns).max(1) as usize;
     let from = state.list_from.min(super::last_page_at(read.len(), deep));
     let to = (from + deep).min(read.len());
     if read.len() > deep {
-        pager(cx, head, from, to, read.len(), deep);
+        counted(cx, head, from, to, read.len(), picked.is_some());
+        let last = super::last_page_at(read.len(), deep);
+        let rows_h = (to - from).div_ceil(columns as usize) as i32 * (cell.h + theme.gap);
+        let band = Rect::new(inner.x, inner.y, inner.w, rows_h.min(inner.h));
+        step_arrow(
+            cx,
+            band,
+            true,
+            (from > 0).then(|| from.saturating_sub(deep)),
+        );
+        step_arrow(
+            cx,
+            band,
+            false,
+            (to < read.len()).then(|| (from + deep).min(last)),
+        );
     }
 
     for (slot, (book, secs)) in read[from..to].iter().enumerate() {
         let at = slot as i32;
         let box_ = Rect::new(
-            inner.x + (at % columns) * (cell.w + theme.gap),
-            inner.y + (at / columns) * (cell.h + theme.gap),
+            grid.x + (at % columns) * (cell.w + theme.gap),
+            grid.y + (at / columns) * (cell.h + theme.gap),
             cell.w,
             cell.h,
         );
@@ -590,6 +671,73 @@ fn cover_grid(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeIncl
         unnamed,
         seconds,
     );
+}
+
+/// The width an arrow beside the cover grid takes, its air included.
+fn arrow_reach(cx: &mut Ctx) -> i32 {
+    let theme: &Theme = cx.theme;
+    cx.text.set_px(theme.head_px);
+    cx.text.measure_width("›") as i32 + theme.gap * 2
+}
+
+/// An arrow at one end of `band`, opening the list at `at`. Nothing is drawn
+/// where there is no page that way.
+fn step_arrow(cx: &mut Ctx, band: Rect, at_left: bool, at: Option<usize>) {
+    let theme: &Theme = cx.theme;
+    let Some(at) = at else { return };
+    let reach = arrow_reach(cx);
+    let said = match at_left {
+        true => "‹",
+        false => "›",
+    };
+    let box_ = match at_left {
+        true => Rect::new(band.x, band.y, reach, band.h),
+        false => Rect::new(band.right() - reach, band.y, reach, band.h),
+    };
+    cx.text.set_px(theme.head_px);
+    let w = cx.text.measure_width(said) as i32;
+    let baseline = box_.center_y() + cx.text.cap_height() as i32 / 2;
+    cx.text
+        .draw(cx.fb, box_.x + (box_.w - w) / 2, baseline, said, false);
+    cx.hit(Hit::ListPage(at), box_);
+}
+
+/// `from`–`to` of `count` at the right of the heading the grid stands under,
+/// left of the chip where one stands there.
+fn counted(cx: &mut Ctx, head: Rect, from: usize, to: usize, count: usize, chipped: bool) {
+    let theme: &Theme = cx.theme;
+    let of = format!("{}–{to} {} {count}", from + 1, cx.s().of);
+    cx.text.set_px(theme.small_px);
+    let w = cx.text.measure_width(&of) as i32;
+    let taken = chipped as i32 * (chip_width(cx, cx.s().open_day) + theme.gap);
+    let baseline = head.y + cx.text.cap_height() as i32;
+    cx.text
+        .draw(cx.fb, head.right() - taken - w, baseline, &of, false);
+}
+
+/// How wide a chip carrying `said` stands, its padding included.
+fn chip_width(cx: &mut Ctx, said: &str) -> i32 {
+    let theme: &Theme = cx.theme;
+    let script = cx.ui_script();
+    cx.text.set_px(theme.small_px);
+    cx.text.measure_width_in(script, said) as i32 + theme.gap * 2
+}
+
+/// The chip opening the day the grid is narrowed to as its own page, at the
+/// right of the heading naming that day.
+fn open_day_chip(cx: &mut Ctx, head: Rect) {
+    let theme: &Theme = cx.theme;
+    let script = cx.ui_script();
+    let said = cx.s().open_day;
+    let w = chip_width(cx, said);
+    let h = cx.text.line_height() as i32 + theme.gap / 2;
+    let chip = Rect::new(head.right() - w, head.y, w, h);
+    paint::stroke(cx.fb, chip, LIGHT, 1);
+    let tw = cx.text.measure_width_in(script, said) as i32;
+    let baseline = chip.center_y() + cx.text.cap_height() as i32 / 2;
+    cx.text
+        .draw_in(script, cx.fb, chip.x + (w - tw) / 2, baseline, said, false);
+    cx.hit(Hit::OpenDay, chip);
 }
 
 /// How the grid cuts `inner`: the rows and columns it holds, and one cell.
@@ -618,7 +766,9 @@ fn jacket(cx: &mut Ctx, box_: Rect, book: usize, secs: i64) {
     let s = cx.s();
     cx.text.set_px(theme.small_px);
     let line = cx.text.line_height() as i32;
-    let (art, under) = box_.split_top((box_.h - line * 2 - theme.gap / 2).max(1));
+    // The jacket keeps clear air under it before the figures start.
+    let under_h = line * 2 + theme.gap;
+    let (art, under) = box_.split_top((box_.h - under_h).max(1));
     cx.covers
         .draw(cx.fb, art, &cx.stats.books[book].thumbnail.clone());
 
@@ -632,7 +782,7 @@ fn jacket(cx: &mut Ctx, box_: Rect, book: usize, secs: i64) {
     // hours states a wider figure than the jacket beside it.
     let px = fitting_px(cx, &[&read, &percent], box_.w);
     cx.text.set_px(px);
-    let mut baseline = under.y + cx.text.cap_height() as i32;
+    let mut baseline = under.y + theme.gap + cx.text.cap_height() as i32;
     for said in [&read, &percent] {
         if said.is_empty() {
             continue;
@@ -969,14 +1119,40 @@ mod tests {
                 let want = wanted(span, area, &theme);
                 let [_, _, _, grid, list] = bands(area, &theme, FIGURES, want, true);
                 assert_eq!(grid.h, want, "{w}x{h} {span:?}: the grid was cut");
-                let rows = (list.h - HEAD) / theme.row_h;
-                let want = match span {
-                    Span::Year => 4,
-                    _ => 5,
-                };
-                assert!(rows >= want, "{w}x{h} {span:?}: room for {rows} books");
+                let room = list.h - HEAD;
+                match span {
+                    // A year names its books by their jackets: a cover and the
+                    // two lines under it, which is three rows of type.
+                    Span::Year => assert!(
+                        room >= theme.row_h * 3,
+                        "{w}x{h}: {room} px for a row of covers"
+                    ),
+                    // A week lists them: four rows and the note under them.
+                    _ => {
+                        let rows = room / theme.row_h;
+                        assert!(rows >= 4, "{w}x{h}: room for {rows} books");
+                    }
+                }
             }
         }
+    }
+
+    #[test]
+    fn a_day_picked_off_a_year_narrows_its_books_before_it_opens() {
+        let mut state = State::new(date::days_from_civil(2026, 9, 16));
+        state.span = Span::Year;
+        state.picked = true;
+        assert!(
+            !opens_page_whole(&state),
+            "a picked day narrows the covers to it"
+        );
+        state.opened_day = true;
+        assert!(opens_page_whole(&state), "and opens as its own page on ask");
+
+        // A span with no book list under it opens a picked day either way.
+        state.span = Span::Month;
+        state.opened_day = false;
+        assert!(opens_page_whole(&state));
     }
 
     #[test]
