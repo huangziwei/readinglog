@@ -157,6 +157,17 @@ pub fn shift_months(day: i64, by: i64) -> i64 {
 /// Seconds are never shown: the counters behind these figures are not that
 /// precise, and a reading log measured to the second would claim an accuracy
 /// it does not have.
+/// `secs` as whole hours and the minutes left over, rounded to the nearest
+/// minute and carried where the rounding fills the hour.
+pub fn hours_and_minutes(secs: i64) -> (i64, i64) {
+    let hours = secs / 3600;
+    let mins = (secs % 3600 + 30) / 60;
+    match mins == 60 {
+        true => (hours + 1, 0),
+        false => (hours, mins),
+    }
+}
+
 pub fn duration(secs: i64, s: &Strings) -> String {
     let sp = if s.unit_space { " " } else { "" };
     let (h, m) = (s.hours, s.minutes);
@@ -168,18 +179,22 @@ pub fn duration(secs: i64, s: &Strings) -> String {
     if secs < 60 {
         return format!("<1{sp}{m}");
     }
-    let hours = secs / 3600;
-    let mins = (secs % 3600 + 30) / 60;
-    let (hours, mins) = if mins == 60 {
-        (hours + 1, 0)
-    } else {
-        (hours, mins)
-    };
+    let (hours, mins) = hours_and_minutes(secs);
     match (hours, mins) {
         (0, mins) => format!("{mins}{sp}{m}"),
         (hours, 0) => format!("{hours}{sp}{h}"),
         (hours, mins) => format!("{hours}{sp}{h} {mins}{sp}{m}"),
     }
+}
+
+/// A headline total: whole hours past a day of reading, where the minutes
+/// carry nothing beside the hours, and [`duration`] below it.
+pub fn duration_coarse(secs: i64, s: &Strings) -> String {
+    if secs < 24 * 3600 {
+        return duration(secs, s);
+    }
+    let space = if s.unit_space { " " } else { "" };
+    format!("{}{space}{}", (secs + 1800) / 3600, s.hours)
 }
 
 /// The same, narrowed for a cell with no room: "4h12", "37m".

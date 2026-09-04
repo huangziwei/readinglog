@@ -2,6 +2,7 @@
 # ./preview.sh [shots...] — draws screens into artifacts/preview/*.png.
 # ./preview.sh --list names every shot, panel and sketch.
 # $READINGLOG_FONTS names the device's fonts; preview.env sets it.
+# --store DIR draws a real sessions.tsv in place of the fixture.
 set -eu
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"

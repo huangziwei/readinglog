@@ -191,7 +191,9 @@ pub fn figures(
     row: Rect,
     stated: &[(String, &str)],
 ) {
-    let air = theme.gap * 2;
+    // Air enough that two figures read as two and not as one long number.
+    // The size gives way to it, never the air.
+    let air = theme.gap * 3;
     let between = air * (stated.len() as i32 - 1).max(0);
     let measure = |text: &mut TextRenderer, px: f32| -> Vec<i32> {
         stated

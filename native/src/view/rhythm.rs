@@ -6,32 +6,27 @@ use crate::date;
 use crate::font::Script;
 use crate::settings::WeekStart;
 use crate::ui::paint::{self, BAR_RGB, INK, LIGHT, MARK_RGB, PALE, Rect, WHITE};
-use crate::ui::{charts, chrome, theme::Theme};
+use crate::ui::{charts, chrome, cover, theme::Theme};
 
 use super::{Ctx, Hit, Span, State, alltime, daybooks, home};
 
 /// Books a day of a month names, the rest counted in `+n`.
 const LANES: usize = 4;
 
-/// The bar the picker stands in. The span's name takes that and the line
-/// under it stating what a span of its width usually comes to.
+/// The bar the picker and the span's name each stand in.
 fn bar_height(theme: &Theme) -> i32 {
     theme.row_h * 3 / 4
 }
 
-/// The height the span's name and its comparison take together.
-fn nav_height(theme: &Theme) -> i32 {
-    bar_height(theme) + theme.small_px as i32 + theme.gap
-}
-
-/// The four bands of the page, top to bottom: the picker, the span's name
-/// between its arrows, the grid, and the books. `grid` is what the span asks
-/// for, clamped to what the page holds.
-fn bands(area: Rect, theme: &Theme, grid: i32, listed: bool) -> [Rect; 4] {
+/// The five bands of the page, top to bottom: the picker, the span's name
+/// between its arrows, what the span comes to as figures, the grid, and the
+/// books. `grid` is what the span asks for, clamped to what the page holds.
+fn bands(area: Rect, theme: &Theme, figures: i32, grid: i32, listed: bool) -> [Rect; 5] {
     let air = theme.gap * 2;
     let bar = bar_height(theme);
     let (picker, rest) = area.split_top(bar + air);
-    let (nav, rest) = rest.split_top(nav_height(theme) + air);
+    let (nav, rest) = rest.split_top(bar + air);
+    let (stated, rest) = rest.split_top(figures + air);
 
     let grid = match listed {
         true => grid.clamp(0, rest.h),
@@ -43,7 +38,8 @@ fn bands(area: Rect, theme: &Theme, grid: i32, listed: bool) -> [Rect; 4] {
     let under = (rest.y + grid + air).min(rest.bottom());
     [
         Rect::new(picker.x, picker.y, picker.w, bar),
-        Rect::new(nav.x, nav.y, nav.w, nav_height(theme)),
+        Rect::new(nav.x, nav.y, nav.w, bar),
+        Rect::new(stated.x, stated.y, stated.w, figures),
         Rect::new(rest.x, rest.y, rest.w, grid),
         Rect::new(rest.x, under, rest.w, list),
     ]
@@ -107,13 +103,13 @@ fn span_page(cx: &mut Ctx, area: Rect, state: &State) {
     let days = span.days(day, cx.week);
 
     let listed = lists_books(span);
+    let figures = chrome::figure_height(cx.text, theme);
     let want = grid_height(span, area, theme, day, cx.week);
-    let [bar, nav, grid, list] = bands(area, theme, want, listed);
+    let [bar, nav, stated, grid, list] = bands(area, theme, figures, want, listed);
 
     picker(cx, bar, state);
-    let name = span.name(day, cx.week, s);
-    let total = date::duration(cx.stats.span_seconds(days.clone()), s);
-    span_nav(cx, nav, &format!("{name} · {total}"), usually(cx, span));
+    span_nav(cx, nav, &span.name(day, cx.week, s));
+    span_figures(cx, stated, days.clone());
 
     match span {
         // `alltime::draw` takes the page ahead of `span_page`.
@@ -122,8 +118,12 @@ fn span_page(cx: &mut Ctx, area: Rect, state: &State) {
         Span::Month => month_grid(cx, grid, day),
         Span::Year => year_heatmap(cx, grid, day, state.picked),
     }
-    if listed {
-        book_list(cx, list, state, days);
+    match (listed, span) {
+        // A year names its books by their jackets; a week has room to name
+        // them in full.
+        (true, Span::Year) => cover_grid(cx, list, state, days),
+        (true, _) => book_list(cx, list, state, days),
+        (false, _) => {}
     }
 }
 
@@ -202,50 +202,36 @@ fn picker(cx: &mut Ctx, area: Rect, state: &State) {
     }
 }
 
-/// What a span of this width usually comes to, over the whole record. The one
-/// thing the grid cannot answer: whether the span showing is a lot.
-fn usually(cx: &Ctx, span: Span) -> String {
+/// What the span holding `days` came to: the reading, the days it fell on,
+/// what one of those days averaged, and the books read through inside it.
+fn span_figures(cx: &mut Ctx, area: Rect, days: std::ops::RangeInclusive<i64>) {
     let s = cx.s();
-    let over = cx.stats.covered(cx.today);
-    let each = match span {
-        Span::Week => over / 7,
-        Span::Month => over * 12 / 365,
-        Span::Year => over / 365,
-        Span::AllTime => 1,
-    };
-    let secs = cx.stats.total_seconds / each.max(1);
-    format!("{} {}", s.usually, date::duration(secs, s))
+    let span = cx.stats.tally(days);
+    let stated = [
+        (date::duration_coarse(span.read, s), s.total_read),
+        (span.days_read.to_string(), s.days_read),
+        (date::duration(span.a_day, s), s.a_day),
+        (span.finished.to_string(), s.finished),
+    ];
+    chrome::figures(cx.fb, cx.text, cx.theme, area, &stated);
 }
 
-/// `title` between two arrows, each its own hit box, over a rule, with `under`
-/// set small beneath it.
-fn span_nav(cx: &mut Ctx, area: Rect, title: &str, under: String) {
+/// `title` between two arrows, each its own hit box, over a rule.
+fn span_nav(cx: &mut Ctx, area: Rect, title: &str) {
     let theme: &Theme = cx.theme;
-    let (top, foot) = area.split_top(bar_height(theme));
     cx.text.set_px(theme.head_px);
-    let baseline = top.center_y() + cx.text.cap_height() as i32 / 2;
+    let baseline = area.center_y() + cx.text.cap_height() as i32 / 2;
     let script = cx.ui_script();
     let w = cx.text.measure_width_in(script, title) as i32;
     cx.text.draw_in(
         script,
         cx.fb,
-        top.x + (top.w - w) / 2,
+        area.x + (area.w - w) / 2,
         baseline,
         title,
         false,
     );
-    cx.text.set_px(theme.small_px);
-    let w = cx.text.measure_width_in(script, &under) as i32;
-    cx.text.draw_in(
-        script,
-        cx.fb,
-        foot.x + (foot.w - w) / 2,
-        foot.y + cx.text.cap_height() as i32,
-        &under,
-        false,
-    );
     paint::hline(cx.fb, area.x, area.bottom(), area.w, PALE, 1);
-    let area = top;
 
     // The hit box is `area.w / 6`, past the arrow's own width.
     let reach = area.w / 6;
@@ -536,6 +522,151 @@ fn more_books(cx: &mut Ctx, inner: Rect, lane: usize, over: usize) {
     cx.text.draw(cx.fb, bar.right() - w, baseline, &more, false);
 }
 
+/// The shortest a cover may be drawn: under this the jacket states nothing
+/// and the grid is better off with fewer, larger ones.
+const COVER_FLOOR: i32 = 3;
+
+/// Every book read over `days` as its cover, what was read of it under each.
+///
+/// As many to a row as the width holds and as many rows as the band has
+/// height for; a grid too small for them all is paged from its heading. The
+/// figures under a cover are set to the cover's own width.
+fn cover_grid(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeInclusive<i64>) {
+    let theme: &Theme = cx.theme;
+    let s = cx.s();
+    let total = date::duration(cx.stats.span_seconds(days.clone()), s);
+    let title = format!("{} · {total}", s.what_was_read);
+    let head = Rect::new(
+        area.x,
+        area.y,
+        area.w,
+        chrome::section_height(cx.text, theme),
+    );
+    let whole = chrome::section(cx.fb, cx.text, theme, area, &title);
+    let read = cx.stats.book_totals(days.clone());
+
+    let (unnamed, seconds) = cx.stats.unnamed_over(days);
+    let foot = (unnamed > 0) as i32 * daybooks::note_height(cx);
+    let inner = Rect::new(whole.x, whole.y, whole.w, (whole.h - foot).max(0));
+
+    if read.is_empty() {
+        cx.text.set_px(theme.body_px);
+        let baseline = inner.y + cx.text.line_height() as i32;
+        let script = cx.ui_script();
+        cx.text
+            .draw_in(script, cx.fb, inner.x, baseline, s.nothing_read, false);
+        daybooks::note(
+            cx,
+            Rect::new(whole.x, baseline + theme.gap * 2, whole.w, foot),
+            unnamed,
+            seconds,
+        );
+        return;
+    }
+
+    let (rows, columns, cell) = grid_of(cx, inner);
+    let deep = (rows * columns).max(1) as usize;
+    let from = state.list_from.min(super::last_page_at(read.len(), deep));
+    let to = (from + deep).min(read.len());
+    if read.len() > deep {
+        pager(cx, head, from, to, read.len(), deep);
+    }
+
+    for (slot, (book, secs)) in read[from..to].iter().enumerate() {
+        let at = slot as i32;
+        let box_ = Rect::new(
+            inner.x + (at % columns) * (cell.w + theme.gap),
+            inner.y + (at / columns) * (cell.h + theme.gap),
+            cell.w,
+            cell.h,
+        );
+        jacket(cx, box_, *book, *secs);
+        cx.hit(Hit::Book(*book), box_);
+    }
+    let under = inner.y + (to - from).div_ceil(columns as usize) as i32 * (cell.h + theme.gap);
+    daybooks::note(
+        cx,
+        Rect::new(whole.x, under, whole.w, whole.bottom() - under),
+        unnamed,
+        seconds,
+    );
+}
+
+/// How the grid cuts `inner`: the rows and columns it holds, and one cell.
+///
+/// A cell is a cover with two lines under it, and the cover keeps its own
+/// two-to-three shape, so the columns follow from whatever height the rows
+/// leave.
+fn grid_of(cx: &mut Ctx, inner: Rect) -> (i32, i32, Rect) {
+    let theme: &Theme = cx.theme;
+    cx.text.set_px(theme.small_px);
+    let under = cx.text.line_height() as i32 * 2 + theme.gap / 2;
+    let least = theme.row_h * COVER_FLOOR + under;
+
+    let rows = ((inner.h + theme.gap) / (least + theme.gap)).max(1);
+    let cell_h = (inner.h - theme.gap * (rows - 1)) / rows;
+    let cover_h = (cell_h - under).max(1);
+    let cell_w = cover::width_for(cover_h);
+    let columns = ((inner.w + theme.gap) / (cell_w + theme.gap)).max(1);
+    (rows, columns, Rect::new(0, 0, cell_w, cell_h))
+}
+
+/// One book of the grid: its cover, the reading under it, and how far through
+/// it stands.
+fn jacket(cx: &mut Ctx, box_: Rect, book: usize, secs: i64) {
+    let theme: &Theme = cx.theme;
+    let s = cx.s();
+    cx.text.set_px(theme.small_px);
+    let line = cx.text.line_height() as i32;
+    let (art, under) = box_.split_top((box_.h - line * 2 - theme.gap / 2).max(1));
+    cx.covers
+        .draw(cx.fb, art, &cx.stats.books[book].thumbnail.clone());
+
+    let read = date::duration_tight(secs, s);
+    let stat = &cx.stats.books[book];
+    let percent = match stat.has_percent() {
+        true => format!("{}%", stat.percent.round() as i64),
+        false => String::new(),
+    };
+    // Both lines are set to the cover's own width: a title read for a hundred
+    // hours states a wider figure than the jacket beside it.
+    let px = fitting_px(cx, &[&read, &percent], box_.w);
+    cx.text.set_px(px);
+    let mut baseline = under.y + cx.text.cap_height() as i32;
+    for said in [&read, &percent] {
+        if said.is_empty() {
+            continue;
+        }
+        let w = cx.text.measure_width(said) as i32;
+        cx.text
+            .draw(cx.fb, box_.x + (box_.w - w) / 2, baseline, said, false);
+        baseline += cx.text.line_height() as i32;
+    }
+}
+
+/// The largest size at or under [`Theme::small_px`] that sets every one of
+/// `said` inside `room`.
+fn fitting_px(cx: &mut Ctx, said: &[&str], room: i32) -> f32 {
+    let theme: &Theme = cx.theme;
+    let floor = theme.small_px * 0.6;
+    let mut px = theme.small_px;
+    while px > floor {
+        cx.text.set_px(px);
+        let widest = said
+            .iter()
+            .map(|s| cx.text.measure_width(s) as i32)
+            .max()
+            .unwrap_or(0);
+        if widest <= room {
+            break;
+        }
+        px = (px * room as f32 / widest.max(1) as f32)
+            .min(px - 1.0)
+            .max(floor);
+    }
+    px
+}
+
 /// What was read over `days`, longest first, each row a hit box onto its
 /// book. `picked` narrows the list to one day; the chips at the right of the
 /// heading step through a list deeper than the page.
@@ -757,6 +888,9 @@ mod tests {
     /// A stand-in for `section_height`.
     const HEAD: i32 = 40;
 
+    /// A stand-in for `chrome::figure_height`.
+    const FIGURES: i32 = 90;
+
     /// The panels this screen has to hold up on.
     const PANELS: [(i32, i32); 3] = [(1264, 1680), (1272, 1696), (1860, 2480)];
 
@@ -778,12 +912,13 @@ mod tests {
             let (theme, area) = page(w, h);
             for span in Span::CALENDAR {
                 let listed = lists_books(span);
-                let [picker, nav, grid, list] =
-                    bands(area, &theme, wanted(span, area, &theme), listed);
+                let [picker, nav, stated, grid, list] =
+                    bands(area, &theme, FIGURES, wanted(span, area, &theme), listed);
                 assert_eq!(picker.y, area.y, "{w}x{h} {span:?}");
+                assert_eq!(stated.h, FIGURES, "{w}x{h} {span:?}");
                 let order = match listed {
-                    true => [picker, nav, grid, list],
-                    false => [picker, nav, grid, grid],
+                    true => [picker, nav, stated, grid, list],
+                    false => [picker, nav, stated, grid, grid],
                 };
                 for pair in order.windows(2).filter(|p| p[0] != p[1]) {
                     let air = pair[1].y - pair[0].bottom();
@@ -796,18 +931,17 @@ mod tests {
     }
 
     #[test]
-    fn the_span_name_leaves_room_for_the_line_under_it() {
-        // The name is set at `head_px` and what a span of its width usually
-        // comes to at `small_px`, one over the other.
+    fn every_span_states_its_figures_over_the_grid() {
         for (w, h) in PANELS {
             let (theme, area) = page(w, h);
-            let [_, nav, _, _] = bands(area, &theme, area.h, true);
-            assert_eq!(nav.h, nav_height(&theme), "{w}x{h}");
-            assert!(
-                nav.h >= bar_height(&theme) + theme.small_px as i32,
-                "{w}x{h}: {} px for a name and a line",
-                nav.h
-            );
+            for span in Span::CALENDAR {
+                let want = wanted(span, area, &theme);
+                let [_, nav, stated, grid, _] =
+                    bands(area, &theme, FIGURES, want, lists_books(span));
+                assert!(stated.y > nav.bottom(), "{w}x{h} {span:?}");
+                assert!(stated.bottom() < grid.y, "{w}x{h} {span:?}");
+                assert!(grid.h > stated.h, "{w}x{h} {span:?}: the grid is crowded");
+            }
         }
     }
 
@@ -815,7 +949,7 @@ mod tests {
     fn a_month_gives_its_grid_the_whole_page() {
         for (w, h) in PANELS {
             let (theme, area) = page(w, h);
-            let [_, nav, grid, list] = bands(area, &theme, area.h, false);
+            let [_, nav, _, grid, list] = bands(area, &theme, FIGURES, area.h, false);
             assert_eq!(list.h, 0, "{w}x{h}");
             assert_eq!(grid.bottom(), area.bottom(), "{w}x{h}");
             assert!(
@@ -833,7 +967,7 @@ mod tests {
             let (theme, area) = page(w, h);
             for span in [Span::Week, Span::Year] {
                 let want = wanted(span, area, &theme);
-                let [_, _, grid, list] = bands(area, &theme, want, true);
+                let [_, _, _, grid, list] = bands(area, &theme, FIGURES, want, true);
                 assert_eq!(grid.h, want, "{w}x{h} {span:?}: the grid was cut");
                 let rows = (list.h - HEAD) / theme.row_h;
                 let want = match span {
@@ -850,7 +984,7 @@ mod tests {
         for (w, h) in PANELS {
             let (theme, area) = page(w, h);
             let want = wanted(Span::Week, area, &theme);
-            let [_, _, grid, _] = bands(area, &theme, want, true);
+            let [_, _, _, grid, _] = bands(area, &theme, FIGURES, want, true);
             let (_, cells) = grid.split_top(charts::weekday_head_height(&theme));
             let laid = charts::week_cells(cells, 0, theme.gap);
             assert_eq!(laid.len(), 7, "{w}x{h}");
@@ -873,7 +1007,7 @@ mod tests {
     fn a_month_cell_stacks_its_date_its_lanes_and_its_hours() {
         for (w, h) in PANELS {
             let (theme, area) = page(w, h);
-            let [_, _, grid, _] = bands(area, &theme, area.h, false);
+            let [_, _, _, grid, _] = bands(area, &theme, FIGURES, area.h, false);
             let (_, cells) = grid.split_top(charts::weekday_head_height(&theme));
             let laid = charts::month_cells(cells, 2026, 8, theme.gap, WeekStart::Monday);
             let inner = laid[0].1.inset(theme.gap / 2);
@@ -891,9 +1025,6 @@ mod tests {
             );
         }
     }
-
-    /// A stand-in for `chrome::figure_height`.
-    const FIGURES: i32 = 90;
 
     /// The list `day_page` draws the day's books into, on a `w` by `h` panel.
     fn day_list(w: i32, h: i32) -> (Theme, Rect) {
@@ -943,7 +1074,7 @@ mod tests {
         let theme = Theme::for_screen(1264, 1680);
         let area = Rect::new(0, 0, 1186, 300);
         for listed in [true, false] {
-            let out = bands(area, &theme, 900, listed);
+            let out = bands(area, &theme, FIGURES, 900, listed);
             for band in out {
                 assert!(band.h >= 0, "{band:?}");
                 assert!(band.y >= area.y, "{band:?} starts above the page");

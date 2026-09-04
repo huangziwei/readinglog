@@ -99,15 +99,29 @@ pub struct Sitting {
     pub hours: Vec<(u8, i64)>,
 }
 
-/// The days an average month is stated over, the months themselves being of
-/// unequal length.
-const DAYS_A_MONTH: i64 = 30;
-
-/// How wide one band of the sitting histogram is, and how many there are:
-/// five minutes a band to two hours, and one more holding everything above,
-/// so the axis closes on a round `2h+` rather than mid-step.
+/// The sitting histogram: five minutes a band to two hours, and one more band
+/// holding everything above, so the axis closes on a round `2h+` rather than
+/// mid-step.
 pub const SITTING_STEP_SECS: i64 = 5 * 60;
 pub const SITTING_BANDS: usize = 25;
+
+/// The shortest run the histogram counts as reading at all.
+///
+/// A book opened and shut again leaves a run of seconds, and there are enough
+/// of them to stand over every real sitting on the chart.
+pub const SITTING_FLOOR_SECS: i64 = 60;
+
+/// What a stretch of days came to, from [`Stats::tally`].
+pub struct Tally {
+    /// Seconds read over the stretch.
+    pub read: i64,
+    /// Days of it with any reading on them.
+    pub days_read: i64,
+    /// What one of those days averaged.
+    pub a_day: i64,
+    /// Books the catalog states read through, finished inside the stretch.
+    pub finished: i64,
+}
 
 /// The record folded onto one cycle, from [`Stats::average_day`] and its kin.
 pub struct Fold {
@@ -376,23 +390,28 @@ impl Stats {
     }
 
     /// The record folded onto one day: the seconds each of the twenty-four
-    /// hours holds in an average day.
+    /// hours holds in an average day read on.
     ///
-    /// Every day holds all twenty-four hours, so every bucket takes the same
-    /// divisor.
+    /// Every such day holds all twenty-four hours, so every bucket takes the
+    /// same divisor.
     pub fn average_day(&self, today: i64) -> Fold {
-        let days = self.covered(today);
-        let hours = self.hours_over(self.opened(today)..=today);
+        let over = self.opened(today)..=today;
+        // Over the days there was reading on, which is what `a day` means
+        // wherever the app states one, so the hours sum to the figure over
+        // them and to [`Tally::a_day`].
+        let days = self.days_over(over.clone()).max(1);
+        let hours = self.hours_over(over.clone());
         let values = hours.iter().map(|secs| secs / days).collect();
-        self.fold(values, self.total_seconds / days)
+        self.fold(values, self.tally(over).a_day)
     }
 
     /// The record folded onto one week, from whichever day `week` starts on:
     /// the seconds each weekday holds in an average week.
     pub fn average_week(&self, today: i64, week: WeekStart) -> Fold {
-        let counted = self.weekdays_over(self.opened(today)..=today);
+        let over = self.opened(today)..=today;
+        let counted = self.weekdays_over(over.clone());
         let mut seen = [0i64; 7];
-        for day in self.opened(today)..=today {
+        for day in over.clone() {
             seen[date::weekday(day)] += 1;
         }
         let values = (0..7)
@@ -401,33 +420,30 @@ impl Stats {
                 counted[day] / seen[day].max(1)
             })
             .collect();
-        let weeks = (self.covered(today) / 7).max(1);
-        self.fold(values, self.total_seconds / weeks)
+        let days = over.end() - over.start() + 1;
+        self.fold(values, self.span_seconds(over) * 7 / days.max(1))
     }
 
-    /// The record folded onto one year: what each month of the year holds over
-    /// thirty days of it.
-    pub fn average_year(&self, today: i64) -> Fold {
+    /// The record laid out by month of the year: what was read in each,
+    /// summed over every occurrence of that month the record holds.
+    ///
+    /// A total, not an average. A month the record covers four times stands
+    /// against one it covers three, which is what a total of that month says.
+    pub fn by_month(&self, today: i64) -> Fold {
         let counted = self.months_over(self.opened(today)..=today);
-        let mut seen = [0i64; 12];
-        for day in self.opened(today)..=today {
-            let (_, month, _) = date::civil_from_days(day);
-            seen[(month - 1).clamp(0, 11) as usize] += 1;
-        }
-        let values = (0..12)
-            .map(|at| counted[at] * DAYS_A_MONTH / seen[at].max(1))
-            .collect();
-        // Hundredths of a year, so a record under a year long still divides.
-        let years = (self.covered(today) * 100 / 36_525).max(1);
-        self.fold(values, self.total_seconds / years)
+        let total = counted.iter().sum();
+        self.fold(counted.to_vec(), total)
     }
 
-    /// How many sittings of the record ran each length, one count per band of
+    /// How many sittings of the record ran each length    /// How many sittings of the record ran each length, one count per band of
     /// [`SITTING_STEP_SECS`], the last holding every sitting past the top of
-    /// the scale.
+    /// the scale. A run under [`SITTING_FLOOR_SECS`] is not counted at all.
     pub fn sitting_bands(&self) -> Vec<i64> {
         let mut out = vec![0i64; SITTING_BANDS];
         for sitting in &self.sittings {
+            if sitting.seconds < SITTING_FLOOR_SECS {
+                continue;
+            }
             let at = (sitting.seconds / SITTING_STEP_SECS).clamp(0, SITTING_BANDS as i64 - 1);
             out[at as usize] += 1;
         }
@@ -441,6 +457,36 @@ impl Stats {
             .filter(|(d, _)| days.contains(d))
             .map(|(_, secs)| secs)
             .sum()
+    }
+
+    /// What a stretch of days came to. Every screen stating these states them
+    /// the same way: the board over the whole record, a span page over its own
+    /// days.
+    pub fn tally(&self, days: std::ops::RangeInclusive<i64>) -> Tally {
+        let read = self.span_seconds(days.clone());
+        let days_read = self.days_over(days.clone());
+        Tally {
+            read,
+            days_read,
+            // Over the days there was reading on, which is the figure beside
+            // it: `read` divided by `days_read` is `a_day`.
+            a_day: read / days_read.max(1),
+            finished: self.finished_over(days),
+        }
+    }
+
+    /// Days of `days` with any reading on them.
+    pub fn days_over(&self, days: std::ops::RangeInclusive<i64>) -> i64 {
+        self.days.iter().filter(|(d, _)| days.contains(d)).count() as i64
+    }
+
+    /// Books the catalog states read through whose last sitting falls inside
+    /// `days`: the books finished over that stretch.
+    pub fn finished_over(&self, days: std::ops::RangeInclusive<i64>) -> i64 {
+        self.books
+            .iter()
+            .filter(|b| b.is_finished() && days.contains(&b.last_day))
+            .count() as i64
     }
 
     /// Days with any reading at all.
@@ -611,11 +657,90 @@ mod tests {
     }
 
     #[test]
-    fn a_month_of_the_year_is_divided_by_how_often_it_came_round() {
-        // A record opening in July 2023 and running to September 2024 holds
-        // two Augusts and one October, both months of 31 days. An hour read in
-        // each August and one in the October: the fold states them level,
-        // whatever the sums come to.
+    fn every_month_the_record_touches_states_what_was_read_in_it() {
+        // A record opening on 27 July and running to 4 September: five days of
+        // July, all of August, four of September. Each month states its own
+        // reading, whatever share of that month the record holds.
+        let days: Vec<i64> = (at(2026, 7, 27)..=at(2026, 9, 4)).collect();
+        let today = at(2026, 9, 5);
+        let stats = Stats::build(&on_days(&days, 3600), today, true);
+
+        let fold = stats.by_month(today);
+        assert_eq!(fold.values[6], 5 * 3600, "five days of July");
+        assert_eq!(fold.values[7], 31 * 3600, "August whole");
+        assert_eq!(fold.values[8], 4 * 3600, "four days of September");
+        assert_eq!(fold.busiest, Some(7));
+        assert_eq!(fold.each, 40 * 3600, "the twelve months are the record");
+    }
+
+    #[test]
+    fn the_board_and_a_span_state_the_same_stretch_the_same_way() {
+        // Ten days of an hour, three of them empty, so days read and days
+        // covered differ and the two figures cannot agree by accident.
+        let days: Vec<i64> = (0..10)
+            .filter(|i| i % 4 != 0)
+            .map(|i| at(2026, 3, 1) + i)
+            .collect();
+        let today = at(2026, 3, 11);
+        let stats = Stats::build(&on_days(&days, 3600), today, true);
+
+        let whole = stats.tally(stats.opened(today)..=today);
+        let march = stats.tally(at(2026, 3, 1)..=at(2026, 3, 31));
+        assert_eq!(whole.read, march.read);
+        assert_eq!(whole.days_read, march.days_read);
+        assert_eq!(whole.a_day, march.a_day);
+        assert_eq!(whole.days_read, days.len() as i64);
+        // The figure beside it: what was read over the days it was read on.
+        assert_eq!(whole.a_day, whole.read / whole.days_read);
+    }
+
+    #[test]
+    fn a_book_opened_and_shut_is_not_a_sitting() {
+        let today = at(2026, 3, 2);
+        let day = at(2026, 3, 1);
+        let mut store = on_days(&[day], SITTING_FLOOR_SECS - 1);
+        let long = on_days(&[day], SITTING_FLOOR_SECS + 60);
+        store.sessions.extend(long.sessions);
+        let stats = Stats::build(&store, today, true);
+
+        let bands = stats.sitting_bands();
+        assert_eq!(
+            bands.iter().sum::<i64>(),
+            1,
+            "the run of seconds is dropped"
+        );
+        assert_eq!(
+            bands[0], 1,
+            "the two-minute one is a short sitting, not none"
+        );
+    }
+
+    #[test]
+    fn an_average_day_is_the_figure_the_board_states_beside_it() {
+        // Ten days of an hour, three of them empty: `a day` is what was read
+        // over the days it was read on, and one number wherever it is stated.
+        let days: Vec<i64> = (0..10)
+            .filter(|i| i % 4 != 0)
+            .map(|i| at(2026, 3, 1) + i)
+            .collect();
+        let today = at(2026, 3, 10);
+        let stats = Stats::build(&on_days(&days, 3600), today, true);
+
+        let board = stats.tally(stats.opened(today)..=today);
+        let fold = stats.average_day(today);
+        assert_eq!(fold.each, board.a_day);
+        assert_eq!(fold.each, 3600, "an hour on a day read on");
+        assert_eq!(
+            fold.values.iter().sum::<i64>(),
+            fold.each,
+            "the hours of the fold are the day it states"
+        );
+    }
+
+    #[test]
+    fn a_month_of_the_year_sums_every_occurrence_the_record_holds() {
+        // Two Augusts of an hour each against one October of an hour: a total
+        // states two hours against one.
         let days = [
             at(2023, 7, 1),
             at(2023, 8, 10),
@@ -624,17 +749,9 @@ mod tests {
         ];
         let today = at(2024, 9, 1);
         let stats = Stats::build(&on_days(&days, 3600), today, true);
-
-        let raw = stats.months_over(stats.opened(today)..=today);
-        assert_eq!(raw[7], 7200, "two Augusts of an hour each");
-        assert_eq!(raw[9], 3600, "one October of an hour");
-
-        let fold = stats.average_year(today);
-        let (august, october) = (fold.values[7], fold.values[9]);
-        assert_eq!(
-            august, october,
-            "August {august} against October {october}: the divisor is missing"
-        );
+        let fold = stats.by_month(today);
+        assert_eq!(fold.values[7], 7200, "two Augusts");
+        assert_eq!(fold.values[9], 3600, "one October");
     }
 
     #[test]
@@ -669,7 +786,7 @@ mod tests {
         for fold in [
             stats.average_day(today),
             stats.average_week(today, WeekStart::Monday),
-            stats.average_year(today),
+            stats.by_month(today),
         ] {
             assert!(fold.busiest.is_none());
             assert_eq!(fold.each, 0);

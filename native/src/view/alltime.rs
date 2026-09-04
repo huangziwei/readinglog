@@ -10,7 +10,7 @@
 
 use crate::date;
 use crate::lang::Strings;
-use crate::stats::{Fold, SITTING_BANDS, SITTING_STEP_SECS};
+use crate::stats::{Fold, SITTING_BANDS, SITTING_FLOOR_SECS, SITTING_STEP_SECS};
 use crate::ui::paint::{self, LIGHT, PALE, Rect};
 use crate::ui::theme::Theme;
 use crate::ui::{charts, chrome};
@@ -127,9 +127,9 @@ fn trends(cx: &mut Ctx, area: Rect) {
         .collect();
     band(cx, rows[1], cx.s().an_average_week, &week, &names, 1);
 
-    let year = cx.stats.average_year(cx.today);
+    let year = cx.stats.by_month(cx.today);
     let names: Vec<String> = cx.s().months_short.iter().map(|m| m.to_string()).collect();
-    band(cx, rows[2], cx.s().an_average_year, &year, &names, 1);
+    band(cx, rows[2], cx.s().by_month, &year, &names, 1);
 
     sittings(cx, rows[3]);
 }
@@ -174,7 +174,9 @@ fn duration_rows(secs: i64, s: &Strings) -> Vec<String> {
         return Vec::new();
     }
     let space = if s.unit_space { " " } else { "" };
-    let (hours, mins) = (secs / 3600, (secs % 3600) / 60);
+    // Rounded, as [`date::duration`] is: a bar and the heading over it state
+    // the same seconds and must state them alike.
+    let (hours, mins) = date::hours_and_minutes(secs);
     let hour = format!("{hours}{space}{}", s.hours);
     let min = format!("{mins}{space}{}", s.minutes);
     match (hours, mins) {
@@ -223,8 +225,9 @@ fn sittings(cx: &mut Ctx, area: Rect) {
 /// The length the band at `at` opens at, for the axis under it. The last band
 /// holds everything above its own opening, and says so.
 fn sitting_name(at: usize, s: &Strings) -> String {
+    // The scale opens where a run first counts as reading, not at zero.
     if at == 0 {
-        return "0".into();
+        return date::duration_tight(SITTING_FLOOR_SECS, s);
     }
     let secs = at as i64 * SITTING_STEP_SECS;
     let opens = match secs % 3600 {
@@ -249,8 +252,9 @@ fn finished_books(cx: &Ctx) -> Vec<usize> {
 /// The twelve figures, row by row.
 fn cells(cx: &Ctx) -> Vec<Cell> {
     let s = cx.s();
-    let over = (cx.today - opened(cx) + 1).max(1);
-    let read = cx.stats.days_read().max(1);
+    // The board states what the whole record came to, the same way a span
+    // page states its own days.
+    let all = cx.stats.tally(opened(cx)..=cx.today);
     let sittings = (cx.stats.sittings.len() as i64).max(1);
     // Every book the record holds, whether or not the shelf can name it.
     let books = (cx.stats.books.len() + cx.stats.unnamed_books()) as i64;
@@ -259,12 +263,12 @@ fn cells(cx: &Ctx) -> Vec<Cell> {
     let (sat_on, sat_secs) = longest_sitting(cx);
 
     vec![
-        plain(hours(cx.stats.total_seconds, s), s.total_read),
-        plain(read.to_string(), s.days_read),
-        plain(date::duration(cx.stats.total_seconds / over, s), s.a_day),
+        plain(date::duration_coarse(all.read, s), s.total_read),
+        plain(all.days_read.to_string(), s.days_read),
+        plain(date::duration(all.a_day, s), s.a_day),
         plain(books.to_string(), s.book_count),
         Cell {
-            value: finished.len().to_string(),
+            value: all.finished.to_string(),
             label: s.finished,
             opens: (!finished.is_empty()).then_some(Hit::Shelved(Shelf::Finished)),
         },

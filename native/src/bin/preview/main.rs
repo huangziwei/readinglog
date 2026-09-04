@@ -91,6 +91,8 @@ struct Opts {
     day: i64,
     out: PathBuf,
     art: PathBuf,
+    /// A store to draw in place of the fixture, by the directory holding it.
+    store: Option<PathBuf>,
     sheet: Option<String>,
     scale: u32,
     crop: Option<sheet::Crop>,
@@ -109,6 +111,7 @@ impl Default for Opts {
             day: date::days_from_civil(DAY.0, DAY.1, DAY.2),
             out: PathBuf::from(OUT),
             art: PathBuf::from(ART),
+            store: None,
             sheet: None,
             scale: 40,
             crop: None,
@@ -135,7 +138,10 @@ fn run() -> Result<()> {
     std::fs::create_dir_all(&opts.art).context("make the cover directory")?;
     let standing = shots_in(&opts.out);
 
-    let library = fixture::library(opts.day, &opts.art);
+    let library = match &opts.store {
+        Some(dir) => Store::load(dir),
+        None => fixture::library(opts.day, &opts.art),
+    };
     let mut tiles: Vec<sheet::Tile> = Vec::new();
     let mut wrote: Vec<PathBuf> = Vec::new();
     for (w, h) in opts.panels.iter().copied() {
@@ -376,6 +382,7 @@ fn read_args(args: impl Iterator<Item = String>) -> Result<Opts> {
             "--hide-unnamed" => opts.unnamed = false,
             "--out" => opts.out = PathBuf::from(value()?),
             "--art" => opts.art = PathBuf::from(value()?),
+            "--store" => opts.store = Some(PathBuf::from(value()?)),
             "--sheet" => opts.sheet = Some(value()?),
             "--scale" => opts.scale = value()?.parse().context("--scale wants a percentage")?,
             "--crop" => {
