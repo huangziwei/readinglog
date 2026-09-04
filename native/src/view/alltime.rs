@@ -169,7 +169,7 @@ fn band(cx: &mut Ctx, area: Rect, name: &str, fold: &Fold, axis: &[String], ever
 /// minute part stack, so `2h 22m` is fitted to the width of `22m` and not of
 /// both. A bucket holding under a minute states nothing, its bar being a
 /// hairline that a figure would stand over as a speck of dirt.
-fn duration_rows(secs: i64, s: &Strings) -> Vec<String> {
+pub(super) fn duration_rows(secs: i64, s: &Strings) -> Vec<String> {
     if secs < 60 {
         return Vec::new();
     }
@@ -359,10 +359,8 @@ fn span_line(cx: &mut Ctx, area: Rect) {
     let first = opened(cx);
     let over = (cx.today - first + 1).max(1);
     let (year, month, _) = date::civil_from_days(first);
-    let line = s
-        .since_days
-        .replace("{m}", &date::month_name(year, month, s).to_uppercase())
-        .replace("{d}", &over.to_string());
+    let line = crate::lang::counted(s.since_days, over)
+        .replace("{m}", &date::month_name(year, month, s).to_uppercase());
     cx.text.set_px(cx.theme.small_px);
     let baseline = area.y + cx.text.cap_height() as i32;
     let script = cx.ui_script();

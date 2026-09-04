@@ -13,8 +13,9 @@ use crate::ui::{charts, theme::Theme};
 
 use super::Ctx;
 
-/// How many days of a book's own history the strip along the bottom shows.
-const RECENT_DAYS: i64 = 30;
+/// The most columns the strip along the bottom is cut into. A book read over
+/// more days than this gives each column a block of them.
+const SPAN_COLUMNS: i64 = 30;
 
 /// Lines a title takes before the rest of it is ellipsized.
 const TITLE_LINES: usize = 2;
@@ -87,35 +88,41 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
         chrome::row(cx.fb, cx.text, theme, *row, key, value);
     }
 
-    let inner = chrome::section(cx.fb, cx.text, theme, chart, s.last_thirty_days);
-    let last = cx.today;
-    let series: Vec<i64> = {
-        let days = cx.stats.book_days(index);
-        (0..RECENT_DAYS)
-            .map(|i| {
-                let day = last - RECENT_DAYS + 1 + i;
-                days.iter()
-                    .find(|(d, _)| *d == day)
-                    .map_or(0, |(_, secs)| *secs)
-            })
-            .collect()
-    };
+    // The strip is anchored on the book's own stretch of days and never on
+    // `cx.today`: a book put down in the spring states its reading, not an
+    // empty summer.
+    let (opened, closed) = (book.first_day, book.last_day);
+    let span = (closed - opened + 1).max(1);
+    // The dates are the axis's to state; two short days in the heading name no
+    // year, and a book read across one then reads as a fortnight.
+    let named = crate::lang::counted(s.the_journey, span);
+    let inner = chrome::section(cx.fb, cx.text, theme, chart, &named);
+    let (series, each) = journey(cx, index, opened, closed);
     charts::columns(
         cx.fb,
         cx.text,
         theme,
         inner,
         &series,
-        move |i| {
-            let day = last - RECENT_DAYS + 1 + i as i64;
-            let (_, _, dom) = date::civil_from_days(day);
-            dom.to_string()
-        },
-        // A fortnight of bars this narrow has no room for figures on them.
-        &|_| Vec::new(),
-        7,
+        move |at| date::short_day(opened + at as i64 * each, s),
+        &|secs| super::alltime::duration_rows(secs, s),
+        (series.len() / 4).max(1),
         None,
     );
+}
+
+/// The seconds read in each column of the strip, and the days one column
+/// covers. A book read over [`SPAN_COLUMNS`] days or fewer gets a column each.
+fn journey(cx: &Ctx, index: usize, opened: i64, closed: i64) -> (Vec<i64>, i64) {
+    let span = (closed - opened + 1).max(1);
+    let each = (span + SPAN_COLUMNS - 1) / SPAN_COLUMNS;
+    let columns = ((span + each - 1) / each).max(1) as usize;
+    let mut series = vec![0i64; columns];
+    for (day, secs) in cx.stats.book_days(index) {
+        let at = ((day - opened) / each).clamp(0, columns as i64 - 1) as usize;
+        series[at] += secs;
+    }
+    (series, each)
 }
 
 /// The cover, the title beside it, and the progress bar under both.
@@ -127,13 +134,16 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat) {
     // `top` stops `theme.gap * 2` above `foot`.
     let top = Rect::new(top.x, top.y, top.w, (top.h - theme.gap * 2).max(1));
     let (art, rest) = top.split_left(cover::width_for(top.h));
+    // The words stand against the jacket's own edges: its title tops with the
+    // cover and its figures stand on the same foot.
+    let jacket = cx.covers.box_in(art, &book.thumbnail);
     cx.covers.draw(cx.fb, art, &book.thumbnail);
 
     let words = Rect::new(
-        art.right() + theme.gap * 2,
-        top.y,
-        (rest.w - theme.gap * 2).max(1),
-        top.h,
+        jacket.right() + theme.gap * 2,
+        jacket.y,
+        (rest.w + art.right() - jacket.right() - theme.gap * 2).max(1),
+        jacket.h,
     );
 
     cx.text.set_px(theme.head_px);
@@ -174,9 +184,42 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat) {
         paint::progress(cx.fb, track, book.percent as i64, 100, INK);
         cx.text.set_px(theme.small_px);
         let pct = format!("{}% {}", book.percent.round() as i64, s.read);
-        cx.text
-            .draw(cx.fb, foot.x, track.y - theme.gap / 2, &pct, false);
+        let baseline = track.y - theme.gap / 2;
+        cx.text.draw(cx.fb, foot.x, baseline, &pct, false);
+        if book.is_finished() {
+            finished_chip(cx, foot, baseline);
+        }
     }
+}
+
+/// A book read through, stated at the right of the line the progress bar
+/// carries. Filled, where every other chip on a screen is outlined: this one
+/// is not a control and states a book's one end state.
+fn finished_chip(cx: &mut Ctx, line: Rect, baseline: i32) {
+    let theme: &Theme = cx.theme;
+    let said = cx.s().shelf_finished;
+    let script = cx.ui_script();
+    cx.text.set_px(theme.small_px);
+    let (w, cap) = (
+        cx.text.measure_width_in(script, said) as i32,
+        cx.text.cap_height() as i32,
+    );
+    let h = cx.text.line_height() as i32 + theme.gap / 2;
+    let chip = Rect::new(
+        line.right() - w - theme.gap * 2,
+        baseline - cap / 2 - h / 2,
+        w + theme.gap * 2,
+        h,
+    );
+    paint::fill(cx.fb, chip, INK);
+    cx.text.draw_in(
+        script,
+        cx.fb,
+        chip.x + theme.gap,
+        chip.center_y() + cap / 2,
+        said,
+        true,
+    );
 }
 
 /// The book's three headline figures, along the foot of the words column.

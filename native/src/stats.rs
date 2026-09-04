@@ -65,11 +65,17 @@ impl BookStat {
         }
     }
 
-    /// What is left to read, at this book's own rate.
+    /// What is left to read, at this book's own rate. Zero on a book read
+    /// through.
     ///
-    /// `None` where `percent` falls outside `0.5..99.5`, or `seconds` is zero.
+    /// `None` is "no answer", not "none left": a book the catalog states no
+    /// percent for, one barely opened, and one with no time against it can
+    /// none of them be estimated.
     pub fn time_left(&self) -> Option<i64> {
-        if !(0.5..99.5).contains(&self.percent) || self.seconds <= 0 {
+        if self.is_finished() {
+            return Some(0);
+        }
+        if self.percent < 0.5 || self.percent >= 99.5 || self.seconds <= 0 {
             return None;
         }
         Some((self.seconds as f64 * (100.0 - self.percent) / self.percent) as i64)

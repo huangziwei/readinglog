@@ -30,6 +30,23 @@ pub struct Covers {
 }
 
 impl Covers {
+    /// The box the cover for `path` fills inside `area`, centred and keeping
+    /// its aspect. `area` itself where the cover cannot be read.
+    ///
+    /// Anything set beside a cover aligns on this and not on `area`: a jacket
+    /// of another shape stands centred inside `area` with air above and below
+    /// it, and a row aligned on `area` then aligns on nothing.
+    pub fn box_in(&mut self, area: Rect, path: &str) -> Rect {
+        let key = (path.to_string(), area.h);
+        let thumb = self
+            .cache
+            .entry(key)
+            .or_insert_with(|| decode(path, area.w, area.h));
+        let Some(thumb) = thumb else { return area };
+        let (w, h) = (thumb.w as i32, thumb.h as i32);
+        Rect::new(area.x + (area.w - w) / 2, area.y + (area.h - h) / 2, w, h)
+    }
+
     /// Draw the cover for `path` inside `area`, centred, keeping its aspect.
     ///
     /// A `path` naming nothing, or a file that will not decode, gets a plain

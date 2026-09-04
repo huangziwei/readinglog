@@ -342,12 +342,26 @@ pub fn columns(
         if stated && !said[at].is_empty() {
             draw_figure(fb, text, theme, bar, &said[at], px);
         }
-        if at % every.max(1) == 0 || at + 1 == values.len() {
-            text.set_px(theme.small_px);
-            let name = axis(at);
-            let w = text.measure_width(&name) as i32;
-            text.draw(fb, cell.x + (cell.w - w) / 2, foot.y + line, &name, false);
+    }
+
+    // The axis is named from the right, so the last bucket — the one that can
+    // carry an overflow — always states itself and an earlier name gives way
+    // where the two would run together.
+    let mut marks: Vec<usize> = (0..values.len()).step_by(every.max(1)).collect();
+    if marks.last() != Some(&(values.len() - 1)) {
+        marks.push(values.len() - 1);
+    }
+    text.set_px(theme.small_px);
+    let mut reach = i32::MAX;
+    for at in marks.into_iter().rev() {
+        let name = axis(at);
+        let w = text.measure_width(&name) as i32;
+        let x = cells[at].x + (cells[at].w - w) / 2;
+        if x + w + theme.gap > reach {
+            continue;
         }
+        text.draw(fb, x, foot.y + line, &name, false);
+        reach = x;
     }
 }
 

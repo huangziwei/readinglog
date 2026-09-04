@@ -4,6 +4,25 @@
 
 use std::path::Path;
 
+/// `template` with `{d}` set to `count`, and an ending in brackets kept only
+/// where `count` is not one.
+///
+/// `{d} DAY[S]` reads "1 DAY" and "30 DAYS"; a language whose noun does not
+/// change with the number writes no brackets and gets the one form.
+pub fn counted(template: &str, count: i64) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut dropping = false;
+    for ch in template.chars() {
+        match ch {
+            '[' => dropping = count == 1,
+            ']' => dropping = false,
+            _ if dropping => {}
+            _ => out.push(ch),
+        }
+    }
+    out.replace("{d}", &count.to_string())
+}
+
 /// The languages the interface is written in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lang {
@@ -231,7 +250,9 @@ pub struct Strings {
     pub on_the_device: &'static str,
     pub yes: &'static str,
     pub no_removed: &'static str,
-    pub last_thirty_days: &'static str,
+    /// The heading over a book's own reading, start to finish. `{d}` is the
+    /// days it spans, filled by [`counted`].
+    pub the_journey: &'static str,
     pub read: &'static str,
     pub left: &'static str,
 
@@ -303,7 +324,7 @@ const ENGLISH: Strings = Strings {
     month: "Month",
     year: "Year",
 
-    since_days: "SINCE {m} · {d} DAYS",
+    since_days: "SINCE {m} · {d} DAY[S]",
     total_read: "read",
     days_read: "days read",
     a_day: "a day",
@@ -345,7 +366,7 @@ const ENGLISH: Strings = Strings {
     on_the_device: "On the device",
     yes: "yes",
     no_removed: "no, removed",
-    last_thirty_days: "THE LAST THIRTY DAYS",
+    the_journey: "THE JOURNEY · {d} DAY[S]",
     read: "read",
     left: "left",
 
@@ -420,7 +441,7 @@ const GERMAN: Strings = Strings {
     month: "Monat",
     year: "Jahr",
 
-    since_days: "SEIT {m} · {d} TAGE",
+    since_days: "SEIT {m} · {d} TAG[E]",
     total_read: "gelesen",
     days_read: "Tage gelesen",
     a_day: "pro Tag",
@@ -462,7 +483,7 @@ const GERMAN: Strings = Strings {
     on_the_device: "Auf dem Gerät",
     yes: "ja",
     no_removed: "nein, entfernt",
-    last_thirty_days: "DIE LETZTEN DREISSIG TAGE",
+    the_journey: "DER VERLAUF · {d} TAG[E]",
     read: "gelesen",
     left: "übrig",
 
@@ -580,7 +601,7 @@ const JAPANESE: Strings = Strings {
     on_the_device: "端末内",
     yes: "あり",
     no_removed: "なし、削除済み",
-    last_thirty_days: "この三十日間",
+    the_journey: "読書の歩み · {d}日",
     read: "読了",
     left: "残り",
 
@@ -685,7 +706,7 @@ const SIMPLIFIED: Strings = Strings {
     on_the_device: "在设备上",
     yes: "是",
     no_removed: "否，已删除",
-    last_thirty_days: "最近三十天",
+    the_journey: "阅读历程 · {d}天",
     read: "已读",
     left: "剩余",
 
@@ -801,7 +822,7 @@ const TRADITIONAL: Strings = Strings {
     on_the_device: "在裝置上",
     yes: "是",
     no_removed: "否，已刪除",
-    last_thirty_days: "最近三十天",
+    the_journey: "閱讀歷程 · {d}天",
     read: "已讀",
     left: "剩餘",
 
@@ -858,6 +879,26 @@ const TRADITIONAL: Strings = Strings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_counted_template_takes_the_ending_that_goes_with_its_number() {
+        assert_eq!(counted("{d} DAY[S]", 1), "1 DAY");
+        assert_eq!(counted("{d} DAY[S]", 30), "30 DAYS");
+        assert_eq!(counted("SEIT {m} · {d} TAG[E]", 1), "SEIT {m} · 1 TAG");
+        // A language whose noun does not change writes no brackets.
+        assert_eq!(counted("{d}\u{65e5}", 1), "1\u{65e5}");
+        // Every language's own line reads for one day and for many.
+        for lang in Lang::ALL {
+            let s = lang.strings();
+            for said in [s.since_days, s.the_journey] {
+                for n in [1, 30] {
+                    let out = counted(said, n);
+                    assert!(!out.contains(['[', ']']), "{lang:?}: {out}");
+                    assert!(out.contains(&n.to_string()), "{lang:?}: {out}");
+                }
+            }
+        }
+    }
+
     use super::*;
 
     /// Every `posix.id.*` in `/opt/amazon/ebook/config/locales/*.properties`
