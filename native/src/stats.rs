@@ -53,18 +53,10 @@ impl BookStat {
     }
 
     /// The percentage every figure and every bar for this book takes, rounded
-    /// once. Under `finished` it is 100, whatever `percent` holds.
+    /// once. Below zero outside [`Self::has_percent`]. `finished` does not
+    /// carry it: a book marked at 55 per cent stands at 55 per cent.
     pub fn percent_shown(&self) -> i64 {
-        match self.finished {
-            true => 100,
-            false => self.percent.round() as i64,
-        }
-    }
-
-    /// Where the reading stands, rounded once. `None` outside
-    /// [`Self::has_percent`].
-    pub fn position_shown(&self) -> Option<i64> {
-        self.has_percent().then(|| self.percent.round() as i64)
+        self.percent.round() as i64
     }
 
     /// Whether this book can be opened: `on_device`, and a `location` the
@@ -718,33 +710,22 @@ mod tests {
         store
     }
     #[test]
-    fn a_marked_book_states_a_hundred_and_marks_where_the_reader_stands() {
+    fn a_marked_book_holds_the_percentage_the_catalog_states() {
         let mut book = fresh(1, &BookRecord::default(), 0);
         book.percent = 55.4;
-        // Unmarked, `percent_shown` and `position_shown` state one figure.
-        assert_eq!(
-            (book.percent_shown(), book.position_shown()),
-            (55, Some(55))
-        );
+        assert_eq!(book.percent_shown(), 55);
         assert!(!book.is_finished());
 
-        // Marked, `percent_shown` holds at 100 and `position_shown` stands.
         book.finished = true;
-        assert_eq!(
-            (book.percent_shown(), book.position_shown()),
-            (100, Some(55))
-        );
+        assert_eq!(book.percent_shown(), 55);
         assert!(book.is_finished());
 
         book.percent = 100.0;
-        assert_eq!(
-            (book.percent_shown(), book.position_shown()),
-            (100, Some(100))
-        );
-        // A book the catalog states no percentage for marks no place.
+        assert_eq!(book.percent_shown(), 100);
+        // A book the catalog states no percentage for keeps its bar and its
+        // figure off, marked or not.
         book.percent = -1.0;
-        assert_eq!((book.percent_shown(), book.position_shown()), (100, None));
-        assert!(book.is_finished());
+        assert!(!book.has_percent() && book.is_finished());
     }
 
     #[test]

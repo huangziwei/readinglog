@@ -436,12 +436,12 @@ const ENGLISH: Strings = Strings {
     continue_short: "Continue",
     mark_finished: "Mark Finished",
     mark_ask: "Mark this book finished?",
-    mark_note: "It goes to 100%, and onto the Finished shelf. The time, the sittings \
-                and the days read are not changed.",
+    mark_note: "It goes onto the Finished shelf, and the library marks it read. The \
+                progress, the time, the sittings and the days read do not change.",
     mark_unfinished: "Mark Unfinished",
     unmark_ask: "Remove the Finished mark?",
-    unmark_note: "The book goes back to the place it stands at, and leaves the Finished \
-                  shelf. The time, the sittings and the days read are not changed.",
+    unmark_note: "It leaves the Finished shelf, and the library marks it unread. The \
+                  progress, the time, the sittings and the days read do not change.",
     percent_at: "{d}% now",
     restart: "Restart",
     restart_ask: "Restart this book?",
@@ -599,12 +599,13 @@ const GERMAN: Strings = Strings {
     continue_short: "Weiter",
     mark_finished: "Fertig markieren",
     mark_ask: "Dieses Buch als fertig markieren?",
-    mark_note: "Es geht auf 100 % und in das Regal Fertig. Gelesene Zeit, Sitzungen und \
-                Tage bleiben unverändert.",
+    mark_note: "Es kommt in das Regal Fertig, und die Bibliothek markiert es als gelesen. \
+                Fortschritt, gelesene Zeit, Sitzungen und Tage bleiben unverändert.",
     mark_unfinished: "Unfertig markieren",
     unmark_ask: "Markierung Fertig entfernen?",
-    unmark_note: "Das Buch geht auf seine Stelle zurück und verlässt das Regal Fertig. \
-                  Gelesene Zeit, Sitzungen und Tage bleiben unverändert.",
+    unmark_note: "Es verlässt das Regal Fertig, und die Bibliothek markiert es als \
+                  ungelesen. Fortschritt, gelesene Zeit, Sitzungen und Tage bleiben \
+                  unverändert.",
     percent_at: "{d} % jetzt",
     restart: "Neu beginnen",
     restart_ask: "Dieses Buch neu beginnen?",
@@ -763,10 +764,10 @@ const JAPANESE: Strings = Strings {
     continue_short: "続き",
     mark_finished: "読了にする",
     mark_ask: "この本を読了にしますか？",
-    mark_note: "進捗は100%になり、読了の棚に入ります。読んだ時間、回数、日数は変わりません。",
+    mark_note: "読了の棚に入り、ライブラリでも既読になります。進捗、読んだ時間、回数、日数は変わりません。",
     mark_unfinished: "未読了にする",
     unmark_ask: "読了の印を外しますか？",
-    unmark_note: "本は今の位置に戻り、読了の棚から外れます。読んだ時間、回数、日数は変わりません。",
+    unmark_note: "読了の棚から外れ、ライブラリでも未読になります。進捗、読んだ時間、回数、日数は変わりません。",
     percent_at: "現在{d}%",
     restart: "最初から",
     restart_ask: "この本を最初から読みますか？",
@@ -911,10 +912,10 @@ const SIMPLIFIED: Strings = Strings {
     continue_short: "继续",
     mark_finished: "标记读完",
     mark_ask: "将这本书标记为读完？",
-    mark_note: "进度将变为100%，并进入已读完书架。已读的时间、次数与天数不变。",
+    mark_note: "本书将进入已读完书架，图书馆中也标记为已读。进度、已读的时间、次数与天数不变。",
     mark_unfinished: "标记未读完",
     unmark_ask: "取消读完标记？",
-    unmark_note: "本书将回到当前位置，并离开已读完书架。已读的时间、次数与天数不变。",
+    unmark_note: "本书将离开已读完书架，图书馆中也标记为未读。进度、已读的时间、次数与天数不变。",
     percent_at: "当前{d}%",
     restart: "重新开始",
     restart_ask: "从头重读这本书？",
@@ -1070,10 +1071,10 @@ const TRADITIONAL: Strings = Strings {
     continue_short: "繼續",
     mark_finished: "標記讀完",
     mark_ask: "將這本書標記為讀完？",
-    mark_note: "進度將變為100%，並進入已讀完書架。已讀的時間、次數與天數不變。",
+    mark_note: "本書將進入已讀完書架，圖書館中也標記為已讀。進度、已讀的時間、次數與天數不變。",
     mark_unfinished: "標記未讀完",
     unmark_ask: "取消讀完標記？",
-    unmark_note: "本書將回到目前位置，並離開已讀完書架。已讀的時間、次數與天數不變。",
+    unmark_note: "本書將離開已讀完書架，圖書館中也標記為未讀。進度、已讀的時間、次數與天數不變。",
     percent_at: "目前{d}%",
     restart: "重新開始",
     restart_ask: "從頭重讀這本書？",

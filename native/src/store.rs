@@ -21,7 +21,6 @@ const STORE_FILE: &str = "sessions.tsv";
 const HEADER: &str = "#readinglog\t2";
 
 /// The percentage [`BookRecord::stand_at`] sets [`BookRecord::finished`] at.
-/// `BookStat::percent_shown` rounds to 100 from here up.
 pub const FINISHED_PERCENT: f64 = 99.5;
 
 /// What `catalog` stated about one book, on the last pass that named it.
