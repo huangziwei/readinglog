@@ -26,7 +26,7 @@ const QUERY: &str = "select coalesce(p_contentSize, 0), p_cdeKey, p_cdeType, \
      coalesce(p_percentFinished, -1), coalesce(p_thumbnail, ''), \
      coalesce(p_lastAccess, 0), coalesce(p_languages_0, ''), \
      replace(coalesce(j_credits, ''), char(10), ' '), \
-     (p_location is not null and p_location <> '') \
+     coalesce(p_location, '') \
      from Entries \
      where p_cdeKey is not null and p_cdeKey <> '' \
        and p_cdeType in ('EBOK', 'PDOC', 'MAGZ')";
@@ -57,7 +57,10 @@ pub struct Book {
     /// False on a `*`-prefixed `cde_key`: a scriptlet, `My Clippings.txt`, a
     /// hotfix runner. Each carries reading time and `Stats::build` drops it.
     pub is_book: bool,
-    /// Whether `p_location` names a file.
+    /// `p_location`, the file the device holds this book in. Empty on a cloud
+    /// row, which names none. `open::uri` makes it the URI the reader opens.
+    pub location: String,
+    /// Whether `location` names a file.
     pub on_device: bool,
 }
 
@@ -116,7 +119,8 @@ fn parse_row(row: &str) -> Option<Book> {
     let last_access = next().trim().parse().unwrap_or(0);
     let language = next().to_string();
     let author = author_name(next(), &collation);
-    let on_device = next().trim() == "1";
+    let location = next().to_string();
+    let on_device = !location.is_empty();
     Some(Book {
         extent,
         cde_key,
@@ -128,6 +132,7 @@ fn parse_row(row: &str) -> Option<Book> {
         last_access,
         language,
         is_book,
+        location,
         on_device,
     })
 }
@@ -279,6 +284,26 @@ mod tests {
         assert!(bible.percent >= 0.0);
         assert!(bible.thumbnail.ends_with("_EBOK_portrait.jpg"));
         assert_eq!(bible.last_access, 1_786_186_690);
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn a_book_on_the_device_names_the_file_it_is_opened_from() {
+        let db = fixture("location");
+        let books = read_from(&db);
+        let clippings = books
+            .iter()
+            .find(|b| b.title == "My Clippings.txt")
+            .expect("the clippings file");
+        // A space survives the read; `open::uri` is what escapes it.
+        assert_eq!(clippings.location, "/mnt/us/documents/My Clippings.txt");
+        assert!(clippings.on_device);
+        let cloud = books
+            .iter()
+            .find(|b| b.cde_key == "B01CLOUD01")
+            .expect("the book no longer on the device");
+        assert_eq!(cloud.location, "");
+        assert!(!cloud.on_device);
         let _ = std::fs::remove_file(&db);
     }
 

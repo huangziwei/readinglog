@@ -19,6 +19,9 @@ pub struct BookStat {
     pub percent: f64,
     /// Whether the catalog names this book as one the device holds.
     pub on_device: bool,
+    /// The file the device holds this book in, which the reader is handed to
+    /// open it. Empty where the catalog names none.
+    pub location: String,
     /// The catalog language tag, which picks the face a CJK title is set in.
     pub language: String,
     pub seconds: i64,
@@ -50,6 +53,12 @@ impl BookStat {
     /// beside it never disagree.
     pub fn percent_shown(&self) -> i64 {
         self.percent.round() as i64
+    }
+
+    /// Whether the reader can be handed this book: the device holds it, and
+    /// the catalog named the file.
+    pub fn can_open(&self) -> bool {
+        self.on_device && !self.location.is_empty()
     }
 
     /// Whether the catalog states this book read through.
@@ -550,6 +559,7 @@ fn fresh(extent: i64, found: &BookRecord, day: i64) -> BookStat {
         thumbnail: found.art().to_string(),
         percent: found.percent,
         on_device: found.on_device,
+        location: found.location.clone(),
         language: found.language.clone(),
         seconds: 0,
         dwell_seconds: 0,
@@ -650,6 +660,7 @@ mod tests {
             last_access: 0,
             language: "en".into(),
             is_book: true,
+            location: "/mnt/us/documents/bible.kfx".into(),
             on_device: true,
         }]
     }
@@ -1065,6 +1076,7 @@ mod tests {
             last_access: 0,
             language: String::new(),
             is_book: false,
+            location: "/mnt/us/documents/ReadingLog.sh".into(),
             on_device: true,
         });
         let mut s = store();
@@ -1122,6 +1134,7 @@ mod tests {
             last_access: 0,
             language: String::new(),
             is_book: true,
+            location: "/mnt/us/documents/other.kfx".into(),
             on_device: true,
         });
         out.remember(&shelf);

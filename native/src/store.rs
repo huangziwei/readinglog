@@ -37,6 +37,10 @@ pub struct BookRecord {
     pub on_device: bool,
     /// The store's own copy of the cover, under `covers::COVERS_DIR`.
     pub cover: String,
+    /// The `p_location` `catalog` last stated, which the reader is handed to
+    /// open the book. Empty for a book the catalog has only ever named in the
+    /// library.
+    pub location: String,
 }
 
 impl BookRecord {
@@ -390,6 +394,7 @@ fn taken(book: &Book) -> BookRecord {
         percent: book.percent,
         on_device: book.on_device,
         cover: String::new(),
+        location: flat(&book.location),
     }
 }
 
@@ -403,6 +408,7 @@ fn merge(record: &mut BookRecord, book: &Book) {
         (&mut record.author, &book.author),
         (&mut record.thumbnail, &book.thumbnail),
         (&mut record.language, &book.language),
+        (&mut record.location, &book.location),
     ] {
         if !stated.is_empty() {
             *field = flat(stated);
@@ -419,7 +425,7 @@ fn merge(record: &mut BookRecord, book: &Book) {
 
 fn write_book(b: &BookRecord) -> String {
     format!(
-        "b\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "b\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         b.extent,
         flat(&b.cde_key),
         flat(&b.title),
@@ -429,6 +435,7 @@ fn write_book(b: &BookRecord) -> String {
         format_args!("{:.6}", b.percent),
         u8::from(b.on_device),
         flat(&b.cover),
+        flat(&b.location),
     )
 }
 
@@ -444,6 +451,9 @@ fn read_book<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<BookRecord> {
         percent: next().parse().unwrap_or(-1.0),
         on_device: next().trim() == "1",
         cover: next().to_string(),
+        // A row written before the location was kept states none, and the next
+        // catalog pass fills it.
+        location: next().to_string(),
     })
 }
 
@@ -616,6 +626,7 @@ mod tests {
             last_access: 0,
             language: "en".into(),
             is_book: !key.starts_with('*'),
+            location: format!("/mnt/us/documents/{title}.kfx"),
             on_device: true,
         }
     }
@@ -639,7 +650,25 @@ mod tests {
         assert_eq!(book.title, "The Jewish Study Bible");
         assert!((book.percent - 76.125).abs() < 1e-6);
         assert!(book.is_book());
+        assert_eq!(
+            book.location,
+            "/mnt/us/documents/The Jewish Study Bible.kfx"
+        );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_book_gone_from_the_device_keeps_the_file_it_was_read_from() {
+        let mut store = Store::default();
+        store.remember(&[shelved(1, "B01", "A Book", 10.0)]);
+        // The library row a deletion leaves behind states no location.
+        let mut library = shelved(0, "B01", "A Book", -1.0);
+        library.location = String::new();
+        library.on_device = false;
+        store.remember(&[library]);
+        let book = &store.books[0];
+        assert!(!book.on_device, "the device holds it");
+        assert_eq!(book.location, "/mnt/us/documents/A Book.kfx");
     }
 
     #[test]

@@ -419,6 +419,28 @@ impl App {
         }
     }
 
+    /// Ask for a book to be opened and leave, so the reader comes up over a
+    /// screen this app has given back.
+    ///
+    /// The request is written down rather than sent from here: the launcher
+    /// makes the call once this process is gone, and a book that cannot be
+    /// asked for leaves the reader where it is.
+    fn open(&mut self, index: usize) -> Action {
+        let Some(book) = self.stats.books.get(index).filter(|b| b.can_open()) else {
+            return Action::Nothing;
+        };
+        match crate::open::ask(
+            std::path::Path::new(crate::store::STORE_DIR),
+            &book.location,
+        ) {
+            Ok(()) => Action::Quit,
+            Err(err) => {
+                eprintln!("open: {} would not be asked for: {err:#}", book.location);
+                Action::Nothing
+            }
+        }
+    }
+
     /// What a tap at `(x, y)` does.
     fn tapped(&mut self, x: i32, y: i32) -> Action {
         // `hits` in reverse: the last box drawn wins.
@@ -438,6 +460,7 @@ impl App {
                 }
             }
             Hit::Exit => return Action::Quit,
+            Hit::Open(index) => return self.open(index),
             Hit::Language(pick) => {
                 if self.settings.language == pick {
                     return Action::Nothing;

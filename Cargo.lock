@@ -798,7 +798,7 @@ checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
 name = "readinglog-native"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "ab_glyph",
  "anyhow",

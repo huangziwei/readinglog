@@ -11,6 +11,7 @@ pub mod font;
 pub mod lang;
 pub mod log;
 pub mod net;
+pub mod open;
 pub mod orientation;
 pub mod settings;
 pub mod stats;

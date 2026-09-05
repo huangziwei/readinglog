@@ -279,6 +279,12 @@ pub fn library(last: i64, art: &Path) -> Store {
             percent: book.percent,
             on_device: slot % 5 != 4,
             cover: String::new(),
+            // A title with a space in it, so a shot shows the control the same
+            // path the device takes to it.
+            location: match slot % 5 != 4 {
+                true => format!("/mnt/us/documents/{}.kfx", book.title),
+                false => String::new(),
+            },
         });
     }
 

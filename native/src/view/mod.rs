@@ -29,6 +29,9 @@ pub enum Hit {
     Day(i64),
     /// A book, by its index in [`Stats::books`].
     Book(usize),
+    /// Hand a book on the device back to the Kindle's reader, by its index in
+    /// [`Stats::books`]. Leaves the app, as [`Hit::Exit`] does.
+    Open(usize),
     /// Leave the app. The only way out: a book is closed by tapping a tab.
     Exit,
     /// A chip on the config page.

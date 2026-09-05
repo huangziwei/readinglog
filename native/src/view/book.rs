@@ -11,7 +11,7 @@ use crate::ui::paint::{self, INK, Rect};
 use crate::ui::text::TextRenderer;
 use crate::ui::{charts, theme::Theme};
 
-use super::Ctx;
+use super::{Ctx, Hit};
 
 /// The most columns the strip along the bottom is cut into. A book read over
 /// more days than this gives each column a block of them.
@@ -36,9 +36,26 @@ fn cover_height(theme: &Theme) -> i32 {
     theme.row_h * 4
 }
 
-/// The height the heading draws into: the cover, and the progress under it.
-fn heading_height(text: &mut TextRenderer, theme: &Theme) -> i32 {
-    cover_height(theme) + theme.gap * 2 + progress_height(text, theme)
+/// The band the Continue reading control takes, the gap above it included.
+/// Nothing where the reader cannot be handed this book.
+fn open_height(theme: &Theme, book: &BookStat) -> i32 {
+    match book.can_open() {
+        true => theme.gap * 2 + chrome::chip_height(theme),
+        false => 0,
+    }
+}
+
+/// Where the control sits inside the band [`open_height`] took: its own height
+/// at the foot, the air above it. Separated from the paint so a control the
+/// reader cannot reach is caught by a test.
+fn open_box(theme: &Theme, band: Rect) -> Rect {
+    band.split_bottom(chrome::chip_height(theme)).0
+}
+
+/// The height the heading draws into: the cover, the progress under it, and
+/// the control under that.
+fn heading_height(text: &mut TextRenderer, theme: &Theme, book: &BookStat) -> i32 {
+    cover_height(theme) + theme.gap * 2 + progress_height(text, theme) + open_height(theme, book)
 }
 
 pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
@@ -51,8 +68,13 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
     let s = cx.s();
     // Each band takes what it draws into.
     let air = theme.gap * 2;
-    let (head, rest) = area.split_top(heading_height(cx.text, theme) + air);
-    heading(cx, Rect::new(head.x, head.y, head.w, head.h - air), &book);
+    let (head, rest) = area.split_top(heading_height(cx.text, theme, &book) + air);
+    heading(
+        cx,
+        Rect::new(head.x, head.y, head.w, head.h - air),
+        &book,
+        index,
+    );
 
     let head_h = chrome::section_height(cx.text, theme);
     let (chart, facts) = rest.split_bottom(head_h + theme.row_h * 3);
@@ -126,10 +148,17 @@ fn journey(cx: &Ctx, index: usize, opened: i64, closed: i64) -> (Vec<i64>, i64) 
     (series, each)
 }
 
-/// The cover, the title beside it, and the progress bar under both.
-fn heading(cx: &mut Ctx, area: Rect, book: &BookStat) {
+/// The cover, the title beside it, the progress bar under both, and the
+/// control that hands the book back to the reader.
+fn heading(cx: &mut Ctx, area: Rect, book: &BookStat, index: usize) {
     let theme: &Theme = cx.theme;
     let script = Script::of_language(&book.language);
+
+    let band = open_height(theme, book);
+    let (open, area) = area.split_bottom(band);
+    if band > 0 {
+        open_button(cx, open_box(theme, open), index);
+    }
 
     let (foot, top) = area.split_bottom(progress_height(cx.text, theme));
     // `top` stops `theme.gap * 2` above `foot`.
@@ -224,6 +253,30 @@ fn finished_chip(cx: &mut Ctx, line: Rect, baseline: i32) {
     );
 }
 
+/// The control that hands this book back to the Kindle's reader, under the
+/// progress bar and along the same left edge. Outlined, as every control on
+/// every screen is; a tap on it leaves the app.
+fn open_button(cx: &mut Ctx, band: Rect, index: usize) {
+    let theme: &Theme = cx.theme;
+    let script = cx.ui_script();
+    let said = cx.s().continue_reading;
+    cx.text.set_px(theme.body_px);
+    let w = cx.text.measure_width_in(script, said) as i32 + chrome::chip_pad() * 4;
+    let chip = Rect::new(band.x, band.y, w.min(band.w), band.h);
+    paint::stroke(cx.fb, chip, INK, 2);
+    let tw = cx.text.measure_width_in(script, said) as i32;
+    let baseline = chip.center_y() + cx.text.cap_height() as i32 / 2;
+    cx.text.draw_in(
+        script,
+        cx.fb,
+        chip.x + (chip.w - tw) / 2,
+        baseline,
+        said,
+        false,
+    );
+    cx.hit(Hit::Open(index), chip);
+}
+
 /// The book's three headline figures, along the foot of the words column.
 fn figures(cx: &mut Ctx, words: Rect, book: &BookStat) {
     let theme: &Theme = cx.theme;
@@ -281,6 +334,7 @@ mod tests {
             thumbnail: String::new(),
             percent: -1.0,
             on_device: false,
+            location: String::new(),
             language: String::new(),
             seconds,
             dwell_seconds: dwell,
@@ -292,6 +346,46 @@ mod tests {
             first_day: 0,
             last_day: 0,
             last_secs: 0,
+        }
+    }
+
+    /// [`book`] with the catalog naming a file for it.
+    fn held(location: &str) -> BookStat {
+        BookStat {
+            on_device: true,
+            location: location.into(),
+            ..book(600, 0, 0)
+        }
+    }
+
+    #[test]
+    fn only_a_book_the_reader_can_be_handed_takes_the_control() {
+        let theme = Theme::for_screen(1264, 1680);
+        // A book the device holds, one it does not, and one it holds under a
+        // name the catalog never stated.
+        assert!(open_height(&theme, &held("/mnt/us/documents/a.kfx")) > 0);
+        assert_eq!(open_height(&theme, &book(600, 0, 0)), 0);
+        assert_eq!(open_height(&theme, &held("")), 0);
+    }
+
+    #[test]
+    fn the_control_stands_inside_the_band_the_heading_took_for_it() {
+        let held = held("/mnt/us/documents/a.kfx");
+        for (w, h) in [(1264, 1680), (1272, 1696), (1860, 2480)] {
+            let theme = Theme::for_screen(w, h);
+            let tall = open_height(&theme, &held);
+            // The band as `heading` cuts it, at the foot of a heading.
+            let band = Rect::new(0, 400, chrome::content_box(&theme).w, tall)
+                .split_bottom(tall)
+                .0;
+            let chip = open_box(&theme, band);
+            assert_eq!(chip.h, chrome::chip_height(&theme), "{w}x{h}");
+            assert_eq!(chip.bottom(), band.bottom(), "{w}x{h}: the control floats");
+            assert_eq!(
+                chip.y - band.y,
+                theme.gap * 2,
+                "{w}x{h}: the control sits against the progress bar"
+            );
         }
     }
 
