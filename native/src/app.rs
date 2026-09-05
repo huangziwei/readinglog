@@ -305,14 +305,13 @@ impl App {
                 painted = Instant::now();
                 stale = false;
             }
-            // Every step sent is drained above before this is read, so nothing
-            // the worker said is lost by leaving here.
+            // Every step sent is drained above before this is read: no step
+            // the worker sent is lost by leaving here.
             if worker.is_finished() {
                 break;
             }
-            // Waking when the next repaint is due rather than a whole
-            // interval from here: a step that arrived a moment ago would
-            // otherwise wait out most of a second interval before it is drawn.
+            // `due` is when the next repaint falls, never a whole
+            // `BANNER_REDRAW` from here.
             let due = match stale {
                 true => painted + BANNER_REDRAW,
                 false => Instant::now() + BANNER_REDRAW,
@@ -431,12 +430,9 @@ impl App {
         }
     }
 
-    /// Ask for a book to be opened and leave, so the reader comes up over a
-    /// screen this app has given back.
-    ///
-    /// The request is written down rather than sent from here: the launcher
-    /// makes the call once this process is gone, and a book that cannot be
-    /// asked for leaves the reader where it is.
+    /// Write down a request for a book to be opened, and leave.
+    /// `bin/readinglog.sh` makes the call once this process is gone, and a book
+    /// `BookStat::can_open` refuses is never asked for.
     fn open(&mut self, index: usize, at: crate::open::At) -> Action {
         let Some(book) = self.stats.books.get(index).filter(|b| b.can_open()) else {
             return Action::Nothing;
@@ -461,10 +457,11 @@ impl App {
         let Some(book) = self.stats.books.get(index) else {
             return Action::Nothing;
         };
-        let (extent, key) = (book.extent, book.cde_key.clone());
+        let (extent, key, cde_type) = (book.extent, book.cde_key.clone(), book.cde_type.clone());
         if !self.store.set_finished(extent, &key, on) {
             return Action::Nothing;
         }
+        self.hand_over_mark(extent, &key, &cde_type, on);
         self.rebuild();
         if let Err(err) = self
             .store
@@ -475,8 +472,17 @@ impl App {
         Action::Redraw
     }
 
-    /// Put `ask` up over the book at `index`. The question already standing
-    /// there is left as it is.
+    /// Hand `read` to `mark::set`, and write down the `p_readState` a taken
+    /// call leaves. A refused call leaves the record's own value standing.
+    fn hand_over_mark(&mut self, extent: i64, key: &str, cde_type: &str, read: bool) {
+        if crate::mark::set(key, cde_type, read) {
+            self.store
+                .note_mark(extent, key, crate::catalog::read_state_for(read));
+        }
+    }
+
+    /// Put `ask` up over the book at `index`. A question standing there is
+    /// left as it stands.
     fn put(&mut self, index: usize, ask: view::Ask) -> Action {
         if self.state.asked == Some((index, ask)) {
             return Action::Nothing;
@@ -500,8 +506,10 @@ impl App {
     /// the Kindle's reader.
     fn restart(&mut self, index: usize) -> Action {
         if let Some(book) = self.stats.books.get(index) {
-            let (extent, key) = (book.extent, book.cde_key.clone());
+            let (extent, key, cde_type) =
+                (book.extent, book.cde_key.clone(), book.cde_type.clone());
             if self.store.restart(extent, &key) {
+                self.hand_over_mark(extent, &key, &cde_type, false);
                 self.rebuild();
                 if let Err(err) = self
                     .store

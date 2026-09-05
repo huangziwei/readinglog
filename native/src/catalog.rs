@@ -63,6 +63,15 @@ pub fn read_state_says(value: i64) -> Option<bool> {
     }
 }
 
+/// The value `mark::set` leaves in `p_readState`, which `MarkAsReadHandler`
+/// files as `READ_MANUAL` or `UNREAD_MANUAL`.
+pub fn read_state_for(read: bool) -> i64 {
+    match read {
+        true => READ_MANUAL,
+        false => UNREAD_MANUAL,
+    }
+}
+
 /// One book the catalog names, on the device or in the library.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Book {

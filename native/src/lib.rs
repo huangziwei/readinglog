@@ -10,6 +10,7 @@ pub mod eink;
 pub mod font;
 pub mod lang;
 pub mod log;
+pub mod mark;
 pub mod net;
 pub mod open;
 pub mod orientation;

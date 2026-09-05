@@ -403,8 +403,8 @@ fn onto(band: Rect, box_: Rect) -> Rect {
     Rect::new(band.x + box_.x, band.y + box_.y, box_.w, box_.h)
 }
 
-/// What `ask` puts to the reader: the headline, what it states, and the label
-/// on the answer.
+/// What `ask` puts up: the headline, what it states, and the label on the
+/// answer.
 fn question(ask: Ask, s: &Strings) -> (&'static str, &'static str, &'static str) {
     match ask {
         Ask::Restart => (s.restart_ask, s.restart_note, s.restart),
@@ -580,6 +580,7 @@ mod tests {
         BookStat {
             extent: 1,
             cde_key: "KEY1".into(),
+            cde_type: "EBOK".into(),
             finished: false,
             title: "A Book".into(),
             author: String::new(),

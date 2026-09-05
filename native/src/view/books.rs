@@ -380,6 +380,7 @@ mod tests {
             .map(|(at, percent)| BookStat {
                 extent: at as i64,
                 cde_key: format!("KEY{at}"),
+                cde_type: "EBOK".into(),
                 // The mark the store puts on a place read through.
                 finished: *percent >= crate::store::FINISHED_PERCENT,
                 title: format!("Book {at}"),

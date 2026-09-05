@@ -15,6 +15,8 @@ pub struct BookStat {
     /// `BookRecord::cde_key`, which `Store::set_finished` addresses the record
     /// by alongside `extent`.
     pub cde_key: String,
+    /// `BookRecord::cde_type`, which `mark::set` names the book by.
+    pub cde_type: String,
     pub title: String,
     pub author: String,
     pub thumbnail: String,
@@ -576,6 +578,7 @@ fn fresh(extent: i64, found: &BookRecord, day: i64) -> BookStat {
     BookStat {
         extent,
         cde_key: found.cde_key.clone(),
+        cde_type: found.cde_type.clone(),
         finished: found.finished,
         title: found.title.clone(),
         author: found.author.clone(),

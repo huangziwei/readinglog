@@ -30,6 +30,8 @@ pub struct BookRecord {
     /// `p_contentSize`, the number a sitting is keyed by.
     pub extent: i64,
     pub cde_key: String,
+    /// `p_cdeType`, which `mark::set` names the book by alongside `cde_key`.
+    pub cde_type: String,
     pub title: String,
     pub author: String,
     pub thumbnail: String,
@@ -402,6 +404,15 @@ impl Store {
         changed
     }
 
+    /// Write `state` down as [`BookRecord::read_state`], leaving
+    /// [`BookRecord::finished`] where it stands. A pass reading the same value
+    /// back takes it for no change.
+    pub fn note_mark(&mut self, extent: i64, key: &str, state: i64) {
+        if let Some(slot) = self.slot_for(extent, Some(key)) {
+            self.books[slot].read_state = state;
+        }
+    }
+
     /// Declare a restart of the record [`Self::book_for`] answers for:
     /// `finished` comes off, `percent` becomes [`BookRecord::restart`] and
     /// reads 0. Answers whether anything changed.
@@ -468,6 +479,7 @@ fn taken(book: &Book) -> BookRecord {
     let mut record = BookRecord {
         extent: book.extent,
         cde_key: flat(&book.cde_key),
+        cde_type: flat(&book.cde_type),
         title: flat(&book.title),
         author: flat(&book.author),
         thumbnail: flat(&book.thumbnail),
@@ -491,6 +503,7 @@ fn taken(book: &Book) -> BookRecord {
 fn merge(record: &mut BookRecord, book: &Book) {
     for (field, stated) in [
         (&mut record.cde_key, &book.cde_key),
+        (&mut record.cde_type, &book.cde_type),
         (&mut record.title, &book.title),
         (&mut record.author, &book.author),
         (&mut record.thumbnail, &book.thumbnail),
@@ -513,7 +526,7 @@ fn merge(record: &mut BookRecord, book: &Book) {
 
 fn write_book(b: &BookRecord) -> String {
     format!(
-        "b\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "b\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         b.extent,
         flat(&b.cde_key),
         flat(&b.title),
@@ -527,6 +540,7 @@ fn write_book(b: &BookRecord) -> String {
         u8::from(b.finished),
         b.restart.map(|p| format!("{p:.6}")).unwrap_or_default(),
         b.read_state,
+        flat(&b.cde_type),
     )
 }
 
@@ -550,6 +564,9 @@ fn read_book<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<BookRecord> {
         // A row written before `read_state` was kept states none, and the
         // next catalog pass takes what it finds as new.
         read_state: next().trim().parse().unwrap_or(-1),
+        // A row written before `cde_type` was kept states none, and the next
+        // catalog pass fills it.
+        cde_type: next().to_string(),
     })
     // `read_through` marks a record the row left unmarked.
     .map(|mut record: BookRecord| {
@@ -808,6 +825,35 @@ mod tests {
         // 0 states neither way and takes nothing off.
         store.remember(&[marked(40.0, 0)]);
         assert!(store.books[0].finished);
+    }
+
+    #[test]
+    fn a_mark_handed_to_the_library_reads_back_as_no_change() {
+        let dir = scratch("notemark");
+        let mut store = Store::default();
+        store.remember(&[marked(40.0, -1)]);
+
+        // `set_finished` and `note_mark`, the pair one tap makes.
+        assert!(store.set_finished(938_018, "B00OKPCRLG", true));
+        store.note_mark(938_018, "B00OKPCRLG", crate::catalog::read_state_for(true));
+        assert_eq!(store.books[0].read_state, 1);
+        assert!(store.books[0].finished);
+
+        // The catalog states the same value back.
+        store.remember(&[marked(40.0, 1)]);
+        assert!(store.books[0].finished);
+
+        // `cde_type` reaches the record and the row.
+        assert_eq!(store.books[0].cde_type, "EBOK");
+        store.save(&dir).expect("a written store");
+        let back = Store::load(&dir);
+        assert_eq!(back.books[0].cde_type, "EBOK");
+        assert_eq!(back.books[0].read_state, 1);
+
+        // A record no key names takes no mark.
+        store.note_mark(0, "NOSUCHKEY", 3);
+        assert_eq!(store.books[0].read_state, 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -275,6 +275,7 @@ pub fn library(last: i64, art: &Path) -> Store {
         store.books.push(BookRecord {
             extent: 100_000 + slot as i64,
             cde_key: format!("KEY{slot}"),
+            cde_type: "EBOK".into(),
             title: book.title.into(),
             author: book.author.into(),
             thumbnail: jacket(art, slot),
