@@ -209,6 +209,12 @@ impl App {
         &self.state
     }
 
+    /// Everything the screens draw, for a caller placing itself against the
+    /// record.
+    pub fn stats(&self) -> &crate::stats::Stats {
+        &self.stats
+    }
+
     /// Draw the whole screen and present it.
     pub fn draw(&mut self, fb: &mut Framebuffer) -> Result<()> {
         let settings = self.settings.clone();

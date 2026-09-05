@@ -40,8 +40,7 @@ const PANELS: &[(&str, u32, u32)] = &[
 const OUT: &str = "artifacts/preview";
 
 /// Where the fixture's jackets are drawn, under `--art`. An input the store's
-/// records point at, and the same files whatever a run draws, so one set stands
-/// apart from any run's output directory.
+/// records point at, held apart from any run's output directory.
 const ART: &str = "artifacts/preview/art";
 
 /// The update banner a shot can name, and what it is saying. The one screen
@@ -129,9 +128,8 @@ struct Opts {
     sheet: Option<String>,
     scale: u32,
     crop: Option<sheet::Crop>,
-    /// Whether every hit box is outlined over the frame. A tap target is
-    /// invisible in a render, and a screen that looks right can still take a
-    /// tap where it should take none.
+    /// Whether every hit box is outlined over the frame. A tap target draws
+    /// nothing of its own.
     hits: bool,
     /// The scheme drawn in.
     scheme: ColorScheme,
@@ -255,8 +253,7 @@ fn run() -> Result<()> {
     Ok(())
 }
 
-/// The PNGs already in `dir`, which this run will leave standing wherever it
-/// does not draw over them.
+/// The PNGs `dir` holds when the run opens.
 fn shots_in(dir: &Path) -> Vec<PathBuf> {
     std::fs::read_dir(dir)
         .into_iter()
@@ -408,6 +405,18 @@ fn set_span(app: &mut App, shot: &Shot, week: WeekStart) -> Result<()> {
         "month" => app.set_span(Span::Month),
         "year" => app.set_span(Span::Year),
         "day" => app.open_day(app.state().day),
+        // The day a book was read through on, where a row carries the chip.
+        "dayfinished" => {
+            let day = app
+                .stats()
+                .books
+                .iter()
+                .filter(|b| b.is_finished())
+                .map(|b| b.last_day)
+                .max()
+                .unwrap_or(app.state().day);
+            app.open_day(day);
+        }
         // The year with a day picked off its heatmap, which narrows the
         // covers to that day and offers the way into it.
         "picked" => {
@@ -426,9 +435,9 @@ fn set_span(app: &mut App, shot: &Shot, week: WeekStart) -> Result<()> {
             app.set_span(Span::Week);
             busy(app, 0);
         }
-        // A day with nothing on it picked off the week. Its columns take a tap
+        // A day with nothing on it picked off the week: its columns take a tap
         // where a year's cells do not, and the record ends part way through
-        // the week showing, so its last day is always one of these.
+        // the week showing.
         "weekempty" => {
             app.set_span(Span::Week);
             let day = app.state().day;
@@ -488,7 +497,7 @@ fn list() {
     for (name, _) in SCREENS {
         let of = match *name {
             "rhythm" => {
-                "  (:all :trends :week :month :year :back :weekback :picked :day\n   :yearbusy :weekbusy :weekempty :busy :busy2 :busyend)"
+                "  (:all :trends :week :month :year :back :weekback :picked :day\n   :dayfinished :yearbusy :weekbusy :weekempty :busy :busy2 :busyend)"
             }
             "today" => "  (:quiet :empty :busy)",
             "book" => "  (:<index> :<index>:restart :<index>:mark :<index>:unmark)",
@@ -499,8 +508,7 @@ fn list() {
         };
         println!("  {name}{of}");
     }
-    // Named off `BANNERS` rather than written out: it is the only list here
-    // the code can state for itself.
+    // `BANNERS` states this list itself.
     let banners: Vec<&str> = BANNERS.iter().map(|(name, _)| *name).collect();
     println!("  update  (:{})", banners.join(" :"));
     println!("sketches:");
@@ -583,6 +591,7 @@ fn everything() -> Vec<Shot> {
         "rhythm:back",
         "rhythm:weekback",
         "rhythm:picked",
+        "rhythm:dayfinished",
         "rhythm:yearbusy",
         "rhythm:weekbusy",
         "rhythm:weekempty",

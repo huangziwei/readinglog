@@ -11,7 +11,7 @@ use crate::ui::paint::{self, INK, Rect, WHITE};
 use crate::ui::text::TextRenderer;
 use crate::ui::{charts, theme::Theme};
 
-use super::{Ask, Ctx, Hit};
+use super::{Ask, Ctx, Hit, band};
 
 /// The most columns the strip along the bottom is cut into. A book read over
 /// more days than this gives each column a block of them.
@@ -23,17 +23,6 @@ const TITLE_LINES: usize = 2;
 
 /// Rows of figures the reading section lists.
 const LINES: usize = 10;
-
-/// The bar stating how far through the book is.
-fn bar_height(theme: &Theme) -> i32 {
-    theme.gap.max(6)
-}
-
-/// The height the progress block takes: the bar and the figure over it.
-fn progress_height(text: &mut TextRenderer, theme: &Theme) -> i32 {
-    text.set_px(theme.small_px);
-    bar_height(theme) + theme.gap / 2 + text.line_height() as i32
-}
 
 /// The cover's height: four rows.
 fn cover_height(theme: &Theme) -> i32 {
@@ -132,7 +121,7 @@ fn heading_height(
 ) -> i32 {
     cover_height(theme)
         + theme.gap * 2
-        + progress_height(text, theme)
+        + band::height(text, theme)
         + open_height(text, theme, script, book, s)
 }
 
@@ -247,7 +236,7 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat, index: usize) {
         controls(cx, open_box(theme, open), book, index);
     }
 
-    let (foot, top) = area.split_bottom(progress_height(cx.text, theme));
+    let (foot, top) = area.split_bottom(band::height(cx.text, theme));
     // `top` stops `theme.gap * 2` above `foot`.
     let top = Rect::new(top.x, top.y, top.w, (top.h - theme.gap * 2).max(1));
     let (art, rest) = top.split_left(cover::width_for(top.h));
@@ -291,93 +280,11 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat, index: usize) {
 
     figures(cx, words, book);
 
-    let track = Rect::new(
-        foot.x,
-        foot.bottom() - bar_height(theme),
-        foot.w,
-        bar_height(theme),
-    );
-    let (shown, fill) = (book.percent_shown(), book.bar_percent());
-    paint::progress(cx.fb, track, fill, 100, INK);
-    cx.text.set_px(theme.small_px);
-    let baseline = track.y - theme.gap / 2;
-    // The chip takes its place first; the figure keeps to what is left.
-    let chip = book
-        .is_finished()
-        .then(|| finished_chip(cx, foot, baseline));
-    let room = left_of(foot, chip, theme.gap * 2);
-    if book.has_percent() {
-        position_mark(cx, room, track, shown, fill > shown);
-    }
+    let said = cx.s().percent_at;
+    band::draw(cx, foot, band::Band::of(book, said, book.is_finished()));
     if book.can_mark() {
         cx.hit(Hit::Finished(index, !book.finished), foot);
     }
-}
-
-/// `line` up to `chip`, `air` clear of it.
-fn left_of(line: Rect, chip: Option<Rect>, air: i32) -> Rect {
-    let right = chip.map_or(line.right(), |c| c.x - air);
-    Rect::new(line.x, line.y, (right - line.x).max(1), line.h)
-}
-
-/// How wide [`position_mark`] cuts.
-fn mark_width(theme: &Theme) -> i32 {
-    (theme.gap / 2).max(3)
-}
-
-/// Where [`position_mark`] cuts in `track`, `at` per cent along it.
-fn mark_x(theme: &Theme, track: Rect, at: i64) -> i32 {
-    let w = mark_width(theme);
-    let x = track.x + (track.w as i64 * at.clamp(0, 100) / 100) as i32;
-    x.clamp(track.x, track.right() - w)
-}
-
-/// [`BookStat::percent_shown`] set small over the place it names, inside
-/// `line`. Under `cut` a white notch cuts the ink there.
-fn position_mark(cx: &mut Ctx, line: Rect, track: Rect, at: i64, cut: bool) {
-    let theme: &Theme = cx.theme;
-    let (w, x) = (mark_width(theme), mark_x(theme, track, at));
-    if cut {
-        paint::fill(cx.fb, Rect::new(x, track.y, w, track.h), WHITE);
-    }
-    let script = cx.ui_script();
-    cx.text.set_px(theme.small_px);
-    let said = crate::lang::counted(cx.s().percent_at, at);
-    let tw = cx.text.measure_width_in(script, &said) as i32;
-    let put = (x + w / 2 - tw / 2).clamp(line.x, (line.right() - tw).max(line.x));
-    cx.text
-        .draw_in(script, cx.fb, put, track.y - theme.gap, &said, false);
-}
-
-/// A book read through, stated at the right of the line the progress bar
-/// carries, and answering the box it took. Filled, where every other chip on a
-/// screen is outlined: this one is not a control and states an end state.
-fn finished_chip(cx: &mut Ctx, line: Rect, baseline: i32) -> Rect {
-    let theme: &Theme = cx.theme;
-    let said = cx.s().shelf_finished;
-    let script = cx.ui_script();
-    cx.text.set_px(theme.small_px);
-    let (w, cap) = (
-        cx.text.measure_width_in(script, said) as i32,
-        cx.text.cap_height() as i32,
-    );
-    let h = cx.text.line_height() as i32 + theme.gap / 2;
-    let chip = Rect::new(
-        line.right() - w - theme.gap * 2,
-        baseline - cap / 2 - h / 2,
-        w + theme.gap * 2,
-        h,
-    );
-    paint::fill(cx.fb, chip, INK);
-    cx.text.draw_in(
-        script,
-        cx.fb,
-        chip.x + theme.gap,
-        chip.center_y() + cap / 2,
-        said,
-        true,
-    );
-    chip
 }
 
 /// The controls under the progress bar, at the places [`controls_split`] put
@@ -725,22 +632,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn the_mark_stands_inside_the_track_at_either_end() {
-        let theme = Theme::for_screen(1264, 1680);
-        let track = Rect::new(39, 900, 1186, bar_height(&theme));
-        for at in [0, 1, 55, 99, 100] {
-            let x = mark_x(&theme, track, at);
-            assert!(x >= track.x, "{at}%: the mark starts left of the track");
-            assert!(
-                x + mark_width(&theme) <= track.right(),
-                "{at}%: the mark runs past the track"
-            );
-        }
-        // The mark tracks the figure it stands for.
-        assert!(mark_x(&theme, track, 20) < mark_x(&theme, track, 80));
     }
 
     #[test]

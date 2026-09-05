@@ -1,5 +1,5 @@
-//! Every [`crate::stats::BookStat`], most recent first, with its cover and the
-//! progress the catalog states.
+//! Every [`crate::stats::BookStat`], most recent first, with its cover, the
+//! progress the catalog states, and a filled figure on a book read through.
 
 use crate::date;
 use crate::stats::{BookStat, Stats};
@@ -8,7 +8,7 @@ use crate::ui::cover;
 use crate::ui::paint::{self, INK, LIGHT, Rect};
 use crate::ui::theme::Theme;
 
-use super::{Ctx, Hit, Shelf, Sort, State};
+use super::{Ctx, Hit, Shelf, Sort, State, band};
 
 /// Lines a title takes before the rest of it is ellipsized.
 const TITLE_LINES: usize = 2;
@@ -29,13 +29,10 @@ fn foot_height(theme: &Theme) -> i32 {
     theme.small_px as i32 * 7 / 2
 }
 
-/// The width of the figures column: the wider of `figure` and `100%`.
+/// The width of the figures column, from `figure` alone: the band under it
+/// carries the percentage.
 fn figures_width(cx: &mut Ctx, figure: &str) -> i32 {
-    let duration = cx.text.measure_width(figure) as i32;
-    cx.text.set_px(cx.theme.small_px);
-    let pct = cx.text.measure_width("100%") as i32;
-    cx.text.set_px(cx.theme.body_px);
-    duration.max(pct)
+    cx.text.measure_width(figure) as i32
 }
 
 /// Books on `shelf` in `order`, by their index in [`Stats::books`], which is
@@ -297,8 +294,9 @@ fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
         true => 0,
         false => theme.gap / 2 + cx.text.line_height() as i32,
     };
-    let bar_h = (theme.gap / 2).max(3);
-    let block_h = title_h + author_h + theme.gap + bar_h;
+    let band_h = band::height(cx.text, theme);
+    cx.text.set_px(theme.small_px);
+    let block_h = title_h + author_h + theme.gap + band_h;
 
     // The block sets against the middle of `body`.
     cx.text.set_px(theme.body_px);
@@ -330,17 +328,13 @@ fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
     cx.text
         .draw(cx.fb, figures.right() - fw, top, &figure, false);
 
-    // The track runs the width of the words column, closing the block.
-    let track = Rect::new(words.x, y + theme.gap, words.w, bar_h);
-    // A book the catalog states no progress for draws no track.
-    if book.has_percent() {
-        let shown = book.percent_shown();
-        paint::progress(cx.fb, track, shown, 100, INK);
-        cx.text.set_px(theme.small_px);
-        let pct = format!("{shown}%");
-        let pw = cx.text.measure_width(&pct) as i32;
-        cx.text
-            .draw(cx.fb, figures.right() - pw, track.bottom(), &pct, false);
+    // The band closes the block, across the whole of `body`. A book the catalog
+    // states no progress for and no mark draws none.
+    if book.has_percent() || book.is_finished() {
+        let foot = Rect::new(body.x, y + theme.gap, body.w, band_h);
+        let said = cx.s().percent_at;
+        let of = band::Band::of(book, said, book.is_finished());
+        band::draw(cx, foot, of);
     }
     paint::hline(cx.fb, row.x, row.bottom() - 1, row.w, LIGHT, 1);
 }

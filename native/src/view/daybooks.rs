@@ -10,7 +10,7 @@ use crate::ui::theme::Theme;
 
 use crate::ui::chrome;
 
-use super::{Ctx, Hit};
+use super::{Ctx, Hit, band};
 
 /// Lines a title takes before the rest of it is ellipsized.
 const TITLE_LINES: usize = 2;
@@ -199,6 +199,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, day: i64, read: &[(usize, i64)]) {
 fn row(cx: &mut Ctx, area: Rect, day: i64, index: usize, secs: i64) {
     let theme: &Theme = cx.theme;
     let percent = cx.stats.percent_over(index, day..=day);
+    let done = cx.stats.finished_on(index, day);
     let book = &cx.stats.books[index];
     let script = Script::of_language(&book.language);
     let title = book.title.clone();
@@ -233,8 +234,9 @@ fn row(cx: &mut Ctx, area: Rect, day: i64, index: usize, secs: i64) {
         true => 0,
         false => theme.gap / 2 + cx.text.line_height() as i32,
     };
-    let bar_h = (theme.gap / 2).max(3);
-    let block_h = title_h + author_h + theme.gap + bar_h;
+    let band_h = band::height(cx.text, theme);
+    cx.text.set_px(theme.small_px);
+    let block_h = title_h + author_h + theme.gap + band_h;
 
     // `block_h` centres in `body`.
     cx.text.set_px(theme.body_px);
@@ -266,30 +268,29 @@ fn row(cx: &mut Ctx, area: Rect, day: i64, index: usize, secs: i64) {
     cx.text
         .draw(cx.fb, figures.right() - fw, top, &figure, false);
 
-    // `track` takes the width of `words`, under the last line drawn.
-    if let Some(percent) = percent {
-        let track = Rect::new(words.x, y + theme.gap, words.w, bar_h);
-        paint::progress(cx.fb, track, percent, 100, INK);
-        cx.text.set_px(theme.small_px);
-        let pct = crate::lang::counted(cx.s().percent_reached, percent);
-        let pw = cx.text.measure_width(&pct) as i32;
-        cx.text
-            .draw(cx.fb, figures.right() - pw, track.bottom(), &pct, false);
+    // The band closes the block, across the whole of `body`.
+    if percent.is_some() || done {
+        let foot = Rect::new(body.x, y + theme.gap, body.w, band_h);
+        let of = band::Band {
+            fill: match done {
+                true => 100,
+                false => percent.unwrap_or(-1),
+            },
+            at: percent,
+            said: cx.s().percent_reached,
+            finished: done,
+        };
+        band::draw(cx, foot, of);
     }
 
     let blocks = cx.stats.day_blocks_of(day, Some(index));
     day_spans(cx.fb, spans, &blocks, theme);
 }
 
-/// The width of the figures column: the wider of `figure` and
-/// `percent_reached` at 100.
+/// The width of the figures column, from `figure` alone: the band under it
+/// carries the percentage.
 fn figures_width(cx: &mut Ctx, figure: &str) -> i32 {
-    let duration = cx.text.measure_width(figure) as i32;
-    let said = crate::lang::counted(cx.s().percent_reached, 100);
-    cx.text.set_px(cx.theme.small_px);
-    let pct = cx.text.measure_width(&said) as i32;
-    cx.text.set_px(cx.theme.body_px);
-    duration.max(pct)
+    cx.text.measure_width(figure) as i32
 }
 
 /// `spans` laid across `area` on the twenty-four hours `charts::timeline`

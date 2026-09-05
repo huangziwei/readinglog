@@ -393,6 +393,9 @@ pub fn thinned(last: i64, art: &Path, keep: usize) -> Store {
 pub fn crowded(last: i64, art: &Path) -> Store {
     let mut store = library(last, art);
     binge(&mut store, last);
+    // The second binge lands past [`library`]'s own call, and each of its
+    // sittings takes a place here.
+    climb(&mut store);
     store
 }
 

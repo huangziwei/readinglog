@@ -307,6 +307,27 @@ pub fn progress(fb: &mut Framebuffer, track: Rect, value: i64, max: i64, ink: u8
     fill(fb, Rect::new(track.x, track.y, filled, track.h), ink);
 }
 
+/// How wide [`notch`] cuts, from `gap`.
+pub fn notch_width(gap: i32) -> i32 {
+    (gap / 2).max(3)
+}
+
+/// Where a notch `w` wide stands in `track`, `at` per cent along it.
+pub fn notch_x(track: Rect, at: i64, w: i32) -> i32 {
+    let x = track.x + (track.w as i64 * at.clamp(0, 100) / 100) as i32;
+    x.clamp(track.x, track.right() - w)
+}
+
+/// Cut [`WHITE`] down `track` at `at` per cent, [`notch_width`] wide.
+pub fn notch(fb: &mut Framebuffer, track: Rect, at: i64, gap: i32) {
+    let w = notch_width(gap);
+    fill(
+        fb,
+        Rect::new(notch_x(track, at, w), track.y, w, track.h),
+        WHITE,
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -561,6 +561,15 @@ impl Stats {
             .count() as i64
     }
 
+    /// Whether the book at `book` counts as finished on `day`: read through,
+    /// and `day` is the last it was read on. The rule
+    /// [`Self::finished_over`] counts by.
+    pub fn finished_on(&self, book: usize, day: i64) -> bool {
+        self.books
+            .get(book)
+            .is_some_and(|b| b.is_finished() && b.last_day == day)
+    }
+
     /// Days with any reading at all.
     pub fn days_read(&self) -> i64 {
         self.days.len() as i64

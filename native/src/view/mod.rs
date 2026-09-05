@@ -3,6 +3,7 @@
 //! span and the open book; a redraw after a tap is the same call.
 
 pub mod alltime;
+pub mod band;
 pub mod book;
 pub mod books;
 pub mod config;
