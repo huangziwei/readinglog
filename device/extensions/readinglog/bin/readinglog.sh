@@ -3,7 +3,7 @@
 
 EXT=/mnt/us/extensions/readinglog
 LOG=/mnt/us/logs/readinglog.log
-# $OPEN holds one URI.
+# $OPEN holds a URI, then "goto" or nothing, then the book's own path.
 OPEN=$EXT/open
 
 READER_APP=com.lab126.booklet.reader
@@ -37,13 +37,27 @@ file_view() {
     return "$status"
 }
 
+# clear_position deletes every .yjf under the .sdr directories beside the book
+# at $1. A KFX book's .sdr carries a hash infix between the stem and .sdr.
+clear_position() {
+    stem=${1%.*}
+    for sdr in "$stem".sdr "$stem".*.sdr; do
+        [ -d "$sdr" ] || continue
+        for yjf in "$sdr"/*.yjf; do
+            [ -f "$yjf" ] || continue
+            rm -f "$yjf" && echo "[$(date)] cleared $yjf" >> "$LOG"
+        done
+    done
+}
+
 # wait_reader returns once activeApp is $READER_APP, within $WAIT_SECS seconds.
 wait_reader() {
+    bound=$WAIT_SECS
     waited=0
     while :; do
         active=$(lipc-get-prop com.lab126.appmgrd activeApp 2>/dev/null)
         [ "$active" = "$READER_APP" ] && break
-        [ "$waited" -ge "$WAIT_SECS" ] && break
+        [ "$waited" -ge "$bound" ] && break
         sleep 1
         waited=$((waited + 1))
     done
@@ -89,12 +103,18 @@ restore_view() {
     esac
 }
 
-# open_book files $OPEN's URI, runs wait_reader, then follow_open.
+# open_book files $OPEN's URI, runs wait_reader, then follow_open. A second
+# line of "goto" runs clear_position over the third line first.
 open_book() {
-    uri=$(head -n 1 "$OPEN")
+    uri=$(sed -n 1p "$OPEN")
+    at=$(sed -n 2p "$OPEN")
+    book=$(sed -n 3p "$OPEN")
     rm -f "$OPEN"
     [ -n "$uri" ] || return 1
-    echo "[$(date)] open $uri" >> "$LOG"
+    echo "[$(date)] open $uri at ${at:-left}" >> "$LOG"
+    if [ "$at" = goto ] && [ -n "$book" ]; then
+        clear_position "$book"
+    fi
     file_view "$uri"
     status=$?
     wait_reader

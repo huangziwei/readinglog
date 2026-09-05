@@ -434,8 +434,9 @@ const ENGLISH: Strings = Strings {
     percent_now: "{d}% now",
     reread: "Reread",
     reread_ask: "Reread this book?",
-    reread_note: "The Finished mark comes off and the progress goes back to 0%. The time, \
-                  the sittings and the days already read are kept.",
+    reread_note: "The Finished mark comes off, the progress goes back to 0%, and the book \
+                  opens at its beginning. Highlights and notes are kept, and so are the \
+                  time, the sittings and the days already read.",
     cancel: "Cancel",
     yes: "yes",
     no_removed: "no, removed",
@@ -590,8 +591,9 @@ const GERMAN: Strings = Strings {
     percent_now: "{d}% jetzt",
     reread: "Neu lesen",
     reread_ask: "Dieses Buch neu lesen?",
-    reread_note: "Die Markierung Fertig wird entfernt und der Fortschritt geht auf 0 % \
-                  zurück. Gelesene Zeit, Sitzungen und Tage bleiben erhalten.",
+    reread_note: "Die Markierung Fertig wird entfernt, der Fortschritt geht auf 0 % zurück, \
+                  und das Buch öffnet sich am Anfang. Markierungen und Notizen bleiben \
+                  erhalten, ebenso gelesene Zeit, Sitzungen und Tage.",
     cancel: "Abbrechen",
     yes: "ja",
     no_removed: "nein, entfernt",
@@ -747,7 +749,8 @@ const JAPANESE: Strings = Strings {
     percent_now: "現在{d}%",
     reread: "再読",
     reread_ask: "この本を再読しますか？",
-    reread_note: "読了の印が外れ、進捗は0%に戻ります。これまでの時間・回数・日数はそのまま残ります。",
+    reread_note: "読了の印が外れ、進捗は0%に戻り、本は最初から開きます。ハイライトとメモ、\
+                  これまでの時間・回数・日数はそのまま残ります。",
     cancel: "キャンセル",
     yes: "あり",
     no_removed: "なし、削除済み",
@@ -890,7 +893,8 @@ const SIMPLIFIED: Strings = Strings {
     percent_now: "当前{d}%",
     reread: "重读",
     reread_ask: "重读这本书？",
-    reread_note: "读完标记将被取消，进度归零。已记录的时间、次数和天数保持不变。",
+    reread_note: "读完标记将被取消，进度归零，本书将从头打开。标注与笔记，\
+                  以及已记录的时间、次数和天数，都会保留。",
     cancel: "取消",
     yes: "是",
     no_removed: "否，已删除",
@@ -1044,7 +1048,8 @@ const TRADITIONAL: Strings = Strings {
     percent_now: "目前{d}%",
     reread: "重讀",
     reread_ask: "重讀這本書？",
-    reread_note: "讀完標記將被取消，進度歸零。已記錄的時間、次數和天數保持不變。",
+    reread_note: "讀完標記將被取消，進度歸零，本書將從頭開啟。標註與筆記，\
+                  以及已記錄的時間、次數和天數，都會保留。",
     cancel: "取消",
     yes: "是",
     no_removed: "否，已刪除",

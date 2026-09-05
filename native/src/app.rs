@@ -435,13 +435,14 @@ impl App {
     /// The request is written down rather than sent from here: the launcher
     /// makes the call once this process is gone, and a book that cannot be
     /// asked for leaves the reader where it is.
-    fn open(&mut self, index: usize) -> Action {
+    fn open(&mut self, index: usize, at: crate::open::At) -> Action {
         let Some(book) = self.stats.books.get(index).filter(|b| b.can_open()) else {
             return Action::Nothing;
         };
         match crate::open::ask(
             std::path::Path::new(crate::store::STORE_DIR),
             &book.location,
+            at,
         ) {
             Ok(()) => Action::Quit,
             Err(err) => {
@@ -490,7 +491,7 @@ impl App {
                 }
             }
         }
-        match self.open(index) {
+        match self.open(index, crate::open::At::Beginning) {
             Action::Quit => Action::Quit,
             _ => Action::Redraw,
         }
@@ -515,7 +516,7 @@ impl App {
                 }
             }
             Hit::Exit => return Action::Quit,
-            Hit::Open(index) => return self.open(index),
+            Hit::Open(index) => return self.open(index, crate::open::At::Left),
             Hit::Finished(index, on) => return self.set_finished(index, on),
             Hit::Reread(index) => {
                 if self.state.asked == Some(index) {
