@@ -265,8 +265,9 @@ pub struct Strings {
     /// mark off again.
     pub mark_finished: &'static str,
     pub mark_unfinished: &'static str,
-    /// The mark on a bar holding at 100. `{d}` is `percent`, rounded.
-    pub percent_now: &'static str,
+    /// The figure over the place a bar's reading stands at. `{d}` is `percent`,
+    /// rounded.
+    pub percent_at: &'static str,
     /// The control that hands a book back to be read from its beginning, the
     /// question it puts, and what that question states.
     pub reread: &'static str,
@@ -431,7 +432,7 @@ const ENGLISH: Strings = Strings {
     continue_short: "Continue",
     mark_finished: "Mark as Finished",
     mark_unfinished: "Mark as Unfinished",
-    percent_now: "{d}% now",
+    percent_at: "{d}% now",
     reread: "Reread",
     reread_ask: "Reread this book?",
     reread_note: "The Finished mark comes off, the progress goes back to 0%, and the book \
@@ -588,7 +589,7 @@ const GERMAN: Strings = Strings {
     continue_short: "Weiter",
     mark_finished: "Als fertig markieren",
     mark_unfinished: "Als unfertig markieren",
-    percent_now: "{d}% jetzt",
+    percent_at: "{d} % jetzt",
     reread: "Neu lesen",
     reread_ask: "Dieses Buch neu lesen?",
     reread_note: "Die Markierung Fertig wird entfernt, der Fortschritt geht auf 0 % zurück, \
@@ -746,7 +747,7 @@ const JAPANESE: Strings = Strings {
     continue_short: "続き",
     mark_finished: "読了にする",
     mark_unfinished: "未読了にする",
-    percent_now: "現在{d}%",
+    percent_at: "現在{d}%",
     reread: "再読",
     reread_ask: "この本を再読しますか？",
     reread_note: "読了の印が外れ、進捗は0%に戻り、本は最初から開きます。ハイライトとメモ、\
@@ -890,7 +891,7 @@ const SIMPLIFIED: Strings = Strings {
     continue_short: "继续",
     mark_finished: "标记读完",
     mark_unfinished: "标记未读完",
-    percent_now: "当前{d}%",
+    percent_at: "当前{d}%",
     reread: "重读",
     reread_ask: "重读这本书？",
     reread_note: "读完标记将被取消，进度归零，本书将从头打开。标注与笔记，\
@@ -1045,7 +1046,7 @@ const TRADITIONAL: Strings = Strings {
     continue_short: "繼續",
     mark_finished: "標記讀完",
     mark_unfinished: "標記未讀完",
-    percent_now: "目前{d}%",
+    percent_at: "目前{d}%",
     reread: "重讀",
     reread_ask: "重讀這本書？",
     reread_note: "讀完標記將被取消，進度歸零，本書將從頭開啟。標註與筆記，\

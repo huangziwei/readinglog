@@ -60,11 +60,10 @@ impl BookStat {
         }
     }
 
-    /// `percent`, rounded, for marking a bar [`Self::percent_shown`] holds at
-    /// 100. `None` without `finished`, without `has_percent`, and at 100.
+    /// Where the reading stands, rounded once, and the one figure a bar carries.
+    /// `None` outside [`Self::has_percent`].
     pub fn position_shown(&self) -> Option<i64> {
-        let at = self.percent.round() as i64;
-        (self.finished && self.has_percent() && at < 100).then_some(at)
+        self.has_percent().then(|| self.percent.round() as i64)
     }
 
     /// Whether the reader can be handed this book: the device holds it, and
@@ -722,10 +721,14 @@ mod tests {
     fn a_marked_book_states_a_hundred_and_marks_where_the_reader_stands() {
         let mut book = fresh(1, &BookRecord::default(), 0);
         book.percent = 55.4;
-        // Unmarked, the bar tracks the position and marks nothing.
-        assert_eq!((book.percent_shown(), book.position_shown()), (55, None));
+        // Unmarked, the bar and the place it marks state the one figure.
+        assert_eq!(
+            (book.percent_shown(), book.position_shown()),
+            (55, Some(55))
+        );
         assert!(!book.is_finished());
 
+        // Marked, the bar holds at 100 and the place stands where it stands.
         book.finished = true;
         assert_eq!(
             (book.percent_shown(), book.position_shown()),
@@ -733,10 +736,12 @@ mod tests {
         );
         assert!(book.is_finished());
 
-        // At the end there is no position left to mark, and a book the catalog
-        // states no percentage for has none to mark either.
         book.percent = 100.0;
-        assert_eq!((book.percent_shown(), book.position_shown()), (100, None));
+        assert_eq!(
+            (book.percent_shown(), book.position_shown()),
+            (100, Some(100))
+        );
+        // A book the catalog states no percentage for marks no place.
         book.percent = -1.0;
         assert_eq!((book.percent_shown(), book.position_shown()), (100, None));
         assert!(book.is_finished());
