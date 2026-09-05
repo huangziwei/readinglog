@@ -20,6 +20,10 @@ const STORE_FILE: &str = "sessions.tsv";
 /// What the first line reads. The number names the parse below it.
 const HEADER: &str = "#readinglog\t2";
 
+/// The percentage [`BookRecord::stand_at`] sets [`BookRecord::finished`] at.
+/// `BookStat::percent_shown` rounds to 100 from here up.
+pub const FINISHED_PERCENT: f64 = 99.5;
+
 /// What `catalog` stated about one book, on the last pass that named it.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct BookRecord {
@@ -41,14 +45,38 @@ pub struct BookRecord {
     /// open the book. Empty for a book the catalog has only ever named in the
     /// library.
     pub location: String,
-    /// Set from the book screen. `merge` and `taken` leave it alone.
+    /// Whether this book is read through. Set from the book screen, and by
+    /// [`Self::stand_at`] on a place at or past [`FINISHED_PERCENT`].
     pub finished: bool,
+    /// The place a reread was declared at, from the book screen. Until the
+    /// catalog names a place before it, the reading it stands for is the one
+    /// that ended and `percent` holds 0.
+    pub restart: Option<f64>,
 }
 
 impl BookRecord {
     /// False on a `*`-prefixed `cde_key`, which names a file and not a book.
     pub fn is_book(&self) -> bool {
         !self.cde_key.starts_with('*')
+    }
+
+    /// Whether the place this record holds calls the book read through.
+    fn read_through(&self) -> bool {
+        self.percent >= FINISHED_PERCENT
+    }
+
+    /// Take `percent` as this book's place. At or past [`FINISHED_PERCENT`] it
+    /// carries [`Self::finished`]; at or past [`Self::restart`] it is the
+    /// reading that ended, and `percent` holds 0.
+    fn stand_at(&mut self, percent: f64) {
+        if let Some(from) = self.restart {
+            if percent >= from {
+                return;
+            }
+            self.restart = None;
+        }
+        self.percent = percent;
+        self.finished |= self.read_through();
     }
 
     /// [`Self::cover`] where one is held, else [`Self::thumbnail`].
@@ -154,7 +182,7 @@ impl Store {
 
     /// The instant a pass must start reading the log at: [`Self::mark`], except
     /// under [`Self::open_at_mark`], where it is the newest sitting's own start
-    /// so that sitting is re-measured whole.
+    /// and that sitting is re-measured whole.
     pub fn read_from(&self) -> String {
         let Some(newest) = self.sessions.last() else {
             return self.mark.clone();
@@ -178,7 +206,7 @@ impl Store {
     }
 
     /// Fold a batch of log lines into the store. Every sitting at or after
-    /// `from` is dropped and replaced by what `lines` measured, so a sitting in
+    /// `from` is dropped and replaced by what `lines` measured; a sitting in
     /// progress is re-measured whole on each pass.
     pub fn absorb(&mut self, lines: &[String], from: &str) -> (usize, usize) {
         let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
@@ -274,7 +302,7 @@ impl Store {
                 continue;
             };
             if !stated.contains(&slot) {
-                self.books[slot].percent = (progress * 100.0).clamp(0.0, 100.0);
+                self.books[slot].stand_at((progress * 100.0).clamp(0.0, 100.0));
             }
         }
     }
@@ -341,13 +369,35 @@ impl Store {
     }
 
     /// Set [`BookRecord::finished`] on the record [`Self::book_for`] answers
-    /// for `extent` and `key`, answering whether the value changed.
+    /// for `extent` and `key`, answering whether the value changed. A book
+    /// declared read through carries no [`BookRecord::restart`].
     pub fn set_finished(&mut self, extent: i64, key: &str, finished: bool) -> bool {
         let Some(slot) = self.slot_for(extent, Some(key)) else {
             return false;
         };
-        let changed = self.books[slot].finished != finished;
-        self.books[slot].finished = finished;
+        let record = &mut self.books[slot];
+        let changed = record.finished != finished;
+        record.finished = finished;
+        if finished {
+            record.restart = None;
+        }
+        changed
+    }
+
+    /// Declare a reread of the record [`Self::book_for`] answers for:
+    /// `finished` comes off, `percent` becomes [`BookRecord::restart`] and
+    /// reads 0. Answers whether anything changed.
+    pub fn reread(&mut self, extent: i64, key: &str) -> bool {
+        let Some(slot) = self.slot_for(extent, Some(key)) else {
+            return false;
+        };
+        let record = &mut self.books[slot];
+        let changed = record.finished || record.percent > 0.0;
+        record.finished = false;
+        if record.percent > 0.0 {
+            record.restart = Some(record.percent);
+            record.percent = 0.0;
+        }
         changed
     }
 
@@ -408,7 +458,8 @@ fn taken(book: &Book) -> BookRecord {
         on_device: book.on_device,
         cover: String::new(),
         location: flat(&book.location),
-        finished: false,
+        finished: book.percent >= FINISHED_PERCENT,
+        restart: None,
     }
 }
 
@@ -432,14 +483,14 @@ fn merge(record: &mut BookRecord, book: &Book) {
         record.extent = book.extent;
     }
     if book.percent >= 0.0 {
-        record.percent = book.percent;
+        record.stand_at(book.percent);
     }
     record.on_device |= book.on_device;
 }
 
 fn write_book(b: &BookRecord) -> String {
     format!(
-        "b\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "b\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         b.extent,
         flat(&b.cde_key),
         flat(&b.title),
@@ -451,6 +502,7 @@ fn write_book(b: &BookRecord) -> String {
         flat(&b.cover),
         flat(&b.location),
         u8::from(b.finished),
+        b.restart.map(|p| format!("{p:.6}")).unwrap_or_default(),
     )
 }
 
@@ -470,6 +522,12 @@ fn read_book<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<BookRecord> {
         // catalog pass fills it.
         location: next().to_string(),
         finished: next().trim() == "1",
+        restart: next().trim().parse().ok(),
+    })
+    // `read_through` marks a record the row left unmarked.
+    .map(|mut record: BookRecord| {
+        record.finished |= record.read_through();
+        record
     })
 }
 
@@ -682,6 +740,68 @@ mod tests {
         assert_eq!(store.books.len(), 1);
         assert!(!store.books[0].finished);
         assert_eq!(store.books[0].location, "/mnt/us/a.kfx");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_place_read_through_marks_its_own_record() {
+        // `set_finished` is not called: `remember` marks this one.
+        let mut store = Store::default();
+        store.remember(&[shelved(938_018, "B00OKPCRLG", "Bible", 99.8)]);
+        assert!(store.books[0].finished);
+
+        // `finished` holds when `percent` turns back.
+        store.remember(&[shelved(938_018, "B00OKPCRLG", "Bible", 71.0)]);
+        assert_eq!(store.books[0].percent, 71.0);
+        assert!(store.books[0].finished);
+
+        // A `b` row carrying `finished` at 0 reads back marked.
+        let dir = scratch("through");
+        std::fs::create_dir_all(&dir).expect("a directory to write in");
+        let row = "b\t938018\tB00OKPCRLG\tBible\tBerlin\t\ten\t100.000000\t1\t\t/mnt/us/a.kfx\t0";
+        std::fs::write(Store::file(&dir), format!("{HEADER}\n{row}\n")).expect("a store");
+        assert!(Store::load(&dir).books[0].finished);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_reread_gives_up_the_place_and_waits_for_one_before_it() {
+        let dir = scratch("reread");
+        let mut store = Store::default();
+        let shelf = [shelved(938_018, "B00OKPCRLG", "Bible", 100.0)];
+        store.remember(&shelf);
+        assert!(store.books[0].finished);
+
+        assert!(store.reread(938_018, "B00OKPCRLG"));
+        assert_eq!(store.books[0].percent, 0.0);
+        assert_eq!(store.books[0].restart, Some(100.0));
+        assert!(!store.books[0].finished);
+
+        // `remember` at or past `restart` leaves `percent` at 0.
+        store.remember(&shelf);
+        assert_eq!(store.books[0].percent, 0.0);
+        assert!(!store.books[0].finished);
+        store.save(&dir).expect("a written store");
+        assert_eq!(Store::load(&dir).books[0].restart, Some(100.0));
+
+        // A `percent` under `restart` clears it, and `remember` takes over.
+        store.remember(&[shelved(938_018, "B00OKPCRLG", "Bible", 4.0)]);
+        assert_eq!(
+            (store.books[0].percent, store.books[0].restart),
+            (4.0, None)
+        );
+        store.remember(&[shelved(938_018, "B00OKPCRLG", "Bible", 100.0)]);
+        assert_eq!(store.books[0].percent, 100.0);
+        assert!(
+            store.books[0].finished,
+            "and the second pass marks it again"
+        );
+
+        // No record, and a record at its beginning, have nothing to
+        // give up.
+        assert!(!store.reread(0, "NOSUCHKEY"));
+        store.remember(&[shelved(555, "B00OTHER", "Another", 0.0)]);
+        assert!(!store.reread(555, "B00OTHER"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

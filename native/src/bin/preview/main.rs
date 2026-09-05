@@ -314,11 +314,20 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
     let Some((_, tab)) = SCREENS.iter().find(|(name, _)| *name == shot.name) else {
         return Err(anyhow!("no screen or sketch called {}", shot.name));
     };
-    let book = match shot.name.as_str() {
-        "book" => Some(shot.of.as_deref().unwrap_or("0").parse().unwrap_or(0)),
-        _ => None,
+    // `book:<index>`, and `book:<index>:asking` with the question up over it.
+    let (book, asking) = match shot.name.as_str() {
+        "book" => {
+            let of = shot.of.as_deref().unwrap_or("0");
+            let (at, asking) = match of.split_once(':') {
+                Some((at, "asking")) => (at, true),
+                _ => (of, false),
+            };
+            (Some(at.parse().unwrap_or(0)), asking)
+        }
+        _ => (None, false),
     };
     app.show(*tab, book);
+    app.ask(asking.then_some(book).flatten());
     set_span(app, shot, week)?;
     app.draw(fb)
 }
@@ -470,7 +479,7 @@ fn list() {
                 "  (:all :trends :week :month :year :back :weekback :picked :day\n   :yearbusy :weekbusy :weekempty :busy :busy2 :busyend)"
             }
             "today" => "  (:quiet :empty :busy)",
-            "book" => "  (:<index>)",
+            "book" => "  (:<index> :<index>:asking)",
             "books" => {
                 "  (:finished :unfinished :unfinished-furthest :longest :furthest\n   :mid :last)"
             }

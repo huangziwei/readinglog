@@ -6,7 +6,7 @@ use std::path::Path;
 
 use readinglog_native::date;
 use readinglog_native::log::session::{Measure, Session};
-use readinglog_native::store::{BookRecord, Store};
+use readinglog_native::store::{BookRecord, FINISHED_PERCENT, Store};
 
 /// Days of reading laid down behind the day being drawn.
 pub const DAYS: i64 = 1150;
@@ -289,7 +289,10 @@ pub fn library(last: i64, art: &Path) -> Store {
                 true => format!("/mnt/us/documents/{}.kfx", book.title),
                 false => String::new(),
             },
-            finished: slot == MARKED,
+            // The store marks a book its place states read through; this one
+            // is the mark set by hand, short of the threshold.
+            finished: slot == MARKED || book.percent >= FINISHED_PERCENT,
+            restart: None,
         });
     }
 

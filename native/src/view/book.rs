@@ -17,8 +17,12 @@ use super::{Ctx, Hit};
 /// more days than this gives each column a block of them.
 const SPAN_COLUMNS: i64 = 30;
 
-/// Lines a title takes before the rest of it is ellipsized.
+/// Lines a title takes before the rest of it is ellipsized, where the column
+/// it is set in has room for them.
 const TITLE_LINES: usize = 2;
+
+/// Rows of figures the reading section lists.
+const LINES: usize = 10;
 
 /// The bar stating how far through the book is.
 fn bar_height(theme: &Theme) -> i32 {
@@ -36,52 +40,91 @@ fn cover_height(theme: &Theme) -> i32 {
     theme.row_h * 4
 }
 
-/// The labels of the two controls. The opening one is `None` outside
-/// [`BookStat::can_open`]; the marking one names the state a tap leaves.
-fn control_labels(book: &BookStat, s: &Strings) -> (Option<&'static str>, &'static str) {
-    let mark = match book.finished {
-        true => s.mark_unfinished,
-        false => s.mark_finished,
-    };
-    (book.can_open().then_some(s.continue_reading), mark)
+/// The labels of the controls: the two that hand the book over, then the mark.
+/// The pair needs [`BookStat::can_open`], the first shortens where the second
+/// joins it, and the mark stands under [`BookStat::can_mark`].
+fn control_labels(
+    book: &BookStat,
+    s: &Strings,
+) -> ([Option<&'static str>; 2], Option<&'static str>) {
+    let open = book.can_open();
+    let again = open && book.can_reread();
+    (
+        [
+            open.then_some(match again {
+                true => s.continue_short,
+                false => s.continue_reading,
+            }),
+            again.then_some(s.reread),
+        ],
+        book.can_mark().then_some(match book.finished {
+            true => s.mark_unfinished,
+            false => s.mark_finished,
+        }),
+    )
 }
 
-/// Where the two controls land across `width`: the opening one against the
-/// left edge, the marking one against the right, on a second row where the two
-/// overrun `width` together.
+/// Where the controls land across `width`: the reading ones from the left
+/// edge, the mark against the right.
 fn controls_split(
     text: &mut TextRenderer,
     theme: &Theme,
     script: Script,
     width: i32,
-    said: (Option<&str>, &str),
-) -> (Option<Rect>, Rect) {
+    said: ([Option<&str>; 2], Option<&str>),
+) -> (Vec<Rect>, Option<Rect>) {
     text.set_px(theme.body_px);
     let pad = chrome::chip_pad() * 4;
     let mut wide = |label: &str| (text.measure_width_in(script, label) as i32 + pad).min(width);
-    let mark = wide(said.1);
-    let open = said.0.map(&mut wide);
-    split_from(theme, width, open, mark)
+    let read: Vec<i32> = said.0.iter().flatten().map(|l| wide(l)).collect();
+    let mark = said.1.map(&mut wide);
+    split_from(theme, width, &read, mark)
 }
 
-/// [`controls_split`]'s arithmetic, over widths already measured. Separated
-/// from the paint: a test reaches it without a `TextRenderer`.
-fn split_from(theme: &Theme, width: i32, open: Option<i32>, mark: i32) -> (Option<Rect>, Rect) {
+/// [`controls_split`]'s arithmetic, over measured widths. `read` runs from the
+/// left edge in the order given and `mark` keeps the right; a row that cannot
+/// hold what is left opens another.
+fn split_from(
+    theme: &Theme,
+    width: i32,
+    read: &[i32],
+    mark: Option<i32>,
+) -> (Vec<Rect>, Option<Rect>) {
     let h = chrome::chip_height(theme);
-    let Some(open) = open else {
-        return (None, Rect::new(width - mark, 0, mark, h));
-    };
-    let row = match open + theme.gap * 2 + mark <= width {
-        true => 0,
-        false => h + theme.gap,
-    };
-    (
-        Some(Rect::new(0, 0, open, h)),
-        Rect::new(width - mark, row, mark, h),
-    )
+    let step = h + theme.gap;
+    let (mut row, mut x) = (0, 0);
+    let mut boxes = Vec::with_capacity(read.len());
+    for w in read {
+        let w = (*w).min(width);
+        if x > 0 && x + w > width {
+            row += 1;
+            x = 0;
+        }
+        boxes.push(Rect::new(x, row * step, w, h));
+        x += w + theme.gap;
+    }
+    let mark = mark.map(|mark| {
+        let mark = mark.min(width);
+        if x > 0 && x + theme.gap + mark > width {
+            row += 1;
+        }
+        Rect::new(width - mark, row * step, mark, h)
+    });
+    (boxes, mark)
 }
 
-/// The band the controls take, the gap above them included.
+/// The foot of the lowest control [`split_from`] placed, and 0 where it placed
+/// none.
+fn controls_bottom(read: &[Rect], mark: Option<Rect>) -> i32 {
+    read.iter()
+        .chain(mark.iter())
+        .map(Rect::bottom)
+        .max()
+        .unwrap_or(0)
+}
+
+/// The band the controls take, the gap above them included, and 0 where this
+/// book offers none.
 fn open_height(
     text: &mut TextRenderer,
     theme: &Theme,
@@ -90,8 +133,11 @@ fn open_height(
     s: &Strings,
 ) -> i32 {
     let width = chrome::content_box(theme).w;
-    let (_, mark) = controls_split(text, theme, script, width, control_labels(book, s));
-    theme.gap * 2 + mark.bottom()
+    let (read, mark) = controls_split(text, theme, script, width, control_labels(book, s));
+    match controls_bottom(&read, mark) {
+        0 => 0,
+        foot => theme.gap * 2 + foot,
+    }
 }
 
 /// Where the controls sit inside the band [`open_height`] took: their own
@@ -135,12 +181,15 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
     );
 
     let head_h = chrome::section_height(cx.text, theme);
-    let (chart, facts) = rest.split_bottom(head_h + theme.row_h * 3);
+    // `facts` takes [`LINES`] line heights; `chart` takes what `rest` has left.
+    cx.text.set_px(theme.body_px);
+    let deep = head_h + air + cx.text.line_height() as i32 * LINES as i32;
+    let (facts, chart) = rest.split_top(deep.min(rest.h));
     let facts = Rect::new(facts.x, facts.y, facts.w, (facts.h - air).max(1));
     let inner = chrome::section(cx.fb, cx.text, theme, facts, s.the_reading);
 
     // [`figures`] states the other three.
-    let lines = [
+    let lines: [(&str, String); LINES] = [
         (s.sittings, book.sittings.to_string()),
         (
             s.days,
@@ -166,6 +215,11 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
     let rows = inner.rows(lines.len() as i32, 0);
     for ((key, value), row) in lines.iter().zip(&rows) {
         chrome::row(cx.fb, cx.text, theme, *row, key, value);
+    }
+
+    // A `chart` shallower than its heading and a row draws no column.
+    if chart.h < head_h + theme.row_h {
+        return;
     }
 
     // The strip is anchored on the book's own stretch of days and never on
@@ -214,7 +268,9 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat, index: usize) {
 
     let band = open_height(cx.text, theme, cx.ui_script(), book, cx.s());
     let (open, area) = area.split_bottom(band);
-    controls(cx, open_box(theme, open), book, index);
+    if band > 0 {
+        controls(cx, open_box(theme, open), book, index);
+    }
 
     let (foot, top) = area.split_bottom(progress_height(cx.text, theme));
     // `top` stops `theme.gap * 2` above `foot`.
@@ -232,10 +288,11 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat, index: usize) {
         jacket.h,
     );
 
+    let deep = title_lines(cx.text, theme, words.h, !book.author.is_empty());
     cx.text.set_px(theme.head_px);
     let lines = cx
         .text
-        .wrap_and_clamp_in(script, &book.title, words.w as u32, TITLE_LINES);
+        .wrap_and_clamp_in(script, &book.title, words.w as u32, deep);
     let mut y = words.y + cx.text.cap_height() as i32;
     for line in &lines {
         cx.text.draw_in(script, cx.fb, words.x, y, line, false);
@@ -339,21 +396,117 @@ fn finished_chip(cx: &mut Ctx, line: Rect, baseline: i32) {
     );
 }
 
-/// The two controls under the progress bar, at the places [`controls_split`]
-/// put them: [`Hit::Open`] on the left, [`Hit::Finished`] on the right.
+/// The controls under the progress bar, at the places [`controls_split`] put
+/// them: [`Hit::Open`] and [`Hit::Reread`] from the left, [`Hit::Finished`]
+/// against the right.
 fn controls(cx: &mut Ctx, band: Rect, book: &BookStat, index: usize) {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
     let said = control_labels(book, cx.s());
-    let (open, mark) = controls_split(cx.text, theme, script, band.w, said);
-    if let (Some(box_), Some(label)) = (open, said.0) {
-        let box_ = Rect::new(band.x + box_.x, band.y + box_.y, box_.w, box_.h);
-        outlined(cx, box_, label);
-        cx.hit(Hit::Open(index), box_);
+    let (read, mark) = controls_split(cx.text, theme, script, band.w, said);
+    let mut placed = read.iter();
+    for (said, hit) in said.0.iter().zip([Hit::Open(index), Hit::Reread(index)]) {
+        let (Some(said), Some(box_)) = (said, placed.next()) else {
+            continue;
+        };
+        let box_ = onto(band, *box_);
+        outlined(cx, box_, said);
+        cx.hit(hit, box_);
     }
-    let box_ = Rect::new(band.x + mark.x, band.y + mark.y, mark.w, mark.h);
-    outlined(cx, box_, said.1);
-    cx.hit(Hit::Finished(index, !book.finished), box_);
+    if let (Some(box_), Some(said)) = (mark, said.1) {
+        let box_ = onto(band, box_);
+        outlined(cx, box_, said);
+        cx.hit(Hit::Finished(index, !book.finished), box_);
+    }
+}
+
+/// A box [`split_from`] placed, moved onto `band`.
+fn onto(band: Rect, box_: Rect) -> Rect {
+    Rect::new(band.x + box_.x, band.y + box_.y, box_.w, box_.h)
+}
+
+/// The question a reread puts, drawn over the book's own screen. The panel
+/// carries [`Hit::Again`] and [`Hit::Dismiss`]; `area` behind it is
+/// [`Hit::Dismiss`] whole.
+pub fn asking(cx: &mut Ctx, area: Rect) {
+    let theme: &Theme = cx.theme;
+    let script = cx.ui_script();
+    let s = cx.s();
+    cx.hit(Hit::Dismiss, area);
+
+    let ways = [(s.cancel, Hit::Dismiss), (s.reread, Hit::Again)];
+    let pad = theme.gap * 3;
+    let width = area.w - theme.gap * 6;
+    let inner = width - pad * 2;
+
+    cx.text.set_px(theme.head_px);
+    let ask = cx
+        .text
+        .wrap_and_clamp_in(script, s.reread_ask, inner as u32, 2);
+    let ask_h = ask.len() as i32 * cx.text.line_height() as i32;
+    cx.text.set_px(theme.body_px);
+    let note = cx
+        .text
+        .wrap_and_clamp_in(script, s.reread_note, inner as u32, 6);
+    let note_h = note.len() as i32 * cx.text.line_height() as i32;
+    let said: Vec<i32> = ways
+        .iter()
+        .map(|(l, _)| {
+            (cx.text.measure_width_in(script, l) as i32 + chrome::chip_pad() * 4).min(inner)
+        })
+        .collect();
+
+    let chip = chrome::chip_height(theme);
+    let abreast = said.iter().sum::<i32>() + theme.gap * 4 <= inner;
+    let rows = match abreast {
+        true => 1,
+        false => said.len() as i32,
+    };
+    let feet_h = chip * rows + theme.gap * (rows - 1);
+    let high = (pad * 2 + ask_h + theme.gap * 2 + note_h + theme.gap * 3 + feet_h).min(area.h);
+    let panel = Rect::new(
+        area.x + (area.w - width) / 2,
+        area.y + (area.h - high) / 2,
+        width,
+        high,
+    );
+    paint::fill(cx.fb, panel, WHITE);
+    paint::stroke(cx.fb, panel, INK, 3);
+
+    let (heads, rest) = panel.inset(pad).split_top(ask_h + theme.gap * 2);
+    let (notes, feet) = rest.split_top(note_h + theme.gap * 3);
+    cx.text.set_px(theme.head_px);
+    lines(cx, heads, script, &ask);
+    cx.text.set_px(theme.body_px);
+    lines(cx, notes, script, &note);
+
+    let boxes = match abreast {
+        true => {
+            let mut x = feet.right() - (said.iter().sum::<i32>() + theme.gap * 4);
+            said.iter()
+                .map(|w| {
+                    let box_ = Rect::new(x, feet.y, *w, chip);
+                    x += w + theme.gap * 2;
+                    box_
+                })
+                .collect()
+        }
+        false => feet.rows(said.len() as i32, theme.gap),
+    };
+    for ((said, hit), box_) in ways.iter().zip(&boxes) {
+        outlined(cx, *box_, said);
+        cx.hit(*hit, *box_);
+    }
+}
+
+/// `said` set down `box_` from its top, at whatever size is set.
+fn lines(cx: &mut Ctx, box_: Rect, script: Script, said: &[String]) {
+    let step = cx.text.line_height() as i32;
+    let mut y = box_.y + cx.text.cap_height() as i32;
+    for line in said {
+        cx.text.draw_in(script, cx.fb, box_.x, y, line, false);
+        y += step;
+    }
 }
 
 /// One control: `said` centred in a 2 px outline.
@@ -372,6 +525,21 @@ fn outlined(cx: &mut Ctx, box_: Rect, said: &str) {
         said,
         false,
     );
+}
+
+/// Lines the title takes in a column `high` tall: [`TITLE_LINES`], fewer where
+/// the author's line and [`figures`] leave room for fewer, and never none.
+fn title_lines(text: &mut TextRenderer, theme: &Theme, high: i32, author: bool) -> usize {
+    let stood = chrome::figure_height(text, theme);
+    text.set_px(theme.small_px);
+    let named = match author {
+        true => theme.gap + text.line_height() as i32,
+        false => 0,
+    };
+    text.set_px(theme.head_px);
+    let each = (text.line_height() as i32).max(1);
+    let room = (high - stood - named) / each;
+    room.clamp(1, TITLE_LINES as i32) as usize
 }
 
 /// The book's three headline figures, along the foot of the words column.
@@ -458,51 +626,109 @@ mod tests {
     }
 
     #[test]
-    fn only_a_book_the_reader_can_be_handed_takes_the_opening_control() {
+    fn only_a_book_the_reader_can_be_handed_takes_the_reading_controls() {
         // A book the device holds, one it does not, and one it holds under a
         // name the catalog never stated.
         let on_device = held("/mnt/us/documents/a.kfx");
-        assert_eq!(control_labels(&on_device, en()).0, Some("Continue reading"));
-        assert_eq!(control_labels(&book(600, 0, 0), en()).0, None);
-        assert_eq!(control_labels(&held(""), en()).0, None);
+        assert_eq!(
+            control_labels(&on_device, en()).0,
+            [Some("Continue reading"), None],
+            "a book with no place in it has none to give up"
+        );
+        assert_eq!(control_labels(&book(600, 0, 0), en()).0, [None, None]);
+        assert_eq!(control_labels(&held(""), en()).0, [None, None]);
+
+        // A place to give up puts the rereading control beside the other, and
+        // shortens the first.
+        let part = BookStat {
+            percent: 46.0,
+            ..on_device
+        };
+        assert_eq!(
+            control_labels(&part, en()).0,
+            [Some("Continue"), Some("Reread")]
+        );
+        // The same book off the device offers neither: both hand it over.
+        let gone = BookStat {
+            percent: 46.0,
+            ..book(600, 0, 0)
+        };
+        assert_eq!(control_labels(&gone, en()).0, [None, None]);
     }
 
     #[test]
     fn the_marking_control_names_the_state_a_tap_would_leave() {
         let held = held("/mnt/us/documents/a.kfx");
-        assert_eq!(control_labels(&held, en()).1, "Mark as Finished");
+        assert_eq!(control_labels(&held, en()).1, Some("Mark as Finished"));
         let marked = BookStat {
             finished: true,
             ..held
         };
-        assert_eq!(control_labels(&marked, en()).1, "Mark as Unfinished");
+        assert_eq!(control_labels(&marked, en()).1, Some("Mark as Unfinished"));
     }
 
     #[test]
-    fn both_controls_stand_inside_the_width_they_were_given() {
+    fn a_book_read_to_the_end_leaves_the_mark_to_the_store() {
+        // `percent` states this one read through, and `can_mark` is false.
+        let done = BookStat {
+            percent: 100.0,
+            finished: true,
+            ..held("/mnt/us/documents/a.kfx")
+        };
+        assert!(done.is_finished());
+        assert_eq!(control_labels(&done, en()).1, None);
+        assert_eq!(
+            control_labels(&done, en()).0,
+            [Some("Continue"), Some("Reread")],
+            "and reading it again is the way out of the mark"
+        );
+        // Short of [`FINISHED_PERCENT`], `can_mark` holds.
+        let back = BookStat {
+            percent: 96.0,
+            ..done
+        };
+        assert_eq!(control_labels(&back, en()).1, Some("Mark as Unfinished"));
+    }
+
+    #[test]
+    fn every_control_stands_inside_the_width_it_was_given() {
         for (w, h) in [(1264, 1680), (1272, 1696), (1860, 2480)] {
             let theme = Theme::for_screen(w, h);
             let width = chrome::content_box(&theme).w;
-            // Two that fit side by side, and two that cannot.
-            for (open, mark) in [(300, 400), (width * 3 / 5, width * 3 / 5)] {
-                let (open_box, mark_box) = split_from(&theme, width, Some(open), mark);
-                let open_box = open_box.expect("a book on the device takes both");
-                assert_eq!(open_box.x, 0, "{w}x{h}: the opening control floats");
+            // Two that fit beside the mark, and two that cannot.
+            for read in [vec![300, 260], vec![width * 3 / 5, width * 3 / 5]] {
+                let (boxes, mark) = split_from(&theme, width, &read, Some(400));
+                let mark = mark.expect("the mark was asked for");
+                assert_eq!(boxes.len(), read.len());
+                assert_eq!(boxes[0].x, 0, "{w}x{h}: the first control floats");
                 assert_eq!(
-                    mark_box.right(),
+                    mark.right(),
                     width,
                     "{w}x{h}: the marking control leaves the right edge"
                 );
+                for box_ in &boxes {
+                    assert!(
+                        box_.right() <= width,
+                        "{w}x{h}: a control runs past the edge"
+                    );
+                    assert!(
+                        box_.y != mark.y || box_.right() <= mark.x,
+                        "{w}x{h}: a reading control overlaps the mark"
+                    );
+                }
                 assert!(
-                    mark_box.y >= open_box.bottom() || mark_box.x >= open_box.right(),
-                    "{w}x{h}: the two controls overlap"
+                    boxes[0].y != boxes[1].y || boxes[0].right() <= boxes[1].x,
+                    "{w}x{h}: the two reading controls overlap"
                 );
             }
-            // A book the device does not hold takes the right-hand control
-            // alone, on the first row.
-            let (open_box, mark_box) = split_from(&theme, width, None, 400);
-            assert!(open_box.is_none());
-            assert_eq!((mark_box.y, mark_box.right()), (0, width));
+            // A book the device does not hold takes the mark alone, on the
+            // first row.
+            let (boxes, mark) = split_from(&theme, width, &[], Some(400));
+            assert!(boxes.is_empty());
+            assert_eq!((mark.unwrap().y, mark.unwrap().right()), (0, width));
+            // With neither, `controls_bottom` is 0 and the band takes no height.
+            let (boxes, mark) = split_from(&theme, width, &[], None);
+            assert_eq!(controls_bottom(&boxes, mark), 0);
         }
     }
 

@@ -143,6 +143,11 @@ impl App {
         self.state.book = book;
     }
 
+    /// Put the rereading question up over `book`, or take it down.
+    pub fn ask(&mut self, book: Option<usize>) {
+        self.state.asked = book;
+    }
+
     /// Draw All Time at `page`, whatever it was left on.
     pub fn set_alltime_page(&mut self, page: usize) {
         self.state.alltime_page = page;
@@ -210,7 +215,12 @@ impl App {
         let colour = self.colour;
         let state = self.state.clone();
         self.frame(fb, &mut |cx, area| match state.book {
-            Some(index) => view::book::draw(cx, area, index),
+            Some(index) => {
+                view::book::draw(cx, area, index);
+                if state.asked == Some(index) {
+                    view::book::asking(cx, area);
+                }
+            }
             None => match state.tab {
                 Tab::Config => view::config::draw(cx, area, &settings, colour),
                 Tab::Home => view::home::draw(cx, area, state.list_from),
@@ -462,6 +472,30 @@ impl App {
         Action::Redraw
     }
 
+    /// Answer the question `State::asked` holds: its book gives up its place
+    /// and its mark, then goes back to the Kindle's reader.
+    fn again(&mut self) -> Action {
+        let Some(index) = self.state.asked.take() else {
+            return Action::Nothing;
+        };
+        if let Some(book) = self.stats.books.get(index) {
+            let (extent, key) = (book.extent, book.cde_key.clone());
+            if self.store.reread(extent, &key) {
+                self.rebuild();
+                if let Err(err) = self
+                    .store
+                    .save(std::path::Path::new(crate::store::STORE_DIR))
+                {
+                    eprintln!("reread: the record did not reach the store: {err:#}");
+                }
+            }
+        }
+        match self.open(index) {
+            Action::Quit => Action::Quit,
+            _ => Action::Redraw,
+        }
+    }
+
     /// What a tap at `(x, y)` does.
     fn tapped(&mut self, x: i32, y: i32) -> Action {
         // `hits` in reverse: the last box drawn wins.
@@ -483,6 +517,18 @@ impl App {
             Hit::Exit => return Action::Quit,
             Hit::Open(index) => return self.open(index),
             Hit::Finished(index, on) => return self.set_finished(index, on),
+            Hit::Reread(index) => {
+                if self.state.asked == Some(index) {
+                    return Action::Nothing;
+                }
+                self.state.asked = Some(index);
+            }
+            Hit::Again => return self.again(),
+            Hit::Dismiss => {
+                if self.state.asked.take().is_none() {
+                    return Action::Nothing;
+                }
+            }
             Hit::Language(pick) => {
                 if self.settings.language == pick {
                     return Action::Nothing;

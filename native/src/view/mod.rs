@@ -35,6 +35,14 @@ pub enum Hit {
     /// Set `BookRecord::finished` on a book, by its index in [`Stats::books`]
     /// and the value to set.
     Finished(usize, bool),
+    /// Ask to read a book again, by its index in [`Stats::books`]. Puts the
+    /// question up rather than answering it: [`Hit::Again`] answers.
+    Reread(usize),
+    /// The book [`State::asked`] names gives up its place and its mark, and
+    /// goes back to the Kindle's reader. Leaves the app, as [`Hit::Open`] does.
+    Again,
+    /// Take the question down, leaving the book as it stands.
+    Dismiss,
     /// Leave the app. The only way out: a book is closed by tapping a tab.
     Exit,
     /// A chip on the config page.
@@ -235,6 +243,9 @@ pub struct State {
     pub picked: bool,
     /// The book whose own screen is open, over whichever tab opened it.
     pub book: Option<usize>,
+    /// The book a reread has been asked for and not yet answered, which puts
+    /// the question over that book's screen.
+    pub asked: Option<usize>,
     /// How far down the book list has been paged.
     pub books_from: usize,
     /// Which books the Books screen lists.
@@ -259,6 +270,7 @@ impl State {
             span: Span::AllTime,
             picked: false,
             book: None,
+            asked: None,
             books_from: 0,
             shelf: Shelf::default(),
             sort: Sort::default(),
@@ -272,11 +284,17 @@ impl State {
     /// whether that moved anywhere: a tap on the tab showing, with nothing
     /// open over it, is no navigation and costs no redraw.
     pub fn go(&mut self, tab: Tab) -> bool {
-        if self.tab == tab && self.book.is_none() && !self.picked && self.shelf == Shelf::All {
+        if self.tab == tab
+            && self.book.is_none()
+            && self.asked.is_none()
+            && !self.picked
+            && self.shelf == Shelf::All
+        {
             return false;
         }
         self.tab = tab;
         self.book = None;
+        self.asked = None;
         self.picked = false;
         self.opened_day = false;
         self.shelf = Shelf::All;

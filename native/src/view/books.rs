@@ -380,7 +380,8 @@ mod tests {
             .map(|(at, percent)| BookStat {
                 extent: at as i64,
                 cde_key: format!("KEY{at}"),
-                finished: false,
+                // The mark the store puts on a place read through.
+                finished: *percent >= crate::store::FINISHED_PERCENT,
                 title: format!("Book {at}"),
                 author: String::new(),
                 thumbnail: String::new(),
@@ -430,8 +431,8 @@ mod tests {
 
     #[test]
     fn a_shelf_holding_the_finished_holds_none_of_them_on_the_next_tap() {
-        // 100 and 99 are read through; 98 and a book with no figure are not.
-        let stats = shelf_of(&[100.0, 98.0, -1.0, 99.0]);
+        // 100 and 99.9 are read through; 98 and a book with no figure are not.
+        let stats = shelf_of(&[100.0, 98.0, -1.0, 99.9]);
         assert_eq!(listed(&stats, Shelf::All, Sort::Recent), [0, 1, 2, 3]);
         assert_eq!(listed(&stats, Shelf::Finished, Sort::Recent), [0, 3]);
         assert_eq!(listed(&stats, Shelf::Unfinished, Sort::Recent), [1, 2]);

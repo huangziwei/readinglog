@@ -5,7 +5,7 @@
 use crate::date;
 use crate::log::session::{Measure, Session};
 use crate::settings::WeekStart;
-use crate::store::{BookRecord, Store};
+use crate::store::{BookRecord, FINISHED_PERCENT, Store};
 
 /// One book, with everything ever read in it.
 #[derive(Debug, Clone, PartialEq)]
@@ -44,19 +44,15 @@ pub struct BookStat {
     pub last_secs: i64,
 }
 
-/// How far through a book counts as read through.
-const FINISHED_PERCENT: f64 = 99.0;
-
 impl BookStat {
     /// Whether the catalog states a progress figure for this book.
     pub fn has_percent(&self) -> bool {
         self.percent >= 0.0
     }
 
-    /// The percentage a screen states, rounded once. Every figure and every
-    /// bar drawn for this book takes this one number, so a track and the figure
-    /// beside it never disagree. Under `finished` this is 100,
-    /// whatever `percent` holds.
+    /// The percentage a screen states, rounded once. Every figure and every bar
+    /// for this book takes this one number; a track and the figure beside it
+    /// never disagree. Under `finished` it is 100, whatever `percent` holds.
     pub fn percent_shown(&self) -> i64 {
         match self.finished {
             true => 100,
@@ -77,9 +73,25 @@ impl BookStat {
         self.on_device && !self.location.is_empty()
     }
 
-    /// `finished`, or `percent` past [`FINISHED_PERCENT`].
+    /// `finished`, which `BookRecord::stand_at` sets at [`FINISHED_PERCENT`]
+    /// and a falling `percent` leaves on.
     pub fn is_finished(&self) -> bool {
-        self.finished || (self.has_percent() && self.percent >= FINISHED_PERCENT)
+        self.finished
+    }
+
+    /// Whether `percent` alone reaches [`FINISHED_PERCENT`].
+    pub fn read_through(&self) -> bool {
+        self.percent >= FINISHED_PERCENT
+    }
+
+    /// Whether `finished` is a tap's to set: `percent` states neither way.
+    pub fn can_mark(&self) -> bool {
+        !self.read_through()
+    }
+
+    /// Whether a reread has anything to clear: `finished`, or a place.
+    pub fn can_reread(&self) -> bool {
+        self.finished || self.percent_shown() > 0
     }
 
     /// Over `days`, the days with reading on them.
@@ -104,7 +116,7 @@ impl BookStat {
         if self.is_finished() {
             return Some(0);
         }
-        if self.percent < 0.5 || self.percent >= 99.5 || self.seconds <= 0 {
+        if self.percent < 0.5 || self.percent >= FINISHED_PERCENT || self.seconds <= 0 {
             return None;
         }
         Some((self.seconds as f64 * (100.0 - self.percent) / self.percent) as i64)
@@ -135,8 +147,7 @@ pub struct Sitting {
 }
 
 /// The sitting histogram: five minutes a band to two hours, and one more band
-/// holding everything above, so the axis closes on a round `2h+` rather than
-/// mid-step.
+/// holding everything above. The axis closes on a round `2h+`.
 pub const SITTING_STEP_SECS: i64 = 5 * 60;
 pub const SITTING_BANDS: usize = 25;
 
@@ -444,12 +455,11 @@ impl Stats {
 
     /// The record folded onto one day: the seconds each of the twenty-four
     /// hours holds in an average day read on. Every such day holds all
-    /// twenty-four, so every bucket takes the same divisor.
+    /// twenty-four, and every bucket takes the same divisor.
     pub fn average_day(&self, today: i64) -> Fold {
         let over = self.opened(today)..=today;
-        // Over the days there was reading on, which is what `a day` means
-        // wherever the app states one, so the hours sum to the figure over
-        // them and to [`Tally::a_day`].
+        // `days_over` counts the days with reading on them, which every `a
+        // day` figure divides by, [`Tally::a_day`] included.
         let days = self.days_over(over.clone()).max(1);
         let hours = self.hours_over(over.clone());
         let values = hours.iter().map(|secs| secs / days).collect();
@@ -733,6 +743,28 @@ mod tests {
     }
 
     #[test]
+    fn the_mark_is_the_readers_only_short_of_the_threshold() {
+        let mut book = fresh(1, &BookRecord::default(), 0);
+        for (percent, marks, rereads) in [
+            (-1.0, true, false),
+            (0.0, true, false),
+            (55.4, true, true),
+            (99.4, true, true),
+            (99.5, false, true),
+            (100.0, false, true),
+        ] {
+            book.percent = percent;
+            book.finished = percent >= FINISHED_PERCENT;
+            assert_eq!(book.can_mark(), marks, "{percent}% is the store's or not");
+            assert_eq!(book.can_reread(), rereads, "{percent}% has a place or not");
+        }
+        // `finished` set by hand holds `can_mark` and `can_reread` true.
+        book.percent = -1.0;
+        book.finished = true;
+        assert!(book.can_mark() && book.can_reread());
+    }
+
+    #[test]
     fn a_bar_and_the_figure_beside_it_state_one_percentage() {
         let record = BookRecord::default();
         let mut book = fresh(1, &record, 0);
@@ -763,8 +795,8 @@ mod tests {
 
     #[test]
     fn the_board_and_a_span_state_the_same_stretch_the_same_way() {
-        // Ten days of an hour, three of them empty, so days read and days
-        // covered differ and the two figures cannot agree by accident.
+        // Ten days of an hour with three empty: days read and days covered
+        // differ, and the two figures cannot agree by accident.
         let days: Vec<i64> = (0..10)
             .filter(|i| i % 4 != 0)
             .map(|i| at(2026, 3, 1) + i)
