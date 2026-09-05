@@ -1,4 +1,4 @@
-//! The app's own record of what was read, at [`STORE_DIR`]. Every pass folds
+//! The record of what was read, at [`STORE_DIR`]. Every pass folds
 //! `log::source` and `catalog` into [`STORE_FILE`]. A sitting is written once,
 //! except one a pass finds in progress and re-measures from its own start.
 
@@ -326,13 +326,24 @@ impl Store {
         }
     }
 
-    /// Copy each book's `thumbnail` into `dir` and point its `cover` at the
-    /// copy, answering how many records changed. A record whose copy is on disk
-    /// keeps it, `thumbnail` unread.
+    /// The slots in [`Self::books`] a sitting is credited to.
+    fn read_slots(&self) -> std::collections::HashSet<usize> {
+        self.sessions
+            .iter()
+            .filter_map(|s| self.slot_for(self.extent_of(s.end_position), s.asin.as_deref()))
+            .filter(|&slot| self.books[slot].is_book())
+            .collect()
+    }
+
+    /// Copy the `thumbnail` of each slot [`Self::read_slots`] answers into
+    /// `dir`, point its `cover` at the copy, and delete every other file there.
+    /// Answers how many records changed.
     pub fn keep_covers(&mut self, dir: &Path) -> usize {
+        let read = self.read_slots();
         let mut kept = 0;
-        for record in &mut self.books {
-            if !record.is_book() {
+        for (slot, record) in self.books.iter_mut().enumerate() {
+            if !read.contains(&slot) {
+                kept += usize::from(!std::mem::take(&mut record.cover).is_empty());
                 continue;
             }
             let at = covers::path(dir, &record.cde_key);
@@ -350,6 +361,18 @@ impl Store {
                 record.cover = at.into_owned();
                 kept += 1;
             }
+        }
+        // An empty `sessions` leaves every file under `dir` standing.
+        if self.sessions.is_empty() {
+            return kept;
+        }
+        let held: Vec<&str> = read
+            .iter()
+            .map(|&slot| self.books[slot].cde_key.as_str())
+            .collect();
+        let swept = covers::sweep(dir, &held);
+        if swept > 0 {
+            eprintln!("covers: {swept} dropped, holding {}", held.len());
         }
         kept
     }
@@ -543,6 +566,9 @@ fn write_book(b: &BookRecord) -> String {
     )
 }
 
+/// A `b` row as a record. `extent` is the one field a row has to carry: `next`
+/// reads every field past the row's last as empty, which each parse below takes
+/// for its default.
 fn read_book<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<BookRecord> {
     let mut next = || f.next().unwrap_or_default();
     Some(BookRecord {
@@ -555,16 +581,11 @@ fn read_book<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<BookRecord> {
         percent: next().parse().unwrap_or(-1.0),
         on_device: next().trim() == "1",
         cover: next().to_string(),
-        // A row written before the location was kept states none, and the next
-        // catalog pass fills it.
         location: next().to_string(),
         finished: next().trim() == "1",
         restart: next().trim().parse().ok(),
-        // A row written before `read_state` was kept states none, and the
-        // next catalog pass takes what it finds as new.
+        // -1, which `take_mark` reads as a value the next catalog pass renews.
         read_state: next().trim().parse().unwrap_or(-1),
-        // A row written before `cde_type` was kept states none, and the next
-        // catalog pass fills it.
         cde_type: next().to_string(),
     })
     // `read_through` marks a record the row left unmarked.
@@ -667,6 +688,55 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         dir
+    }
+
+    #[test]
+    fn a_cover_is_kept_only_for_a_book_the_record_has_reading_against() {
+        let dir = scratch("covers");
+        let art = dir.join("thumbnail.jpg");
+        std::fs::write(&art, b"jpegbytes").expect("a written thumbnail");
+        let named = |extent: i64, key: &str| BookRecord {
+            extent,
+            cde_key: key.into(),
+            title: key.into(),
+            thumbnail: art.to_string_lossy().into_owned(),
+            ..BookRecord::default()
+        };
+        let mut store = Store {
+            sessions: vec![session(
+                "2026-08-07T10:15:01",
+                "2026-08-07T10:55:43",
+                148_207,
+                2_400,
+            )],
+            books: vec![named(148_207, "B00OKPCRLG"), named(938_016, "B00NEVERRD")],
+            ..Store::default()
+        };
+        // A cover for the book with no reading, and a `.partial` beside it.
+        covers::keep(&dir, "B00NEVERRD", &art).expect("a copied cover");
+        store.books[1].cover = covers::path(&dir, "B00NEVERRD")
+            .to_string_lossy()
+            .into_owned();
+        std::fs::write(dir.join(covers::COVERS_DIR).join("B01.partial"), b"x").unwrap();
+
+        assert_eq!(store.keep_covers(&dir), 2, "one taken, one given up");
+        assert!(covers::held(&dir, "B00OKPCRLG"), "the book that was read");
+        assert!(!covers::held(&dir, "B00NEVERRD"), "the book that was not");
+        assert!(store.books[1].cover.is_empty(), "a cover no file backs");
+        let left = std::fs::read_dir(dir.join(covers::COVERS_DIR))
+            .expect("the covers directory")
+            .count();
+        assert_eq!(left, 1, "one book carries reading");
+
+        // `keep_covers` over the same store takes nothing and drops nothing.
+        assert_eq!(store.keep_covers(&dir), 0);
+        assert!(covers::held(&dir, "B00OKPCRLG"));
+
+        // An empty `sessions` holds every file under `dir`.
+        store.sessions.clear();
+        store.keep_covers(&dir);
+        assert!(covers::held(&dir, "B00OKPCRLG"), "the cache is not emptied");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

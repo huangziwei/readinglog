@@ -1,9 +1,9 @@
-//! Book covers under [`COVERS_DIR`], copied from the paths `cc.db` states in
-//! `p_thumbnail`.
+//! Copies of book covers under [`COVERS_DIR`], made by [`keep`] from the
+//! `source` it is given and named by [`file_name`].
 
 use std::path::{Path, PathBuf};
 
-/// The directory holding the copies, under the store's own.
+/// The directory holding the copies, under the `dir` [`path`] takes.
 pub const COVERS_DIR: &str = "covers";
 
 /// The largest file [`keep`] copies, in bytes.
@@ -50,6 +50,26 @@ pub fn keep(dir: &Path, key: &str, source: &Path) -> std::io::Result<PathBuf> {
 /// Whether [`path`] exists with a non-zero length.
 pub fn held(dir: &Path, key: &str) -> bool {
     std::fs::metadata(path(dir, key)).is_ok_and(|m| m.len() > 0)
+}
+
+/// Delete every file under [`COVERS_DIR`] that no key in `keys` names,
+/// answering how many went. A `.partial` sibling goes with them.
+pub fn sweep(dir: &Path, keys: &[&str]) -> usize {
+    let names: std::collections::HashSet<String> = keys.iter().map(|k| file_name(k)).collect();
+    let Ok(entries) = std::fs::read_dir(dir.join(COVERS_DIR)) else {
+        return 0;
+    };
+    let mut gone = 0;
+    for entry in entries.flatten() {
+        if names.contains(&entry.file_name().to_string_lossy().into_owned()) {
+            continue;
+        }
+        match std::fs::remove_file(entry.path()) {
+            Ok(()) => gone += 1,
+            Err(err) => eprintln!("covers: {} — {err}", entry.path().display()),
+        }
+    }
+    gone
 }
 
 #[cfg(test)]
