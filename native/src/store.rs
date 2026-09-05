@@ -48,7 +48,7 @@ pub struct BookRecord {
     /// Whether this book is read through. Set from the book screen, and by
     /// [`Self::stand_at`] on a place at or past [`FINISHED_PERCENT`].
     pub finished: bool,
-    /// The place a reread was declared at, from the book screen. Until the
+    /// The place a restart was declared at, from the book screen. Until the
     /// catalog names a place before it, the reading it stands for is the one
     /// that ended and `percent` holds 0.
     pub restart: Option<f64>,
@@ -384,10 +384,10 @@ impl Store {
         changed
     }
 
-    /// Declare a reread of the record [`Self::book_for`] answers for:
+    /// Declare a restart of the record [`Self::book_for`] answers for:
     /// `finished` comes off, `percent` becomes [`BookRecord::restart`] and
     /// reads 0. Answers whether anything changed.
-    pub fn reread(&mut self, extent: i64, key: &str) -> bool {
+    pub fn restart(&mut self, extent: i64, key: &str) -> bool {
         let Some(slot) = self.slot_for(extent, Some(key)) else {
             return false;
         };
@@ -765,14 +765,14 @@ mod tests {
     }
 
     #[test]
-    fn a_reread_gives_up_the_place_and_waits_for_one_before_it() {
-        let dir = scratch("reread");
+    fn a_restart_gives_up_the_place_and_waits_for_one_before_it() {
+        let dir = scratch("restart");
         let mut store = Store::default();
         let shelf = [shelved(938_018, "B00OKPCRLG", "Bible", 100.0)];
         store.remember(&shelf);
         assert!(store.books[0].finished);
 
-        assert!(store.reread(938_018, "B00OKPCRLG"));
+        assert!(store.restart(938_018, "B00OKPCRLG"));
         assert_eq!(store.books[0].percent, 0.0);
         assert_eq!(store.books[0].restart, Some(100.0));
         assert!(!store.books[0].finished);
@@ -799,9 +799,9 @@ mod tests {
 
         // No record, and a record at its beginning, have nothing to
         // give up.
-        assert!(!store.reread(0, "NOSUCHKEY"));
+        assert!(!store.restart(0, "NOSUCHKEY"));
         store.remember(&[shelved(555, "B00OTHER", "Another", 0.0)]);
-        assert!(!store.reread(555, "B00OTHER"));
+        assert!(!store.restart(555, "B00OTHER"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

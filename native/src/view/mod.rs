@@ -32,15 +32,16 @@ pub enum Hit {
     /// Hand a book on the device back to the Kindle's reader, by its index in
     /// [`Stats::books`]. Leaves the app, as [`Hit::Exit`] does.
     Open(usize),
-    /// Set `BookRecord::finished` on a book, by its index in [`Stats::books`]
-    /// and the value to set.
+    /// Ask to set `BookRecord::finished` on a book, by its index in
+    /// [`Stats::books`] and the value a tap would set. Puts the question up
+    /// rather than answering it: [`Hit::Answer`] answers.
     Finished(usize, bool),
     /// Ask to read a book again, by its index in [`Stats::books`]. Puts the
-    /// question up rather than answering it: [`Hit::Again`] answers.
-    Reread(usize),
-    /// The book [`State::asked`] names gives up its place and its mark, and
-    /// goes back to the Kindle's reader. Leaves the app, as [`Hit::Open`] does.
-    Again,
+    /// question up rather than answering it: [`Hit::Answer`] answers.
+    Restart(usize),
+    /// Carry out the question [`State::asked`] holds. A restart leaves the app,
+    /// as [`Hit::Open`] does.
+    Answer,
     /// Take the question down, leaving the book as it stands.
     Dismiss,
     /// Leave the app. The only way out: a book is closed by tapping a tab.
@@ -72,6 +73,16 @@ pub enum Hit {
     BooksPage(usize),
     /// The order the Books screen lists in.
     Sorted(Sort),
+}
+
+/// A question standing over a book's own screen, which [`Hit::Answer`] carries
+/// out and [`Hit::Dismiss`] takes down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ask {
+    /// Give up the book's place and its mark, and hand it back at its start.
+    Restart,
+    /// Set `BookRecord::finished` to the value carried.
+    Mark(bool),
 }
 
 /// Which books the Books screen lists.
@@ -243,9 +254,9 @@ pub struct State {
     pub picked: bool,
     /// The book whose own screen is open, over whichever tab opened it.
     pub book: Option<usize>,
-    /// The book a reread has been asked for and not yet answered, which puts
-    /// the question over that book's screen.
-    pub asked: Option<usize>,
+    /// The question standing over the open book's screen, and the book it
+    /// names.
+    pub asked: Option<(usize, Ask)>,
     /// How far down the book list has been paged.
     pub books_from: usize,
     /// Which books the Books screen lists.

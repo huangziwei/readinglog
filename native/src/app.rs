@@ -143,9 +143,9 @@ impl App {
         self.state.book = book;
     }
 
-    /// Put the rereading question up over `book`, or take it down.
-    pub fn ask(&mut self, book: Option<usize>) {
-        self.state.asked = book;
+    /// Put a question up over the book it names, or take one down.
+    pub fn ask(&mut self, asked: Option<(usize, view::Ask)>) {
+        self.state.asked = asked;
     }
 
     /// Draw All Time at `page`, whatever it was left on.
@@ -217,8 +217,10 @@ impl App {
         self.frame(fb, &mut |cx, area| match state.book {
             Some(index) => {
                 view::book::draw(cx, area, index);
-                if state.asked == Some(index) {
-                    view::book::asking(cx, area);
+                if let Some((at, ask)) = state.asked
+                    && at == index
+                {
+                    view::book::asking(cx, area, ask);
                 }
             }
             None => match state.tab {
@@ -473,21 +475,39 @@ impl App {
         Action::Redraw
     }
 
-    /// Answer the question `State::asked` holds: its book gives up its place
-    /// and its mark, then goes back to the Kindle's reader.
-    fn again(&mut self) -> Action {
-        let Some(index) = self.state.asked.take() else {
+    /// Put `ask` up over the book at `index`. The question already standing
+    /// there is left as it is.
+    fn put(&mut self, index: usize, ask: view::Ask) -> Action {
+        if self.state.asked == Some((index, ask)) {
+            return Action::Nothing;
+        }
+        self.state.asked = Some((index, ask));
+        Action::Redraw
+    }
+
+    /// Carry out the question `State::asked` holds, taking it down.
+    fn answer(&mut self) -> Action {
+        let Some((index, ask)) = self.state.asked.take() else {
             return Action::Nothing;
         };
+        match ask {
+            view::Ask::Restart => self.restart(index),
+            view::Ask::Mark(on) => self.set_finished(index, on),
+        }
+    }
+
+    /// The book at `index` gives up its place and its mark, then goes back to
+    /// the Kindle's reader.
+    fn restart(&mut self, index: usize) -> Action {
         if let Some(book) = self.stats.books.get(index) {
             let (extent, key) = (book.extent, book.cde_key.clone());
-            if self.store.reread(extent, &key) {
+            if self.store.restart(extent, &key) {
                 self.rebuild();
                 if let Err(err) = self
                     .store
                     .save(std::path::Path::new(crate::store::STORE_DIR))
                 {
-                    eprintln!("reread: the record did not reach the store: {err:#}");
+                    eprintln!("restart: the record did not reach the store: {err:#}");
                 }
             }
         }
@@ -517,14 +537,9 @@ impl App {
             }
             Hit::Exit => return Action::Quit,
             Hit::Open(index) => return self.open(index, crate::open::At::Left),
-            Hit::Finished(index, on) => return self.set_finished(index, on),
-            Hit::Reread(index) => {
-                if self.state.asked == Some(index) {
-                    return Action::Nothing;
-                }
-                self.state.asked = Some(index);
-            }
-            Hit::Again => return self.again(),
+            Hit::Finished(index, on) => return self.put(index, view::Ask::Mark(on)),
+            Hit::Restart(index) => return self.put(index, view::Ask::Restart),
+            Hit::Answer => return self.answer(),
             Hit::Dismiss => {
                 if self.state.asked.take().is_none() {
                     return Action::Nothing;

@@ -258,21 +258,25 @@ pub struct Strings {
     pub measured_as: &'static str,
     pub on_the_device: &'static str,
     /// The control handing a book back to the Kindle's reader: the long form
-    /// where it stands alone, the short one where `reread` stands beside it.
+    /// where it stands alone, the short one where `restart` stands beside it.
     pub continue_reading: &'static str,
     pub continue_short: &'static str,
-    /// The control that marks a book read through, and the one that takes the
-    /// mark off again.
+    /// The answer that marks a book read through, and the answer that takes the
+    /// mark off, each under the question it answers.
     pub mark_finished: &'static str,
+    pub mark_ask: &'static str,
+    pub mark_note: &'static str,
     pub mark_unfinished: &'static str,
+    pub unmark_ask: &'static str,
+    pub unmark_note: &'static str,
     /// The figure over the place a bar's reading stands at. `{d}` is `percent`,
     /// rounded.
     pub percent_at: &'static str,
     /// The control that hands a book back to be read from its beginning, the
     /// question it puts, and what that question states.
-    pub reread: &'static str,
-    pub reread_ask: &'static str,
-    pub reread_note: &'static str,
+    pub restart: &'static str,
+    pub restart_ask: &'static str,
+    pub restart_note: &'static str,
     /// The way out of a question, beside the word the question is asked in.
     pub cancel: &'static str,
     pub yes: &'static str,
@@ -430,14 +434,20 @@ const ENGLISH: Strings = Strings {
     on_the_device: "On the device",
     continue_reading: "Continue reading",
     continue_short: "Continue",
-    mark_finished: "Mark as Finished",
-    mark_unfinished: "Mark as Unfinished",
+    mark_finished: "Mark Finished",
+    mark_ask: "Mark this book finished?",
+    mark_note: "It goes to 100%, and onto the Finished shelf. The time, the sittings \
+                and the days read are not changed.",
+    mark_unfinished: "Mark Unfinished",
+    unmark_ask: "Remove the Finished mark?",
+    unmark_note: "The book goes back to the place it stands at, and leaves the Finished \
+                  shelf. The time, the sittings and the days read are not changed.",
     percent_at: "{d}% now",
-    reread: "Reread",
-    reread_ask: "Reread this book?",
-    reread_note: "The Finished mark comes off, the progress goes back to 0%, and the book \
-                  opens at its beginning. Highlights and notes are kept, and so are the \
-                  time, the sittings and the days already read.",
+    restart: "Restart",
+    restart_ask: "Restart this book?",
+    restart_note: "The Finished mark comes off, the progress goes back to 0%, and the \
+                   book opens at its beginning. Highlights and notes are kept, and so are \
+                   the time, the sittings and the days already read.",
     cancel: "Cancel",
     yes: "yes",
     no_removed: "no, removed",
@@ -587,14 +597,20 @@ const GERMAN: Strings = Strings {
     on_the_device: "Auf dem Gerät",
     continue_reading: "Weiterlesen",
     continue_short: "Weiter",
-    mark_finished: "Als fertig markieren",
-    mark_unfinished: "Als unfertig markieren",
+    mark_finished: "Fertig markieren",
+    mark_ask: "Dieses Buch als fertig markieren?",
+    mark_note: "Es geht auf 100 % und in das Regal Fertig. Gelesene Zeit, Sitzungen und \
+                Tage bleiben unverändert.",
+    mark_unfinished: "Unfertig markieren",
+    unmark_ask: "Markierung Fertig entfernen?",
+    unmark_note: "Das Buch geht auf seine Stelle zurück und verlässt das Regal Fertig. \
+                  Gelesene Zeit, Sitzungen und Tage bleiben unverändert.",
     percent_at: "{d} % jetzt",
-    reread: "Neu lesen",
-    reread_ask: "Dieses Buch neu lesen?",
-    reread_note: "Die Markierung Fertig wird entfernt, der Fortschritt geht auf 0 % zurück, \
-                  und das Buch öffnet sich am Anfang. Markierungen und Notizen bleiben \
-                  erhalten, ebenso gelesene Zeit, Sitzungen und Tage.",
+    restart: "Neu beginnen",
+    restart_ask: "Dieses Buch neu beginnen?",
+    restart_note: "Die Markierung Fertig wird entfernt, der Fortschritt geht auf 0 % \
+                   zurück, und das Buch öffnet sich am Anfang. Markierungen und Notizen \
+                   bleiben erhalten, ebenso gelesene Zeit, Sitzungen und Tage.",
     cancel: "Abbrechen",
     yes: "ja",
     no_removed: "nein, entfernt",
@@ -746,11 +762,15 @@ const JAPANESE: Strings = Strings {
     continue_reading: "続きを読む",
     continue_short: "続き",
     mark_finished: "読了にする",
+    mark_ask: "この本を読了にしますか？",
+    mark_note: "進捗は100%になり、読了の棚に入ります。読んだ時間、回数、日数は変わりません。",
     mark_unfinished: "未読了にする",
+    unmark_ask: "読了の印を外しますか？",
+    unmark_note: "本は今の位置に戻り、読了の棚から外れます。読んだ時間、回数、日数は変わりません。",
     percent_at: "現在{d}%",
-    reread: "再読",
-    reread_ask: "この本を再読しますか？",
-    reread_note: "読了の印が外れ、進捗は0%に戻り、本は最初から開きます。ハイライトとメモ、\
+    restart: "最初から",
+    restart_ask: "この本を最初から読みますか？",
+    restart_note: "読了の印が外れ、進捗は0%に戻り、本は最初から開きます。ハイライトとメモ、\
                   これまでの時間・回数・日数はそのまま残ります。",
     cancel: "キャンセル",
     yes: "あり",
@@ -890,11 +910,15 @@ const SIMPLIFIED: Strings = Strings {
     continue_reading: "继续阅读",
     continue_short: "继续",
     mark_finished: "标记读完",
+    mark_ask: "将这本书标记为读完？",
+    mark_note: "进度将变为100%，并进入已读完书架。已读的时间、次数与天数不变。",
     mark_unfinished: "标记未读完",
+    unmark_ask: "取消读完标记？",
+    unmark_note: "本书将回到当前位置，并离开已读完书架。已读的时间、次数与天数不变。",
     percent_at: "当前{d}%",
-    reread: "重读",
-    reread_ask: "重读这本书？",
-    reread_note: "读完标记将被取消，进度归零，本书将从头打开。标注与笔记，\
+    restart: "重新开始",
+    restart_ask: "从头重读这本书？",
+    restart_note: "读完标记将被取消，进度归零，本书将从头打开。标注与笔记，\
                   以及已记录的时间、次数和天数，都会保留。",
     cancel: "取消",
     yes: "是",
@@ -1045,11 +1069,15 @@ const TRADITIONAL: Strings = Strings {
     continue_reading: "繼續閱讀",
     continue_short: "繼續",
     mark_finished: "標記讀完",
+    mark_ask: "將這本書標記為讀完？",
+    mark_note: "進度將變為100%，並進入已讀完書架。已讀的時間、次數與天數不變。",
     mark_unfinished: "標記未讀完",
+    unmark_ask: "取消讀完標記？",
+    unmark_note: "本書將回到目前位置，並離開已讀完書架。已讀的時間、次數與天數不變。",
     percent_at: "目前{d}%",
-    reread: "重讀",
-    reread_ask: "重讀這本書？",
-    reread_note: "讀完標記將被取消，進度歸零，本書將從頭開啟。標註與筆記，\
+    restart: "重新開始",
+    restart_ask: "從頭重讀這本書？",
+    restart_note: "讀完標記將被取消，進度歸零，本書將從頭開啟。標註與筆記，\
                   以及已記錄的時間、次數和天數，都會保留。",
     cancel: "取消",
     yes: "是",

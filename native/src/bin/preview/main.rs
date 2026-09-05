@@ -22,7 +22,7 @@ use readinglog_native::ui::paint;
 use readinglog_native::ui::text::TextRenderer;
 use readinglog_native::ui::theme::Theme;
 use readinglog_native::update::{Doing, Failure, Outcome};
-use readinglog_native::view::{Shelf, Sort, Span};
+use readinglog_native::view::{Ask, Shelf, Sort, Span};
 
 /// The day the preview is set to, and the second of it: a Wednesday evening in
 /// the middle of a month.
@@ -314,22 +314,34 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
     let Some((_, tab)) = SCREENS.iter().find(|(name, _)| *name == shot.name) else {
         return Err(anyhow!("no screen or sketch called {}", shot.name));
     };
-    // `book:<index>`, and `book:<index>:asking` with the question up over it.
+    // `book:<index>`, and `book:<index>:<question>` with one up over it.
     let (book, asking) = match shot.name.as_str() {
         "book" => {
             let of = shot.of.as_deref().unwrap_or("0");
             let (at, asking) = match of.split_once(':') {
-                Some((at, "asking")) => (at, true),
-                _ => (of, false),
+                Some((at, name)) => (at, Some(question(name)?)),
+                None => (of, None),
             };
             (Some(at.parse().unwrap_or(0)), asking)
         }
-        _ => (None, false),
+        _ => (None, None),
     };
     app.show(*tab, book);
-    app.ask(asking.then_some(book).flatten());
+    app.ask(book.zip(asking));
     set_span(app, shot, week)?;
     app.draw(fb)
+}
+
+/// The question a `book:<index>:<name>` shot puts up over the book.
+fn question(name: &str) -> Result<Ask> {
+    match name {
+        "restart" => Ok(Ask::Restart),
+        "mark" => Ok(Ask::Mark(true)),
+        "unmark" => Ok(Ask::Mark(false)),
+        _ => Err(anyhow!(
+            "no question called {name} — restart, mark or unmark"
+        )),
+    }
 }
 
 /// The update banner, at whichever of its lines `of` names.
@@ -479,7 +491,7 @@ fn list() {
                 "  (:all :trends :week :month :year :back :weekback :picked :day\n   :yearbusy :weekbusy :weekempty :busy :busy2 :busyend)"
             }
             "today" => "  (:quiet :empty :busy)",
-            "book" => "  (:<index> :<index>:asking)",
+            "book" => "  (:<index> :<index>:restart :<index>:mark :<index>:unmark)",
             "books" => {
                 "  (:finished :unfinished :unfinished-furthest :longest :furthest\n   :mid :last)"
             }

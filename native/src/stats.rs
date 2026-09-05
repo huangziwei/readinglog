@@ -88,8 +88,8 @@ impl BookStat {
         !self.read_through()
     }
 
-    /// Whether a reread has anything to clear: `finished`, or a place.
-    pub fn can_reread(&self) -> bool {
+    /// Whether a restart has anything to clear: `finished`, or a place.
+    pub fn can_restart(&self) -> bool {
         self.finished || self.percent_shown() > 0
     }
 
@@ -750,7 +750,7 @@ mod tests {
     #[test]
     fn the_mark_is_the_readers_only_short_of_the_threshold() {
         let mut book = fresh(1, &BookRecord::default(), 0);
-        for (percent, marks, rereads) in [
+        for (percent, marks, restarts) in [
             (-1.0, true, false),
             (0.0, true, false),
             (55.4, true, true),
@@ -761,12 +761,16 @@ mod tests {
             book.percent = percent;
             book.finished = percent >= FINISHED_PERCENT;
             assert_eq!(book.can_mark(), marks, "{percent}% is the store's or not");
-            assert_eq!(book.can_reread(), rereads, "{percent}% has a place or not");
+            assert_eq!(
+                book.can_restart(),
+                restarts,
+                "{percent}% has a place or not"
+            );
         }
-        // `finished` set by hand holds `can_mark` and `can_reread` true.
+        // `finished` set by hand holds `can_mark` and `can_restart` true.
         book.percent = -1.0;
         book.finished = true;
-        assert!(book.can_mark() && book.can_reread());
+        assert!(book.can_mark() && book.can_restart());
     }
 
     #[test]
