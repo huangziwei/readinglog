@@ -157,7 +157,7 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat, index: usize) {
     let band = open_height(theme, book);
     let (open, area) = area.split_bottom(band);
     if band > 0 {
-        open_button(cx, open_box(theme, open), index);
+        open_button(cx, open_box(theme, open), book, index);
     }
 
     let (foot, top) = area.split_bottom(progress_height(cx.text, theme));
@@ -253,13 +253,22 @@ fn finished_chip(cx: &mut Ctx, line: Rect, baseline: i32) {
     );
 }
 
+/// What the control says. The reader opens a book read through at its cover
+/// rather than where it was left, so that one is offered from the beginning.
+fn open_label(book: &BookStat, s: &Strings) -> &'static str {
+    match book.is_finished() {
+        true => s.reread_from_beginning,
+        false => s.continue_reading,
+    }
+}
+
 /// The control that hands this book back to the Kindle's reader, under the
 /// progress bar and along the same left edge. Outlined, as every control on
 /// every screen is; a tap on it leaves the app.
-fn open_button(cx: &mut Ctx, band: Rect, index: usize) {
+fn open_button(cx: &mut Ctx, band: Rect, book: &BookStat, index: usize) {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
-    let said = cx.s().continue_reading;
+    let said = open_label(book, cx.s());
     cx.text.set_px(theme.body_px);
     let w = cx.text.measure_width_in(script, said) as i32 + chrome::chip_pad() * 4;
     let chip = Rect::new(band.x, band.y, w.min(band.w), band.h);
@@ -387,6 +396,24 @@ mod tests {
                 "{w}x{h}: the control sits against the progress bar"
             );
         }
+    }
+
+    #[test]
+    fn a_book_read_through_is_offered_from_its_beginning() {
+        let held = held("/mnt/us/documents/a.kfx");
+        let done = BookStat {
+            percent: 100.0,
+            ..held.clone()
+        };
+        assert_eq!(open_label(&done, en()), "Reread from beginning");
+        // A book with a place left in it, and one the catalog states no
+        // progress for at all.
+        let part = BookStat {
+            percent: 40.0,
+            ..held.clone()
+        };
+        assert_eq!(open_label(&part, en()), "Continue reading");
+        assert_eq!(open_label(&held, en()), "Continue reading");
     }
 
     #[test]
