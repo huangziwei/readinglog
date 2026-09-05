@@ -52,11 +52,11 @@ impl BookStat {
         self.percent >= 0.0
     }
 
-    /// The percentage every figure for this book states, rounded once. Below
-    /// zero outside [`Self::has_percent`]. `finished` does not carry it: a
-    /// book marked at 55 per cent stands at 55 per cent.
+    /// The percentage every figure for this book states, through
+    /// [`whole_per_cent`]. Below zero outside [`Self::has_percent`], and
+    /// `finished` does not carry it.
     pub fn percent_shown(&self) -> i64 {
-        self.percent.round() as i64
+        whole_per_cent(self.percent)
     }
 
     /// How full a bar for this book draws: 100 under `finished`, else
@@ -127,6 +127,13 @@ impl BookStat {
     pub fn wpm(&self) -> Option<i64> {
         (self.words > 0 && self.seconds > 0).then(|| self.words * 60 / self.seconds)
     }
+}
+
+/// `value`, 0 through 100, as whole per cent. Half rounds to even, which is
+/// what `NumberFormat.getPercentInstance()` does: the reader's own chrome and
+/// the library's `{percentRead, number, percent}` both set a figure through it.
+fn whole_per_cent(value: f64) -> i64 {
+    value.round_ties_even() as i64
 }
 
 /// One sitting, placed on the calendar and pointed at its book.
@@ -366,15 +373,20 @@ impl Stats {
             .collect()
     }
 
-    /// The place `book` stood at as its last sitting inside `days` ended,
-    /// rounded once. `None` where no sitting of it inside `days` states one.
+    /// The place `book` stood at as its last sitting inside `days` ended, or
+    /// [`BookStat::percent_shown`] where `days` holds the last day of a book
+    /// read through: `Sitting::progress` stops a page short of the end.
     pub fn percent_over(&self, book: usize, days: std::ops::RangeInclusive<i64>) -> Option<i64> {
+        let stat = self.books.get(book)?;
+        if stat.is_finished() && stat.has_percent() && days.contains(&stat.last_day) {
+            return Some(stat.percent_shown());
+        }
         self.sittings
             .iter()
             .filter(|s| s.book == Some(book) && days.contains(&s.day))
             .filter_map(|s| Some(((s.day, s.to_secs), s.progress?)))
             .max_by_key(|(at, _)| *at)
-            .map(|(_, p)| (p * 100.0).clamp(0.0, 100.0).round() as i64)
+            .map(|(_, p)| whole_per_cent((p * 100.0).clamp(0.0, 100.0)))
     }
 
     /// Books read over `days` that no record names, and the seconds on them.
@@ -880,6 +892,57 @@ mod tests {
         store.sessions[3].progress = None;
         let stats = Stats::build(&store, day(2026, 8, 8), true);
         assert_eq!(stats.percent_over(0, last..=last), Some(44));
+    }
+
+    #[test]
+    fn a_book_read_through_states_the_catalogs_figure_on_the_day_it_ended() {
+        // The device's own `J5LSDTFS…` — Dr Jekyll, read through on 5 September
+        // with `%Left` last sampled at 0.994690, a page short of the end.
+        let mut store = Store::default();
+        store.books.push(BookRecord {
+            extent: 142_294,
+            cde_key: "J5LSDTFS".into(),
+            percent: 100.0,
+            finished: true,
+            ..BookRecord::default()
+        });
+        for (at, progress) in [("08:54:34", 0.603540), ("22:36:42", 0.994690)] {
+            store.sessions.push(Session {
+                started_at: format!("2026-09-05T{at}"),
+                ended_at: format!("2026-09-05T{at}"),
+                end_position: 142_294,
+                seconds: 600,
+                page_turns: 1,
+                words: 100,
+                hours: vec![(8, 600)],
+                measure: Measure::Counted,
+                asin: None,
+                progress: Some(progress),
+            });
+        }
+        let ended = day(2026, 9, 5);
+        let stats = Stats::build(&store, ended, true);
+        assert_eq!(stats.books[0].percent_shown(), 100);
+        assert_eq!(stats.percent_over(0, ended..=ended), Some(100));
+        // A day before the last one takes the sample it holds.
+        let stats = Stats::build(&store, ended + 1, true);
+        assert_eq!(stats.percent_over(0, ended..=ended), Some(100));
+    }
+
+    #[test]
+    fn a_half_per_cent_rounds_to_even_the_way_the_device_rounds_it() {
+        // `NumberFormat.getPercentInstance()` is HALF_EVEN at no decimals.
+        for (raw, shown) in [
+            (46.5, 46),
+            (47.5, 48),
+            (0.5, 0),
+            (99.5, 100),
+            (99.469, 99),
+            (46.4, 46),
+            (46.6, 47),
+        ] {
+            assert_eq!(whole_per_cent(raw), shown, "{raw}");
+        }
     }
 
     #[test]

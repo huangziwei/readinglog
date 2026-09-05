@@ -21,26 +21,23 @@ pub fn height(text: &mut TextRenderer, theme: &Theme) -> i32 {
 }
 
 /// What one band states.
-pub struct Band<'a> {
+pub struct Band {
     /// How full the track draws, from [`BookStat::bar_percent`].
     pub fill: i64,
     /// The place the figure names and the notch cuts at. `None` draws
     /// neither.
     pub at: Option<i64>,
-    /// The template `at` fills, from `Strings`.
-    pub said: &'a str,
     /// Whether the `Finished` chip stands at the right.
     pub finished: bool,
 }
 
-impl<'a> Band<'a> {
-    /// One book's band, its figure set from `said`. `finished` is
-    /// [`BookStat::is_finished`] where the caller states no narrower rule.
-    pub fn of(book: &BookStat, said: &'a str, finished: bool) -> Self {
+impl Band {
+    /// One book's band. `finished` is [`BookStat::is_finished`] where the
+    /// caller states no narrower rule.
+    pub fn of(book: &BookStat, finished: bool) -> Self {
         Self {
             fill: book.bar_percent(),
             at: book.has_percent().then(|| book.percent_shown()),
-            said,
             finished,
         }
     }
@@ -63,7 +60,13 @@ pub fn draw(cx: &mut Ctx, area: Rect, of: Band) -> Rect {
     let chip = of.finished.then(|| chip(cx, area, baseline));
     let room = left_of(area, chip, theme.gap * 2);
     if let Some(at) = of.at {
-        mark(cx, room, track, at, of.said, of.fill > at);
+        // A book read through states the place it stands at; one in progress
+        // has its own fill saying the same thing.
+        let said = match of.finished {
+            true => cx.s().percent_at,
+            false => cx.s().percent_plain,
+        };
+        mark(cx, room, track, at, said, of.fill > at);
     }
     track
 }

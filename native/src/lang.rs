@@ -270,6 +270,9 @@ pub struct Strings {
     /// The place a book stood at as a day or a span ended. `{d}` is that
     /// figure, rounded.
     pub percent_reached: &'static str,
+    /// The figure on a bar whose own fill states the same place. `{d}` is that
+    /// figure, rounded.
+    pub percent_plain: &'static str,
     /// The control that hands a book back to be read from its beginning, the
     /// question it puts, and what that question states.
     pub restart: &'static str,
@@ -442,6 +445,7 @@ const ENGLISH: Strings = Strings {
                   progress, the time, the sittings and the days read do not change.",
     percent_at: "{d}% now",
     percent_reached: "at {d}%",
+    percent_plain: "{d}%",
     restart: "Restart",
     restart_ask: "Restart this book?",
     restart_note: "The Finished mark comes off, the progress goes back to 0%, and the \
@@ -607,6 +611,7 @@ const GERMAN: Strings = Strings {
                   unverändert.",
     percent_at: "{d} % jetzt",
     percent_reached: "bei {d} %",
+    percent_plain: "{d} %",
     restart: "Neu beginnen",
     restart_ask: "Dieses Buch neu beginnen?",
     restart_note: "Die Markierung Fertig wird entfernt, der Fortschritt geht auf 0 % \
@@ -770,6 +775,7 @@ const JAPANESE: Strings = Strings {
     unmark_note: "読了の棚から外れ、ライブラリでも未読になります。進捗、読んだ時間、回数、日数は変わりません。",
     percent_at: "現在{d}%",
     percent_reached: "{d}%まで",
+    percent_plain: "{d}%",
     restart: "最初から",
     restart_ask: "この本を最初から読みますか？",
     restart_note: "読了の印が外れ、進捗は0%に戻り、本は最初から開きます。ハイライトとメモ、\
@@ -919,6 +925,7 @@ const SIMPLIFIED: Strings = Strings {
     unmark_note: "本书将离开已读完书架，图书馆中也标记为未读。进度、已读的时间、次数与天数不变。",
     percent_at: "当前{d}%",
     percent_reached: "至{d}%",
+    percent_plain: "{d}%",
     restart: "重新开始",
     restart_ask: "从头重读这本书？",
     restart_note: "读完标记将被取消，进度归零，本书将从头打开。标注与笔记，\
@@ -1079,6 +1086,7 @@ const TRADITIONAL: Strings = Strings {
     unmark_note: "本書將離開已讀完書架，圖書館中也標記為未讀。進度、已讀的時間、次數與天數不變。",
     percent_at: "目前{d}%",
     percent_reached: "至{d}%",
+    percent_plain: "{d}%",
     restart: "重新開始",
     restart_ask: "從頭重讀這本書？",
     restart_note: "讀完標記將被取消，進度歸零，本書將從頭開啟。標註與筆記，\

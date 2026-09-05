@@ -277,7 +277,6 @@ fn row(cx: &mut Ctx, area: Rect, day: i64, index: usize, secs: i64) {
                 false => percent.unwrap_or(-1),
             },
             at: percent,
-            said: cx.s().percent_reached,
             finished: done,
         };
         band::draw(cx, foot, of);

@@ -332,9 +332,7 @@ fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
     // states no progress for and no mark draws none.
     if book.has_percent() || book.is_finished() {
         let foot = Rect::new(body.x, y + theme.gap, body.w, band_h);
-        let said = cx.s().percent_at;
-        let of = band::Band::of(book, said, book.is_finished());
-        band::draw(cx, foot, of);
+        band::draw(cx, foot, band::Band::of(book, book.is_finished()));
     }
     paint::hline(cx.fb, row.x, row.bottom() - 1, row.w, LIGHT, 1);
 }

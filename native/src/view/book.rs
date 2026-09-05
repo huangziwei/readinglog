@@ -280,8 +280,7 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat, index: usize) {
 
     figures(cx, words, book);
 
-    let said = cx.s().percent_at;
-    band::draw(cx, foot, band::Band::of(book, said, book.is_finished()));
+    band::draw(cx, foot, band::Band::of(book, book.is_finished()));
     if book.can_mark() {
         cx.hit(Hit::Finished(index, !book.finished), foot);
     }
