@@ -52,11 +52,20 @@ impl BookStat {
         self.percent >= 0.0
     }
 
-    /// The percentage every figure and every bar for this book takes, rounded
-    /// once. Below zero outside [`Self::has_percent`]. `finished` does not
-    /// carry it: a book marked at 55 per cent stands at 55 per cent.
+    /// The percentage every figure for this book states, rounded once. Below
+    /// zero outside [`Self::has_percent`]. `finished` does not carry it: a
+    /// book marked at 55 per cent stands at 55 per cent.
     pub fn percent_shown(&self) -> i64 {
         self.percent.round() as i64
+    }
+
+    /// How full a bar for this book draws: 100 under `finished`, else
+    /// [`Self::percent_shown`].
+    pub fn bar_percent(&self) -> i64 {
+        match self.finished {
+            true => 100,
+            false => self.percent_shown(),
+        }
     }
 
     /// Whether this book can be opened: `on_device`, and a `location` the
@@ -728,19 +737,21 @@ mod tests {
     fn a_marked_book_holds_the_percentage_the_catalog_states() {
         let mut book = fresh(1, &BookRecord::default(), 0);
         book.percent = 55.4;
-        assert_eq!(book.percent_shown(), 55);
+        assert_eq!((book.percent_shown(), book.bar_percent()), (55, 55));
         assert!(!book.is_finished());
 
+        // The figure holds where the reading stands; the bar fills.
         book.finished = true;
-        assert_eq!(book.percent_shown(), 55);
+        assert_eq!((book.percent_shown(), book.bar_percent()), (55, 100));
         assert!(book.is_finished());
 
         book.percent = 100.0;
-        assert_eq!(book.percent_shown(), 100);
-        // A book the catalog states no percentage for keeps its bar and its
-        // figure off, marked or not.
+        assert_eq!((book.percent_shown(), book.bar_percent()), (100, 100));
+        // A book the catalog states no percentage for states no figure, and
+        // its bar fills on the mark alone.
         book.percent = -1.0;
-        assert!(!book.has_percent() && book.is_finished());
+        assert!(!book.has_percent());
+        assert_eq!(book.bar_percent(), 100);
     }
 
     #[test]

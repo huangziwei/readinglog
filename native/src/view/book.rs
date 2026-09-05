@@ -297,8 +297,8 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat, index: usize) {
         foot.w,
         bar_height(theme),
     );
-    let shown = book.percent_shown();
-    paint::progress(cx.fb, track, shown, 100, INK);
+    let (shown, fill) = (book.percent_shown(), book.bar_percent());
+    paint::progress(cx.fb, track, fill, 100, INK);
     cx.text.set_px(theme.small_px);
     let baseline = track.y - theme.gap / 2;
     // The chip takes its place first; the figure keeps to what is left.
@@ -307,7 +307,7 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat, index: usize) {
         .then(|| finished_chip(cx, foot, baseline));
     let room = left_of(foot, chip, theme.gap * 2);
     if book.has_percent() {
-        position_mark(cx, room, track, shown);
+        position_mark(cx, room, track, shown, fill > shown);
     }
     if book.can_mark() {
         cx.hit(Hit::Finished(index, !book.finished), foot);
@@ -320,12 +320,12 @@ fn left_of(line: Rect, chip: Option<Rect>, air: i32) -> Rect {
     Rect::new(line.x, line.y, (right - line.x).max(1), line.h)
 }
 
-/// The span [`position_mark`] centres its figure over.
+/// How wide [`position_mark`] cuts.
 fn mark_width(theme: &Theme) -> i32 {
     (theme.gap / 2).max(3)
 }
 
-/// Where [`position_mark`] stands in `track`, `at` per cent along it.
+/// Where [`position_mark`] cuts in `track`, `at` per cent along it.
 fn mark_x(theme: &Theme, track: Rect, at: i64) -> i32 {
     let w = mark_width(theme);
     let x = track.x + (track.w as i64 * at.clamp(0, 100) / 100) as i32;
@@ -333,10 +333,13 @@ fn mark_x(theme: &Theme, track: Rect, at: i64) -> i32 {
 }
 
 /// [`BookStat::percent_shown`] set small over the place it names, inside
-/// `line`.
-fn position_mark(cx: &mut Ctx, line: Rect, track: Rect, at: i64) {
+/// `line`. Under `cut` a white notch cuts the ink there.
+fn position_mark(cx: &mut Ctx, line: Rect, track: Rect, at: i64, cut: bool) {
     let theme: &Theme = cx.theme;
     let (w, x) = (mark_width(theme), mark_x(theme, track, at));
+    if cut {
+        paint::fill(cx.fb, Rect::new(x, track.y, w, track.h), WHITE);
+    }
     let script = cx.ui_script();
     cx.text.set_px(theme.small_px);
     let said = crate::lang::counted(cx.s().percent_at, at);
