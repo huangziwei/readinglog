@@ -49,23 +49,23 @@ impl TextRenderer {
     }
 
     /// Set the size the next draws are at. `px` is the em, whichever face
-    /// draws the row — see [`font::scale_of`] — and the glyph cache is keyed by
-    /// size, so switching back and forth costs nothing after the first pass.
+    /// draws the row — see [`font::scale_of`]. The glyph cache is keyed by size:
+    /// switching back and forth costs one pass.
     pub fn set_px(&mut self, px: f32) {
         self.px = px;
     }
 
     /// How far above the baseline a capital stands, for centring a line inside
-    /// a box rather than hanging it off the baseline. CJK is drawn onto this
-    /// same centre by [`FontChain::centring`], so one figure places both.
+    /// a box. [`FontChain::centring`] draws CJK onto that same centre: one
+    /// figure places both.
     pub fn cap_height(&self) -> u32 {
         (self.px * font::CAP).round().max(1.0) as u32
     }
 
     pub fn line_height(&self) -> u32 {
-        // Always the primary face's metrics, rounded up, so a row keeps its
-        // height whichever face draws the text: every face is scaled to the
-        // same em and CJK ink is centred on the Latin cap.
+        // Always the primary face's metrics, rounded up: a row keeps its height
+        // whichever face draws the text, every face being scaled to the same em
+        // with CJK ink centred on the Latin cap.
         let face = self
             .chain
             .primary()
@@ -98,6 +98,30 @@ impl TextRenderer {
             w = w.saturating_add(advance);
         }
         w
+    }
+
+    /// The ink of `s` at the current px, as rows either side of the baseline:
+    /// the topmost the glyphs cover and the row past the lowest. `None` where
+    /// `s` inks nothing.
+    pub fn ink_box(&mut self, s: &str) -> Option<(i32, i32)> {
+        let run = font::Script::resolve(font::Script::Unknown, s);
+        let (px, px_key) = (self.px, self.px.to_bits());
+        let mut box_: Option<(i32, i32)> = None;
+        for ch in s.chars().filter(|c| !font::is_invisible(*c)) {
+            let band = font::band_of(ch, run);
+            let Some(glyph) = self.glyph(band, ch, px, px_key) else {
+                continue;
+            };
+            if glyph.height == 0 {
+                continue;
+            }
+            let (top, bottom) = (glyph.top, glyph.top + glyph.height as i32);
+            box_ = Some(match box_ {
+                Some((t, b)) => (t.min(top), b.max(bottom)),
+                None => (top, bottom),
+            });
+        }
+        box_
     }
 
     /// A font-backed [`crate::wrap::wrap_and_clamp`]: `text` to `max_width` per
@@ -150,7 +174,7 @@ impl TextRenderer {
 
     /// [`TextRenderer::draw`] under a known `script`, which decides the Han
     /// convention and the order faces are tried in. Each character comes from
-    /// its own band, so Latin inside a CJK title still comes off the UI face.
+    /// its own band: Latin inside a CJK title comes off the UI face.
     pub fn draw_in(
         &mut self,
         script: font::Script,
@@ -195,7 +219,7 @@ impl TextRenderer {
 
 /// `ch` outlined from `font` at an em of `px`, with its coverage, dropped by
 /// `drop` pixels. ab_glyph works in screen space, y downward from the
-/// baseline, so its bounds are the blit's offsets.
+/// baseline: its bounds are the blit's offsets.
 fn rasterize(font: &FontVec, ch: char, px: f32, drop: f32) -> Raster {
     let scale = font::scale_of(font, px);
     let id = font.glyph_id(ch);
@@ -270,8 +294,8 @@ fn blit_threshold(
     if w == 0 || h == 0 {
         return;
     }
-    // put_pixel applies the orientation transform + bounds check. Glyphs
-    // are small (≤32x32 typically), so per-pixel call overhead is fine.
+    // put_pixel applies the orientation transform + bounds check, at a
+    // per-pixel cost a glyph of ≤32x32 absorbs.
     for row in 0..h {
         let cov_row = &coverage[row * w..row * w + w];
         for (col, &cov) in cov_row.iter().enumerate() {

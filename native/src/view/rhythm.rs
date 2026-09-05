@@ -635,7 +635,8 @@ fn cover_grid(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeIncl
     let deep = (rows * columns).max(1) as usize;
     let from = state.list_from.min(super::last_page_at(read.len(), deep));
     let to = (from + deep).min(read.len());
-    if read.len() > deep {
+    let paged = read.len() > deep;
+    if paged {
         counted(cx, head, from, to, read.len(), picked.is_some());
         let last = super::last_page_at(read.len(), deep);
         let rows_h = (to - from).div_ceil(columns as usize) as i32 * (cell.h + air);
@@ -654,10 +655,16 @@ fn cover_grid(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeIncl
         );
     }
 
+    // A paged grid centres its jackets between the arrows; a list that fits
+    // whole opens at `inner`'s own left edge, level with the heading over it.
+    let left = match paged {
+        true => row_left(grid, cell, air, columns, to - from),
+        false => inner.x,
+    };
     for (slot, (book, secs)) in read[from..to].iter().enumerate() {
         let at = slot as i32;
         let box_ = Rect::new(
-            grid.x + (at % columns) * (cell.w + air),
+            left + (at % columns) * (cell.w + air),
             grid.y + (at / columns) * (cell.h + air),
             cell.w,
             cell.h,
@@ -760,6 +767,15 @@ fn grid_of(cx: &mut Ctx, inner: Rect) -> (i32, i32, Rect) {
     let cell_w = cover::width_for(cover_h).max(figure_floor(cx));
     let columns = ((inner.w + air) / (cell_w + air)).max(1);
     (rows, columns, Rect::new(0, 0, cell_w, cell_h))
+}
+
+/// Where a paged grid opens its jackets inside `grid`. A page of fewer than
+/// `columns`, and the remainder no whole number of cells covers, both leave
+/// the same air either side.
+fn row_left(grid: Rect, cell: Rect, air: i32, columns: i32, shown: usize) -> i32 {
+    let across = columns.min(shown as i32).max(1);
+    let taken = across * cell.w + (across - 1) * air;
+    grid.x + (grid.w - taken).max(0) / 2
 }
 
 /// The narrowest a cell is cut: `percent_reached` at 100, set at the size
@@ -1064,6 +1080,27 @@ mod tests {
             let tallest = Rect::new(cell.x, cell.y, bw, bars.h);
             assert!(clock_box(&theme, tallest).w >= 24, "{w}x{h}: too narrow");
         }
+    }
+
+    #[test]
+    fn a_paged_grid_leaves_the_same_air_either_side_of_its_jackets() {
+        let grid = Rect::new(100, 0, 1000, 400);
+        let cell = Rect::new(0, 0, 140, 200);
+        let (air, columns) = (20, 6);
+        // A full row: the remainder no whole number of cells covers splits.
+        let taken = 6 * 140 + 5 * 20;
+        let left = row_left(grid, cell, air, columns, 6);
+        assert_eq!(left - grid.x, grid.right() - (left + taken));
+        // A page one short of the row centres the five it draws.
+        let taken = 5 * 140 + 4 * 20;
+        let left = row_left(grid, cell, air, columns, 5);
+        assert_eq!(left - grid.x, grid.right() - (left + taken));
+        // More books than one row holds opens where a full row opens.
+        let full = row_left(grid, cell, air, columns, 6);
+        assert_eq!(row_left(grid, cell, air, columns, 30), full);
+        // A cell wider than the grid opens at its left edge, never outside it.
+        let wide = Rect::new(0, 0, 4000, 200);
+        assert_eq!(row_left(grid, wide, air, columns, 1), grid.x);
     }
 
     /// A jacket is as tall as the band it stands in: the week's grid leaves one
