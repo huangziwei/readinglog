@@ -136,6 +136,9 @@ pub struct Sitting {
     pub page_turns: i64,
     /// [`Session::hours`], the seconds read in each clock hour of `day`.
     pub hours: Vec<(u8, i64)>,
+    /// [`Session::progress`], the place the book stood at as this sitting
+    /// ended.
+    pub progress: Option<f64>,
 }
 
 /// The sitting histogram: five minutes a band to two hours, and one more band
@@ -240,6 +243,7 @@ impl Stats {
                 measure: s.measure,
                 page_turns: s.page_turns,
                 hours: s.hours.clone(),
+                progress: s.progress,
             });
             out.total_seconds += s.seconds;
             out.total_turns += s.page_turns;
@@ -351,6 +355,17 @@ impl Stats {
         out.into_iter()
             .map(|(book, secs, _)| (book, secs))
             .collect()
+    }
+
+    /// The place `book` stood at as its last sitting inside `days` ended,
+    /// rounded once. `None` where no sitting of it inside `days` states one.
+    pub fn percent_over(&self, book: usize, days: std::ops::RangeInclusive<i64>) -> Option<i64> {
+        self.sittings
+            .iter()
+            .filter(|s| s.book == Some(book) && days.contains(&s.day))
+            .filter_map(|s| Some(((s.day, s.to_secs), s.progress?)))
+            .max_by_key(|(at, _)| *at)
+            .map(|(_, p)| (p * 100.0).clamp(0.0, 100.0).round() as i64)
     }
 
     /// Books read over `days` that no record names, and the seconds on them.
@@ -802,6 +817,49 @@ mod tests {
         assert_eq!(whole.days_read, days.len() as i64);
         // The figure beside it: what was read over the days it was read on.
         assert_eq!(whole.a_day, whole.read / whole.days_read);
+    }
+
+    #[test]
+    fn a_day_states_the_place_its_own_last_sitting_reached() {
+        let mut store = Store::default();
+        store.books.push(BookRecord {
+            extent: 100,
+            cde_key: "B01".into(),
+            percent: 62.0,
+            ..BookRecord::default()
+        });
+        // Two days, two sittings each, climbing 20 → 31 → 44 → 62.
+        for (day, at, progress) in [
+            ("2026-08-07", "09:00:00", 0.20),
+            ("2026-08-07", "21:00:00", 0.31),
+            ("2026-08-08", "09:00:00", 0.44),
+            ("2026-08-08", "21:00:00", 0.62),
+        ] {
+            store.sessions.push(Session {
+                started_at: format!("{day}T{at}"),
+                ended_at: format!("{day}T{at}"),
+                end_position: 100,
+                seconds: 600,
+                page_turns: 1,
+                words: 100,
+                hours: vec![(9, 600)],
+                measure: Measure::Counted,
+                asin: None,
+                progress: Some(progress),
+            });
+        }
+        let stats = Stats::build(&store, day(2026, 8, 8), true);
+        let (first, last) = (day(2026, 8, 7), day(2026, 8, 8));
+        assert_eq!(stats.percent_over(0, first..=first), Some(31));
+        assert_eq!(stats.percent_over(0, last..=last), Some(62));
+        assert_eq!(stats.percent_over(0, first..=last), Some(62));
+        // A day with no sitting of this book states no place.
+        assert_eq!(stats.percent_over(0, first - 1..=first - 1), None);
+
+        // A sitting stating no place leaves the one before it standing.
+        store.sessions[3].progress = None;
+        let stats = Stats::build(&store, day(2026, 8, 8), true);
+        assert_eq!(stats.percent_over(0, last..=last), Some(44));
     }
 
     #[test]

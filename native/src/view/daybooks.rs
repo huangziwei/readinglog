@@ -1,6 +1,6 @@
 //! One day's books, a row each: the cover, the title, how long it was read
-//! that day, how far through it is, and where in the day the reading fell.
-//! Today and Rhythm both end here, and a day reads the same from either.
+//! that day, the place it stood at as the day ended, and where in the day the
+//! reading fell. `home` and `rhythm` both end here.
 
 use crate::date;
 use crate::font::Script;
@@ -27,8 +27,8 @@ pub fn fits(theme: &Theme, h: i32, count: usize) -> usize {
 }
 
 /// One day's books under their own heading, opened at `from`, which is held
-/// inside the list. Today and the Rhythm day page both draw this, so a day's
-/// books read and page the same from either.
+/// inside the list. `home` and `rhythm::day_page` both call it: a day's books
+/// read and page the same from either.
 pub fn paged(cx: &mut Ctx, area: Rect, day: i64, from: usize) {
     let theme: &Theme = cx.theme;
     // The strip `section` sets its title in, taken before the call.
@@ -51,8 +51,8 @@ pub fn paged(cx: &mut Ctx, area: Rect, day: i64, from: usize) {
 }
 
 /// `from`–`to` of `count` at the right of the list's heading, a chip either
-/// side of it stepping by `deep` and carrying the index it opens at. They
-/// straddle the count so each is its own target.
+/// side of it stepping by `deep` and carrying the index it opens at. The two
+/// straddle the count, each its own target.
 fn pager(cx: &mut Ctx, head: Rect, from: usize, to: usize, count: usize, deep: usize) {
     let theme: &Theme = cx.theme;
     let last = super::last_page_at(count, deep);
@@ -193,15 +193,16 @@ pub fn draw(cx: &mut Ctx, area: Rect, day: i64, read: &[(usize, i64)]) {
     }
 }
 
-/// The book at `index`: its cover, title, author, `secs`, its `percent`, and
-/// across the foot of `area` the spans `day` holds on it.
+/// The book at `index`: its cover, title, author, `secs`, the place it stood
+/// at as `day` ended, and across the foot of `area` the spans `day` holds on
+/// it.
 fn row(cx: &mut Ctx, area: Rect, day: i64, index: usize, secs: i64) {
     let theme: &Theme = cx.theme;
+    let percent = cx.stats.percent_over(index, day..=day);
     let book = &cx.stats.books[index];
     let script = Script::of_language(&book.language);
     let title = book.title.clone();
     let author = book.author.clone();
-    let percent = book.has_percent().then(|| book.percent_shown());
 
     // `spans` takes the full width of `area`; `over` holds the book.
     let (spans, over) = area.split_bottom(theme.gap * 3);
@@ -270,7 +271,7 @@ fn row(cx: &mut Ctx, area: Rect, day: i64, index: usize, secs: i64) {
         let track = Rect::new(words.x, y + theme.gap, words.w, bar_h);
         paint::progress(cx.fb, track, percent, 100, INK);
         cx.text.set_px(theme.small_px);
-        let pct = format!("{percent}%");
+        let pct = crate::lang::counted(cx.s().percent_reached, percent);
         let pw = cx.text.measure_width(&pct) as i32;
         cx.text
             .draw(cx.fb, figures.right() - pw, track.bottom(), &pct, false);
@@ -280,11 +281,13 @@ fn row(cx: &mut Ctx, area: Rect, day: i64, index: usize, secs: i64) {
     day_spans(cx.fb, spans, &blocks, theme);
 }
 
-/// The width of the figures column: the wider of `figure` and `100%`.
+/// The width of the figures column: the wider of `figure` and
+/// `percent_reached` at 100.
 fn figures_width(cx: &mut Ctx, figure: &str) -> i32 {
     let duration = cx.text.measure_width(figure) as i32;
+    let said = crate::lang::counted(cx.s().percent_reached, 100);
     cx.text.set_px(cx.theme.small_px);
-    let pct = cx.text.measure_width("100%") as i32;
+    let pct = cx.text.measure_width(&said) as i32;
     cx.text.set_px(cx.theme.body_px);
     duration.max(pct)
 }

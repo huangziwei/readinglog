@@ -351,7 +351,27 @@ pub fn library(last: i64, art: &Path) -> Store {
     store
         .sessions
         .sort_by(|a, b| a.started_at.cmp(&b.started_at));
+    climb(&mut store);
     store
+}
+
+/// Give each sitting the place its book stood at as it ended: an even climb
+/// over that book's own sittings, ending at the record's `percent`. A sitting
+/// [`ghosts`] left names no book and keeps `None`.
+fn climb(store: &mut Store) {
+    for slot in 0..store.books.len() {
+        let (extent, percent) = (store.books[slot].extent, store.books[slot].percent);
+        if percent < 0.0 {
+            continue;
+        }
+        let at: Vec<usize> = (0..store.sessions.len())
+            .filter(|&i| store.sessions[i].end_position == extent)
+            .collect();
+        let count = at.len() as f64;
+        for (n, i) in at.iter().enumerate() {
+            store.sessions[*i].progress = Some(percent / 100.0 * (n as f64 + 1.0) / count);
+        }
+    }
 }
 
 /// [`library`] with `keep` of the last day's sittings left on it.

@@ -35,8 +35,7 @@ fn bands(area: Rect, theme: &Theme, figures: i32, grid: i32, listed: bool) -> [R
         false => rest.h,
     };
     let list = (rest.h - grid - air).max(0) * listed as i32;
-    // A span listing no books still answers with a band, which stands at the
-    // foot of the page rather than past it.
+    // A span listing no books takes a band, clamped to the foot of `rest`.
     let under = (rest.y + grid + air).min(rest.bottom());
     [
         Rect::new(picker.x, picker.y, picker.w, bar),
@@ -57,8 +56,8 @@ fn lists_books(span: Span) -> bool {
 fn grid_height(span: Span, area: Rect, theme: &Theme, day: i64, week: WeekStart) -> i32 {
     match span {
         Span::AllTime | Span::Month => area.h,
-        // A week has seven columns and a shelf of covers under them, so the
-        // grid takes a share of the page and never less than its own height.
+        // A week has seven columns and a shelf of covers under them: the grid
+        // takes a share of the page and never less than its own height.
         Span::Week => week_height(theme).max(area.h * 2 / 5),
         Span::Year => {
             let (year, _, _) = date::civil_from_days(day);
@@ -217,8 +216,7 @@ fn span_figures(cx: &mut Ctx, area: Rect, days: std::ops::RangeInclusive<i64>) {
 }
 
 /// `title` between two arrows, each its own hit box. `back` draws the chip
-/// returning to the span that holds today. The chip keeps a thumb's width from
-/// both arrows, so a reach for one cannot land on the other.
+/// returning to the span that holds today, clear of both arrow boxes.
 fn span_nav(cx: &mut Ctx, area: Rect, title: &str, back: bool) {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
@@ -226,8 +224,7 @@ fn span_nav(cx: &mut Ctx, area: Rect, title: &str, back: bool) {
     let baseline = area.center_y() + cx.text.cap_height() as i32 / 2;
     let title_w = cx.text.measure_width_in(script, title) as i32;
 
-    // The name is centred whatever else stands on the row: the chip beside it
-    // is optional and must not move it.
+    // The name is centred on `area`; the chip beside it takes no part in `at`.
     let at = area.x + (area.w - title_w) / 2;
     cx.text.draw_in(script, cx.fb, at, baseline, title, false);
     let chip = back.then(|| now_chip(cx, area, at + title_w + theme.gap * 3));
@@ -239,7 +236,7 @@ fn span_nav(cx: &mut Ctx, area: Rect, title: &str, back: bool) {
         .draw(cx.fb, area.right() - next, baseline, "›", false);
 
     // The forward arrow takes a sixth of the row, or whatever the chip beside
-    // a long name leaves it, so the two never share a pixel.
+    // a long name leaves it. The two share no pixel.
     let reach = area.w / 6;
     let opens = chip.map_or(area.right() - reach, |chip| {
         (chip.right() + theme.gap).max(area.right() - reach)
@@ -278,7 +275,7 @@ const WEEK_CLOCK: (i32, i32) = (1, 3);
 const WEEK_CLOCK_CAP: (i32, i32) = (2, 5);
 
 /// The share of its column a day's bar is drawn at. Wide enough to carry the
-/// day's hours inside it, and short of the whole so the columns read as seven
+/// day's hours inside it, and short of the whole: the columns read as seven
 /// bars and not as one band broken by gaps.
 const WEEK_BAR_WIDTH: (i32, i32) = (7, 8);
 
@@ -340,13 +337,13 @@ fn day_head(cx: &mut Ctx, area: Rect, day: i64) {
 }
 
 /// The box a day's hours are cut into, inside its own bar. A whole number of
-/// hours wide so each hour owns its pixels, and held clear of the bar's edges
-/// so a mark cannot open onto the page and read as a broken bar.
+/// hours wide, each hour owning its pixels, and held clear of the bar's edges,
+/// where a mark opens onto the page and reads as a broken bar.
 fn clock_box(theme: &Theme, bar: Rect) -> Rect {
     let pad = (theme.gap / 2).max(1);
     let w = ((bar.w - pad * 2).max(0) / 24) * 24;
-    // A share of the bar, so a short day keeps a bar and not a row of notches,
-    // and never past a strip, so a long one keeps a bar and not a comb.
+    // A share of the bar, capped at a strip: a short day keeps a bar and not a
+    // row of notches, a long one a bar and not a comb.
     let cap = theme.row_h * WEEK_CLOCK_CAP.0 / WEEK_CLOCK_CAP.1;
     let h = (bar.h * WEEK_CLOCK.0 / WEEK_CLOCK.1).min(cap) - pad;
     Rect::new(bar.x + (bar.w - w) / 2, bar.bottom() - pad - h, w, h.max(0))
@@ -380,8 +377,8 @@ fn day_bar(cx: &mut Ctx, area: Rect, day: i64, most: i64, on: bool) {
     paint::fill_rgb(cx.fb, bar, ink);
     let hours = cx.stats.hours_over(day..=day);
     let busiest = hours.iter().copied().max().unwrap_or(0);
-    // The hours are cut out of the bar rather than drawn over it: the bar
-    // keeps its own weight on the page and the marks read as part of it.
+    // `WHITE_RGB` cuts the hours out of the bar: the bar keeps its own weight
+    // on the page and the marks read as part of it.
     charts::hour_shape(cx.fb, clock_box(theme, bar), &hours, busiest, WHITE_RGB);
     cx.text.draw(
         cx.fb,
@@ -510,9 +507,8 @@ fn year_heatmap(cx: &mut Ctx, area: Rect, day: i64, picked: bool) {
         if picked && *at == day {
             paint::stroke(cx.fb, cell.inset(-2), INK, 2);
         }
-        // A day with nothing on it takes no tap. The cells are small enough
-        // that an empty one standing between two read days would only steal
-        // the reach meant for them, and it has nothing to state.
+        // A day with nothing on it takes no tap: an empty cell between two
+        // read days holds nothing to open, at the width of a cell.
         if secs > 0 {
             cx.hit(Hit::Day(*at), *cell);
         }
@@ -568,13 +564,12 @@ fn more_books(cx: &mut Ctx, inner: Rect, lane: usize, over: usize) {
     cx.text.draw(cx.fb, bar.right() - w, baseline, &more, false);
 }
 
-/// The shortest a cover may be drawn: under this the jacket states nothing
-/// and the grid is better off with fewer, larger ones.
+/// Rows of `theme.row_h` the shortest cover is drawn at. [`grid_of`] floors
+/// its own row count on it.
 const COVER_FLOOR: i32 = 3;
 
 /// The air the cover grid keeps: between one jacket and the next, under the
 /// heading before the first row, and under a jacket before its figures.
-/// Jackets set shoulder to shoulder read as one band of colour, not a shelf.
 fn cover_air(theme: &Theme) -> i32 {
     theme.gap * 2
 }
@@ -606,7 +601,7 @@ fn cover_grid(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeIncl
         open_day_chip(cx, head);
     }
 
-    let (unnamed, seconds) = cx.stats.unnamed_over(over);
+    let (unnamed, seconds) = cx.stats.unnamed_over(over.clone());
     let foot = (unnamed > 0) as i32 * daybooks::note_height(cx);
     let inner = Rect::new(whole.x, whole.y, whole.w, (whole.h - foot).max(0));
 
@@ -625,9 +620,8 @@ fn cover_grid(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeIncl
         return;
     }
 
-    // The arrows stand at the ends of the grid's own row, where a thumb
-    // reaches without covering a jacket. The grid keeps the middle, opening a
-    // row of air below the heading.
+    // The arrows take the ends of the grid's own row and the grid the middle,
+    // under a row of `cover_air` below the heading.
     let reach = arrow_reach(cx);
     let air = cover_air(theme);
     let (_, inner) = inner.split_top(air.min(inner.h));
@@ -668,7 +662,8 @@ fn cover_grid(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeIncl
             cell.w,
             cell.h,
         );
-        jacket(cx, box_, *book, *secs);
+        let percent = cx.stats.percent_over(*book, over.clone());
+        jacket(cx, box_, *book, *secs, percent);
         cx.hit(Hit::Book(*book), box_);
     }
     let under = inner.y + (to - from).div_ceil(columns as usize) as i32 * (cell.h + air);
@@ -751,7 +746,7 @@ fn open_day_chip(cx: &mut Ctx, head: Rect) {
 
 /// How the grid cuts `inner`: the rows and columns it holds, and one cell. A
 /// cell is a cover with two lines under it, and the cover keeps its own
-/// two-to-three shape, so the columns follow from the height the rows leave.
+/// two-to-three shape: the columns follow from the height the rows leave.
 fn grid_of(cx: &mut Ctx, inner: Rect) -> (i32, i32, Rect) {
     let theme: &Theme = cx.theme;
     cx.text.set_px(theme.small_px);
@@ -762,14 +757,25 @@ fn grid_of(cx: &mut Ctx, inner: Rect) -> (i32, i32, Rect) {
     let rows = ((inner.h + air) / (least + air)).max(1);
     let cell_h = (inner.h - air * (rows - 1)) / rows;
     let cover_h = (cell_h - under).max(1);
-    let cell_w = cover::width_for(cover_h);
+    let cell_w = cover::width_for(cover_h).max(figure_floor(cx));
     let columns = ((inner.w + air) / (cell_w + air)).max(1);
     (rows, columns, Rect::new(0, 0, cell_w, cell_h))
 }
 
-/// One book of the grid: its cover, the reading under it, and how far through
-/// it stands.
-fn jacket(cx: &mut Ctx, box_: Rect, book: usize, secs: i64) {
+/// The narrowest a cell is cut: `percent_reached` at 100, set at the size
+/// [`fitting_px`] stops at. A cover narrower than this leaves its cell wide
+/// and stands centred in it.
+fn figure_floor(cx: &mut Ctx) -> i32 {
+    let said = crate::lang::counted(cx.s().percent_reached, 100);
+    let floor = cx.theme.small_px * 0.6;
+    cx.text.set_px(floor);
+    let w = cx.text.measure_width(&said) as i32;
+    cx.text.set_px(cx.theme.small_px);
+    w
+}
+
+/// One book of the grid: its cover, the reading under it, and `percent`.
+fn jacket(cx: &mut Ctx, box_: Rect, book: usize, secs: i64, percent: Option<i64>) {
     let theme: &Theme = cx.theme;
     let s = cx.s();
     cx.text.set_px(theme.small_px);
@@ -777,15 +783,16 @@ fn jacket(cx: &mut Ctx, box_: Rect, book: usize, secs: i64) {
     // The jacket keeps clear air under it before the figures start.
     let under_h = line * 2 + cover_air(theme);
     let (art, under) = box_.split_top((box_.h - under_h).max(1));
+    // A cell cut wide by `figure_floor` keeps the art at a cover's own shape.
+    let w = cover::width_for(art.h).min(art.w);
+    let art = Rect::new(art.x + (art.w - w) / 2, art.y, w, art.h);
     cx.covers
         .draw(cx.fb, art, &cx.stats.books[book].thumbnail.clone());
 
     let read = date::duration_tight(secs, s);
-    let stat = &cx.stats.books[book];
-    let percent = match stat.has_percent() {
-        true => format!("{}%", stat.percent_shown()),
-        false => String::new(),
-    };
+    let percent = percent.map_or(String::new(), |p| {
+        crate::lang::counted(s.percent_reached, p)
+    });
     // Both lines are set to the cover's own width: a title read for a hundred
     // hours states a wider figure than the jacket beside it.
     let px = fitting_px(cx, &[&read, &percent], box_.w);
@@ -1047,7 +1054,7 @@ mod tests {
                 // Every hour of the day gets its own column of pixels, and
                 // none of the box is left over past the last of them.
                 assert_eq!(clock.w % 24, 0, "{w}x{h} {tall}: {} wide", clock.w);
-                // Blue on all four sides, so no mark opens onto the page.
+                // Blue on all four sides: no mark opens onto the page.
                 assert!(clock.x > bar.x, "{w}x{h} {tall}");
                 assert!(clock.right() < bar.right(), "{w}x{h} {tall}");
                 assert!(clock.y > bar.y, "{w}x{h} {tall}");
@@ -1059,8 +1066,8 @@ mod tests {
         }
     }
 
-    /// A jacket is as tall as the band it stands in, so the week's grid must
-    /// leave one deep enough to draw a cover at.
+    /// A jacket is as tall as the band it stands in: the week's grid leaves one
+    /// deep enough to draw a cover at.
     #[test]
     fn a_week_leaves_its_covers_a_band_a_jacket_fits() {
         for (w, h) in PANELS {

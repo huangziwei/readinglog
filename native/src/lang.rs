@@ -39,8 +39,6 @@ pub enum Lang {
 }
 
 /// Where the device writes the locale the config picker set.
-/// `/etc/upstart/langpicker.conf` names it and writes `LANG=en_US.UTF-8` and
-/// `LC_ALL=en_US.UTF-8` into it. `com.lab126.locale` carries the same fact.
 const LOCALE_FILE: &str = "/var/local/system/locale";
 
 impl Lang {
@@ -66,8 +64,7 @@ impl Lang {
         }
     }
 
-    /// What the setting is stored as: one letter. The file stays readable and
-    /// a hand edit is hard to get wrong.
+    /// What the setting is stored as: one letter.
     pub fn letter(self) -> char {
         match self {
             Lang::English => 'e',
@@ -78,8 +75,7 @@ impl Lang {
         }
     }
 
-    /// The language a stored letter names. Anything else is English: a
-    /// settings file written by another build must not stop this one drawing.
+    /// The language a stored letter names. Anything else is English.
     pub fn from_letter(s: &str) -> Lang {
         match s.trim() {
             "d" => Lang::German,
@@ -115,8 +111,7 @@ impl Lang {
     }
 
     /// What the device is set to. English wherever the file is missing,
-    /// unreadable, or names a language this app is not written in: the ten a
-    /// Kindle ships include six it has no words for.
+    /// unreadable, or names a language [`Lang`] does not carry.
     pub fn detect() -> Lang {
         Self::detect_in(Path::new(LOCALE_FILE))
     }
@@ -156,7 +151,7 @@ pub fn of_posix(value: &str) -> Option<Lang> {
         "ja" => Some(Lang::Japanese),
         "zh" => {
             // A region is read where one is given: nothing else names
-            // Traditional, and the device ships `zh-Hans-CN` alone.
+            // Traditional.
             for subtag in subtags {
                 match subtag.to_ascii_lowercase().as_str() {
                     "hant" | "tw" | "hk" | "mo" => return Some(Lang::TraditionalChinese),
@@ -272,6 +267,9 @@ pub struct Strings {
     /// The figure over the place a bar's reading stands at. `{d}` is `percent`,
     /// rounded.
     pub percent_at: &'static str,
+    /// The place a book stood at as a day or a span ended. `{d}` is that
+    /// figure, rounded.
+    pub percent_reached: &'static str,
     /// The control that hands a book back to be read from its beginning, the
     /// question it puts, and what that question states.
     pub restart: &'static str,
@@ -288,7 +286,7 @@ pub struct Strings {
     pub left: &'static str,
 
     /// The three measures, and the two mixed cases. These name what the app
-    /// can and cannot know about a number; a loose translation makes it lie.
+    /// can and cannot know about a number.
     pub kindle_timer: &'static str,
     pub timer_and_pages: &'static str,
     pub time_awake: &'static str,
@@ -333,7 +331,7 @@ pub struct Strings {
     pub update_row: &'static str,
     pub update_check: &'static str,
     /// The banner, while an update runs. `update_tap_to_stop` is the only way
-    /// out of it: the screen is one banner and has no room for a button.
+    /// out of it.
     pub update_asking: &'static str,
     pub update_downloading: &'static str,
     pub update_checking: &'static str,
@@ -443,6 +441,7 @@ const ENGLISH: Strings = Strings {
     unmark_note: "It leaves the Finished shelf, and the library marks it unread. The \
                   progress, the time, the sittings and the days read do not change.",
     percent_at: "{d}% now",
+    percent_reached: "at {d}%",
     restart: "Restart",
     restart_ask: "Restart this book?",
     restart_note: "The Finished mark comes off, the progress goes back to 0%, and the \
@@ -607,6 +606,7 @@ const GERMAN: Strings = Strings {
                   ungelesen. Fortschritt, gelesene Zeit, Sitzungen und Tage bleiben \
                   unverändert.",
     percent_at: "{d} % jetzt",
+    percent_reached: "bei {d} %",
     restart: "Neu beginnen",
     restart_ask: "Dieses Buch neu beginnen?",
     restart_note: "Die Markierung Fertig wird entfernt, der Fortschritt geht auf 0 % \
@@ -769,6 +769,7 @@ const JAPANESE: Strings = Strings {
     unmark_ask: "読了の印を外しますか？",
     unmark_note: "読了の棚から外れ、ライブラリでも未読になります。進捗、読んだ時間、回数、日数は変わりません。",
     percent_at: "現在{d}%",
+    percent_reached: "{d}%まで",
     restart: "最初から",
     restart_ask: "この本を最初から読みますか？",
     restart_note: "読了の印が外れ、進捗は0%に戻り、本は最初から開きます。ハイライトとメモ、\
@@ -917,6 +918,7 @@ const SIMPLIFIED: Strings = Strings {
     unmark_ask: "取消读完标记？",
     unmark_note: "本书将离开已读完书架，图书馆中也标记为未读。进度、已读的时间、次数与天数不变。",
     percent_at: "当前{d}%",
+    percent_reached: "至{d}%",
     restart: "重新开始",
     restart_ask: "从头重读这本书？",
     restart_note: "读完标记将被取消，进度归零，本书将从头打开。标注与笔记，\
@@ -1076,6 +1078,7 @@ const TRADITIONAL: Strings = Strings {
     unmark_ask: "取消讀完標記？",
     unmark_note: "本書將離開已讀完書架，圖書館中也標記為未讀。進度、已讀的時間、次數與天數不變。",
     percent_at: "目前{d}%",
+    percent_reached: "至{d}%",
     restart: "重新開始",
     restart_ask: "從頭重讀這本書？",
     restart_note: "讀完標記將被取消，進度歸零，本書將從頭開啟。標註與筆記，\
@@ -1187,9 +1190,8 @@ mod tests {
 
     use super::*;
 
-    /// Every `posix.id.*` in `/opt/amazon/ebook/config/locales/*.properties`
-    /// on a Kindle Scribe — every value that can reach [`LOCALE_FILE`], and
-    /// nothing else reaches [`of_posix`].
+    /// Every value that can reach [`LOCALE_FILE`]. Nothing else reaches
+    /// [`of_posix`].
     const DEVICE_LOCALES: &[(&str, Option<Lang>)] = &[
         ("de_DE.utf8", Some(Lang::German)),
         ("ja_JP.utf8", Some(Lang::Japanese)),
@@ -1231,8 +1233,7 @@ mod tests {
 
     #[test]
     fn the_locale_file_is_read_the_way_the_picker_writes_it() {
-        // Verbatim from `/etc/upstart/langpicker.conf`:
-        //   echo -e "LANG=en_US.UTF-8\nLC_ALL=en_US.UTF-8" > $LOCALE_FILE
+        // The pair the picker writes, `LANG` first.
         let written = "LANG=en_US.UTF-8\nLC_ALL=en_US.UTF-8\n";
         assert_eq!(of_locale_file(written), Some(Lang::English));
         assert_eq!(
@@ -1277,7 +1278,7 @@ mod tests {
         assert_eq!(Lang::Japanese.language_tag(), "ja");
         assert_eq!(Lang::TraditionalChinese.language_tag(), "zh-Hant");
         assert_eq!(Lang::SimplifiedChinese.language_tag(), "zh-Hans");
-        // Latin names no Han convention, and must not promote one.
+        // Latin names no Han convention.
         assert_eq!(Lang::English.language_tag(), "en");
         assert_eq!(Lang::German.language_tag(), "de");
     }
