@@ -22,8 +22,8 @@ pub struct BookStat {
     pub percent: f64,
     /// Whether the catalog names this book as one the device holds.
     pub on_device: bool,
-    /// The file the device holds this book in, which the reader is handed to
-    /// open it. Empty where the catalog names none.
+    /// The file the device holds this book in, which `open::uri` names.
+    /// Empty where the catalog names none.
     pub location: String,
     /// The catalog language tag, which picks the face a CJK title is set in.
     pub language: String,
@@ -50,9 +50,8 @@ impl BookStat {
         self.percent >= 0.0
     }
 
-    /// The percentage a screen states, rounded once. Every figure and every bar
-    /// for this book takes this one number; a track and the figure beside it
-    /// never disagree. Under `finished` it is 100, whatever `percent` holds.
+    /// The percentage every figure and every bar for this book takes, rounded
+    /// once. Under `finished` it is 100, whatever `percent` holds.
     pub fn percent_shown(&self) -> i64 {
         match self.finished {
             true => 100,
@@ -60,14 +59,14 @@ impl BookStat {
         }
     }
 
-    /// Where the reading stands, rounded once, and the one figure a bar carries.
-    /// `None` outside [`Self::has_percent`].
+    /// Where the reading stands, rounded once. `None` outside
+    /// [`Self::has_percent`].
     pub fn position_shown(&self) -> Option<i64> {
         self.has_percent().then(|| self.percent.round() as i64)
     }
 
-    /// Whether the reader can be handed this book: the device holds it, and
-    /// the catalog named the file.
+    /// Whether this book can be opened: `on_device`, and a `location` the
+    /// catalog named.
     pub fn can_open(&self) -> bool {
         self.on_device && !self.location.is_empty()
     }
@@ -83,12 +82,12 @@ impl BookStat {
         self.percent >= FINISHED_PERCENT
     }
 
-    /// Whether `finished` is a tap's to set: `percent` states neither way.
+    /// Whether `finished` can be set: `percent` states neither way.
     pub fn can_mark(&self) -> bool {
         !self.read_through()
     }
 
-    /// Whether a restart has anything to clear: `finished`, or a place.
+    /// Whether `Store::restart` has anything to clear: `finished`, or a place.
     pub fn can_restart(&self) -> bool {
         self.finished || self.percent_shown() > 0
     }
@@ -151,8 +150,7 @@ pub const SITTING_STEP_SECS: i64 = 5 * 60;
 pub const SITTING_BANDS: usize = 25;
 
 /// The shortest run the histogram counts as reading at all. A book opened and
-/// shut again leaves a run of seconds, and there are enough of them to stand
-/// over every real sitting on the chart.
+/// shut again leaves a run of seconds.
 pub const SITTING_FLOOR_SECS: i64 = 60;
 
 /// What a stretch of days came to, from [`Stats::tally`].
@@ -427,7 +425,7 @@ impl Stats {
 
     /// One fold of the record onto a cycle: what each bucket holds, what one
     /// turn averages, and the fullest bucket. Each bucket divides by however
-    /// many of it the record covers, which is what makes them comparable.
+    /// many of it the record covers.
     pub fn fold(&self, values: Vec<i64>, each: i64) -> Fold {
         let busiest = values
             .iter()
@@ -517,17 +515,15 @@ impl Stats {
             .sum()
     }
 
-    /// What a stretch of days came to. Every screen stating these states them
-    /// the same way: the board over the whole record, a span page over its own
-    /// days.
+    /// What a stretch of days came to, stated the same way over the whole
+    /// record and over one span.
     pub fn tally(&self, days: std::ops::RangeInclusive<i64>) -> Tally {
         let read = self.span_seconds(days.clone());
         let days_read = self.days_over(days.clone());
         Tally {
             read,
             days_read,
-            // Over the days there was reading on, which is the figure beside
-            // it: `read` divided by `days_read` is `a_day`.
+            // `read` divided by `days_read` is `a_day`.
             a_day: read / days_read.max(1),
             finished: self.finished_over(days),
         }
@@ -689,6 +685,7 @@ mod tests {
             is_book: true,
             location: "/mnt/us/documents/bible.kfx".into(),
             on_device: true,
+            read_state: -1,
         }]
     }
 
@@ -721,14 +718,14 @@ mod tests {
     fn a_marked_book_states_a_hundred_and_marks_where_the_reader_stands() {
         let mut book = fresh(1, &BookRecord::default(), 0);
         book.percent = 55.4;
-        // Unmarked, the bar and the place it marks state the one figure.
+        // Unmarked, `percent_shown` and `position_shown` state one figure.
         assert_eq!(
             (book.percent_shown(), book.position_shown()),
             (55, Some(55))
         );
         assert!(!book.is_finished());
 
-        // Marked, the bar holds at 100 and the place stands where it stands.
+        // Marked, `percent_shown` holds at 100 and `position_shown` stands.
         book.finished = true;
         assert_eq!(
             (book.percent_shown(), book.position_shown()),
@@ -777,8 +774,8 @@ mod tests {
     fn a_bar_and_the_figure_beside_it_state_one_percentage() {
         let record = BookRecord::default();
         let mut book = fresh(1, &record, 0);
-        // The pairs straddle the rounding, which is where a truncated value
-        // and a rounded one part company.
+        // The pairs straddle the rounding: a truncated value and a rounded
+        // one part company.
         for (raw, shown) in [(99.6, 100), (99.4, 99), (0.4, 0), (100.0, 100)] {
             book.percent = raw;
             assert_eq!(book.percent_shown(), shown, "{raw}");
@@ -1161,6 +1158,7 @@ mod tests {
             is_book: false,
             location: "/mnt/us/documents/ReadingLog.sh".into(),
             on_device: true,
+            read_state: -1,
         });
         let mut s = store();
         s.remember(&shelf);
@@ -1219,6 +1217,7 @@ mod tests {
             is_book: true,
             location: "/mnt/us/documents/other.kfx".into(),
             on_device: true,
+            read_state: -1,
         });
         out.remember(&shelf);
         out

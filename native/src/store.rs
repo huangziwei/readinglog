@@ -41,17 +41,18 @@ pub struct BookRecord {
     pub on_device: bool,
     /// The store's own copy of the cover, under `covers::COVERS_DIR`.
     pub cover: String,
-    /// The `p_location` `catalog` last stated, which the reader is handed to
-    /// open the book. Empty for a book the catalog has only ever named in the
-    /// library.
+    /// The `p_location` `catalog` last stated, which `open::uri` names.
+    /// Empty for a book the catalog has only ever named in the library.
     pub location: String,
-    /// Whether this book is read through. Set from the book screen, and by
+    /// Whether this book is read through. [`Store::set_finished`] sets it, and
     /// [`Self::stand_at`] on a place at or past [`FINISHED_PERCENT`].
     pub finished: bool,
-    /// The place a restart was declared at, from the book screen. Until the
-    /// catalog names a place before it, the reading it stands for is the one
-    /// that ended and `percent` holds 0.
+    /// The place [`Store::restart`] was called at. Until the catalog names a
+    /// place before it, `percent` holds 0.
     pub restart: Option<f64>,
+    /// The catalog's `p_readState` on the last pass that named this book,
+    /// negative where it states none. [`Self::take_mark`] reads it.
+    pub read_state: i64,
 }
 
 impl BookRecord {
@@ -79,6 +80,23 @@ impl BookRecord {
         self.finished |= self.read_through();
     }
 
+    /// Take `state` as [`Self::read_state`]. A value differing from the one
+    /// held carries [`Self::finished`]; an unchanged one leaves `finished` as
+    /// it stands. [`Self::read_through`] outranks both.
+    fn take_mark(&mut self, state: i64) {
+        if state == self.read_state {
+            return;
+        }
+        self.read_state = state;
+        let Some(read) = crate::catalog::read_state_says(state) else {
+            return;
+        };
+        self.finished = read || self.read_through();
+        if read {
+            self.restart = None;
+        }
+    }
+
     /// [`Self::cover`] where one is held, else [`Self::thumbnail`].
     pub fn art(&self) -> &str {
         match self.cover.is_empty() {
@@ -88,7 +106,7 @@ impl BookRecord {
     }
 }
 
-/// Everything the app knows, loaded whole.
+/// The record, loaded whole.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Store {
     /// Ascending by `started_at`, with `end_position` a sitting's identity.
@@ -447,7 +465,7 @@ fn flat(text: &str) -> String {
 
 /// A `BookRecord` holding everything `book` states.
 fn taken(book: &Book) -> BookRecord {
-    BookRecord {
+    let mut record = BookRecord {
         extent: book.extent,
         cde_key: flat(&book.cde_key),
         title: flat(&book.title),
@@ -460,7 +478,11 @@ fn taken(book: &Book) -> BookRecord {
         location: flat(&book.location),
         finished: book.percent >= FINISHED_PERCENT,
         restart: None,
-    }
+        // What `take_mark` reads to answer whether `book` states a new mark.
+        read_state: -1,
+    };
+    record.take_mark(book.read_state);
+    record
 }
 
 /// Take what `book` states over what `record` holds, field by field. A cloud
@@ -482,6 +504,7 @@ fn merge(record: &mut BookRecord, book: &Book) {
     if book.extent != 0 {
         record.extent = book.extent;
     }
+    record.take_mark(book.read_state);
     if book.percent >= 0.0 {
         record.stand_at(book.percent);
     }
@@ -490,7 +513,7 @@ fn merge(record: &mut BookRecord, book: &Book) {
 
 fn write_book(b: &BookRecord) -> String {
     format!(
-        "b\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "b\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         b.extent,
         flat(&b.cde_key),
         flat(&b.title),
@@ -503,6 +526,7 @@ fn write_book(b: &BookRecord) -> String {
         flat(&b.location),
         u8::from(b.finished),
         b.restart.map(|p| format!("{p:.6}")).unwrap_or_default(),
+        b.read_state,
     )
 }
 
@@ -523,6 +547,9 @@ fn read_book<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<BookRecord> {
         location: next().to_string(),
         finished: next().trim() == "1",
         restart: next().trim().parse().ok(),
+        // A row written before `read_state` was kept states none, and the
+        // next catalog pass takes what it finds as new.
+        read_state: next().trim().parse().unwrap_or(-1),
     })
     // `read_through` marks a record the row left unmarked.
     .map(|mut record: BookRecord| {
@@ -702,6 +729,7 @@ mod tests {
             is_book: !key.starts_with('*'),
             location: format!("/mnt/us/documents/{title}.kfx"),
             on_device: true,
+            read_state: -1,
         }
     }
 
@@ -740,6 +768,85 @@ mod tests {
         assert_eq!(store.books.len(), 1);
         assert!(!store.books[0].finished);
         assert_eq!(store.books[0].location, "/mnt/us/a.kfx");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// [`shelved`] carrying `read_state`.
+    fn marked(percent: f64, read_state: i64) -> Book {
+        Book {
+            read_state,
+            ..shelved(938_018, "B00OKPCRLG", "Bible", percent)
+        }
+    }
+
+    #[test]
+    fn the_librarys_own_mark_carries_the_records_and_a_tap_holds_against_it() {
+        let mut store = Store::default();
+        store.remember(&[marked(40.0, -1)]);
+        assert!(!store.books[0].finished, "a NULL column states nothing");
+
+        // 1, which `catalog::read_state_says` reads as read.
+        store.remember(&[marked(40.0, 1)]);
+        assert!(store.books[0].finished);
+
+        // `set_finished` disagrees, and an unchanged `read_state` on every
+        // pass after it leaves `finished` standing.
+        assert!(store.set_finished(938_018, "B00OKPCRLG", false));
+        store.remember(&[marked(40.0, 1)]);
+        store.remember(&[marked(40.0, 1)]);
+        assert!(
+            !store.books[0].finished,
+            "an unchanged column overrode a tap"
+        );
+
+        // 3 states unread, 4 read.
+        store.remember(&[marked(40.0, 3)]);
+        assert!(!store.books[0].finished);
+        store.remember(&[marked(40.0, 4)]);
+        assert!(store.books[0].finished);
+
+        // 0 states neither way and takes nothing off.
+        store.remember(&[marked(40.0, 0)]);
+        assert!(store.books[0].finished);
+    }
+
+    #[test]
+    fn a_place_read_through_outranks_the_librarys_mark() {
+        let mut store = Store::default();
+        store.remember(&[marked(100.0, 3)]);
+        assert!(
+            store.books[0].finished,
+            "the place states this one read through"
+        );
+
+        // `restart` clears `finished`, with `read_state` unchanged through
+        // it.
+        assert!(store.restart(938_018, "B00OKPCRLG"));
+        assert!(!store.books[0].finished);
+        store.remember(&[marked(100.0, 3)]);
+        assert_eq!(store.books[0].percent, 0.0);
+        assert!(!store.books[0].finished);
+    }
+
+    #[test]
+    fn the_librarys_mark_round_trips_and_an_older_row_takes_the_next_one() {
+        let dir = scratch("readstate");
+        let mut store = Store::default();
+        store.remember(&[marked(40.0, 1)]);
+        store.save(&dir).expect("a written store");
+        let back = Store::load(&dir);
+        assert_eq!(back.books[0].read_state, 1);
+        assert!(back.books[0].finished);
+
+        // Twelve fields: a `b` row without `read_state`. The next value
+        // `remember` takes is new to it.
+        std::fs::create_dir_all(&dir).expect("a directory to write in");
+        let row = "b\t938018\tB00OKPCRLG\tBible\tBerlin\t\ten\t40.000000\t1\t\t/mnt/us/a.kfx\t0\t";
+        std::fs::write(Store::file(&dir), format!("{HEADER}\n{row}\n")).expect("a store");
+        let mut store = Store::load(&dir);
+        assert_eq!(store.books[0].read_state, -1);
+        store.remember(&[marked(40.0, 2)]);
+        assert!(store.books[0].finished, "READ_AUTOMATIC reached no record");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

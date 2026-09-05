@@ -1,12 +1,12 @@
-//! The device's content catalog, `cc.db`, read through the `sqlite3` binary the
-//! firmware ships. `p_contentSize` equals a reading line's
-//! `BookEndPosition.FromBook`, and `p_cdeKey` a reader-shell record's key.
+//! The device's content catalog, `cc.db`, read through `sqlite3`.
+//! `p_contentSize` equals a log line's `BookEndPosition.FromBook`, and
+//! `p_cdeKey` equals `Session::asin`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// The catalog, newest firmware first. `/var/local` is a symlink to
-/// `/var/base-local`, and one device answers to more than one of these.
+/// `/var/base-local`, and more than one of these can exist.
 const CATALOG_PATHS: [&str; 3] = [
     "/var/base-local/metadata/cc.db",
     "/var/local/metadata/cc.db",
@@ -18,18 +18,50 @@ const CATALOG_PATHS: [&str; 3] = [
 const COL: &str = "\u{1}";
 const ROW: &str = "\u{2}";
 
-/// `p_location` is empty on a cloud row, which also states no `p_contentSize`
-/// and no `p_percentFinished`. `p_contentState` is 1 on a store book, 0 on a
-/// sideload. A `*`-prefixed `p_cdeKey` is kept — see [`Book::is_book`].
-const QUERY: &str = "select coalesce(p_contentSize, 0), p_cdeKey, p_cdeType, \
+/// The columns [`parse_row`] takes, in order. `p_location` is empty on a cloud
+/// row, which states no `p_contentSize` and no `p_percentFinished`. A
+/// `*`-prefixed `p_cdeKey` is kept — see [`Book::is_book`].
+const COLUMNS: &str = "coalesce(p_contentSize, 0), p_cdeKey, p_cdeType, \
      coalesce(p_titles_0_nominal, ''), coalesce(p_credits_0_name_collation, ''), \
      coalesce(p_percentFinished, -1), coalesce(p_thumbnail, ''), \
      coalesce(p_lastAccess, 0), coalesce(p_languages_0, ''), \
      replace(coalesce(j_credits, ''), char(10), ' '), \
-     coalesce(p_location, '') \
-     from Entries \
+     coalesce(p_location, '')";
+
+/// `p_readState`, last of the columns. [`parse_row`] reads a row without it.
+const MARK_COLUMN: &str = ", coalesce(p_readState, -1)";
+
+const FROM: &str = " from Entries \
      where p_cdeKey is not null and p_cdeKey <> '' \
        and p_cdeType in ('EBOK', 'PDOC', 'MAGZ')";
+
+/// The query, with [`MARK_COLUMN`] under `mark`.
+fn query(mark: bool) -> String {
+    match mark {
+        true => format!("select {COLUMNS}{MARK_COLUMN}{FROM}"),
+        false => format!("select {COLUMNS}{FROM}"),
+    }
+}
+
+/// The `p_readState` values stating the book read.
+const READ_MANUAL: i64 = 1;
+const READ_AUTOMATIC: i64 = 2;
+const READ_BACKFILL: i64 = 4;
+
+/// The `p_readState` values stating it unread.
+const UNREAD_MANUAL: i64 = 3;
+const UNREAD_BACKFILL: i64 = 5;
+const UNREAD_BORROWED: i64 = 6;
+
+/// What `value` states. `None` on `UNKNOWN`, on a negative, and on any value
+/// outside the six named above.
+pub fn read_state_says(value: i64) -> Option<bool> {
+    match value {
+        READ_MANUAL | READ_AUTOMATIC | READ_BACKFILL => Some(true),
+        UNREAD_MANUAL | UNREAD_BACKFILL | UNREAD_BORROWED => Some(false),
+        _ => None,
+    }
+}
 
 /// One book the catalog names, on the device or in the library.
 #[derive(Debug, Clone, PartialEq)]
@@ -37,7 +69,7 @@ pub struct Book {
     /// `p_contentSize`, the number a sitting is keyed by. Zero on a cloud row,
     /// which states none.
     pub extent: i64,
-    /// `p_cdeKey`, the key the reader-shell records name this book by.
+    /// `p_cdeKey`, the key `Session::asin` carries.
     pub cde_key: String,
     /// `EBOK` for a store book or a sideload, `PDOC` for a personal document.
     pub cde_type: String,
@@ -58,10 +90,13 @@ pub struct Book {
     /// hotfix runner. Each carries reading time and `Stats::build` drops it.
     pub is_book: bool,
     /// `p_location`, the file the device holds this book in. Empty on a cloud
-    /// row, which names none. `open::uri` makes it the URI the reader opens.
+    /// row, which names none. `open::uri` makes it the URI a launch names.
     pub location: String,
     /// Whether `location` names a file.
     pub on_device: bool,
+    /// `p_readState`, negative where the column is NULL. [`read_state_says`]
+    /// reads it.
+    pub read_state: i64,
 }
 
 /// Every book the catalog names. Empty when no `CATALOG_PATHS` entry exists.
@@ -76,30 +111,43 @@ pub fn read() -> Vec<Book> {
 /// and `-readonly` fail for want of a `-shm` file, and `immutable=1` reads
 /// pre-WAL state.
 pub fn read_from(db: &Path) -> Vec<Book> {
+    // `Entries` stating no `p_readState` refuses the whole query, every book
+    // with it. The second run drops that column.
+    match rows(db, &query(true)) {
+        Some(rows) => rows,
+        None => rows(db, &query(false)).unwrap_or_default(),
+    }
+}
+
+/// What `sql` answers over `db`, and `None` where `sqlite3` refused it.
+fn rows(db: &Path, sql: &str) -> Option<Vec<Book>> {
     let out = match Command::new("sqlite3")
         .arg("-separator")
         .arg(COL)
         .arg("-newline")
         .arg(ROW)
         .arg(db)
-        .arg(QUERY)
+        .arg(sql)
         .output()
     {
         Ok(out) => out,
         Err(err) => {
             eprintln!("catalog: sqlite3 would not run: {err}");
-            return Vec::new();
+            return Some(Vec::new());
         }
     };
     // `sqlite3` writes a refused query to stderr.
     let complaint = String::from_utf8_lossy(&out.stderr);
     if !complaint.trim().is_empty() {
         eprintln!("catalog: sqlite3 {}: {}", db.display(), complaint.trim());
+        return None;
     }
-    String::from_utf8_lossy(&out.stdout)
-        .split(ROW)
-        .filter_map(parse_row)
-        .collect()
+    Some(
+        String::from_utf8_lossy(&out.stdout)
+            .split(ROW)
+            .filter_map(parse_row)
+            .collect(),
+    )
 }
 
 fn parse_row(row: &str) -> Option<Book> {
@@ -121,6 +169,7 @@ fn parse_row(row: &str) -> Option<Book> {
     let author = author_name(next(), &collation);
     let location = next().to_string();
     let on_device = !location.is_empty();
+    let read_state = next().trim().parse().unwrap_or(-1);
     Some(Book {
         extent,
         cde_key,
@@ -134,6 +183,7 @@ fn parse_row(row: &str) -> Option<Book> {
         is_book,
         location,
         on_device,
+        read_state,
     })
 }
 
@@ -224,6 +274,64 @@ mod tests {
             .expect("sqlite3 on PATH");
         assert!(out.status.success(), "fixture: {:?}", out);
         path
+    }
+
+    /// A catalog stating `p_readState`, which [`fixture`]'s `Entries` does not.
+    fn marked(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("readinglog-catalog-{name}.db"));
+        let _ = std::fs::remove_file(&path);
+        let sql = "create table Entries (\
+                p_contentSize integer, p_cdeKey text, p_cdeType text, \
+                p_titles_0_nominal text, p_credits_0_name_collation text, \
+                p_percentFinished real, p_thumbnail text, p_lastAccess integer, \
+                p_languages_0 text, p_contentState integer, p_location text, \
+                j_credits text, p_readState integer);\
+            insert into Entries values \
+              (100, 'BREAD00001', 'EBOK', 'Marked Read', '', 40.0, '', 0, '', 1, \
+               '/mnt/us/documents/read.kfx', '', 1), \
+              (200, 'BUNREAD001', 'EBOK', 'Marked Unread', '', 40.0, '', 0, '', 1, \
+               '/mnt/us/documents/unread.kfx', '', 3), \
+              (300, 'BPLAIN0001', 'EBOK', 'Never Marked', '', 40.0, '', 0, '', 1, \
+               '/mnt/us/documents/plain.kfx', '', null);";
+        let out = Command::new("sqlite3")
+            .arg(&path)
+            .arg(sql)
+            .output()
+            .expect("sqlite3 on PATH");
+        assert!(out.status.success(), "fixture: {:?}", out);
+        path
+    }
+
+    #[test]
+    fn the_librarys_own_mark_is_read_where_the_firmware_states_it() {
+        let db = marked("readstate");
+        let books = read_from(&db);
+        let state = |key: &str| {
+            books
+                .iter()
+                .find(|b| b.cde_key == key)
+                .expect("a row of the fixture")
+                .read_state
+        };
+        assert_eq!(state("BREAD00001"), 1);
+        assert_eq!(state("BUNREAD001"), 3);
+        assert_eq!(state("BPLAIN0001"), -1, "a NULL column reads as unstated");
+        assert_eq!(read_state_says(1), Some(true));
+        assert_eq!(read_state_says(3), Some(false));
+        assert_eq!(read_state_says(0), None, "UNKNOWN states neither way");
+        assert_eq!(read_state_says(-1), None);
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn a_catalog_stating_no_mark_column_still_names_every_book() {
+        // `fixture`'s `Entries` has no `p_readState`. The first query is refused
+        // and the second reads the rest.
+        let db = fixture("nomark");
+        let books = read_from(&db);
+        assert_eq!(books.len(), 6, "{books:#?}");
+        assert!(books.iter().all(|b| b.read_state < 0));
+        let _ = std::fs::remove_file(&db);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! An invented library: a shelf in three scripts and [`DAYS`] of reading over
-//! it. Every number comes off [`Rng`], seeded once: the same picture every
-//! run, and two rounds of a design held against each other.
+//! it. Every number comes off [`Rng`], seeded once: the same picture on
+//! every run.
 
 use std::path::Path;
 
@@ -252,9 +252,8 @@ const BINGE_DAY: i64 = 40;
 const BINGE_BOOKS: usize = 10;
 const BINGE_OPENS: i64 = 8;
 
-/// One day of [`BINGE_BOOKS`] short sittings, in place of whatever the
-/// generator left on it: a list of more books than a page holds. Every
-/// sitting stays under half an hour.
+/// One day of [`BINGE_BOOKS`] short sittings, in place of whatever
+/// [`library`] left on it. Every sitting stays under half an hour.
 fn binge(store: &mut Store, day: i64) {
     store
         .sessions
@@ -283,16 +282,16 @@ pub fn library(last: i64, art: &Path) -> Store {
             percent: book.percent,
             on_device: slot % 5 != 4,
             cover: String::new(),
-            // A title with a space in it, so a shot shows the control the same
-            // path the device takes to it.
+            // A title with a space in it, which `open::uri` escapes.
             location: match slot % 5 != 4 {
                 true => format!("/mnt/us/documents/{}.kfx", book.title),
                 false => String::new(),
             },
-            // The store marks a book its place states read through; this one
-            // is the mark set by hand, short of the threshold.
+            // `Store::remember` marks a book its place states read through;
+            // this one is `MARKED`, short of `FINISHED_PERCENT`.
             finished: slot == MARKED || book.percent >= FINISHED_PERCENT,
             restart: None,
+            read_state: -1,
         });
     }
 
@@ -304,7 +303,7 @@ pub fn library(last: i64, art: &Path) -> Store {
         if (shut..shut + 14).contains(&day) {
             continue;
         }
-        // `date::weekday` counts from Monday, so the weekend is 5 and 6.
+        // `date::weekday` counts from Monday: the weekend is 5 and 6.
         let weekend = matches!(date::weekday(day), 5 | 6);
         // A day off, three weekdays in ten and one weekend day in ten.
         if rng.upto(10) < if weekend { 1 } else { 3 } {
@@ -354,8 +353,7 @@ pub fn library(last: i64, art: &Path) -> Store {
     store
 }
 
-/// [`library`] with `keep` of the last day's sittings left on it: how a screen
-/// reads on a day that has barely started, and on one with nothing on it.
+/// [`library`] with `keep` of the last day's sittings left on it.
 pub fn thinned(last: i64, art: &Path, keep: usize) -> Store {
     let mut store = library(last, art);
     let mut seen = 0usize;
