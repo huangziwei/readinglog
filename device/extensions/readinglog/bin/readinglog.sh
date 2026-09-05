@@ -6,10 +6,13 @@ LOG=/mnt/us/logs/readinglog.log
 # $OPEN holds one URI.
 OPEN=$EXT/open
 
-# READER_APP is activeApp's value for a book.
 READER_APP=com.lab126.booklet.reader
+# WAIT_SECS bounds wait_reader.
+WAIT_SECS=10
 # WATCH_SECS bounds follow_open. 0 skips it.
 WATCH_SECS=8
+# REFILE_SECS bounds follow_open's call to file_view.
+REFILE_SECS=3
 # TRACE_LINES of /var/log/messages reach $LOG.
 TRACE_LINES=120
 
@@ -34,8 +37,22 @@ file_view() {
     return "$status"
 }
 
-# follow_open watches activeApp for $WATCH_SECS seconds, files $1 again where
-# activeApp is not $READER_APP, and appends /var/log/messages to $LOG.
+# wait_reader returns once activeApp is $READER_APP, within $WAIT_SECS seconds.
+wait_reader() {
+    waited=0
+    while :; do
+        active=$(lipc-get-prop com.lab126.appmgrd activeApp 2>/dev/null)
+        [ "$active" = "$READER_APP" ] && break
+        [ "$waited" -ge "$WAIT_SECS" ] && break
+        sleep 1
+        waited=$((waited + 1))
+    done
+    echo "[$(date)] waited ${waited}s, activeApp=$active" >> "$LOG"
+    [ "$active" = "$READER_APP" ]
+}
+
+# follow_open watches activeApp for $WATCH_SECS seconds, files $1 again inside
+# $REFILE_SECS, and appends /var/log/messages to $LOG.
 follow_open() {
     [ "$WATCH_SECS" -gt 0 ] || return 0
     (
@@ -49,6 +66,7 @@ follow_open() {
             echo "    +${elapsed}s activeApp=$active" >> "$LOG"
             [ "$active" = "$READER_APP" ] && continue
             [ "$refiled" = yes ] && continue
+            [ "$elapsed" -gt "$REFILE_SECS" ] && continue
             refiled=yes
             echo "[$(date)] refiling $1" >> "$LOG"
             file_view "$1"
@@ -71,7 +89,7 @@ restore_view() {
     esac
 }
 
-# open_book files $OPEN's URI, then hands it to follow_open.
+# open_book files $OPEN's URI, runs wait_reader, then follow_open.
 open_book() {
     uri=$(head -n 1 "$OPEN")
     rm -f "$OPEN"
@@ -79,6 +97,7 @@ open_book() {
     echo "[$(date)] open $uri" >> "$LOG"
     file_view "$uri"
     status=$?
+    wait_reader
     follow_open "$uri"
     return "$status"
 }
