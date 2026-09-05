@@ -379,6 +379,8 @@ mod tests {
             .enumerate()
             .map(|(at, percent)| BookStat {
                 extent: at as i64,
+                cde_key: format!("KEY{at}"),
+                finished: false,
                 title: format!("Book {at}"),
                 author: String::new(),
                 thumbnail: String::new(),

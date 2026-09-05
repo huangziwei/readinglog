@@ -441,6 +441,27 @@ impl App {
         }
     }
 
+    /// Set `BookRecord::finished` on the book at `index`, total the store again
+    /// and write it out. A failed `save` leaves the mark in `stats` and off the
+    /// disk.
+    fn set_finished(&mut self, index: usize, on: bool) -> Action {
+        let Some(book) = self.stats.books.get(index) else {
+            return Action::Nothing;
+        };
+        let (extent, key) = (book.extent, book.cde_key.clone());
+        if !self.store.set_finished(extent, &key, on) {
+            return Action::Nothing;
+        }
+        self.rebuild();
+        if let Err(err) = self
+            .store
+            .save(std::path::Path::new(crate::store::STORE_DIR))
+        {
+            eprintln!("finished: the mark did not reach the store: {err:#}");
+        }
+        Action::Redraw
+    }
+
     /// What a tap at `(x, y)` does.
     fn tapped(&mut self, x: i32, y: i32) -> Action {
         // `hits` in reverse: the last box drawn wins.
@@ -461,6 +482,7 @@ impl App {
             }
             Hit::Exit => return Action::Quit,
             Hit::Open(index) => return self.open(index),
+            Hit::Finished(index, on) => return self.set_finished(index, on),
             Hit::Language(pick) => {
                 if self.settings.language == pick {
                     return Action::Nothing;

@@ -11,6 +11,10 @@ use readinglog_native::store::{BookRecord, Store};
 /// Days of reading laid down behind the day being drawn.
 pub const DAYS: i64 = 1150;
 
+/// The [`SHELF`] slot `BookRecord::finished` is set on: the `percent: 46.0`
+/// entry, whose title names its notes and its index.
+const MARKED: usize = 7;
+
 /// A book on the shelf, and the stretch of days it was read over.
 struct Shelved {
     title: &'static str,
@@ -285,6 +289,7 @@ pub fn library(last: i64, art: &Path) -> Store {
                 true => format!("/mnt/us/documents/{}.kfx", book.title),
                 false => String::new(),
             },
+            finished: slot == MARKED,
         });
     }
 

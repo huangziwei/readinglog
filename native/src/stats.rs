@@ -12,6 +12,9 @@ use crate::store::{BookRecord, Store};
 pub struct BookStat {
     /// The catalog's number for this book, and the key the views address it by.
     pub extent: i64,
+    /// `BookRecord::cde_key`, which `Store::set_finished` addresses the record
+    /// by alongside `extent`.
+    pub cde_key: String,
     pub title: String,
     pub author: String,
     pub thumbnail: String,
@@ -24,6 +27,8 @@ pub struct BookStat {
     pub location: String,
     /// The catalog language tag, which picks the face a CJK title is set in.
     pub language: String,
+    /// `BookRecord::finished`.
+    pub finished: bool,
     pub seconds: i64,
     /// The parts of `seconds` carrying `Measure::Dwell` and `Measure::Awake`.
     pub dwell_seconds: i64,
@@ -50,9 +55,20 @@ impl BookStat {
 
     /// The percentage a screen states, rounded once. Every figure and every
     /// bar drawn for this book takes this one number, so a track and the figure
-    /// beside it never disagree.
+    /// beside it never disagree. Under `finished` this is 100,
+    /// whatever `percent` holds.
     pub fn percent_shown(&self) -> i64 {
-        self.percent.round() as i64
+        match self.finished {
+            true => 100,
+            false => self.percent.round() as i64,
+        }
+    }
+
+    /// `percent`, rounded, for marking a bar [`Self::percent_shown`] holds at
+    /// 100. `None` without `finished`, without `has_percent`, and at 100.
+    pub fn position_shown(&self) -> Option<i64> {
+        let at = self.percent.round() as i64;
+        (self.finished && self.has_percent() && at < 100).then_some(at)
     }
 
     /// Whether the reader can be handed this book: the device holds it, and
@@ -61,9 +77,9 @@ impl BookStat {
         self.on_device && !self.location.is_empty()
     }
 
-    /// Whether the catalog states this book read through.
+    /// `finished`, or `percent` past [`FINISHED_PERCENT`].
     pub fn is_finished(&self) -> bool {
-        self.has_percent() && self.percent >= FINISHED_PERCENT
+        self.finished || (self.has_percent() && self.percent >= FINISHED_PERCENT)
     }
 
     /// Over `days`, the days with reading on them.
@@ -554,6 +570,8 @@ impl Stats {
 fn fresh(extent: i64, found: &BookRecord, day: i64) -> BookStat {
     BookStat {
         extent,
+        cde_key: found.cde_key.clone(),
+        finished: found.finished,
         title: found.title.clone(),
         author: found.author.clone(),
         thumbnail: found.art().to_string(),
@@ -690,6 +708,30 @@ mod tests {
         }
         store
     }
+    #[test]
+    fn a_marked_book_states_a_hundred_and_marks_where_the_reader_stands() {
+        let mut book = fresh(1, &BookRecord::default(), 0);
+        book.percent = 55.4;
+        // Unmarked, the bar tracks the position and marks nothing.
+        assert_eq!((book.percent_shown(), book.position_shown()), (55, None));
+        assert!(!book.is_finished());
+
+        book.finished = true;
+        assert_eq!(
+            (book.percent_shown(), book.position_shown()),
+            (100, Some(55))
+        );
+        assert!(book.is_finished());
+
+        // At the end there is no position left to mark, and a book the catalog
+        // states no percentage for has none to mark either.
+        book.percent = 100.0;
+        assert_eq!((book.percent_shown(), book.position_shown()), (100, None));
+        book.percent = -1.0;
+        assert_eq!((book.percent_shown(), book.position_shown()), (100, None));
+        assert!(book.is_finished());
+    }
+
     #[test]
     fn a_bar_and_the_figure_beside_it_state_one_percentage() {
         let record = BookRecord::default();

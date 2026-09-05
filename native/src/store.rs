@@ -41,6 +41,8 @@ pub struct BookRecord {
     /// open the book. Empty for a book the catalog has only ever named in the
     /// library.
     pub location: String,
+    /// Set from the book screen. `merge` and `taken` leave it alone.
+    pub finished: bool,
 }
 
 impl BookRecord {
@@ -338,6 +340,17 @@ impl Store {
         self.books.iter().position(|b| b.cde_key == key)
     }
 
+    /// Set [`BookRecord::finished`] on the record [`Self::book_for`] answers
+    /// for `extent` and `key`, answering whether the value changed.
+    pub fn set_finished(&mut self, extent: i64, key: &str, finished: bool) -> bool {
+        let Some(slot) = self.slot_for(extent, Some(key)) else {
+            return false;
+        };
+        let changed = self.books[slot].finished != finished;
+        self.books[slot].finished = finished;
+        changed
+    }
+
     /// The catalog number for a sitting's own key, which is the key itself
     /// where no line ever stated the mapping.
     pub fn extent_of(&self, end_position: i64) -> i64 {
@@ -395,6 +408,7 @@ fn taken(book: &Book) -> BookRecord {
         on_device: book.on_device,
         cover: String::new(),
         location: flat(&book.location),
+        finished: false,
     }
 }
 
@@ -425,7 +439,7 @@ fn merge(record: &mut BookRecord, book: &Book) {
 
 fn write_book(b: &BookRecord) -> String {
     format!(
-        "b\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "b\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         b.extent,
         flat(&b.cde_key),
         flat(&b.title),
@@ -436,6 +450,7 @@ fn write_book(b: &BookRecord) -> String {
         u8::from(b.on_device),
         flat(&b.cover),
         flat(&b.location),
+        u8::from(b.finished),
     )
 }
 
@@ -454,6 +469,7 @@ fn read_book<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<BookRecord> {
         // A row written before the location was kept states none, and the next
         // catalog pass fills it.
         location: next().to_string(),
+        finished: next().trim() == "1",
     })
 }
 
@@ -629,6 +645,44 @@ mod tests {
             location: format!("/mnt/us/documents/{title}.kfx"),
             on_device: true,
         }
+    }
+
+    #[test]
+    fn a_mark_survives_the_file_and_every_pass_over_it() {
+        let dir = scratch("finished");
+        let mut store = Store::default();
+        let shelf = [shelved(938_018, "B00OKPCRLG", "Bible", 55.0)];
+        store.remember(&shelf);
+        assert!(!store.books[0].finished, "a catalog row states no mark");
+
+        assert!(store.set_finished(938_018, "B00OKPCRLG", true));
+        // The same value twice is no change and no write.
+        assert!(!store.set_finished(938_018, "B00OKPCRLG", true));
+        // A catalog pass states nothing about the mark and takes nothing off.
+        store.remember(&shelf);
+        assert!(store.books[0].finished);
+
+        store.save(&dir).expect("a written store");
+        assert!(Store::load(&dir).books[0].finished);
+
+        assert!(store.set_finished(938_018, "B00OKPCRLG", false));
+        store.save(&dir).expect("a written store");
+        assert!(!Store::load(&dir).books[0].finished);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_row_written_before_the_mark_reads_as_unmarked() {
+        let dir = scratch("premark");
+        std::fs::create_dir_all(&dir).expect("a directory to write in");
+        // Ten fields: a `b` row without the `finished` field.
+        let row = "b\t938018\tB00OKPCRLG\tBible\tBerlin\t\ten\t55.000000\t1\t\t/mnt/us/a.kfx";
+        std::fs::write(Store::file(&dir), format!("{HEADER}\n{row}\n")).expect("a store");
+        let store = Store::load(&dir);
+        assert_eq!(store.books.len(), 1);
+        assert!(!store.books[0].finished);
+        assert_eq!(store.books[0].location, "/mnt/us/a.kfx");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

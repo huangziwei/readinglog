@@ -32,6 +32,9 @@ pub enum Hit {
     /// Hand a book on the device back to the Kindle's reader, by its index in
     /// [`Stats::books`]. Leaves the app, as [`Hit::Exit`] does.
     Open(usize),
+    /// Set `BookRecord::finished` on a book, by its index in [`Stats::books`]
+    /// and the value to set.
+    Finished(usize, bool),
     /// Leave the app. The only way out: a book is closed by tapping a tab.
     Exit,
     /// A chip on the config page.
