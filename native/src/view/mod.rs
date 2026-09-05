@@ -70,10 +70,28 @@ pub enum Shelf {
     All,
     /// Books the catalog states read through.
     Finished,
+    /// Books the catalog states short of read through.
+    Unfinished,
 }
 
 impl Shelf {
-    pub const ALL: [Shelf; 2] = [Shelf::All, Shelf::Finished];
+    /// The two chips the row draws: every book, then the shelf this one
+    /// narrows to.
+    pub fn chips(self) -> [Shelf; 2] {
+        match self {
+            Shelf::Unfinished => [Shelf::All, Shelf::Unfinished],
+            _ => [Shelf::All, Shelf::Finished],
+        }
+    }
+
+    /// The shelf a tap on the second chip lands on.
+    pub fn cycled(self) -> Shelf {
+        match self {
+            Shelf::All => Shelf::Finished,
+            Shelf::Finished => Shelf::Unfinished,
+            Shelf::Unfinished => Shelf::All,
+        }
+    }
 
     /// What this shelf is called, in the interface's own language.
     pub fn label(self, lang: Lang) -> &'static str {
@@ -81,6 +99,7 @@ impl Shelf {
         match self {
             Shelf::All => s.shelf_every,
             Shelf::Finished => s.shelf_finished,
+            Shelf::Unfinished => s.shelf_unfinished,
         }
     }
 }
@@ -88,7 +107,7 @@ impl Shelf {
 /// The order the Books screen lists in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Sort {
-    /// Last put down first, which is where a reader left off.
+    /// Last put down first.
     #[default]
     Recent,
     /// Most time read first.
@@ -217,12 +236,11 @@ pub struct State {
     pub books_from: usize,
     /// Which books the Books screen lists.
     pub shelf: Shelf,
-    /// The order it lists them in, which a tab change keeps: it is how the
-    /// reader wants the shelf read, not where they are in it.
+    /// The order it lists them in, which a tab change keeps.
     pub sort: Sort,
     /// Whether the day picked off the grid was asked to open as its own page.
     /// A span whose books are listed under its grid narrows that list to the
-    /// picked day instead, and opens the day only on this.
+    /// picked day, and opens the day only on this.
     pub opened_day: bool,
     /// Which page of All Time is showing, of [`alltime::PAGES`].
     pub alltime_page: usize,
@@ -266,7 +284,7 @@ impl State {
 
     /// Step Rhythm on: a day at a time where one is open, a page of All Time
     /// where that is the span, else a whole span, answering whether anything
-    /// moved. All Time has no span either side, so its pages are what step.
+    /// moved. All Time has no span either side; its pages are what step.
     pub fn shift(&mut self, by: i64) -> bool {
         if self.picked {
             self.day += by;

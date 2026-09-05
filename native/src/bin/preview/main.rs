@@ -361,6 +361,11 @@ fn set_span(app: &mut App, shot: &Shot, week: WeekStart) -> Result<()> {
             app.set_alltime_page(1);
         }
         "finished" => app.set_shelf(Shelf::Finished),
+        "unfinished" => app.set_shelf(Shelf::Unfinished),
+        "unfinished-furthest" => {
+            app.set_shelf(Shelf::Unfinished);
+            app.set_sort(Sort::Furthest);
+        }
         "longest" => app.set_sort(Sort::Longest),
         "furthest" => app.set_sort(Sort::Furthest),
         "last" => app.open_books(usize::MAX),
@@ -466,7 +471,9 @@ fn list() {
             }
             "today" => "  (:quiet :empty :busy)",
             "book" => "  (:<index>)",
-            "books" => "  (:finished :longest :furthest :mid :last)",
+            "books" => {
+                "  (:finished :unfinished :unfinished-furthest :longest :furthest\n   :mid :last)"
+            }
             _ => "",
         };
         println!("  {name}{of}");
@@ -561,6 +568,7 @@ fn everything() -> Vec<Shot> {
         "rhythm:day",
         "books",
         "books:finished",
+        "books:unfinished",
         "books:longest",
         "books:furthest",
         "books:mid",

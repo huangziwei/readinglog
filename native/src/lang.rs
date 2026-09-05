@@ -21,9 +21,8 @@ pub fn counted(template: &str, count: i64) -> String {
     out.replace("{d}", &count.to_string())
 }
 
-/// `template` with `{v}` set to `version`. Beside [`counted`] so the
-/// convention is one thing: a language whose word order puts the number
-/// elsewhere moves the brace rather than the code.
+/// `template` with `{v}` set to `version`. Beside [`counted`]: a language
+/// whose word order puts the number elsewhere moves the brace.
 pub fn at_version(template: &str, version: &str) -> String {
     template.replace("{v}", version)
 }
@@ -219,6 +218,7 @@ pub struct Strings {
     // The Books screen, whose two chips narrow the list to one shelf.
     pub shelf_every: &'static str,
     pub shelf_finished: &'static str,
+    pub shelf_unfinished: &'static str,
     /// The orders the Books screen lists in.
     pub by_recent: &'static str,
     pub by_longest: &'static str,
@@ -325,9 +325,6 @@ pub struct Strings {
     pub update_installed: &'static str,
     pub update_reopen: &'static str,
     pub update_stopped: &'static str,
-    /// Why it did not, and where to go instead. Every failure draws
-    /// `update_by_hand` and the address under it: this app has no browser, and
-    /// the release page opened on a computer always works.
     pub update_failed: &'static str,
     pub update_by_hand: &'static str,
     pub update_offline: &'static str,
@@ -386,6 +383,7 @@ const ENGLISH: Strings = Strings {
 
     shelf_every: "All",
     shelf_finished: "Finished",
+    shelf_unfinished: "Unfinished",
     by_recent: "Recent",
     by_longest: "Longest",
     by_furthest: "Furthest",
@@ -533,6 +531,7 @@ const GERMAN: Strings = Strings {
 
     shelf_every: "Alle",
     shelf_finished: "Fertig",
+    shelf_unfinished: "Unfertig",
     by_recent: "Zuletzt",
     by_longest: "Längste",
     by_furthest: "Weiteste",
@@ -681,6 +680,7 @@ const JAPANESE: Strings = Strings {
 
     shelf_every: "すべて",
     shelf_finished: "読了",
+    shelf_unfinished: "未読了",
     by_recent: "最近",
     by_longest: "時間順",
     by_furthest: "進捗",
@@ -816,6 +816,7 @@ const SIMPLIFIED: Strings = Strings {
 
     shelf_every: "全部",
     shelf_finished: "已读完",
+    shelf_unfinished: "未读完",
     by_recent: "最近",
     by_longest: "时长",
     by_furthest: "进度",
@@ -962,6 +963,7 @@ const TRADITIONAL: Strings = Strings {
 
     shelf_every: "全部",
     shelf_finished: "已讀完",
+    shelf_unfinished: "未讀完",
     by_recent: "最近",
     by_longest: "時長",
     by_furthest: "進度",

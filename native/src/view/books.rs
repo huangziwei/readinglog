@@ -2,7 +2,7 @@
 //! progress the catalog states.
 
 use crate::date;
-use crate::stats::Stats;
+use crate::stats::{BookStat, Stats};
 use crate::ui::chrome;
 use crate::ui::cover;
 use crate::ui::paint::{self, INK, LIGHT, Rect};
@@ -46,6 +46,7 @@ pub fn listed(stats: &Stats, shelf: Shelf, order: Sort) -> Vec<usize> {
         .filter(|at| match shelf {
             Shelf::All => true,
             Shelf::Finished => stats.books[*at].is_finished(),
+            Shelf::Unfinished => !stats.books[*at].is_finished(),
         })
         .collect();
     match order {
@@ -61,6 +62,15 @@ pub fn listed(stats: &Stats, shelf: Shelf, order: Sort) -> Vec<usize> {
 /// chip narrows to.
 pub fn shelved(stats: &Stats) -> bool {
     stats.books.iter().any(|b| b.is_finished())
+}
+
+/// The shelf a tap on the second chip lands on. [`Shelf::Unfinished`] is
+/// stepped over where every book is read through.
+pub fn tapped_to(stats: &Stats, on: Shelf) -> Shelf {
+    match on.cycled() {
+        Shelf::Unfinished if stats.books.iter().all(BookStat::is_finished) => Shelf::All,
+        next => next,
+    }
 }
 
 /// The box the rows are drawn into, the shelf chips taken off the top.
@@ -130,8 +140,8 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
         if to < shelf.len() {
             cx.hit(Hit::Next, right);
         }
-        // Drawn after the halves, so a tap on one of these takes the whole
-        // way rather than the single step the half under it would.
+        // Drawn after the halves. A tap on one of these takes the whole way;
+        // the half under it takes one step.
         let last = last_page_at(theme, area, shelf.len());
         let width = cx.text.measure_width(&label) as i32;
         let ends = Rect::new(foot.x + (foot.w - width) / 2, foot.y, width, foot.h);
@@ -145,8 +155,8 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
 }
 
 /// The order the list is in, at the right of the shelf chips' own row. One
-/// chip, not one to an order: the row has no width for three more at every text
-/// size, so a tap opens the order after this one.
+/// chip, not one to an order: the row has no width for three more at every
+/// text size. A tap opens the order after this one.
 fn sort_chip(cx: &mut Ctx, area: Rect, on: Sort) {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
@@ -181,7 +191,7 @@ fn jump_reach(cx: &mut Ctx) -> i32 {
 }
 
 /// A mark to one side of the page count, opening the list at `at`, and nothing
-/// where the list already stands at that end. `count` is the box the count is
+/// where the list stands at that end. `count` is the box the count is
 /// set in; the mark stands clear of it.
 fn jump(cx: &mut Ctx, count: Rect, baseline: i32, at_left: bool, at: Option<usize>) {
     let theme: &Theme = cx.theme;
@@ -234,21 +244,25 @@ fn centred(cx: &mut Ctx, foot: Rect, baseline: i32, said: &str) {
 }
 
 /// The shelves as a chip apiece, the one showing filled, each its own hit box.
+/// The second chip carries [`tapped_to`].
 fn shelf_chips(cx: &mut Ctx, area: Rect, on: Shelf) {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
-    let options: Vec<(&str, crate::font::Script)> = Shelf::ALL
+    let shelves = on.chips();
+    let options: Vec<(&str, crate::font::Script)> = shelves
         .iter()
         .map(|shelf| (shelf.label(cx.lang), script))
         .collect();
     let placed = chrome::chip_layout(cx.text, theme, &options, area.w);
-    let at = Shelf::ALL
-        .iter()
-        .position(|shelf| *shelf == on)
-        .unwrap_or(0);
+    let at = usize::from(on != Shelf::All);
+    let cycled = tapped_to(cx.stats, on);
     let drawn = chrome::chips(cx.fb, cx.text, theme, area, &options, &placed, at);
     for (slot, chip) in drawn.into_iter().enumerate() {
-        cx.hit(Hit::Shelved(Shelf::ALL[slot]), chip);
+        let to = match slot {
+            0 => Shelf::All,
+            _ => cycled,
+        };
+        cx.hit(Hit::Shelved(to), chip);
     }
 }
 
@@ -355,7 +369,80 @@ fn empty(cx: &mut Ctx, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stats::BookStat;
     use crate::ui::chrome;
+
+    /// A shelf of books at `percents`, held most recent first.
+    fn shelf_of(percents: &[f64]) -> Stats {
+        let books = percents
+            .iter()
+            .enumerate()
+            .map(|(at, percent)| BookStat {
+                extent: at as i64,
+                title: format!("Book {at}"),
+                author: String::new(),
+                thumbnail: String::new(),
+                percent: *percent,
+                on_device: true,
+                location: String::new(),
+                language: String::new(),
+                seconds: 600,
+                dwell_seconds: 0,
+                awake_seconds: 0,
+                sittings: 1,
+                page_turns: 0,
+                words: 0,
+                days: 1,
+                first_day: 0,
+                last_day: 0,
+                last_secs: 0,
+            })
+            .collect();
+        Stats {
+            books,
+            ..Stats::default()
+        }
+    }
+
+    #[test]
+    fn the_second_chip_cycles_through_every_shelf_and_back() {
+        assert_eq!(Shelf::All.cycled(), Shelf::Finished);
+        assert_eq!(Shelf::Finished.cycled(), Shelf::Unfinished);
+        assert_eq!(Shelf::Unfinished.cycled(), Shelf::All);
+        // The chip states the shelf it is on, and rests on `Finished`.
+        assert_eq!(Shelf::All.chips()[1], Shelf::Finished);
+        assert_eq!(Shelf::Finished.chips()[1], Shelf::Finished);
+        assert_eq!(Shelf::Unfinished.chips()[1], Shelf::Unfinished);
+    }
+
+    #[test]
+    fn a_record_read_through_end_to_end_steps_over_the_empty_shelf() {
+        let all_done = shelf_of(&[100.0, 100.0]);
+        assert_eq!(tapped_to(&all_done, Shelf::All), Shelf::Finished);
+        assert_eq!(tapped_to(&all_done, Shelf::Finished), Shelf::All);
+        // A record with anything left in it takes the whole cycle.
+        let mixed = shelf_of(&[100.0, 40.0]);
+        assert_eq!(tapped_to(&mixed, Shelf::Finished), Shelf::Unfinished);
+        assert_eq!(tapped_to(&mixed, Shelf::Unfinished), Shelf::All);
+    }
+
+    #[test]
+    fn a_shelf_holding_the_finished_holds_none_of_them_on_the_next_tap() {
+        // 100 and 99 are read through; 98 and a book with no figure are not.
+        let stats = shelf_of(&[100.0, 98.0, -1.0, 99.0]);
+        assert_eq!(listed(&stats, Shelf::All, Sort::Recent), [0, 1, 2, 3]);
+        assert_eq!(listed(&stats, Shelf::Finished, Sort::Recent), [0, 3]);
+        assert_eq!(listed(&stats, Shelf::Unfinished, Sort::Recent), [1, 2]);
+    }
+
+    #[test]
+    fn furthest_over_the_unfinished_opens_on_the_nearest_to_the_end() {
+        let stats = shelf_of(&[100.0, 40.0, -1.0, 100.0, 92.0]);
+        // Every book read through leads on `Furthest`, and the shelf without
+        // them opens where reading is left.
+        assert_eq!(listed(&stats, Shelf::All, Sort::Furthest), [0, 3, 4, 1, 2]);
+        assert_eq!(listed(&stats, Shelf::Unfinished, Sort::Furthest), [4, 1, 2]);
+    }
 
     /// A content box holding exactly `rows` rows and the page counter.
     fn area_for(theme: &Theme, rows: i32) -> Rect {

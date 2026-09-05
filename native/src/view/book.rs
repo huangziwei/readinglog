@@ -45,9 +45,8 @@ fn open_height(theme: &Theme, book: &BookStat) -> i32 {
     }
 }
 
-/// Where the control sits inside the band [`open_height`] took: its own height
-/// at the foot, the air above it. Separated from the paint so a control the
-/// reader cannot reach is caught by a test.
+/// Where the control sits inside the band [`open_height`] took: its own
+/// height at the foot, the air above it.
 fn open_box(theme: &Theme, band: Rect) -> Rect {
     band.split_bottom(chrome::chip_height(theme)).0
 }
@@ -253,8 +252,7 @@ fn finished_chip(cx: &mut Ctx, line: Rect, baseline: i32) {
     );
 }
 
-/// What the control says. The reader opens a book read through at its cover
-/// rather than where it was left, so that one is offered from the beginning.
+/// What the control says: `reread_from_beginning` where `is_finished`.
 fn open_label(book: &BookStat, s: &Strings) -> &'static str {
     match book.is_finished() {
         true => s.reread_from_beginning,
