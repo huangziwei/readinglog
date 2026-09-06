@@ -4,6 +4,7 @@
 pub mod charts;
 pub mod chrome;
 pub mod cover;
+pub mod dialog;
 pub mod paint;
 pub mod splash;
 pub mod text;

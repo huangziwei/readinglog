@@ -22,7 +22,7 @@ use readinglog_native::ui::paint;
 use readinglog_native::ui::text::TextRenderer;
 use readinglog_native::ui::theme::Theme;
 use readinglog_native::update::{Doing, Failure, Outcome};
-use readinglog_native::view::{Ask, Shelf, Sort, Span, Window};
+use readinglog_native::view::{Ask, Reset, Shelf, Sort, Span, Window};
 
 /// The day the preview is set to, and the second of it.
 const DAY: (i64, i64, i64) = (2026, 9, 16);
@@ -189,6 +189,9 @@ fn run() -> Result<()> {
                     let store = store.as_ref().unwrap_or(&library);
                     let mut fb = Framebuffer::offscreen(w, h);
                     let mut app = open(store, &opts, w, h, lang, size)?;
+                    if let Some(dir) = archives_for(shot, store, &opts.out)? {
+                        app.set_dir(dir);
+                    }
                     draw(&mut app, &mut fb, shot, opts.week)?;
                     if opts.hits {
                         outline_hits(&app, &mut fb);
@@ -263,7 +266,9 @@ const FONTS: &str = "no font — point READINGLOG_FONTS at the device's font dir
 
 /// An [`App`] over `store`, at the panel and the settings the run names.
 fn open(store: &Store, opts: &Opts, w: u32, h: u32, lang: Lang, size: TextSize) -> Result<App> {
-    if Stats::build(store, opts.day, true).books.is_empty() {
+    // Only of the fixture: a real record given by `--store` can be empty, and
+    // an emptied one is a screen worth drawing.
+    if opts.store.is_none() && Stats::build(store, opts.day, true).books.is_empty() {
         bail!("the fixture named no book");
     }
     let theme = Theme::sized(w, h, size);
@@ -285,9 +290,39 @@ fn thinned_for(shot: &Shot, opts: &Opts, art: &Path) -> Option<Store> {
         ("today", Some("quiet")) => 1,
         ("today", Some("empty")) => 0,
         ("today", Some("busy")) => return Some(fixture::crowded(opts.day, art)),
+        // A record standing on a floor, which is what offers the log rebuild.
+        ("config", Some("restore" | "logs" | "many" | "many2")) => {
+            let mut store = fixture::library(opts.day, art);
+            store.floor = "260810:120000".into();
+            return Some(store);
+        }
         _ => return None,
     };
     Some(fixture::thinned(opts.day, art, keep))
+}
+
+/// A directory of archives for the shots that draw them, under `out`. The
+/// archives are real: written by the same writer the device uses.
+fn archives_for(shot: &Shot, store: &Store, out: &Path) -> Result<Option<PathBuf>> {
+    let stamps: &[&str] = match (shot.name.as_str(), shot.of.as_deref()) {
+        ("config", Some("restore")) => &["260906:010231", "260830:184500"],
+        ("config", Some("many" | "many2")) => &[
+            "260906:010231",
+            "260830:184500",
+            "260412:093000",
+            "260311:220000",
+            "260228:071500",
+        ],
+        _ => return Ok(None),
+    };
+    let dir = out.join("record");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir)?;
+    for stamp in stamps {
+        readinglog_native::backup::keep_record(&dir, store, stamp, false)
+            .map_err(|e| anyhow!("write an archive: {e}"))?;
+    }
+    Ok(Some(dir))
 }
 
 /// Set `app` to what `shot` names and draw it into `fb`.
@@ -319,6 +354,17 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
     };
     app.show(*tab, book);
     app.ask(book.zip(asking));
+    if shot.name == "config" {
+        app.set_config_page(usize::from(shot.of.as_deref() == Some("many2")));
+        app.ask_about(match shot.of.as_deref() {
+            Some("reset") => Some(Reset::Wipe(true)),
+            Some("nobackup") => Some(Reset::Wipe(false)),
+            Some("restore") => Some(Reset::Restore(0)),
+            Some("logs") => Some(Reset::Rebuild),
+            Some("many" | "many2") | None => None,
+            Some(other) => bail!("no config shot called {other}"),
+        });
+    }
     set_span(app, shot, week)?;
     app.draw(fb)
 }
@@ -327,10 +373,11 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
 fn question(name: &str) -> Result<Ask> {
     match name {
         "restart" => Ok(Ask::Restart),
+        "clear" => Ok(Ask::Clear),
         "mark" => Ok(Ask::Mark(true)),
         "unmark" => Ok(Ask::Mark(false)),
         _ => Err(anyhow!(
-            "no question called {name} — restart, mark or unmark"
+            "no question called {name} — restart, mark, unmark or clear"
         )),
     }
 }
@@ -535,7 +582,10 @@ fn list() {
                 "  (:all :trends :week :month :year :back :weekback :picked :day\n   :dayfinished :yearbusy :weekbusy :weekempty :busy :busy2 :busyend)"
             }
             "today" => "  (:quiet :empty :busy)",
-            "book" => "  (:<index> :<index>:restart :<index>:mark :<index>:unmark)",
+            "book" => {
+                "  (:<index> :<index>:restart :<index>:mark :<index>:unmark\n   :<index>:clear)"
+            }
+            "config" => "  (:reset :nobackup :restore :logs :many :many2)",
             "books" => {
                 "  (:finished :unfinished :unfinished-progress :time :progress\n   :mid :last :window :windowweek :windowprogress :windowempty)"
             }

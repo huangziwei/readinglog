@@ -30,6 +30,12 @@ pub struct Covers {
 }
 
 impl Covers {
+    /// Give up every cover read so far. What is on disk has changed: a reset
+    /// deleted the cache, or a restore put files back into it.
+    pub fn forget(&mut self) {
+        self.cache.clear();
+    }
+
     /// The box the cover for `path` fills inside `area`, centred and keeping
     /// its aspect; `area` itself where it cannot be read. Anything set beside a
     /// cover aligns on this and not on `area`.

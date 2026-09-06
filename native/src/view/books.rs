@@ -420,19 +420,24 @@ fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
     paint::hline(cx.fb, row.x, row.bottom() - 1, row.w, LIGHT, 1);
 }
 
+/// The line an empty list stands under: reading on nothing the catalog names,
+/// nothing since a reset, or nothing at all.
+fn empty_line(stats: &crate::stats::Stats, floored: bool, s: &crate::lang::Strings) -> String {
+    if stats.total_seconds > 0 {
+        return s
+            .unnamed_only
+            .replace("{t}", &crate::date::duration(stats.total_seconds, s));
+    }
+    match floored {
+        true => s.nothing_since_reset.to_string(),
+        false => s.no_reading_yet.to_string(),
+    }
+}
+
 fn empty(cx: &mut Ctx, area: Rect) {
     let theme: &Theme = cx.theme;
     cx.text.set_px(theme.body_px);
-    let said = match cx.stats.total_seconds > 0 {
-        true => format!(
-            "{} read, on books the catalog names none of. A book is listed \
-             once the device has said what it is.",
-            crate::date::duration(cx.stats.total_seconds, cx.s())
-        ),
-        false => "No reading yet. Open a book, read a few pages, then come \
-             back — the log starts from the day this first runs."
-            .into(),
-    };
+    let said = empty_line(cx.stats, cx.floored, cx.s());
     let lines = cx.text.wrap_and_clamp(&said, area.w as u32, 4);
     let mut y = area.y + area.h / 3;
     for line in lines {

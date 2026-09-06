@@ -1,5 +1,7 @@
 /target
-/artifacts
+# Anywhere, not only the root: a tool run from a subdirectory writes its own
+# scratch under one there.
+artifacts/
 .DS_Store
 .claude
 

@@ -3,6 +3,7 @@
 //! device binary runs is here.
 
 pub mod app;
+pub mod backup;
 pub mod catalog;
 pub mod covers;
 pub mod date;

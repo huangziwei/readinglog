@@ -314,10 +314,15 @@ pub fn chip_column(
 }
 
 /// [`chip_column`]'s arithmetic, over measured widths.
+///
+/// The labels have first call: a column pulled back under the widest of them
+/// draws it over the chips beside it, which German at the largest text does on
+/// two rows of this page. A run left short of space wraps instead, which
+/// `chip_layout` already does and the row's own height already allows for.
 fn column_from(widest_label: i32, runs: &[i32], width: i32) -> i32 {
     let wanted = widest_label + CHIP_GAP * 3;
     let room = runs.iter().map(|run| width - run).min().unwrap_or(i32::MAX);
-    wanted.min(room.max(width / 3).min(width / 2))
+    wanted.min(room.max(wanted).min(width / 2))
 }
 
 /// How wide a run of chips is once tiled, gaps included.
@@ -374,6 +379,25 @@ pub fn setting(
 /// Every option of a setting, side by side, the one in use filled and the rest
 /// outlined, at the places [`chip_layout`] put them, answering one box each.
 /// The caller must size the row from that same layout.
+/// One control: `said` centred in a 2 px outline. What the book screen's own
+/// controls and every dialog answer are drawn as.
+pub fn outlined(cx: &mut crate::view::Ctx, box_: Rect, said: &str) {
+    let theme: &Theme = cx.theme;
+    let script = cx.ui_script();
+    cx.text.set_px(theme.body_px);
+    paint::stroke(cx.fb, box_, INK, 2);
+    let tw = cx.text.measure_width_in(script, said) as i32;
+    let baseline = box_.center_y() + cx.text.cap_height() as i32 / 2;
+    cx.text.draw_in(
+        script,
+        cx.fb,
+        box_.x + (box_.w - tw) / 2,
+        baseline,
+        said,
+        false,
+    );
+}
+
 pub fn chips(
     fb: &mut Framebuffer,
     text: &mut TextRenderer,

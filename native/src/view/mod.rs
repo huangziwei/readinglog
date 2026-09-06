@@ -73,6 +73,50 @@ pub enum Hit {
     BooksPage(usize),
     /// The order the Books screen lists in.
     Sorted(Sort),
+    /// Ask what should become of one book's reading, by its index in
+    /// [`Stats::books`]. Answered by [`Hit::ClearBook`] or [`Hit::ForgetBook`].
+    Clear(usize),
+    /// Take one book's reading, keeping its record.
+    ClearBook(usize),
+    /// Take one book's reading and its record together.
+    ForgetBook(usize),
+    /// Ask to empty the whole record. The flag is whether an archive is
+    /// written first.
+    Wipe(bool),
+    /// Empty it, as [`Hit::Wipe`] asked.
+    Wiped(bool),
+    /// Ask to take an archive back, by its place in `backup::list`.
+    Restore(usize),
+    /// Take it back.
+    Restored(usize),
+    /// Ask to read the device's whole log again, and read it.
+    Rebuild,
+    Rebuilt,
+}
+
+/// A question standing over the config page, with the figures it states
+/// gathered when it went up: nothing is walked while the dialog is drawn.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Confirm {
+    pub about: Reset,
+    /// What the question is about, already counted.
+    pub sittings: usize,
+    pub books: usize,
+    /// The archive to be written, or the space a wipe gives back.
+    pub bytes: u64,
+    /// The archive's name, where the question names one.
+    pub named: String,
+}
+
+/// What a [`Confirm`] asks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reset {
+    /// Empty the record; the flag is whether an archive is kept.
+    Wipe(bool),
+    /// Take the archive at this place in `backup::list` back.
+    Restore(usize),
+    /// Read the device's whole log again.
+    Rebuild,
 }
 
 /// A question standing over a book's own screen, which [`Hit::Answer`] carries
@@ -83,6 +127,9 @@ pub enum Ask {
     Restart,
     /// Set `BookRecord::finished` to the value carried.
     Mark(bool),
+    /// Put this book's reading back to zero, keeping the record or not. Its
+    /// two answers are their own hits, being two different acts.
+    Clear,
 }
 
 /// Which books the Books screen lists.
@@ -282,6 +329,10 @@ pub struct State {
     pub book: Option<usize>,
     /// The question over the open book's screen, and the book it names.
     pub asked: Option<(usize, Ask)>,
+    /// The question over the config page, with the figures it states.
+    pub confirm: Option<Confirm>,
+    /// Which page of the config screen is showing.
+    pub config_page: usize,
     /// How far down the book list has been paged.
     pub books_from: usize,
     /// Which books the Books screen lists.
@@ -307,6 +358,8 @@ impl State {
             picked: false,
             book: None,
             asked: None,
+            confirm: None,
+            config_page: 0,
             books_from: 0,
             shelf: Shelf::default(),
             window: None,
@@ -324,6 +377,7 @@ impl State {
         if self.tab == tab
             && self.book.is_none()
             && self.asked.is_none()
+            && self.confirm.is_none()
             && !self.picked
             && self.shelf == Shelf::All
             && self.window.is_none()
@@ -333,6 +387,7 @@ impl State {
         self.tab = tab;
         self.book = None;
         self.asked = None;
+        self.confirm = None;
         self.picked = false;
         self.opened_day = false;
         self.shelf = Shelf::All;
@@ -384,6 +439,9 @@ pub struct Ctx<'a> {
     /// The device's own local day, and the second of it.
     pub today: i64,
     pub now: i64,
+    /// Whether the record stands on a floor. The one thing a screen asks it:
+    /// an empty list is a first run or a reset, and the two read differently.
+    pub floored: bool,
     pub hits: Vec<(Hit, Rect)>,
 }
 
@@ -620,6 +678,25 @@ mod tests {
             assert_eq!(window.days(week), span.days(day, week));
             assert!(window.days(week).contains(&day));
         }
+    }
+
+    #[test]
+    fn a_tab_tap_takes_down_the_question_standing_over_the_page() {
+        let mut s = State::new(third());
+        s.go(Tab::Config);
+        s.confirm = Some(Confirm {
+            about: Reset::Wipe(true),
+            sittings: 12,
+            books: 3,
+            bytes: 0,
+            named: "readinglog-260906-010231.zip".into(),
+        });
+        assert!(
+            s.go(Tab::Config),
+            "the tab under a question still navigates"
+        );
+        assert!(s.confirm.is_none());
+        assert!(!s.go(Tab::Config), "and the bare page stays put");
     }
 
     #[test]

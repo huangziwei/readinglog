@@ -280,6 +280,51 @@ pub struct Strings {
     pub unnamed_row: &'static str,
     pub unnamed_show: &'static str,
     pub unnamed_hide: &'static str,
+    /// The row stating what the record holds, above the reset controls.
+    pub recorded_row: &'static str,
+    /// `{d} sitting[s]` and `{d} book[s]`, which that row and the dialogs
+    /// below count with.
+    pub n_sittings: &'static str,
+    pub n_books: &'static str,
+    /// The reset row, and its two chips.
+    pub reset_row: &'static str,
+    pub reset_keep: &'static str,
+    pub reset_none: &'static str,
+    /// The restore row, and the chip offering the device's own logs.
+    pub restore_row: &'static str,
+    pub restore_logs: &'static str,
+    /// Emptying the record, keeping an archive first. `{what}` is what goes,
+    /// `{file}` the archive's name, `{size}` how large it is.
+    pub wipe_ask: &'static str,
+    pub wipe_note: &'static str,
+    pub wipe_do: &'static str,
+    /// Emptying it keeping nothing. `{what}` and `{size}` as above.
+    pub nowipe_ask: &'static str,
+    pub nowipe_note: &'static str,
+    pub nowipe_do: &'static str,
+    /// Taking an archive back. `{what}` is what it holds, `{file}` its name.
+    pub restore_ask: &'static str,
+    pub restore_note: &'static str,
+    pub restore_do: &'static str,
+    /// Reading the device's whole log again.
+    pub rebuild_ask: &'static str,
+    pub rebuild_note: &'static str,
+    pub rebuild_do: &'static str,
+    /// The book screen's own control, and the question it puts up. `{what}` is
+    /// the reading that goes.
+    pub clear: &'static str,
+    pub clear_ask: &'static str,
+    pub clear_note: &'static str,
+    /// Added to that note where the longest streak moves: `{a}` to `{b}` days.
+    pub streak_note: &'static str,
+    /// Its two answers: the record stays, or it goes as well.
+    pub clear_keep: &'static str,
+    pub clear_forget: &'static str,
+    /// What the Books list says with nothing to list: before any reading, and
+    /// after a reset. `{t}` is a duration.
+    pub no_reading_yet: &'static str,
+    pub nothing_since_reset: &'static str,
+    pub unnamed_only: &'static str,
     /// `{n} unidentified · {duration}`, closing a list of books.
     pub unidentified: &'static str,
     /// `{n} books in the record`, under the last page of the Books list.
@@ -429,6 +474,50 @@ const ENGLISH: Strings = Strings {
     unnamed_row: "Unidentified books",
     unnamed_show: "Show",
     unnamed_hide: "Hide",
+    recorded_row: "Recorded",
+    n_sittings: "{d} sitting[s]",
+    n_books: "{d} book[s]",
+    reset_row: "Reset",
+    reset_keep: "Back up first",
+    reset_none: "No backup",
+    restore_row: "Backups",
+    restore_logs: "From the logs",
+    wipe_ask: "Back up, then reset?",
+    wipe_note: "{what}, with every cover held, are copied into {file}, {size}. \
+                The record then starts empty from today. To bring it back, tap \
+                it under Backups.",
+    wipe_do: "Back up and reset",
+    nowipe_ask: "Reset without a backup?",
+    nowipe_note: "{what} and every cover held are deleted, and no copy is kept. \
+                  It frees {size}. Your Kindle's own logs are not touched, and \
+                  about a month of them can be read again. Reading older than \
+                  that, and books no longer in your library, cannot come back.",
+    nowipe_do: "Reset, no backup",
+    restore_ask: "Bring this back?",
+    restore_note: "{file} holds {what}. Whatever the record already has is left \
+                   as it stands, so nothing is counted twice.",
+    restore_do: "Restore",
+    rebuild_ask: "Read the Kindle's logs again?",
+    rebuild_note: "Every log the device still holds is read from the start, \
+                   which takes a few minutes. Nothing you have now is lost. \
+                   Reading older than the logs, and books taken off the record \
+                   one at a time, do not come back.",
+    rebuild_do: "Read them",
+    clear: "Clear",
+    clear_ask: "Clear this book's reading?",
+    clear_note: "{what} go, and the book leaves your lists until you read it \
+                 again. Keeping it holds its title, cover and progress; \
+                 forgetting it takes those too. A copy is saved first, under \
+                 Backups.",
+    streak_note: "Your longest streak goes from {a} days to {b}.",
+    clear_keep: "Keep the book",
+    clear_forget: "Forget it too",
+    no_reading_yet: "No reading yet. Open a book, read a few pages, then come \
+                     back — the log starts from the day this first runs.",
+    nothing_since_reset: "Nothing read since the record was reset. Open a book \
+                          and it starts again from here.",
+    unnamed_only: "{t} read, on books the catalog names none of. A book is \
+                   listed once the device has said what it is.",
     unidentified: "unidentified",
     in_the_record: "books in the record",
     interface: "INTERFACE",
@@ -585,6 +674,51 @@ const GERMAN: Strings = Strings {
     catching_up: "Liest, was dazugekommen ist.",
 
     the_record: "DIE AUFZEICHNUNG",
+    recorded_row: "Aufgezeichnet",
+    n_sittings: "{d} Sitzung[en]",
+    n_books: "{d} Titel",
+    reset_row: "Zurücksetzen",
+    reset_keep: "Erst sichern",
+    reset_none: "Ohne Sicherung",
+    restore_row: "Sicherungen",
+    restore_logs: "Aus den Protokollen",
+    wipe_ask: "Erst sichern, dann zurücksetzen?",
+    wipe_note: "{what} werden mit allen Titelbildern nach {file} kopiert, \
+                {size}. Die Aufzeichnung beginnt dann leer ab heute. Zum \
+                Zurückholen unter Sicherungen antippen.",
+    wipe_do: "Zurücksetzen",
+    nowipe_ask: "Ohne Sicherung zurücksetzen?",
+    nowipe_note: "{what} und alle Titelbilder werden ohne Kopie gelöscht, das \
+                  gibt {size} frei. Die Protokolle des Kindle bleiben \
+                  unberührt; etwa ein Monat lässt sich erneut lesen. Ältere \
+                  Lesezeit und Bücher außerhalb der Bibliothek nicht.",
+    nowipe_do: "Ohne Sicherung",
+    restore_ask: "Das zurückholen?",
+    restore_note: "{file} enthält {what}. Was die Aufzeichnung schon hat, \
+                   bleibt unverändert, also wird nichts doppelt gezählt.",
+    restore_do: "Zurückholen",
+    rebuild_ask: "Die Protokolle erneut lesen?",
+    rebuild_note: "Jedes Protokoll auf dem Gerät wird von vorn gelesen, was \
+                   einige Minuten dauert. Nichts Vorhandenes geht verloren. \
+                   Ältere Lesezeit und einzeln entfernte Bücher kommen nicht \
+                   zurück.",
+    rebuild_do: "Erneut lesen",
+    clear: "Löschen",
+    clear_ask: "Die Zeiten dieses Buches löschen?",
+    clear_note: "{what} werden gelöscht; das Buch verlässt die Listen, bis du \
+                 es wieder liest. Bleibt es, bleiben Titel, Bild und \
+                 Fortschritt, sonst gehen auch diese. Eine Kopie wird \
+                 gesichert.",
+    streak_note: "Längste Serie: von {a} auf {b} Tage.",
+    clear_keep: "Buch behalten",
+    clear_forget: "Auch vergessen",
+    no_reading_yet: "Noch nichts gelesen. Öffne ein Buch, lies ein paar Seiten \
+                     und komm zurück — das Protokoll beginnt am Tag des ersten \
+                     Starts.",
+    nothing_since_reset: "Seit dem Zurücksetzen nichts gelesen. Öffne ein Buch, \
+                          dann beginnt es hier von vorn.",
+    unnamed_only: "{t} gelesen, auf Büchern, die der Katalog nicht benennt. Ein \
+                   Buch wird gelistet, sobald das Gerät sagt, welches es ist.",
     unnamed_row: "Unbekannte Bücher",
     unnamed_show: "Zeigen",
     unnamed_hide: "Verbergen",
@@ -740,6 +874,44 @@ const JAPANESE: Strings = Strings {
     catching_up: "追加された記録を読み込み中。",
 
     the_record: "記録",
+    recorded_row: "記録の中身",
+    n_sittings: "{d}回",
+    n_books: "{d}冊",
+    reset_row: "リセット",
+    reset_keep: "先に保存",
+    reset_none: "保存しない",
+    restore_row: "バックアップ",
+    restore_logs: "ログから",
+    wipe_ask: "保存してからリセットしますか？",
+    wipe_note: "{what}と表紙をすべて {file} に保存します（{size}）。記録は今日から空で始まります。\
+                戻すときはバックアップから選んでください。",
+    wipe_do: "保存してリセット",
+    nowipe_ask: "保存せずにリセットしますか？",
+    nowipe_note: "{what}と表紙をすべて削除し、控えは残りません。{size}の空きができます。\
+                  Kindle自身のログには触れないので、約1か月分は読み直せます。\
+                  それより古い読書と、ライブラリにない本は戻りません。",
+    nowipe_do: "保存せずリセット",
+    restore_ask: "これを戻しますか？",
+    restore_note: "{file} には{what}が入っています。すでにある記録はそのままなので、二重には数えません。",
+    restore_do: "戻す",
+    rebuild_ask: "Kindleのログを読み直しますか？",
+    rebuild_note: "端末に残っているログを最初から読み直します。数分かかります。\
+                   今ある記録が失われることはありません。ログより古い読書と、\
+                   1冊ずつ記録から外した本は戻りません。",
+    rebuild_do: "読み直す",
+    clear: "消去",
+    clear_ask: "この本の読書記録を消去しますか？",
+    clear_note: "{what}を削除します。本を残せば題名・表紙・進捗はそのまま残り、\
+                 一緒に消せばそれらも消えて、次に読むまで一覧から外れます。\
+                 控えは先に保存されます。",
+    streak_note: "最長連続日数は{a}日から{b}日になります。",
+    clear_keep: "本は残す",
+    clear_forget: "本も消す",
+    no_reading_yet: "まだ読書がありません。本を開いて数ページ読んでから戻ってきてください。\
+                     記録は初回起動の日から始まります。",
+    nothing_since_reset: "リセット後の読書はまだありません。本を開けば、ここから始まります。",
+    unnamed_only: "{t}の読書がありますが、カタログが本を特定していません。\
+                   端末が本を認識すると一覧に並びます。",
     unnamed_row: "不明な本",
     unnamed_show: "表示",
     unnamed_hide: "非表示",
@@ -884,6 +1056,41 @@ const SIMPLIFIED: Strings = Strings {
     catching_up: "正在读取新增的记录。",
 
     the_record: "记录",
+    recorded_row: "已记录",
+    n_sittings: "{d}次",
+    n_books: "{d}本",
+    reset_row: "重置",
+    reset_keep: "先备份",
+    reset_none: "不备份",
+    restore_row: "备份",
+    restore_logs: "从日志读取",
+    wipe_ask: "先备份再重置？",
+    wipe_note: "{what}和所有封面会存入 {file}（{size}）。记录随后从今天起为空。\
+                要取回，请在备份中点选。",
+    wipe_do: "备份并重置",
+    nowipe_ask: "不备份就重置？",
+    nowipe_note: "{what}和所有封面都会删除，不留副本，可腾出 {size}。\
+                  Kindle 自己的日志不会被动到，其中约一个月可以重新读取。\
+                  更早的阅读，以及已不在书库中的书，无法恢复。",
+    nowipe_do: "不备份重置",
+    restore_ask: "取回这一份？",
+    restore_note: "{file} 中有{what}。记录里已有的内容保持不变，因此不会重复计入。",
+    restore_do: "取回",
+    rebuild_ask: "重新读取 Kindle 日志？",
+    rebuild_note: "设备上仍保留的日志会从头读一遍，需要几分钟。现有记录不会丢失。\
+                   比日志更早的阅读，以及逐本从记录中移除的书，不会回来。",
+    rebuild_do: "重新读取",
+    clear: "清除",
+    clear_ask: "清除这本书的阅读记录？",
+    clear_note: "将删除{what}。保留书籍时，书名、封面和进度都会留下；\
+                 一并移除时它们也会消失，直到再次阅读才会回到列表。\
+                 系统会先保存一份副本。",
+    streak_note: "最长连续天数将从 {a} 天变为 {b} 天。",
+    clear_keep: "保留书籍",
+    clear_forget: "一并移除",
+    no_reading_yet: "还没有阅读记录。打开一本书读几页再回来——日志从首次运行当天开始。",
+    nothing_since_reset: "重置后还没有阅读。打开一本书，就从这里重新开始。",
+    unnamed_only: "已读 {t}，但目录未能指明是哪些书。设备识别出书名后就会列出。",
     unnamed_row: "未识别的书",
     unnamed_show: "显示",
     unnamed_hide: "隐藏",
@@ -1039,6 +1246,41 @@ const TRADITIONAL: Strings = Strings {
     catching_up: "正在讀取新增的記錄。",
 
     the_record: "記錄",
+    recorded_row: "已記錄",
+    n_sittings: "{d}次",
+    n_books: "{d}本",
+    reset_row: "重設",
+    reset_keep: "先備份",
+    reset_none: "不備份",
+    restore_row: "備份",
+    restore_logs: "從日誌讀取",
+    wipe_ask: "先備份再重設？",
+    wipe_note: "{what}和所有封面會存入 {file}（{size}）。記錄隨後從今天起為空。\
+                要取回，請在備份中點選。",
+    wipe_do: "備份並重設",
+    nowipe_ask: "不備份就重設？",
+    nowipe_note: "{what}和所有封面都會刪除，不留副本，可騰出 {size}。\
+                  Kindle 自己的日誌不會被動到，其中約一個月可以重新讀取。\
+                  更早的閱讀，以及已不在書庫中的書，無法復原。",
+    nowipe_do: "不備份重設",
+    restore_ask: "取回這一份？",
+    restore_note: "{file} 中有{what}。記錄裡已有的內容保持不變，因此不會重複計入。",
+    restore_do: "取回",
+    rebuild_ask: "重新讀取 Kindle 日誌？",
+    rebuild_note: "裝置上仍保留的日誌會從頭讀一遍，需要幾分鐘。現有記錄不會遺失。\
+                   比日誌更早的閱讀，以及逐本從記錄中移除的書，不會回來。",
+    rebuild_do: "重新讀取",
+    clear: "清除",
+    clear_ask: "清除這本書的閱讀記錄？",
+    clear_note: "將刪除{what}。保留書籍時，書名、封面和進度都會留下；\
+                 一併移除時它們也會消失，直到再次閱讀才會回到列表。\
+                 系統會先儲存一份副本。",
+    streak_note: "最長連續天數將從 {a} 天變為 {b} 天。",
+    clear_keep: "保留書籍",
+    clear_forget: "一併移除",
+    no_reading_yet: "還沒有閱讀記錄。打開一本書讀幾頁再回來——日誌從首次執行當天開始。",
+    nothing_since_reset: "重設後還沒有閱讀。打開一本書，就從這裡重新開始。",
+    unnamed_only: "已讀 {t}，但目錄未能指明是哪些書。裝置辨識出書名後就會列出。",
     unnamed_row: "未識別的書",
     unnamed_show: "顯示",
     unnamed_hide: "隱藏",
@@ -1240,6 +1482,106 @@ mod tests {
             }
             for (i, d) in s.weekdays_short.iter().enumerate() {
                 assert!(!d.is_empty(), "{lang:?} weekday {i}");
+            }
+        }
+    }
+
+    /// A line's width, the way `the_nav_labels_fit_the_narrowest_panel`
+    /// estimates one: Latin at 0.6 em a character, CJK at a full em.
+    fn em_width(said: &str, px: f32) -> u32 {
+        let wide = said.chars().filter(|c| *c as u32 > 0x2E80).count() as f32;
+        let thin = said.chars().count() as f32 - wide;
+        ((wide + thin * 0.6) * px) as u32
+    }
+
+    /// How many lines `said` wraps to at `px` inside `width`.
+    fn lines_of(said: &str, width: u32, px: f32) -> usize {
+        crate::wrap::wrap_to_width(said, width, |t| em_width(t, px)).len()
+    }
+
+    #[test]
+    fn every_dialog_states_its_whole_case_in_every_language() {
+        // The narrowest panel at the largest text, which is where a clamp
+        // bites first. `ui::dialog` boxes the note in `area.w - gap * 6`, less
+        // `gap * 3` of padding on each side.
+        let theme = crate::ui::theme::Theme::sized(1264, 1680, crate::settings::TextSize::Large);
+        let inner = crate::ui::chrome::content_box(&theme).w - theme.gap * 12;
+
+        for lang in Lang::ALL {
+            let s = lang.strings();
+            // Every field at its widest, so the budget holds for any record.
+            let filled = |note: &str| {
+                note.replace(
+                    "{what}",
+                    &format!(
+                        "{} · {}",
+                        counted(s.n_sittings, 9_999),
+                        counted(s.n_books, 999)
+                    ),
+                )
+                .replace("{file}", "readinglog-991231-235959.zip")
+                .replace("{size}", "999.9 MB")
+                .replace("{a}", "999")
+                .replace("{b}", "999")
+            };
+            for (name, heading, note) in [
+                ("wipe", s.wipe_ask, s.wipe_note),
+                ("nowipe", s.nowipe_ask, s.nowipe_note),
+                ("restore", s.restore_ask, s.restore_note),
+                ("rebuild", s.rebuild_ask, s.rebuild_note),
+                ("restart", s.restart_ask, s.restart_note),
+                ("mark", s.mark_ask, s.mark_note),
+                ("unmark", s.unmark_ask, s.unmark_note),
+                (
+                    "clear",
+                    s.clear_ask,
+                    // The note and the streak sentence stand together.
+                    &format!("{} {}", s.clear_note, s.streak_note),
+                ),
+            ] {
+                let head = lines_of(heading, inner as u32, theme.head_px);
+                assert!(head <= 2, "{lang:?} {name} headline takes {head} lines");
+                let body = lines_of(&filled(note), inner as u32, theme.body_px);
+                assert!(body <= 8, "{lang:?} {name} note takes {body} lines");
+
+                // And the box those lines make stands inside the screen: a
+                // panel taller than the page is clamped, and the answers along
+                // its foot are what falls off.
+                let line = |px: f32| (px * 1.4) as i32;
+                let high = theme.gap * 6
+                    + head as i32 * line(theme.head_px)
+                    + theme.gap * 2
+                    + body as i32 * line(theme.body_px)
+                    + theme.gap * 3
+                    + theme.row_h * 2 / 3;
+                let room = crate::ui::chrome::content_box(&theme).h;
+                assert!(high <= room, "{lang:?} {name} boxes {high} px of {room}");
+            }
+        }
+    }
+
+    #[test]
+    fn every_dialog_answer_fits_beside_its_fellows() {
+        // Three answers abreast on the narrow panel at Large, gaps included.
+        let theme = crate::ui::theme::Theme::sized(1264, 1680, crate::settings::TextSize::Large);
+        let inner = crate::ui::chrome::content_box(&theme).w - theme.gap * 12;
+        for lang in Lang::ALL {
+            let s = lang.strings();
+            for answer in [
+                s.cancel,
+                s.wipe_do,
+                s.nowipe_do,
+                s.restore_do,
+                s.rebuild_do,
+                s.clear_keep,
+                s.clear_forget,
+                s.clear,
+            ] {
+                let width = em_width(answer, theme.body_px) as i32;
+                assert!(
+                    width <= inner / 2,
+                    "{lang:?} {answer:?} sets {width} px of {inner}"
+                );
             }
         }
     }

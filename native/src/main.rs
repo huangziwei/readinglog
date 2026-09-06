@@ -41,7 +41,7 @@ fn version() -> Result<()> {
 /// `store`.
 fn collect() -> Result<Store> {
     let dir = Path::new(store::STORE_DIR);
-    let mut store = Store::load(dir);
+    let mut store = Store::open(dir);
     collect_into(&mut store, dir, &mut |_, _| {});
     Ok(store)
 }
@@ -139,7 +139,7 @@ fn show() -> Result<()> {
 
     // `splash::show` paints before the first gunzip.
     let dir = Path::new(store::STORE_DIR);
-    let mut store = Store::load(dir);
+    let mut store = Store::open(dir);
     let theme = ui::theme::Theme::for_screen(fb.var.xres, fb.var.yres);
     let mut text = ui::text::TextRenderer::load(theme.body_px)?;
     eprintln!("fonts: {}", text.chain_description());

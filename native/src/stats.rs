@@ -273,6 +273,27 @@ impl Stats {
         out
     }
 
+    /// What the longest streak would be with one book's reading taken out.
+    ///
+    /// A day survives unless that book was the only thing read on it, so this
+    /// is the same walk `streaks` makes over the days left standing. It is
+    /// what tells a reader that clearing one book costs them a run of days.
+    pub fn streak_without(&self, book: usize) -> i64 {
+        let mine = self.book_days(book);
+        let left: Vec<(i64, i64)> = self
+            .days
+            .iter()
+            .filter(|(day, secs)| {
+                let taken = mine
+                    .binary_search_by_key(day, |(d, _)| *d)
+                    .map_or(0, |i| mine[i].1);
+                *secs > taken
+            })
+            .copied()
+            .collect();
+        streaks(&left, self.last_day()).0
+    }
+
     /// Seconds read on one day.
     pub fn day_seconds(&self, day: i64) -> i64 {
         self.days
@@ -1113,6 +1134,8 @@ mod tests {
             ends: vec![(148_207, 148_209)],
             books: Vec::new(),
             mark: "260807:091000".into(),
+            floor: String::new(),
+            cleared: Vec::new(),
         }
     }
 

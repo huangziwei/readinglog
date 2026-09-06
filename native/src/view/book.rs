@@ -7,7 +7,7 @@ use crate::lang::Strings;
 use crate::stats::BookStat;
 use crate::ui::chrome;
 use crate::ui::cover;
-use crate::ui::paint::{self, INK, Rect, WHITE};
+use crate::ui::paint::Rect;
 use crate::ui::text::TextRenderer;
 use crate::ui::{charts, theme::Theme};
 
@@ -86,7 +86,8 @@ fn controls_bottom(read: &[Rect]) -> i32 {
 }
 
 /// The band the controls take, the gap above them included, and 0 where this
-/// book offers none.
+/// book offers none. The reset control alone is enough to open the band: a
+/// book off the device carries no reading control and still carries this one.
 fn open_height(
     text: &mut TextRenderer,
     theme: &Theme,
@@ -96,10 +97,26 @@ fn open_height(
 ) -> i32 {
     let width = chrome::content_box(theme).w;
     let read = controls_split(text, theme, script, width, control_labels(book, s));
-    match controls_bottom(&read) {
-        0 => 0,
-        foot => theme.gap * 2 + foot,
-    }
+    let foot = controls_bottom(&read).max(chrome::chip_height(theme));
+    theme.gap * 2 + foot
+}
+
+/// Where the reset control sits: against the right edge of the last row the
+/// reading controls took, which is the slot the finished mark left.
+fn reset_box(
+    text: &mut TextRenderer,
+    theme: &Theme,
+    script: Script,
+    band: Rect,
+    s: &Strings,
+) -> Rect {
+    text.set_px(theme.body_px);
+    let w = (text.measure_width_in(script, s.clear) as i32 + chrome::chip_pad() * 4).min(band.w);
+    let h = chrome::chip_height(theme);
+    let step = h + theme.gap;
+    let rows = (band.h + theme.gap) / step.max(1);
+    let y = band.y + (rows - 1).max(0) * step;
+    Rect::new(band.right() - w, y, w, h)
 }
 
 /// Where the controls sit inside the band [`open_height`] took: their own
@@ -284,8 +301,9 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat, index: usize) {
     }
 }
 
-/// The controls under the progress bar, at the places [`controls_split`] put
-/// them: [`Hit::Open`], then [`Hit::Restart`].
+/// The controls under the progress bar: the reading pair from the left at the
+/// places [`controls_split`] put them, and the reset control against the right
+/// edge.
 fn controls(cx: &mut Ctx, band: Rect, book: &BookStat, index: usize) {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
@@ -297,9 +315,14 @@ fn controls(cx: &mut Ctx, band: Rect, book: &BookStat, index: usize) {
             continue;
         };
         let box_ = onto(band, *box_);
-        outlined(cx, box_, said);
+        chrome::outlined(cx, box_, said);
         cx.hit(hit, box_);
     }
+
+    let clear = cx.s().clear;
+    let box_ = reset_box(cx.text, theme, script, band, cx.s());
+    chrome::outlined(cx, box_, clear);
+    cx.hit(Hit::Clear(index), box_);
 }
 
 /// A box [`split_from`] placed, moved onto `band`.
@@ -308,111 +331,70 @@ fn onto(band: Rect, box_: Rect) -> Rect {
 }
 
 /// What `ask` puts up: the headline, what it states, and the label on the
-/// answer.
+/// answer. [`Ask::Clear`] states figures and has two answers, so it is drawn
+/// by [`asking`] itself.
 fn question(ask: Ask, s: &Strings) -> (&'static str, &'static str, &'static str) {
     match ask {
         Ask::Restart => (s.restart_ask, s.restart_note, s.restart),
         Ask::Mark(true) => (s.mark_ask, s.mark_note, s.mark_finished),
         Ask::Mark(false) => (s.unmark_ask, s.unmark_note, s.mark_unfinished),
+        Ask::Clear => (s.clear_ask, s.clear_note, s.clear_keep),
     }
 }
 
-/// A question drawn over the book's own screen. The panel carries
-/// [`Hit::Answer`] and [`Hit::Dismiss`]; `area` behind it is [`Hit::Dismiss`]
-/// whole.
-pub fn asking(cx: &mut Ctx, area: Rect, ask: Ask) {
-    let theme: &Theme = cx.theme;
-    let script = cx.ui_script();
-    let s = cx.s();
-    cx.hit(Hit::Dismiss, area);
-
-    let (heading, note, answer) = question(ask, s);
-    let ways = [(s.cancel, Hit::Dismiss), (answer, Hit::Answer)];
-    let pad = theme.gap * 3;
-    let width = area.w - theme.gap * 6;
-    let inner = width - pad * 2;
-
-    cx.text.set_px(theme.head_px);
-    let ask = cx.text.wrap_and_clamp_in(script, heading, inner as u32, 2);
-    let ask_h = ask.len() as i32 * cx.text.line_height() as i32;
-    cx.text.set_px(theme.body_px);
-    let note = cx.text.wrap_and_clamp_in(script, note, inner as u32, 6);
-    let note_h = note.len() as i32 * cx.text.line_height() as i32;
-    let said: Vec<i32> = ways
-        .iter()
-        .map(|(l, _)| {
-            (cx.text.measure_width_in(script, l) as i32 + chrome::chip_pad() * 4).min(inner)
-        })
-        .collect();
-
-    let chip = chrome::chip_height(theme);
-    let abreast = said.iter().sum::<i32>() + theme.gap * 4 <= inner;
-    let rows = match abreast {
-        true => 1,
-        false => said.len() as i32,
+/// What [`Ask::Clear`] states: the reading that goes, and the streak where
+/// clearing this book moves it.
+pub fn clearing_note(stats: &crate::stats::Stats, index: usize, s: &Strings) -> String {
+    let Some(book) = stats.books.get(index) else {
+        return s.clear_note.to_string();
     };
-    let feet_h = chip * rows + theme.gap * (rows - 1);
-    let high = (pad * 2 + ask_h + theme.gap * 2 + note_h + theme.gap * 3 + feet_h).min(area.h);
-    let panel = Rect::new(
-        area.x + (area.w - width) / 2,
-        area.y + (area.h - high) / 2,
-        width,
-        high,
+    let what = format!(
+        "{} · {}",
+        crate::lang::counted(s.n_sittings, book.sittings),
+        date::duration(book.seconds, s)
     );
-    paint::fill(cx.fb, panel, WHITE);
-    paint::stroke(cx.fb, panel, INK, 3);
-
-    let (heads, rest) = panel.inset(pad).split_top(ask_h + theme.gap * 2);
-    let (notes, feet) = rest.split_top(note_h + theme.gap * 3);
-    cx.text.set_px(theme.head_px);
-    lines(cx, heads, script, &ask);
-    cx.text.set_px(theme.body_px);
-    lines(cx, notes, script, &note);
-
-    let boxes = match abreast {
-        true => {
-            let mut x = feet.right() - (said.iter().sum::<i32>() + theme.gap * 4);
-            said.iter()
-                .map(|w| {
-                    let box_ = Rect::new(x, feet.y, *w, chip);
-                    x += w + theme.gap * 2;
-                    box_
-                })
-                .collect()
-        }
-        false => feet.rows(said.len() as i32, theme.gap),
-    };
-    for ((said, hit), box_) in ways.iter().zip(&boxes) {
-        outlined(cx, *box_, said);
-        cx.hit(*hit, *box_);
+    let mut out = s.clear_note.replace("{what}", &what);
+    let without = stats.streak_without(index);
+    if without < stats.longest_streak {
+        out.push(' ');
+        out.push_str(
+            &s.streak_note
+                .replace("{a}", &stats.longest_streak.to_string())
+                .replace("{b}", &without.to_string()),
+        );
     }
+    out
 }
 
-/// `said` set down `box_` from its top, at whatever size is set.
-fn lines(cx: &mut Ctx, box_: Rect, script: Script, said: &[String]) {
-    let step = cx.text.line_height() as i32;
-    let mut y = box_.y + cx.text.cap_height() as i32;
-    for line in said {
-        cx.text.draw_in(script, cx.fb, box_.x, y, line, false);
-        y += step;
+/// A question drawn over the book's own screen, through [`ui::dialog`].
+pub fn asking(cx: &mut Ctx, area: Rect, ask: Ask, index: usize) {
+    let s = cx.s();
+    if ask == Ask::Clear {
+        let note = clearing_note(cx.stats, index, s);
+        crate::ui::dialog::draw(
+            cx,
+            area,
+            &crate::ui::dialog::Question {
+                heading: s.clear_ask,
+                note: &note,
+                answers: &[
+                    (s.cancel, Hit::Dismiss),
+                    (s.clear_keep, Hit::ClearBook(index)),
+                    (s.clear_forget, Hit::ForgetBook(index)),
+                ],
+            },
+        );
+        return;
     }
-}
-
-/// One control: `said` centred in a 2 px outline.
-fn outlined(cx: &mut Ctx, box_: Rect, said: &str) {
-    let theme: &Theme = cx.theme;
-    let script = cx.ui_script();
-    cx.text.set_px(theme.body_px);
-    paint::stroke(cx.fb, box_, INK, 2);
-    let tw = cx.text.measure_width_in(script, said) as i32;
-    let baseline = box_.center_y() + cx.text.cap_height() as i32 / 2;
-    cx.text.draw_in(
-        script,
-        cx.fb,
-        box_.x + (box_.w - tw) / 2,
-        baseline,
-        said,
-        false,
+    let (heading, note, answer) = question(ask, s);
+    crate::ui::dialog::draw(
+        cx,
+        area,
+        &crate::ui::dialog::Question {
+            heading,
+            note,
+            answers: &[(s.cancel, Hit::Dismiss), (answer, Hit::Answer)],
+        },
     );
 }
 

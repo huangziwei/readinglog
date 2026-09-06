@@ -44,6 +44,8 @@ pub struct App {
     now: i64,
     /// What `eink::fb::has_cfa` answered at startup.
     colour: bool,
+    /// Where the record and the archives beside it live.
+    dir: std::path::PathBuf,
     /// Where every touchable thing was on the last frame.
     hits: Vec<(Hit, crate::ui::paint::Rect)>,
 }
@@ -70,6 +72,7 @@ impl App {
             store,
             stats,
             colour,
+            dir: std::path::PathBuf::from(crate::store::STORE_DIR),
             state: State::new(today),
             today,
             now,
@@ -143,6 +146,22 @@ impl App {
     /// Put a question up over the book it names, or take one down.
     pub fn ask(&mut self, asked: Option<(usize, view::Ask)>) {
         self.state.asked = asked;
+    }
+
+    /// Put one of the config page's questions up, gathering the figures it
+    /// states, or take one down.
+    pub fn ask_about(&mut self, about: Option<view::Reset>) {
+        match about {
+            Some(about) => {
+                self.ask_reset(about);
+            }
+            None => self.state.confirm = None,
+        }
+    }
+
+    /// Draw the settings at `page`, whatever it was left on.
+    pub fn set_config_page(&mut self, page: usize) {
+        self.state.config_page = page;
     }
 
     /// Draw All Time at `page`, whatever it was left on.
@@ -223,17 +242,34 @@ impl App {
         let settings = self.settings.clone();
         let colour = self.colour;
         let state = self.state.clone();
+        // The archives are read off disk here, on the frame that draws them:
+        // it is a handful of names, and it is how a reset or a restore shows
+        // up on the row that made it without a cache to keep in step.
+        let record = match state.tab == Tab::Config && state.book.is_none() {
+            true => view::config::Record::of(
+                &self.stats,
+                &self.dir,
+                !self.store.floor.is_empty(),
+                self.lang,
+            ),
+            false => view::config::Record::default(),
+        };
         self.frame(fb, &mut |cx, area| match state.book {
             Some(index) => {
                 view::book::draw(cx, area, index);
                 if let Some((at, ask)) = state.asked
                     && at == index
                 {
-                    view::book::asking(cx, area, ask);
+                    view::book::asking(cx, area, ask, index);
                 }
             }
             None => match state.tab {
-                Tab::Config => view::config::draw(cx, area, &settings, colour),
+                Tab::Config => {
+                    view::config::draw(cx, area, &settings, colour, &record, state.config_page);
+                    if let Some(confirm) = &state.confirm {
+                        view::config::asking(cx, area, confirm);
+                    }
+                }
                 Tab::Home => view::home::draw(cx, area, state.list_from),
                 Tab::Rhythm => view::rhythm::draw(cx, area, &state),
                 Tab::Books => view::books::draw(cx, area, &state),
@@ -263,6 +299,7 @@ impl App {
             stats: &self.stats,
             today: self.today,
             now: self.now,
+            floored: !self.store.floor.is_empty(),
             hits: Vec::new(),
         };
         body(&mut cx, area);
@@ -507,6 +544,8 @@ impl App {
         match ask {
             view::Ask::Restart => self.restart(index),
             view::Ask::Mark(on) => self.set_finished(index, on),
+            // Two answers of its own, each its own hit.
+            view::Ask::Clear => Action::Redraw,
         }
     }
 
@@ -557,7 +596,10 @@ impl App {
             Hit::Restart(index) => return self.put(index, view::Ask::Restart),
             Hit::Answer => return self.answer(),
             Hit::Dismiss => {
-                if self.state.asked.take().is_none() {
+                // Whichever question stands: the book's, or the config page's.
+                let asked = self.state.asked.take().is_some();
+                let confirmed = self.state.confirm.take().is_some();
+                if !asked && !confirmed {
                     return Action::Nothing;
                 }
             }
@@ -672,7 +714,167 @@ impl App {
             Hit::Update => return Action::Update,
             Hit::Prev => return self.paged(-1),
             Hit::Next => return self.paged(1),
+            Hit::Clear(index) => return self.put(index, view::Ask::Clear),
+            Hit::ClearBook(index) => return self.clear_book(index, false),
+            Hit::ForgetBook(index) => return self.clear_book(index, true),
+            Hit::Wipe(keep) => return self.ask_reset(view::Reset::Wipe(keep)),
+            Hit::Restore(at) => return self.ask_reset(view::Reset::Restore(at)),
+            Hit::Rebuild => return self.ask_reset(view::Reset::Rebuild),
+            Hit::Wiped(keep) => return self.wipe(keep),
+            Hit::Restored(at) => return self.restore(at),
+            Hit::Rebuilt => return self.reread(),
         }
+        Action::Redraw
+    }
+
+    /// Where the record lives.
+    fn dir(&self) -> &std::path::Path {
+        &self.dir
+    }
+
+    /// Draw and act against a record somewhere other than [`store::STORE_DIR`].
+    /// The preview reads a real record from wherever it was copied to; nothing
+    /// on the device calls this.
+    pub fn set_dir(&mut self, dir: std::path::PathBuf) {
+        self.dir = dir;
+    }
+
+    /// Write the record, saying so where it will not go down.
+    fn store_it(&self, what: &str) {
+        if let Err(err) = self.store.save(self.dir()) {
+            eprintln!("{what}: the record did not reach the store: {err:#}");
+        }
+    }
+
+    /// Put one of the config page's questions up, with the figures it states
+    /// gathered now: the dialog itself walks nothing.
+    fn ask_reset(&mut self, about: view::Reset) -> Action {
+        let (jackets, archives) = crate::backup::sizes(self.dir());
+        let confirm = match about {
+            view::Reset::Wipe(keep) => view::Confirm {
+                about,
+                sittings: self.stats.sittings.len(),
+                books: self.stats.books.len(),
+                // What the archive will weigh, or what deleting the cache
+                // gives back.
+                bytes: match keep {
+                    true => jackets + self.store.text().len() as u64,
+                    false => jackets,
+                },
+                named: crate::backup::name(crate::backup::Kind::Record, &self.store.mark),
+            },
+            view::Reset::Restore(at) => {
+                let held = crate::backup::list(self.dir());
+                let Some(backup) = held.get(at) else {
+                    return Action::Nothing;
+                };
+                // Read once, here: what the archive holds is what the question
+                // is about.
+                let inside = crate::backup::peek(&backup.path).unwrap_or_default();
+                view::Confirm {
+                    about,
+                    sittings: inside.sessions.len(),
+                    books: inside.books.len(),
+                    bytes: backup.bytes,
+                    named: backup
+                        .path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                }
+            }
+            view::Reset::Rebuild => view::Confirm {
+                about,
+                sittings: 0,
+                books: 0,
+                bytes: archives,
+                named: String::new(),
+            },
+        };
+        if self.state.confirm.as_ref() == Some(&confirm) {
+            return Action::Nothing;
+        }
+        self.state.confirm = Some(confirm);
+        Action::Redraw
+    }
+
+    /// Empty the record, keeping an archive of it first under `keep`.
+    fn wipe(&mut self, keep: bool) -> Action {
+        self.state.confirm = None;
+        let keeping = match keep {
+            true => crate::backup::Keep::Archive,
+            false => crate::backup::Keep::Nothing,
+        };
+        let dir = self.dir.clone();
+        match crate::backup::reset(&dir, &mut self.store, keeping) {
+            Ok(Some(at)) => eprintln!("reset: the record is kept at {}", at.display()),
+            Ok(None) => {}
+            // Nothing was emptied: `reset` writes the archive first and stops
+            // on a failure.
+            Err(err) => {
+                eprintln!("reset: nothing was reset — {err}");
+                return Action::Redraw;
+            }
+        }
+        self.covers.forget();
+        self.rebuild();
+        Action::Redraw
+    }
+
+    /// Fold the archive at `at` in the list back into the record.
+    fn restore(&mut self, at: usize) -> Action {
+        self.state.confirm = None;
+        let held = crate::backup::list(self.dir());
+        let Some(backup) = held.get(at) else {
+            return Action::Redraw;
+        };
+        let dir = self.dir.clone();
+        match crate::backup::take(&dir, &backup.path, &mut self.store) {
+            Ok(added) => {
+                eprintln!("restore: {added} sittings from {}", backup.path.display());
+                self.store_it("restore");
+            }
+            Err(err) => eprintln!("restore: {} would not open — {err}", backup.path.display()),
+        }
+        self.covers.forget();
+        self.rebuild();
+        Action::Redraw
+    }
+
+    /// Read the device's whole log again and fold it in.
+    fn reread(&mut self) -> Action {
+        self.state.confirm = None;
+        let added = self.store.rebuild(&mut |_, _| {});
+        eprintln!("reread: {added} sittings the record did not hold");
+        self.store_it("reread");
+        self.rebuild();
+        Action::Redraw
+    }
+
+    /// Put one book's reading back to zero, taking its record with it under
+    /// `forget`. An archive of that book goes down first, and a book whose
+    /// archive will not write is left alone.
+    fn clear_book(&mut self, index: usize, forget: bool) -> Action {
+        self.state.asked = None;
+        let Some(book) = self.stats.books.get(index) else {
+            return Action::Redraw;
+        };
+        let (extent, key) = (book.extent, book.cde_key.clone());
+        let one = self.store.one_book(extent, &key);
+        if let Err(err) = crate::backup::keep_book(self.dir(), &one, &self.store.mark.clone()) {
+            eprintln!("clear: nothing was cleared — {err}");
+            return Action::Redraw;
+        }
+        let went = match forget {
+            true => self.store.forget_book(extent, &key),
+            false => self.store.clear_book(extent, &key),
+        };
+        eprintln!("clear: {went} sittings, forget {forget}");
+        self.store_it("clear");
+        // Off every list: the book's own screen is gone with its sittings.
+        self.state.book = None;
+        self.covers.forget();
+        self.rebuild();
         Action::Redraw
     }
 
@@ -698,8 +900,16 @@ impl App {
             return Action::Redraw;
         }
         match self.state.tab {
-            // Neither has anything to page through.
-            Tab::Config | Tab::Home => Action::Nothing,
+            // A page of settings past the first only exists where they will
+            // not all fit; `config::draw` holds the number inside its own
+            // count, so a step past the last lands on it.
+            Tab::Config => {
+                let at = self.state.config_page as i64;
+                self.state.config_page = (at + by).max(0) as usize;
+                Action::Redraw
+            }
+            // Nothing to page through.
+            Tab::Home => Action::Nothing,
             Tab::Rhythm => {
                 if !self.state.shift(by) {
                     return Action::Nothing;

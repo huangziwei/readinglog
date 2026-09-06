@@ -3,7 +3,7 @@
 //! and a streaming zipper's empty local headers read the same as any other.
 
 use std::fs::{self, File};
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io::{self, Read, Seek, SeekFrom, Write as _};
 use std::path::{Component, Path, PathBuf};
 
 /// End of central directory, central directory entry, local file header.
@@ -25,6 +25,16 @@ const ZIP64_MARK: u32 = 0xFFFF_FFFF;
 /// Compression methods this reads.
 const STORED: u16 = 0;
 const DEFLATED: u16 = 8;
+
+/// What [`write`] states it needs and was made by: zip 2.0, which is stored
+/// and deflated entries with no zip64.
+const VERSION: u16 = 20;
+
+/// The modification time [`write`] stamps every entry with: midnight on
+/// 1980-01-01, the zero of the DOS clock. The archive's own name carries the
+/// date that means anything.
+const DOS_TIME: u16 = 0;
+const DOS_DATE: u16 = 0b0000_0000_0010_0001;
 
 /// Ceiling on one entry's uncompressed size. Past this the unpack stops.
 const MAX_ENTRY: u64 = 64 * 1024 * 1024;
@@ -59,7 +69,7 @@ impl From<io::Error> for Error {
     }
 }
 
-type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = std::result::Result<T, Error>;
 
 /// One central-directory record.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -206,6 +216,137 @@ pub fn unpack(zip: &Path, marker: &str, dest: &Path) -> Result<usize> {
         return Err(Error::Malformed("nothing to unpack".into()));
     }
     Ok(written)
+}
+
+/// What goes into an archive under one name.
+pub enum Source<'a> {
+    /// Bytes already in hand.
+    Bytes(&'a [u8]),
+    /// A file, read one entry at a time so a cache of jackets is never held
+    /// whole in memory.
+    File(&'a Path),
+}
+
+/// Write `entries` as an archive at `at`, stored and never deflated, through a
+/// `.partial` sibling and a rename. Names are `/`-separated and taken as
+/// given.
+///
+/// The reader above is this writer's other half: what goes in comes back out
+/// of [`Archive::read`] with its checksum standing.
+pub fn write(at: &Path, entries: &[(String, Source<'_>)]) -> Result<()> {
+    if let Some(dir) = at.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let partial = at.with_extension("partial");
+    let result = fill(&partial, entries);
+    if result.is_err() {
+        let _ = fs::remove_file(&partial);
+        return result;
+    }
+    fs::rename(&partial, at)?;
+    Ok(())
+}
+
+/// [`write`]'s body, before the rename that makes the archive the real one.
+fn fill(partial: &Path, entries: &[(String, Source<'_>)]) -> Result<()> {
+    let mut out = io::BufWriter::new(File::create(partial)?);
+    // Name, checksum, size and where its local header starts.
+    let mut listed: Vec<(&str, u32, u32, u32)> = Vec::with_capacity(entries.len());
+    let mut at = 0u64;
+
+    for (name, source) in entries {
+        let held;
+        let bytes: &[u8] = match source {
+            Source::Bytes(b) => b,
+            Source::File(path) => {
+                held = fs::read(path)?;
+                &held
+            }
+        };
+        let size = fits(bytes.len() as u64, name)?;
+        let offset = fits(at, name)?;
+        let mut hasher = crc32fast::Hasher::new();
+        hasher.update(bytes);
+        let crc = hasher.finalize();
+
+        let mut header = Vec::with_capacity(LOCAL_LEN + name.len());
+        put32(&mut header, LOCAL_SIG);
+        put16(&mut header, VERSION);
+        put16(&mut header, 0); // no flags: no encryption, sizes stated here
+        put16(&mut header, STORED);
+        put16(&mut header, DOS_TIME);
+        put16(&mut header, DOS_DATE);
+        put32(&mut header, crc);
+        put32(&mut header, size);
+        put32(&mut header, size);
+        put16(&mut header, name.len() as u16);
+        put16(&mut header, 0); // no extra field
+        header.extend_from_slice(name.as_bytes());
+        out.write_all(&header)?;
+        out.write_all(bytes)?;
+
+        at += header.len() as u64 + bytes.len() as u64;
+        listed.push((name, crc, size, offset));
+    }
+
+    let directory = fits(at, "the central directory")?;
+    let mut size = 0u64;
+    for (name, crc, bytes, offset) in &listed {
+        let mut record = Vec::with_capacity(CD_LEN + name.len());
+        put32(&mut record, CD_SIG);
+        put16(&mut record, VERSION);
+        put16(&mut record, VERSION);
+        put16(&mut record, 0);
+        put16(&mut record, STORED);
+        put16(&mut record, DOS_TIME);
+        put16(&mut record, DOS_DATE);
+        put32(&mut record, *crc);
+        put32(&mut record, *bytes);
+        put32(&mut record, *bytes);
+        put16(&mut record, name.len() as u16);
+        put16(&mut record, 0); // extra
+        put16(&mut record, 0); // comment
+        put16(&mut record, 0); // the one disk
+        put16(&mut record, 0); // internal attributes
+        put32(&mut record, 0); // external attributes
+        put32(&mut record, *offset);
+        record.extend_from_slice(name.as_bytes());
+        out.write_all(&record)?;
+        size += record.len() as u64;
+    }
+
+    let mut eocd = Vec::with_capacity(EOCD_LEN);
+    put32(&mut eocd, EOCD_SIG);
+    put16(&mut eocd, 0); // this disk
+    put16(&mut eocd, 0); // the disk the directory starts on
+    put16(&mut eocd, u16::try_from(listed.len()).unwrap_or(u16::MAX));
+    put16(&mut eocd, u16::try_from(listed.len()).unwrap_or(u16::MAX));
+    put32(&mut eocd, fits(size, "the central directory")?);
+    put32(&mut eocd, directory);
+    put16(&mut eocd, 0); // no comment
+    out.write_all(&eocd)?;
+
+    out.into_inner()
+        .map_err(|e| Error::Io(e.into_error()))?
+        .sync_all()?;
+    Ok(())
+}
+
+/// `value` as the 32 bits a zip field holds, or [`Error::Malformed`] where it
+/// will not fit: this writer states no zip64.
+fn fits(value: u64, what: &str) -> Result<u32> {
+    u32::try_from(value)
+        .ok()
+        .filter(|v| *v != ZIP64_MARK)
+        .ok_or_else(|| Error::Malformed(format!("{what} is too large for a zip")))
+}
+
+fn put16(out: &mut Vec<u8>, value: u16) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn put32(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_le_bytes());
 }
 
 /// `rest` under `dest`, or `None` for `/etc/x`, `../x`, and anything else
@@ -537,6 +678,73 @@ mod tests {
         fs::write(&zip, b"<!DOCTYPE html>").unwrap();
         assert!(unpack(&zip, "bin/readinglog", &dir.join("out")).is_err());
         assert!(unpack(&dir.join("absent.zip"), "bin/readinglog", &dir.join("out")).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn what_the_writer_puts_in_the_reader_takes_out() {
+        let dir = tmpdir("written");
+        let jacket = dir.join("cover.jpg");
+        fs::write(&jacket, vec![0xABu8; 5_000]).unwrap();
+        let record = b"#readinglog\t2\nm\t260906:010231\n".to_vec();
+
+        let zip = dir.join("backup.zip");
+        write(
+            &zip,
+            &[
+                ("sessions.tsv".to_string(), Source::Bytes(&record)),
+                ("covers/B00OKPCRLG.jpg".to_string(), Source::File(&jacket)),
+            ],
+        )
+        .expect("an archive");
+
+        let mut read = Archive::open(&zip).expect("a readable archive");
+        let entries = read.entries().to_vec();
+        assert_eq!(
+            entries.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(),
+            ["sessions.tsv", "covers/B00OKPCRLG.jpg"]
+        );
+        assert_eq!(read.read(&entries[0]).unwrap(), record);
+        assert_eq!(read.read(&entries[1]).unwrap(), vec![0xABu8; 5_000]);
+        assert!(!dir.join("backup.partial").exists(), "the partial was left");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_archive_of_one_entry_reads_back() {
+        let dir = tmpdir("one-entry");
+        let zip = dir.join("one.zip");
+        write(&zip, &[("sessions.tsv".to_string(), Source::Bytes(b"x"))]).expect("an archive");
+
+        let mut read = Archive::open(&zip).expect("a readable archive");
+        let entries = read.entries().to_vec();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(read.read(&entries[0]).unwrap(), b"x");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_archive_of_nothing_still_reads_as_an_archive() {
+        let dir = tmpdir("empty");
+        let zip = dir.join("empty.zip");
+        write(&zip, &[]).expect("an archive");
+        assert!(
+            Archive::open(&zip)
+                .expect("a readable archive")
+                .entries()
+                .is_empty()
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_entry_naming_a_file_that_is_not_there_writes_no_archive() {
+        let dir = tmpdir("absent-source");
+        let zip = dir.join("nope.zip");
+        let missing = dir.join("gone.jpg");
+        assert!(write(&zip, &[("a.jpg".to_string(), Source::File(&missing))]).is_err());
+        assert!(!zip.exists(), "a failed write left an archive standing");
+        assert!(!dir.join("nope.partial").exists(), "the partial was left");
         let _ = fs::remove_dir_all(&dir);
     }
 }
