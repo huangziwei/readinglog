@@ -1,8 +1,6 @@
-//! The app's own archives, under [`BACKUPS_DIR`] beside the record. One holds
-//! a `sessions.tsv` and the jackets standing when it was written; taking it
-//! back is a merge, so an archive can be folded in twice and in any order.
-//!
-//! Nothing here reaches outside the extension's own directory.
+//! Archives under [`BACKUPS_DIR`]. Each holds a `sessions.tsv` and the files
+//! `covers::COVERS_DIR` held when [`keep_record`] wrote it. [`take`] merges
+//! one into a [`Store`].
 
 use std::path::{Path, PathBuf};
 
@@ -10,7 +8,7 @@ use crate::covers;
 use crate::store::Store;
 use crate::update::archive::{self, Archive, Source};
 
-/// The directory holding them, under the `dir` the store lives in.
+/// The directory holding them, under `dir`.
 pub const BACKUPS_DIR: &str = "backups";
 
 /// The record's name inside an archive.
@@ -50,14 +48,13 @@ pub fn dir(dir: &Path) -> PathBuf {
     dir.join(BACKUPS_DIR)
 }
 
-/// An archive's name. The stamp loses the mark's colon: the user partition is
-/// FAT, which will not take one in a name.
+/// An archive's name: `mark` with every `:` written as `-`.
 pub fn name(kind: Kind, mark: &str) -> String {
     format!("{}-{}.zip", kind.stem(), mark.replace(':', "-"))
 }
 
-/// Write `store` and, under `covers`, every jacket it holds into an archive
-/// named for `mark`. Answers where it landed.
+/// Write `store`, and under `jackets` every file in `covers::COVERS_DIR`,
+/// into an archive named for `mark`. Answers where it landed.
 pub fn keep_record(
     dir: &Path,
     store: &Store,
@@ -79,8 +76,8 @@ pub fn keep_record(
     Ok(at)
 }
 
-/// Write one book's rows, and its jacket where it has one, into an archive
-/// named for `mark`. Answers where it landed.
+/// Write `one` and the jacket `covers::path` names, into an archive named
+/// for `mark`. Answers where it landed.
 pub fn keep_book(dir: &Path, one: &Store, mark: &str) -> archive::Result<PathBuf> {
     let text = one.text();
     let mut entries: Vec<(String, Source<'_>)> =
@@ -105,8 +102,8 @@ pub fn keep_book(dir: &Path, one: &Store, mark: &str) -> archive::Result<PathBuf
     Ok(at)
 }
 
-/// Write the bytes of a record this build will not read whole into an archive
-/// of one entry. Answers where it landed.
+/// Write `text` into an archive of one entry, named for `mark`. Answers
+/// where it landed.
 pub fn keep_text(dir: &Path, text: &str, mark: &str) -> archive::Result<PathBuf> {
     let at = dir.join(BACKUPS_DIR).join(name(Kind::Record, mark));
     archive::write(&at, &[(RECORD.to_string(), Source::Bytes(text.as_bytes()))])?;
@@ -116,20 +113,16 @@ pub fn keep_text(dir: &Path, text: &str, mark: &str) -> archive::Result<PathBuf>
 /// What a whole-record reset keeps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Keep {
-    /// An archive of the record and every jacket, written before the wipe. The
-    /// jackets stay on disk as well.
+    /// An archive of the record and every jacket. `covers::COVERS_DIR` keeps
+    /// its files.
     Archive,
-    /// Nothing. The jacket cache goes with the record and the space comes
-    /// back.
+    /// Nothing. `covers::sweep` empties `covers::COVERS_DIR`.
     Nothing,
 }
 
-/// Empty the record and write it. Under [`Keep::Archive`] the archive is
-/// written first and a reset that cannot write one does not happen; under
-/// [`Keep::Nothing`] the jacket cache is deleted after the record is safely
-/// on disk. Answers the archive written, where one was.
-///
-/// Nothing outside `dir` is touched, and no log is opened at all.
+/// [`Store::wipe`] `store` and save it under `dir`. [`Keep::Archive`] writes
+/// an archive first and answers `Err` where that write fails. Answers the
+/// archive written.
 pub fn reset(dir: &Path, store: &mut Store, keep: Keep) -> archive::Result<Option<PathBuf>> {
     if store.mark.is_empty() {
         return Ok(None);
@@ -141,15 +134,14 @@ pub fn reset(dir: &Path, store: &mut Store, keep: Keep) -> archive::Result<Optio
     store.wipe();
     store.save(dir)?;
     if keep == Keep::Nothing {
-        // After the record is down: a crash between the two leaves jackets
-        // for books that are gone, which the next pass sweeps up anyway.
+        // After `save`: `Store::keep_covers` sweeps what a crash here leaves.
         covers::sweep(dir, &[]);
     }
     Ok(kept)
 }
 
-/// Every archive under `dir`, newest first. A file this does not recognise is
-/// left out of the list and alone on disk.
+/// Every archive under `dir`, newest first. A name no [`Kind::stem`] opens is
+/// left out.
 pub fn list(dir: &Path) -> Vec<Backup> {
     let Ok(entries) = std::fs::read_dir(self::dir(dir)) else {
         return Vec::new();
@@ -175,7 +167,7 @@ pub fn list(dir: &Path) -> Vec<Backup> {
     out
 }
 
-/// The record an archive holds, without touching anything on disk.
+/// The record the archive at `at` holds, through [`Store::from_archive`].
 pub fn peek(at: &Path) -> archive::Result<Store> {
     let mut open = Archive::open(at)?;
     let entry = open
@@ -185,33 +177,43 @@ pub fn peek(at: &Path) -> archive::Result<Store> {
         .cloned()
         .ok_or_else(|| archive::Error::NoMarker(RECORD.to_string()))?;
     let bytes = open.read(&entry)?;
-    Ok(Store::from_text(&String::from_utf8_lossy(&bytes)))
+    Ok(Store::from_archive(&String::from_utf8_lossy(&bytes)))
 }
 
-/// Fold the archive at `at` into `store` and put back any jacket the cache is
-/// missing. Answers how many sittings the record did not already hold.
-///
-/// A jacket already on disk is left alone: it is the copy the app made for
-/// itself, and it is no older than the archive's.
-pub fn take(dir: &Path, at: &Path, store: &mut Store) -> archive::Result<usize> {
+/// What taking an archive back did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Taken {
+    /// Sittings [`Store::merge`] added.
+    pub added: usize,
+    /// Whether `store` holds every row of the archive, and every jacket it
+    /// carried is a file on disk.
+    pub whole: bool,
+}
+
+/// Fold the archive at `at` into `store`, and write each jacket it carries
+/// that `covers::COVERS_DIR` does not hold. Answers what landed.
+pub fn take(dir: &Path, at: &Path, store: &mut Store) -> archive::Result<Taken> {
     let mut open = Archive::open(at)?;
     let entries = open.entries().to_vec();
     let mut added = 0;
+    let mut inside = Store::default();
+    let mut jackets: Vec<PathBuf> = Vec::new();
     for entry in entries.iter().filter(|e| !e.is_dir()) {
         if entry.path == RECORD {
             let bytes = open.read(entry)?;
-            added = store.merge(&Store::from_text(&String::from_utf8_lossy(&bytes)));
+            inside = Store::from_archive(&String::from_utf8_lossy(&bytes));
+            added = store.merge(&inside);
             continue;
         }
         let Some(named) = entry.path.strip_prefix(&format!("{}/", covers::COVERS_DIR)) else {
             continue;
         };
-        // A name of its own, never a path: an archive cannot write outside the
-        // jacket cache.
+        // A name, never a path: `out` stays under `covers::COVERS_DIR`.
         if named.is_empty() || named.contains('/') || named.starts_with('.') {
             continue;
         }
         let out = dir.join(covers::COVERS_DIR).join(named);
+        jackets.push(out.clone());
         if out.exists() {
             continue;
         }
@@ -221,7 +223,30 @@ pub fn take(dir: &Path, at: &Path, store: &mut Store) -> archive::Result<usize> 
         }
         std::fs::write(&out, &bytes)?;
     }
-    Ok(added)
+    Ok(Taken {
+        added,
+        whole: holds(store, &inside) && jackets.iter().all(|j| j.is_file()),
+    })
+}
+
+/// Whether `store` holds every sitting, end and book row of `inside`, on the
+/// identities `Store::sort` de-duplicates by.
+fn holds(store: &Store, inside: &Store) -> bool {
+    let sitting = |a: &crate::log::session::Session| {
+        store.sessions.iter().any(|s| {
+            s.started_at == a.started_at
+                && s.end_position == a.end_position
+                && s.ended_at == a.ended_at
+        })
+    };
+    inside.sessions.iter().all(sitting)
+        && inside.ends.iter().all(|e| store.ends.contains(e))
+        && inside.books.iter().all(|b| {
+            store
+                .books
+                .iter()
+                .any(|h| h.extent == b.extent && h.cde_key == b.cde_key)
+        })
 }
 
 /// How many bytes the jacket cache and the archives take under `dir`.
@@ -232,8 +257,7 @@ pub fn sizes(dir: &Path) -> (u64, u64) {
     )
 }
 
-/// The files directly under `at`, added up. Nothing recurses: neither
-/// directory holds another.
+/// The files directly under `at`, added up.
 fn weight(at: &Path) -> u64 {
     let Ok(entries) = std::fs::read_dir(at) else {
         return 0;
@@ -246,8 +270,7 @@ fn weight(at: &Path) -> u64 {
         .sum()
 }
 
-/// Every jacket under `dir`, as the name it goes into an archive under and the
-/// file it is copied from.
+/// Each `.jpg` under `covers::COVERS_DIR`, as its name and its path.
 fn jackets_under(dir: &Path) -> Vec<(String, PathBuf)> {
     let Ok(entries) = std::fs::read_dir(dir.join(covers::COVERS_DIR)) else {
         return Vec::new();
@@ -344,7 +367,7 @@ mod tests {
         let back = peek(&at).expect("a readable archive");
         assert_eq!(back.sessions.len(), 1);
         assert_eq!(back.books[0].title, "A Book");
-        // What is on disk is what was emptied, not what the store held before.
+        // `Store::load` reads the emptied record.
         assert!(Store::load(&dir).sessions.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -369,7 +392,7 @@ mod tests {
         let dir = scratch("blocked");
         let mut store = read_one(&dir);
         let before = store.clone();
-        // A file where the archive directory has to go.
+        // A file at the path `archive::write` needs a directory for.
         std::fs::write(self::dir(&dir), b"in the way").unwrap();
 
         assert!(reset(&dir, &mut store, Keep::Archive).is_err());
@@ -396,11 +419,62 @@ mod tests {
         let mut store = read_one(&dir);
         let at = reset(&dir, &mut store, Keep::Archive).unwrap().unwrap();
 
-        assert_eq!(take(&dir, &at, &mut store).expect("a merge"), 1);
+        let taken = take(&dir, &at, &mut store).expect("a merge");
+        assert_eq!((taken.added, taken.whole), (1, true));
         assert_eq!(store.sessions.len(), 1);
         assert_eq!(store.books.len(), 1);
-        assert_eq!(take(&dir, &at, &mut store).expect("a merge"), 0);
+
+        // The same rows, from a copy of the archive.
+        let again = dir.join("again.zip");
+        std::fs::copy(&at, &again).unwrap();
+        let taken = take(&dir, &again, &mut store).expect("a merge");
+        assert_eq!((taken.added, taken.whole), (0, true));
         assert_eq!(store.sessions.len(), 1, "the sitting came back twice");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_archive_of_a_superseded_record_gives_back_its_sittings() {
+        let dir = scratch("superseded");
+        let _ = read_one(&dir);
+        // `HEADER` replaced by one this build does not open.
+        let text = std::fs::read_to_string(Store::file(&dir)).unwrap();
+        let at = keep_text(
+            &dir,
+            &text.replacen("#readinglog\t2", "#readinglog\t1", 1),
+            "260810:120000",
+        )
+        .expect("an archive");
+
+        // `peek` reads every row, through `Store::from_archive`.
+        assert!(peek(&at).expect("a readable archive").sessions.len() == 1);
+        let mut empty = Store::default();
+        let taken = take(&dir, &at, &mut empty).expect("a merge");
+        assert_eq!(taken.added, 1, "the era stayed in the file");
+        assert!(taken.whole, "and could never be told from a whole one");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_archive_the_record_did_not_take_whole_is_not_the_apps_to_delete() {
+        let dir = scratch("partial");
+        let mut store = read_one(&dir);
+        let at = reset(&dir, &mut store, Keep::Archive).unwrap().unwrap();
+
+        // `holds` over a record carrying the rows, and over one carrying none.
+        let inside = peek(&at).expect("a readable archive");
+        assert!(holds(
+            &{
+                let mut whole = Store::default();
+                whole.merge(&inside);
+                whole
+            },
+            &inside
+        ));
+        assert!(
+            !holds(&Store::default(), &inside),
+            "an empty record holds none of it"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -448,10 +522,10 @@ mod tests {
             ["sessions.tsv", "covers/B00OKPCRLG.jpg"]
         );
 
-        // And it is the way back: clear the book, take the archive, it stands.
+        // `take` after `clear_book` puts the book back.
         store.clear_book(148_207, "B00OKPCRLG");
         assert!(store.sessions.is_empty());
-        assert_eq!(take(&dir, &at, &mut store).expect("a merge"), 1);
+        assert_eq!(take(&dir, &at, &mut store).expect("a merge").added, 1);
         assert_eq!(store.sessions.len(), 1);
         assert_eq!(store.books[0].title, "A Book");
         let _ = std::fs::remove_dir_all(&dir);

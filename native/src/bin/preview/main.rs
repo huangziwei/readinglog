@@ -296,6 +296,16 @@ fn thinned_for(shot: &Shot, opts: &Opts, art: &Path) -> Option<Store> {
             store.floor = "260810:120000".into();
             return Some(store);
         }
+        // The book listed last cleared, its record kept: it sorts last either
+        // way, so every other index stands.
+        ("book" | "books", Some(of)) if of.ends_with("cleared") => {
+            let mut store = fixture::library(opts.day, art);
+            let last = Stats::build(&store, opts.day, true).books.last()?.clone();
+            let (extent, key) = (last.extent, last.cde_key);
+            store.mark = "260916:200000".into();
+            store.clear_book(extent, &key);
+            return Some(store);
+        }
         _ => return None,
     };
     Some(fixture::thinned(opts.day, art, keep))
@@ -345,6 +355,7 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
         "book" => {
             let of = shot.of.as_deref().unwrap_or("0");
             let (at, asking) = match of.split_once(':') {
+                Some((at, "cleared")) => (at, None),
                 Some((at, name)) => (at, Some(question(name)?)),
                 None => (of, None),
             };
@@ -583,7 +594,7 @@ fn list() {
             }
             "today" => "  (:quiet :empty :busy)",
             "book" => {
-                "  (:<index> :<index>:restart :<index>:mark :<index>:unmark\n   :<index>:clear)"
+                "  (:<index> :<index>:restart :<index>:mark :<index>:unmark\n   :<index>:clear :<index>:cleared)"
             }
             "config" => "  (:reset :nobackup :restore :logs :many :many2)",
             "books" => {

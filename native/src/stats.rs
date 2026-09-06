@@ -7,6 +7,10 @@ use crate::log::session::{Measure, Session};
 use crate::settings::WeekStart;
 use crate::store::{BookRecord, FINISHED_PERCENT, Store};
 
+/// The day a book with no reading stands on. Every screen reads `days` and
+/// `sittings` for that, and draws no date.
+pub const NO_DAY: i64 = i64::MIN;
+
 /// One book, with everything ever read in it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BookStat {
@@ -260,6 +264,19 @@ impl Stats {
                 Ok(i) => out.days[i].1 += s.seconds,
                 Err(i) => out.days.insert(i, (day, s.seconds)),
             }
+        }
+
+        // A book `Store::clear_book` emptied has no sitting to be found by,
+        // and is listed at zero.
+        for record in store.books.iter().filter(|b| b.kept && b.is_book()) {
+            let extent = match record.extent {
+                0 => continue,
+                stated => stated,
+            };
+            if out.books.iter().any(|b| b.extent == extent) {
+                continue;
+            }
+            out.books.push(fresh(extent, record, NO_DAY));
         }
 
         for (slot, book) in out.books.iter_mut().enumerate() {
@@ -600,9 +617,10 @@ impl Stats {
     /// Most recently read first, and within a day the one put down last.
     fn sort_books(&mut self) {
         let mut order: Vec<usize> = (0..self.books.len()).collect();
+        // Reversed, never negated: [`NO_DAY`] has no negation to take.
         order.sort_by_key(|&i| {
             let b = &self.books[i];
-            (-b.last_day, -b.last_secs, -b.seconds)
+            std::cmp::Reverse((b.last_day, b.last_secs, b.seconds))
         });
         // Every sitting names its book by slot.
         let mut moved: Vec<usize> = vec![0; order.len()];
@@ -1137,6 +1155,56 @@ mod tests {
             floor: String::new(),
             cleared: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_book_cleared_and_kept_is_listed_at_zero() {
+        let mut store = store();
+        let before = Stats::build(&store, day(2026, 8, 7), true);
+        assert_eq!(before.books[0].sittings, 3);
+
+        store.clear_book(148_209, "B00OKPCRLG");
+        let after = Stats::build(&store, day(2026, 8, 7), true);
+        let book = after
+            .books
+            .iter()
+            .find(|b| b.extent == 148_209)
+            .expect("the book, kept");
+        assert_eq!(book.title, "The Jewish Study Bible");
+        assert_eq!(
+            (book.sittings, book.seconds, book.days, book.page_turns),
+            (0, 0, 0, 0)
+        );
+        assert_eq!(book.first_day, NO_DAY, "no day to draw");
+        assert_eq!(
+            after.total_seconds,
+            before.total_seconds - before.books[0].seconds,
+            "the reading went out of every total"
+        );
+    }
+
+    #[test]
+    fn a_book_forgotten_is_listed_no_longer() {
+        let mut store = store();
+        store.forget_book(148_209, "B00OKPCRLG");
+        let after = Stats::build(&store, day(2026, 8, 7), true);
+        assert!(after.books.is_empty(), "the record went with the reading");
+    }
+
+    #[test]
+    fn a_book_cleared_and_kept_sorts_under_one_with_reading() {
+        let mut store = store();
+        store.books.push(BookRecord {
+            extent: 900_001,
+            cde_key: "B00KEPT".into(),
+            title: "Kept".into(),
+            kept: true,
+            ..BookRecord::default()
+        });
+        let stats = Stats::build(&store, day(2026, 8, 7), true);
+        assert_eq!(stats.books.len(), 2);
+        assert_eq!(stats.books[0].extent, 148_209, "the one with reading first");
+        assert_eq!(stats.books[1].title, "Kept");
     }
 
     #[test]

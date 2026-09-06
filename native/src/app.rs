@@ -242,9 +242,7 @@ impl App {
         let settings = self.settings.clone();
         let colour = self.colour;
         let state = self.state.clone();
-        // The archives are read off disk here, on the frame that draws them:
-        // it is a handful of names, and it is how a reset or a restore shows
-        // up on the row that made it without a cache to keep in step.
+        // `backup::list` runs on the frame that draws its row.
         let record = match state.tab == Tab::Config && state.book.is_none() {
             true => view::config::Record::of(
                 &self.stats,
@@ -374,9 +372,8 @@ impl App {
             }
         }
 
-        // A worker that panicked left nothing in place: moving the new copy in
-        // is the last thing it does, and every step of that answers rather
-        // than unwinds.
+        // `worker` moves the new copy in as its last step, and every step of
+        // that answers.
         let outcome = worker
             .join()
             .unwrap_or(Outcome::Failed(update::Failure::NotPlaced));
@@ -755,8 +752,7 @@ impl App {
                 about,
                 sittings: self.stats.sittings.len(),
                 books: self.stats.books.len(),
-                // What the archive will weigh, or what deleting the cache
-                // gives back.
+                // The archive's weight, or the room `covers::sweep` returns.
                 bytes: match keep {
                     true => jackets + self.store.text().len() as u64,
                     false => jackets,
@@ -768,8 +764,7 @@ impl App {
                 let Some(backup) = held.get(at) else {
                     return Action::Nothing;
                 };
-                // Read once, here: what the archive holds is what the question
-                // is about.
+                // `peek` once: the figures the question states.
                 let inside = crate::backup::peek(&backup.path).unwrap_or_default();
                 view::Confirm {
                     about,
@@ -809,8 +804,7 @@ impl App {
         match crate::backup::reset(&dir, &mut self.store, keeping) {
             Ok(Some(at)) => eprintln!("reset: the record is kept at {}", at.display()),
             Ok(None) => {}
-            // Nothing was emptied: `reset` writes the archive first and stops
-            // on a failure.
+            // `reset` writes the archive first and leaves `store` on a failure.
             Err(err) => {
                 eprintln!("reset: nothing was reset — {err}");
                 return Action::Redraw;
@@ -830,9 +824,27 @@ impl App {
         };
         let dir = self.dir.clone();
         match crate::backup::take(&dir, &backup.path, &mut self.store) {
-            Ok(added) => {
-                eprintln!("restore: {added} sittings from {}", backup.path.display());
+            Ok(taken) => {
+                eprintln!(
+                    "restore: {} sittings from {}",
+                    taken.added,
+                    backup.path.display()
+                );
                 self.store_it("restore");
+                // `Taken::whole`: `store` holds every row the archive carried.
+                if taken.whole {
+                    match std::fs::remove_file(&backup.path) {
+                        Ok(()) => {
+                            eprintln!("restore: {} is now in the record", backup.path.display())
+                        }
+                        Err(err) => eprintln!("restore: {} stands — {err}", backup.path.display()),
+                    }
+                } else {
+                    eprintln!(
+                        "restore: {} holds more than the record took",
+                        backup.path.display()
+                    );
+                }
             }
             Err(err) => eprintln!("restore: {} would not open — {err}", backup.path.display()),
         }
@@ -871,7 +883,7 @@ impl App {
         };
         eprintln!("clear: {went} sittings, forget {forget}");
         self.store_it("clear");
-        // Off every list: the book's own screen is gone with its sittings.
+        // `Stats::books` drops a book with no sittings.
         self.state.book = None;
         self.covers.forget();
         self.rebuild();

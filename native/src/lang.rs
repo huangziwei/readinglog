@@ -494,8 +494,9 @@ const ENGLISH: Strings = Strings {
                   that, and books no longer in your library, cannot come back.",
     nowipe_do: "Reset, no backup",
     restore_ask: "Bring this back?",
-    restore_note: "{file} holds {what}. Whatever the record already has is left \
-                   as it stands, so nothing is counted twice.",
+    restore_note: "{file} holds {what}. Whatever the record already has is \
+                   left as it stands, so nothing is counted twice. The backup \
+                   itself goes once all of it is back in the record.",
     restore_do: "Restore",
     rebuild_ask: "Read the Kindle's logs again?",
     rebuild_note: "Every log the device still holds is read from the start, \
@@ -505,10 +506,10 @@ const ENGLISH: Strings = Strings {
     rebuild_do: "Read them",
     clear: "Clear",
     clear_ask: "Clear this book's reading?",
-    clear_note: "{what} go, and the book leaves your lists until you read it \
-                 again. Keeping it holds its title, cover and progress; \
-                 forgetting it takes those too. A copy is saved first, under \
-                 Backups.",
+    clear_note: "{what} go, and the book goes back to 0%. Keeping it leaves it \
+                 on your lists with nothing against it; forgetting it takes \
+                 the title, the author and the cover as well. A copy is saved \
+                 first, under Backups.",
     streak_note: "Your longest streak goes from {a} days to {b}.",
     clear_keep: "Keep the book",
     clear_forget: "Forget it too",
@@ -695,7 +696,9 @@ const GERMAN: Strings = Strings {
     nowipe_do: "Ohne Sicherung",
     restore_ask: "Das zurückholen?",
     restore_note: "{file} enthält {what}. Was die Aufzeichnung schon hat, \
-                   bleibt unverändert, also wird nichts doppelt gezählt.",
+                   bleibt unverändert, also wird nichts doppelt gezählt. Die \
+                   Sicherung selbst wird gelöscht, sobald alles wieder in der \
+                   Aufzeichnung steht.",
     restore_do: "Zurückholen",
     rebuild_ask: "Die Protokolle erneut lesen?",
     rebuild_note: "Jedes Protokoll auf dem Gerät wird von vorn gelesen, was \
@@ -705,10 +708,10 @@ const GERMAN: Strings = Strings {
     rebuild_do: "Erneut lesen",
     clear: "Löschen",
     clear_ask: "Die Zeiten dieses Buches löschen?",
-    clear_note: "{what} werden gelöscht; das Buch verlässt die Listen, bis du \
-                 es wieder liest. Bleibt es, bleiben Titel, Bild und \
-                 Fortschritt, sonst gehen auch diese. Eine Kopie wird \
-                 gesichert.",
+    clear_note: "{what} werden gelöscht, und das Buch steht wieder bei 0 %. \
+                 Bleibt es, steht es ohne Werte auf den Listen; wird es \
+                 vergessen, gehen auch Titel, Autor und Bild. Eine Kopie wird \
+                 vorher gesichert.",
     streak_note: "Längste Serie: von {a} auf {b} Tage.",
     clear_keep: "Buch behalten",
     clear_forget: "Auch vergessen",
@@ -892,7 +895,8 @@ const JAPANESE: Strings = Strings {
                   それより古い読書と、ライブラリにない本は戻りません。",
     nowipe_do: "保存せずリセット",
     restore_ask: "これを戻しますか？",
-    restore_note: "{file} には{what}が入っています。すでにある記録はそのままなので、二重には数えません。",
+    restore_note: "{file} には{what}が入っています。すでにある記録はそのままなので、二重には数えません。\
+                   すべてが記録に戻ると、このバックアップ自体は削除されます。",
     restore_do: "戻す",
     rebuild_ask: "Kindleのログを読み直しますか？",
     rebuild_note: "端末に残っているログを最初から読み直します。数分かかります。\
@@ -901,9 +905,8 @@ const JAPANESE: Strings = Strings {
     rebuild_do: "読み直す",
     clear: "消去",
     clear_ask: "この本の読書記録を消去しますか？",
-    clear_note: "{what}を削除します。本を残せば題名・表紙・進捗はそのまま残り、\
-                 一緒に消せばそれらも消えて、次に読むまで一覧から外れます。\
-                 控えは先に保存されます。",
+    clear_note: "{what}を削除し、進捗は0%に戻ります。本を残せば数値のない状態で一覧に残り、\
+                 一緒に消せば題名・著者・表紙も消えます。控えは先に保存されます。",
     streak_note: "最長連続日数は{a}日から{b}日になります。",
     clear_keep: "本は残す",
     clear_forget: "本も消す",
@@ -1074,7 +1077,8 @@ const SIMPLIFIED: Strings = Strings {
                   更早的阅读，以及已不在书库中的书，无法恢复。",
     nowipe_do: "不备份重置",
     restore_ask: "取回这一份？",
-    restore_note: "{file} 中有{what}。记录里已有的内容保持不变，因此不会重复计入。",
+    restore_note: "{file} 中有{what}。记录里已有的内容保持不变，因此不会重复计入。\
+                   全部回到记录后，这份备份本身会被删除。",
     restore_do: "取回",
     rebuild_ask: "重新读取 Kindle 日志？",
     rebuild_note: "设备上仍保留的日志会从头读一遍，需要几分钟。现有记录不会丢失。\
@@ -1082,9 +1086,8 @@ const SIMPLIFIED: Strings = Strings {
     rebuild_do: "重新读取",
     clear: "清除",
     clear_ask: "清除这本书的阅读记录？",
-    clear_note: "将删除{what}。保留书籍时，书名、封面和进度都会留下；\
-                 一并移除时它们也会消失，直到再次阅读才会回到列表。\
-                 系统会先保存一份副本。",
+    clear_note: "将删除{what}，进度回到 0%。保留书籍时，它仍在列表中，只是没有任何数值；\
+                 一并移除时，书名、作者和封面也会消失。系统会先保存一份副本。",
     streak_note: "最长连续天数将从 {a} 天变为 {b} 天。",
     clear_keep: "保留书籍",
     clear_forget: "一并移除",
@@ -1264,7 +1267,8 @@ const TRADITIONAL: Strings = Strings {
                   更早的閱讀，以及已不在書庫中的書，無法復原。",
     nowipe_do: "不備份重設",
     restore_ask: "取回這一份？",
-    restore_note: "{file} 中有{what}。記錄裡已有的內容保持不變，因此不會重複計入。",
+    restore_note: "{file} 中有{what}。記錄裡已有的內容保持不變，因此不會重複計入。\
+                   全部回到記錄後，這份備份本身會被刪除。",
     restore_do: "取回",
     rebuild_ask: "重新讀取 Kindle 日誌？",
     rebuild_note: "裝置上仍保留的日誌會從頭讀一遍，需要幾分鐘。現有記錄不會遺失。\
@@ -1272,9 +1276,8 @@ const TRADITIONAL: Strings = Strings {
     rebuild_do: "重新讀取",
     clear: "清除",
     clear_ask: "清除這本書的閱讀記錄？",
-    clear_note: "將刪除{what}。保留書籍時，書名、封面和進度都會留下；\
-                 一併移除時它們也會消失，直到再次閱讀才會回到列表。\
-                 系統會先儲存一份副本。",
+    clear_note: "將刪除{what}，進度回到 0%。保留書籍時，它仍在列表中，只是沒有任何數值；\
+                 一併移除時，書名、作者和封面也會消失。系統會先儲存一份副本。",
     streak_note: "最長連續天數將從 {a} 天變為 {b} 天。",
     clear_keep: "保留書籍",
     clear_forget: "一併移除",

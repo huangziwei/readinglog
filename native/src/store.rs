@@ -49,6 +49,9 @@ pub struct BookRecord {
     pub restart: Option<f64>,
     /// The catalog's `p_readState`, negative where it states none.
     pub read_state: i64,
+    /// Whether [`Store::clear_book`] took this book's reading. `Stats::build`
+    /// lists the book at zero while it stands.
+    pub kept: bool,
 }
 
 impl BookRecord {
@@ -161,19 +164,8 @@ impl Store {
         Self::from_text(&text)
     }
 
-    /// Read the record, keeping a copy of one this build will not read whole.
-    ///
-    /// [`Self::load`] gives up `sessions` and `mark` under a stamp it does not
-    /// know, on the contract that the next pass measures them again. The
-    /// record outgrew that contract: it holds more days than the device keeps
-    /// log for, and under a floor the pass may not look at all. So the file
-    /// goes into an archive first, whole and unaltered.
-    ///
-    /// Restoring that archive takes back its books and its ends, never its
-    /// sittings: those were measured by the parser this build supersedes, and
-    /// `from_text` refuses them there for the same reason it refuses them
-    /// here. What the archive is, is the file itself, kept where the reader
-    /// can copy it off.
+    /// [`Self::load`], with `backup::keep_text` writing the file whole under
+    /// `backup::BACKUPS_DIR` where its first line is not [`HEADER`].
     pub fn open(dir: &Path) -> Self {
         let Ok(text) = std::fs::read_to_string(Self::file(dir)) else {
             return Self::default();
@@ -190,9 +182,20 @@ impl Store {
         Self::from_text(&text)
     }
 
-    /// [`Self::load`] over text already in hand, which is how an archive's own
-    /// copy of the record is read.
+    /// [`Self::load`] over `text` in hand.
     pub fn from_text(text: &str) -> Self {
+        Self::parse(text, true)
+    }
+
+    /// Every row `text` holds, whatever stamp it carries. What `backup::take`
+    /// folds in, against [`Self::from_text`] on a load.
+    pub fn from_archive(text: &str) -> Self {
+        Self::parse(text, false)
+    }
+
+    /// The rows of `text`. Under `gated` a stamp this build does not know
+    /// gives up `sessions` and `mark`.
+    fn parse(text: &str, gated: bool) -> Self {
         let mut out = Self::default();
         let mut stamped = false;
         for line in text.lines() {
@@ -215,7 +218,7 @@ impl Store {
                 _ => {}
             }
         }
-        if !stamped {
+        if gated && !stamped {
             out.sessions.clear();
             out.mark.clear();
         }
@@ -297,10 +300,9 @@ impl Store {
         mark - ended < SESSION_GAP_SECS
     }
 
-    /// Fold a batch of log lines into the store. Every sitting at or after
-    /// `from` is dropped and replaced by what `lines` measured; a sitting in
-    /// progress is re-measured whole on each pass. A sitting under the floor,
-    /// or under the stamp of a `c` row, is measured and then let go.
+    /// Fold `lines` into the store. Every sitting at or after `from` is
+    /// dropped and replaced by what `lines` measured; a sitting [`Self::barred`]
+    /// answers for is dropped.
     pub fn absorb(&mut self, lines: &[String], from: &str) -> (usize, usize) {
         let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
         let parsed = crate::log::parse_sessions(refs.iter().copied());
@@ -335,11 +337,8 @@ impl Store {
         (found.saturating_sub(dropped), dropped.min(found))
     }
 
-    /// Whether this record refuses `session`: it starts under the floor, or
-    /// under the stamp of the `c` row naming its book.
-    ///
-    /// The floor is checked here and not only against the log's watermark, so
-    /// the guarantee holds however the lines reached this pass.
+    /// Whether `session` starts under [`Self::floor`], or under the stamp of
+    /// the `c` row naming its book.
     fn barred(&self, session: &Session) -> bool {
         if !self.floor.is_empty() && session.started_at < iso_stamp(&self.floor) {
             return true;
@@ -389,17 +388,9 @@ impl Store {
         }
     }
 
-    /// Read the device's whole log into a record of its own and fold it in,
-    /// answering how many sittings this record did not already hold.
-    ///
-    /// The parse goes into a store of its own and comes back through
-    /// [`Self::merge`], so nothing already held can be lost: run against this
-    /// record, [`Self::absorb`] with no watermark would drop every sitting and
-    /// let the log restate the lot — and the log is younger than the record.
-    ///
-    /// The floor comes off, the reader having just asked for what stood under
-    /// it. The `c` rows do not: a book taken off the record was taken off on
-    /// purpose, one book at a time.
+    /// Parse the whole log into a [`Store`] of its own and fold it in through
+    /// [`Self::merge`]. Clears [`Self::floor`], keeps the `c` rows. Answers
+    /// the sittings [`Self::merge`] added.
     pub fn rebuild(&mut self, on: &mut dyn FnMut(usize, usize)) -> usize {
         self.rebuild_from(
             Path::new(source::LIVE_LOG),
@@ -605,15 +596,9 @@ impl Store {
         changed
     }
 
-    /// Empty the record: the sittings, the books and the ends all go, and
-    /// [`Self::floor`] takes the mark so no later pass reads under it.
-    ///
-    /// [`Self::mark`] stands, and so do the `c` rows — every one of them is at
-    /// or under the new floor, and they are what keeps a book taken off the
-    /// record from returning when the log is read whole again. Answers whether
-    /// anything was there to wipe.
-    ///
-    /// A record with no mark has read nothing, and has no instant to floor.
+    /// Clear `sessions`, `books` and `ends`, and set [`Self::floor`] from
+    /// [`Self::mark`]. `mark` and the `c` rows stand. Answers false where
+    /// `mark` is empty.
     pub fn wipe(&mut self) -> bool {
         if self.mark.is_empty() {
             return false;
@@ -625,13 +610,9 @@ impl Store {
         true
     }
 
-    /// Fold another record's sittings, ends and books into this one, answering
-    /// how many sittings it did not already hold.
-    ///
-    /// [`Self::sort`] de-duplicates, and its sorts are stable, so folding the
-    /// same record in twice is folding it in once, and where both hold a book
-    /// this record's own row stands. Neither [`Self::floor`] nor the `c` rows
-    /// move: they hold back the parser, and a record is not a parse.
+    /// Fold `other`'s sittings, ends and books into this one, through
+    /// [`Self::sort`]. [`Self::floor`] and the `c` rows stand. Answers the
+    /// sittings added.
     pub fn merge(&mut self, other: &Store) -> usize {
         let before = self.sessions.len();
         self.sessions.extend(other.sessions.iter().cloned());
@@ -641,11 +622,9 @@ impl Store {
         self.sessions.len() - before
     }
 
-    /// One book's rows as a record of its own: its own `b` row, the sittings
-    /// credited to it, and the `e` rows that place them. Empty where the
-    /// record holds no such book.
-    ///
-    /// What an archive carries before that book is cleared or forgotten.
+    /// One book's rows as a [`Store`]: its `b` row, the sittings
+    /// [`Self::slot_for`] places on it, and the `e` rows keying them. Empty
+    /// where `extent` and `key` reach no record.
     pub fn one_book(&self, extent: i64, key: &str) -> Store {
         let Some(slot) = self.slot_for(extent, Some(key)) else {
             return Store::default();
@@ -668,27 +647,28 @@ impl Store {
             sessions,
             ends,
             books: vec![self.books[slot].clone()],
-            // The stamps belong to the record as a whole and never to a book.
+            // `mark`, `floor` and the `c` rows key the record, not one book.
             mark: String::new(),
             floor: String::new(),
             cleared: Vec::new(),
         }
     }
 
-    /// Put one book's reading back to zero: its sittings go, and a `c` row
-    /// stops a later parse handing them back. The record stands, holding the
-    /// title, the cover and the place. Answers how many sittings went.
+    /// Put one book back to zero: its sittings go, a `c` row holds a later
+    /// parse off them, [`Self::restart`] takes the place, and
+    /// [`BookRecord::kept`] keeps it listed. Answers the sittings dropped.
     pub fn clear_book(&mut self, extent: i64, key: &str) -> usize {
-        self.drop_reading(extent, key)
+        let went = self.drop_reading(extent, key);
+        self.restart(extent, key);
+        if let Some(slot) = self.slot_for(extent, Some(key)) {
+            self.books[slot].kept = true;
+        }
+        went
     }
 
-    /// Take one book off the record altogether: its reading goes the way
-    /// [`Self::clear_book`] takes it, and its record goes with it. Answers how
-    /// many sittings went.
-    ///
-    /// The catalog writes a fresh record on the next pass for a book still in
-    /// the library; for one that has left it, this is the last copy of the
-    /// title, the author and the cover on the machine.
+    /// [`Self::clear_book`], and the `b` row with it. Answers the sittings
+    /// dropped. [`Self::remember`] writes a fresh record for a book the
+    /// catalog names.
     pub fn forget_book(&mut self, extent: i64, key: &str) -> usize {
         let went = self.drop_reading(extent, key);
         if let Some(slot) = self.slot_for(extent, Some(key)) {
@@ -703,8 +683,7 @@ impl Store {
             return 0;
         };
         let kept: Vec<Session> = {
-            // A sitting is this book's where it lands on this book's record,
-            // which is the placement `Stats::build` draws it under.
+            // A sitting landing on this record, as `Stats::build` places one.
             let mine = |s: &Session| {
                 self.slot_for(self.extent_of(s.end_position), s.asin.as_deref()) == Some(slot)
             };
@@ -712,8 +691,7 @@ impl Store {
         };
         let went = self.sessions.len() - kept.len();
         self.sessions = kept;
-        // An empty mark means no pass has read anything, so there is no
-        // instant to hold a later parse below.
+        // An empty `mark` names no instant to hold a parse below.
         if !self.mark.is_empty() {
             self.cleared.push(Cleared {
                 extent: self.books[slot].extent,
@@ -806,6 +784,7 @@ fn taken(book: &Book) -> BookRecord {
         restart: None,
         // What `take_mark` reads to answer whether `book` states a new mark.
         read_state: -1,
+        kept: false,
     };
     record.take_mark(book.read_state);
     record
@@ -840,7 +819,7 @@ fn merge(record: &mut BookRecord, book: &Book) {
 
 fn write_book(b: &BookRecord) -> String {
     format!(
-        "b\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "b\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         b.extent,
         flat(&b.cde_key),
         flat(&b.title),
@@ -855,6 +834,7 @@ fn write_book(b: &BookRecord) -> String {
         b.restart.map(|p| format!("{p:.6}")).unwrap_or_default(),
         b.read_state,
         flat(&b.cde_type),
+        u8::from(b.kept),
     )
 }
 
@@ -879,6 +859,7 @@ fn read_book<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<BookRecord> {
         // -1, which `take_mark` reads as a value the next catalog pass renews.
         read_state: next().trim().parse().unwrap_or(-1),
         cde_type: next().to_string(),
+        kept: next().trim() == "1",
     })
     // `read_through` marks a record the row left unmarked.
     .map(|mut record: BookRecord| {
@@ -1166,8 +1147,7 @@ mod tests {
         assert_eq!(held.len(), 1, "the record was not kept");
         assert_eq!(held[0].stamp, "260810-120000", "named for the mark");
 
-        // The file is in there whole, which is what a reader copying it off
-        // over USB has.
+        // The entry holds every `s` row of the record.
         let mut open =
             crate::update::archive::Archive::open(&held[0].path).expect("a readable archive");
         let entry = open.entries()[0].clone();
@@ -1175,11 +1155,10 @@ mod tests {
         let text = String::from_utf8_lossy(&bytes);
         assert_eq!(text.lines().filter(|l| l.starts_with("s\t")).count(), 3);
 
-        // What this build will take back from it is what its own parser never
-        // measured: the names, and not the sittings.
+        // `peek` reads every row, through `Store::from_archive`.
         let inside = crate::backup::peek(&held[0].path).expect("a readable archive");
-        assert!(inside.sessions.is_empty(), "another parser's measurements");
-        assert_eq!(inside.books.len(), 2, "the names were not the parser's");
+        assert_eq!(inside.sessions.len(), 3, "the era stayed in the file");
+        assert_eq!(inside.books.len(), 2);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1749,9 +1728,12 @@ mod tests {
         assert_eq!(store.sessions[0].end_position, 938_018);
         assert_eq!(store.books.len(), 2, "the record stands");
         let held = &store.books[0];
-        assert_eq!(held.title, "A Book");
-        assert!(held.finished, "the place is not the reading");
-        assert_eq!(held.restart, Some(62.0));
+        assert_eq!(held.title, "A Book", "the record stands, and names itself");
+        assert!(held.kept, "and stands on the lists at zero");
+        // `restart` took `finished` and `percent` with the sittings.
+        assert!(!held.finished);
+        assert_eq!(held.percent, 0.0);
+        assert_eq!(held.restart, Some(62.0), "the place it gave up");
         assert_eq!(
             store.cleared,
             vec![Cleared {
@@ -1785,7 +1767,7 @@ mod tests {
     fn a_cleared_book_is_not_re_derived_by_the_whole_log() {
         let mut store = two_books();
         store.clear_book(148_207, "B00OKPCRLG");
-        // The log still holds every line the book was measured from.
+        // Every line the book was measured from.
         let lines = vec![
             page("260807:101501", 7_390_020),
             page("260807:101543", 7_431_463),
@@ -1897,7 +1879,7 @@ mod tests {
         .expect("a log to read");
 
         let mut store = Store {
-            // Older than anything the log still holds.
+            // Older than the lines `live` holds.
             sessions: vec![session(
                 "2026-07-01T09:00:00",
                 "2026-07-01T09:30:00",
@@ -1979,7 +1961,7 @@ mod tests {
         store.floor = "260810:120000".into();
         let held = store.cleared.clone();
 
-        // The archive still holds what the book had.
+        // What an archive of the book holds.
         let mut coming_back = Store::default();
         coming_back.sessions.push(session(
             "2026-08-07T10:15:01",
@@ -2028,8 +2010,7 @@ mod tests {
             page("260807:101501", 7_390_020),
             page("260807:101543", 7_431_463),
         ];
-        // Cleared after the sitting ran, which is every clear: the stamp is the
-        // mark, and the mark stands past everything already read.
+        // A `c` row stamped past the sitting, as `drop_reading` writes one.
         let mut store = having_cleared("260807:120000");
         let (added, extended) = store.absorb(&lines, "");
         assert_eq!((added, extended), (0, 0));

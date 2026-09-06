@@ -22,6 +22,9 @@ const TITLE_LINES: usize = 2;
 /// Rows of figures the reading section lists.
 const LINES: usize = 10;
 
+/// What a row states in place of a figure it has none of.
+const DASH: &str = "—";
+
 /// The cover's height: four rows.
 fn cover_height(theme: &Theme) -> i32 {
     theme.row_h * 4
@@ -170,15 +173,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
     // [`figures`] states the other three.
     let lines: [(&str, String); LINES] = [
         (s.sittings, book.sittings.to_string()),
-        (
-            s.days,
-            format!(
-                "{} {} {}",
-                book.days,
-                s.of,
-                (book.last_day - book.first_day + 1).max(1)
-            ),
-        ),
+        (s.days, days_note(&book, s)),
         (s.average_a_day, date::duration(book.per_day(), s)),
         (s.average_a_sitting, date::duration(book.per_sitting(), s)),
         (s.words, date::words(book.words)),
@@ -186,8 +181,8 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
             s.reading_speed,
             book.wpm().map_or("—".into(), |w| format!("{w} {}", s.wpm)),
         ),
-        (s.started, date::year_day(book.first_day, s)),
-        (s.last_read, date::year_day(book.last_day, s)),
+        (s.started, day_note(book.first_day, &book, s)),
+        (s.last_read, day_note(book.last_day, &book, s)),
         (s.finished_on, finished_note(&book, s)),
         (s.on_the_device, where_note(&book, s)),
     ];
@@ -196,8 +191,9 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
         chrome::row(cx.fb, cx.text, theme, *row, key, value);
     }
 
-    // A `chart` shallower than its heading and a row draws no column.
-    if chart.h < head_h + theme.row_h {
+    // A `chart` shallower than its heading and a row draws no column, and a
+    // book with no sitting has none to draw.
+    if chart.h < head_h + theme.row_h || book.sittings == 0 {
         return;
     }
 
@@ -439,12 +435,33 @@ fn where_note(book: &BookStat, s: &Strings) -> String {
     }
 }
 
-/// The day a book read through was last put down, which is the day it counts
-/// as finished on. A book short of the end states none.
+/// The day a book read through was last put down. A book short of the end,
+/// or one with no reading, states none.
 fn finished_note(book: &BookStat, s: &Strings) -> String {
     match book.is_finished() {
-        true => date::year_day(book.last_day, s),
-        false => "—".into(),
+        true => day_note(book.last_day, book, s),
+        false => DASH.into(),
+    }
+}
+
+/// `day`, and [`DASH`] for a book carrying no reading.
+fn day_note(day: i64, book: &BookStat, s: &Strings) -> String {
+    match book.sittings {
+        0 => DASH.into(),
+        _ => date::year_day(day, s),
+    }
+}
+
+/// The days read of the days between the first and the last.
+fn days_note(book: &BookStat, s: &Strings) -> String {
+    match book.sittings {
+        0 => DASH.into(),
+        _ => format!(
+            "{} {} {}",
+            book.days,
+            s.of,
+            (book.last_day - book.first_day + 1).max(1)
+        ),
     }
 }
 

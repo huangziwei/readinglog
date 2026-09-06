@@ -1,8 +1,6 @@
-//! A question standing over whatever screen raised it: a scrim, a boxed
-//! headline and note, and the answers along the foot.
-//!
-//! It is drawn from the ordinary `draw`, off state the screen holds, so every
-//! question can be rendered off the device.
+//! A question over the screen that raised it: a boxed headline and note, with
+//! the answers along the foot. Drawn from the ordinary `draw`, off state the
+//! screen holds.
 
 use crate::font::Script;
 use crate::ui::chrome;
@@ -10,10 +8,8 @@ use crate::ui::paint::{self, INK, Rect, WHITE};
 use crate::ui::theme::Theme;
 use crate::view::{Ctx, Hit};
 
-/// How many lines the headline and the note are each allowed. The note's
-/// budget is what the longest question needs to state its whole case without a
-/// clamp; `lang`'s own tests hold every question inside it, and hold the box
-/// that many lines make inside the screen.
+/// The lines `wrap_and_clamp_in` allows the headline and the note. `lang`'s
+/// tests hold every question inside both.
 const HEAD_LINES: usize = 2;
 const NOTE_LINES: usize = 8;
 
@@ -26,11 +22,8 @@ pub struct Question<'a> {
     pub answers: &'a [(&'a str, Hit)],
 }
 
-/// Draw `question` over `area`.
-///
-/// `area` takes [`Hit::Dismiss`] before anything else, so a tap outside the
-/// box takes the question down and a tap on an answer, pushed later, wins its
-/// own box: `App::tapped` reads the hits in reverse.
+/// Draw `question` over `area`. `area` takes [`Hit::Dismiss`] first and each
+/// answer after it; `App::tapped` reads the hits in reverse.
 pub fn draw(cx: &mut Ctx, area: Rect, question: &Question) {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();

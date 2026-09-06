@@ -292,6 +292,7 @@ pub fn library(last: i64, art: &Path) -> Store {
             finished: slot == MARKED || book.percent >= FINISHED_PERCENT,
             restart: None,
             read_state: -1,
+            kept: false,
         });
     }
 
