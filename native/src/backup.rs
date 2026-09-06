@@ -191,14 +191,28 @@ pub struct Taken {
 }
 
 /// Fold the archive at `at` into `store`, and write each jacket it carries
-/// that `covers::COVERS_DIR` does not hold. Answers what landed.
-pub fn take(dir: &Path, at: &Path, store: &mut Store) -> archive::Result<Taken> {
+/// that `covers::COVERS_DIR` does not hold. Answers what landed, reporting
+/// files read and files to read as it goes.
+pub fn take(
+    dir: &Path,
+    at: &Path,
+    store: &mut Store,
+    on: &mut dyn FnMut(usize, usize),
+) -> archive::Result<Taken> {
     let mut open = Archive::open(at)?;
-    let entries = open.entries().to_vec();
+    let entries: Vec<_> = open
+        .entries()
+        .iter()
+        .filter(|e| !e.is_dir())
+        .cloned()
+        .collect();
+    let total = entries.len();
     let mut added = 0;
     let mut inside = Store::default();
     let mut jackets: Vec<PathBuf> = Vec::new();
-    for entry in entries.iter().filter(|e| !e.is_dir()) {
+    // `done` counts the entries behind this one; `on(total, total)` closes it.
+    for (done, entry) in entries.iter().enumerate() {
+        on(done, total);
         if entry.path == RECORD {
             let bytes = open.read(entry)?;
             inside = Store::from_archive(&String::from_utf8_lossy(&bytes));
@@ -223,6 +237,7 @@ pub fn take(dir: &Path, at: &Path, store: &mut Store) -> archive::Result<Taken> 
         }
         std::fs::write(&out, &bytes)?;
     }
+    on(total, total);
     Ok(Taken {
         added,
         whole: holds(store, &inside) && jackets.iter().all(|j| j.is_file()),
@@ -419,7 +434,7 @@ mod tests {
         let mut store = read_one(&dir);
         let at = reset(&dir, &mut store, Keep::Archive).unwrap().unwrap();
 
-        let taken = take(&dir, &at, &mut store).expect("a merge");
+        let taken = take(&dir, &at, &mut store, &mut |_, _| {}).expect("a merge");
         assert_eq!((taken.added, taken.whole), (1, true));
         assert_eq!(store.sessions.len(), 1);
         assert_eq!(store.books.len(), 1);
@@ -427,7 +442,7 @@ mod tests {
         // The same rows, from a copy of the archive.
         let again = dir.join("again.zip");
         std::fs::copy(&at, &again).unwrap();
-        let taken = take(&dir, &again, &mut store).expect("a merge");
+        let taken = take(&dir, &again, &mut store, &mut |_, _| {}).expect("a merge");
         assert_eq!((taken.added, taken.whole), (0, true));
         assert_eq!(store.sessions.len(), 1, "the sitting came back twice");
         let _ = std::fs::remove_dir_all(&dir);
@@ -449,7 +464,7 @@ mod tests {
         // `peek` reads every row, through `Store::from_archive`.
         assert!(peek(&at).expect("a readable archive").sessions.len() == 1);
         let mut empty = Store::default();
-        let taken = take(&dir, &at, &mut empty).expect("a merge");
+        let taken = take(&dir, &at, &mut empty, &mut |_, _| {}).expect("a merge");
         assert_eq!(taken.added, 1, "the era stayed in the file");
         assert!(taken.whole, "and could never be told from a whole one");
         let _ = std::fs::remove_dir_all(&dir);
@@ -485,7 +500,7 @@ mod tests {
         let at = reset(&dir, &mut store, Keep::Archive).unwrap().unwrap();
         std::fs::remove_file(covers::path(&dir, "B00OKPCRLG")).unwrap();
 
-        take(&dir, &at, &mut store).expect("a merge");
+        take(&dir, &at, &mut store, &mut |_, _| {}).expect("a merge");
         assert!(covers::held(&dir, "B00OKPCRLG"), "the jacket stayed gone");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -497,7 +512,7 @@ mod tests {
         let at = reset(&dir, &mut store, Keep::Archive).unwrap().unwrap();
         std::fs::write(covers::path(&dir, "B00OKPCRLG"), b"the newer copy").unwrap();
 
-        take(&dir, &at, &mut store).expect("a merge");
+        take(&dir, &at, &mut store, &mut |_, _| {}).expect("a merge");
         assert_eq!(
             std::fs::read(covers::path(&dir, "B00OKPCRLG")).unwrap(),
             b"the newer copy"
@@ -525,7 +540,12 @@ mod tests {
         // `take` after `clear_book` puts the book back.
         store.clear_book(148_207, "B00OKPCRLG");
         assert!(store.sessions.is_empty());
-        assert_eq!(take(&dir, &at, &mut store).expect("a merge").added, 1);
+        assert_eq!(
+            take(&dir, &at, &mut store, &mut |_, _| {})
+                .expect("a merge")
+                .added,
+            1
+        );
         assert_eq!(store.sessions.len(), 1);
         assert_eq!(store.books[0].title, "A Book");
         let _ = std::fs::remove_dir_all(&dir);

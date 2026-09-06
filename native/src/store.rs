@@ -1984,6 +1984,41 @@ mod tests {
     }
 
     #[test]
+    fn a_rebuild_states_sittings_and_leaves_every_book_to_the_catalog() {
+        let dir = scratch("rebuild-books");
+        let live = dir.join("messages");
+        std::fs::write(
+            &live,
+            format!(
+                "{}\n{}\n",
+                page("260807:101501", 7_390_020),
+                page("260807:101543", 7_431_463)
+            ),
+        )
+        .expect("a log to read");
+        let shelf = [shelved(938_018, "B00OKPCRLG", "Bible", 55.0)];
+
+        let mut store = Store::default();
+        store.remember(&shelf);
+        store.mark = "260807:101543".into();
+        store.wipe();
+        assert!(store.books.is_empty(), "a wipe left a book record standing");
+
+        let added = store.rebuild_from(&live, &dir.join("none"), &dir.join("none"), &mut |_, _| {});
+        assert_eq!(added, 1, "the log's sitting did not come back");
+        assert!(
+            store.books.is_empty(),
+            "a parse named a book — only the catalog can, and a reset that \
+             skips it hands back sittings against nothing"
+        );
+
+        // The pass `App::relearn` makes once a reset is over.
+        store.remember(&shelf);
+        assert_eq!(store.books.len(), 1, "the catalog left the shelf empty");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn merging_one_record_twice_is_merging_it_once() {
         let mut store = two_books();
         let copy = store.clone();

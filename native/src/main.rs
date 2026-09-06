@@ -161,7 +161,7 @@ fn show() -> Result<()> {
             return;
         }
         painted = done;
-        let step = format!("log {done} of {total}");
+        let step = ui::splash::step(splash_lang.strings().step_logs, done, total);
         let said = launching(script, &note, &step);
         let _ = ui::splash::show(&mut fb, &mut text, &theme, &said, false);
     });

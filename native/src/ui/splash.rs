@@ -101,6 +101,14 @@ fn centre(
     text.draw_in(script, fb, x, y, s, false);
 }
 
+/// `template` with `{d}` set to `done` and `{n}` to `total`.
+/// [`Strings::step_logs`] and [`Strings::step_files`] are the two templates.
+pub fn step(template: &str, done: usize, total: usize) -> String {
+    template
+        .replace("{d}", &done.to_string())
+        .replace("{n}", &total.to_string())
+}
+
 /// The lines under the headline, for a store at `mark`.
 ///
 /// An empty `mark` names a store that has read no log line.

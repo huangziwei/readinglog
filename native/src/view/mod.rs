@@ -99,7 +99,7 @@ pub enum Hit {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Confirm {
     pub about: Reset,
-    /// What the question is about, already counted.
+    /// What the question is about, counted when it went up.
     pub sittings: usize,
     pub books: usize,
     /// The archive to be written, or the space a wipe gives back.
@@ -117,6 +117,19 @@ pub enum Reset {
     Restore(usize),
     /// Read the device's whole log again.
     Rebuild,
+}
+
+impl Reset {
+    /// The headline and the note a banner over this reset draws. The headline
+    /// names the act: `reset_row`, `restore_do`, `rebuild_head`.
+    pub fn doing(self, s: &Strings) -> (String, Vec<String>) {
+        let (headline, said) = match self {
+            Reset::Wipe(_) => (s.reset_row, s.wipe_doing),
+            Reset::Restore(_) => (s.restore_do, s.restore_doing),
+            Reset::Rebuild => (s.rebuild_head, s.rebuild_doing),
+        };
+        (headline.into(), vec![said.into()])
+    }
 }
 
 /// A question standing over a book's own screen, which [`Hit::Answer`] carries

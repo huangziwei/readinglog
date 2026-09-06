@@ -19,6 +19,7 @@ use readinglog_native::stats::Stats;
 use readinglog_native::store::Store;
 use readinglog_native::ui::chrome::Tab;
 use readinglog_native::ui::paint;
+use readinglog_native::ui::splash;
 use readinglog_native::ui::text::TextRenderer;
 use readinglog_native::ui::theme::Theme;
 use readinglog_native::update::{Doing, Failure, Outcome};
@@ -60,6 +61,13 @@ const BANNERS: &[(&str, Said)] = &[
     ("failed", || {
         Banner::Ended(Outcome::Failed(Failure::WrongBuild))
     }),
+];
+
+/// The banner over a running reset, by the name a `reset:<of>` shot takes.
+const RESETS: &[(&str, Reset)] = &[
+    ("wipe", Reset::Wipe(true)),
+    ("restore", Reset::Restore(0)),
+    ("logs", Reset::Rebuild),
 ];
 
 /// What one of [`BANNERS`] is saying, made when a shot names it.
@@ -347,6 +355,9 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
     if shot.name == "update" {
         return banner(app, fb, shot.of.as_deref().unwrap_or("asking"));
     }
+    if shot.name == "reset" {
+        return resetting(app, fb, shot.of.as_deref().unwrap_or("logs"));
+    }
     let Some((_, tab)) = SCREENS.iter().find(|(name, _)| *name == shot.name) else {
         return Err(anyhow!("no screen or sketch called {}", shot.name));
     };
@@ -410,6 +421,22 @@ fn banner(app: &mut App, fb: &mut Framebuffer, of: &str) -> Result<()> {
         }
     };
     app.banner(fb, &headline, &note, step, true)
+}
+
+/// The banner over a reset while it runs, at whichever of them `of` names,
+/// drawn a quarter of the way through the files it counts.
+fn resetting(app: &mut App, fb: &mut Framebuffer, of: &str) -> Result<()> {
+    let Some((_, about)) = RESETS.iter().find(|(name, _)| *name == of) else {
+        return Err(anyhow!("no reset banner called {of}"));
+    };
+    let s = app.language().strings();
+    let (headline, note) = about.doing(s);
+    let step = match about {
+        Reset::Wipe(_) => String::new(),
+        Reset::Restore(_) => splash::step(s.step_files, 118, 436),
+        Reset::Rebuild => splash::step(s.step_logs, 31, 97),
+    };
+    app.banner(fb, &headline, &note, &step, true)
 }
 
 /// Every hit box the frame recorded, outlined over it.
@@ -607,6 +634,9 @@ fn list() {
     // `BANNERS` states this list itself.
     let banners: Vec<&str> = BANNERS.iter().map(|(name, _)| *name).collect();
     println!("  update  (:{})", banners.join(" :"));
+    // As does `RESETS`.
+    let resets: Vec<&str> = RESETS.iter().map(|(name, _)| *name).collect();
+    println!("  reset   (:{})", resets.join(" :"));
     println!("sketches:");
     match sketch::ALL.is_empty() {
         true => println!("  (none)"),
@@ -707,6 +737,7 @@ fn everything() -> Vec<Shot> {
         "update:downloading",
         "update:done",
         "update:failed",
+        "reset:logs",
     ]
     .iter()
     .map(|spec| Shot::read(spec))

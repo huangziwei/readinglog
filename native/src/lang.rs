@@ -268,6 +268,11 @@ pub struct Strings {
     pub first_run_1: &'static str,
     pub first_run_2: &'static str,
     pub catching_up: &'static str,
+    /// The line under a banner counting files: `{d}` files behind it, of `{n}`
+    /// to open. `step_logs` counts the device's logs, `step_files` the entries
+    /// of an archive.
+    pub step_logs: &'static str,
+    pub step_files: &'static str,
 
     // Config.
     /// The section headings, and the name of each setting's row.
@@ -310,6 +315,13 @@ pub struct Strings {
     pub rebuild_ask: &'static str,
     pub rebuild_note: &'static str,
     pub rebuild_do: &'static str,
+    /// The banner headline over the log pass. `reset_row` and `restore_do`
+    /// head the other two.
+    pub rebuild_head: &'static str,
+    /// The line under that headline while each of the three runs.
+    pub wipe_doing: &'static str,
+    pub restore_doing: &'static str,
+    pub rebuild_doing: &'static str,
     /// The book screen's own control, and the question it puts up. `{what}` is
     /// the reading that goes.
     pub clear: &'static str,
@@ -469,6 +481,8 @@ const ENGLISH: Strings = Strings {
     first_run_1: "First run: every log the device still holds",
     first_run_2: "is read once. This can take a few minutes.",
     catching_up: "Reading what the log has added.",
+    step_logs: "log {d} of {n}",
+    step_files: "file {d} of {n}",
 
     the_record: "THE RECORD",
     unnamed_row: "Unidentified books",
@@ -504,6 +518,10 @@ const ENGLISH: Strings = Strings {
                    Reading older than the logs, and books taken off the record \
                    one at a time, do not come back.",
     rebuild_do: "Read them",
+    rebuild_head: "Restore from the logs",
+    wipe_doing: "Resetting the record.",
+    restore_doing: "Bringing the backup back.",
+    rebuild_doing: "Reading every log the device still holds.",
     clear: "Clear",
     clear_ask: "Clear this book's reading?",
     clear_note: "{what} go, and the book goes back to 0%. Keeping it leaves it \
@@ -673,6 +691,8 @@ const GERMAN: Strings = Strings {
     first_run_1: "Erster Start: jedes Protokoll auf dem Gerät",
     first_run_2: "wird einmal gelesen. Das dauert einige Minuten.",
     catching_up: "Liest, was dazugekommen ist.",
+    step_logs: "Protokoll {d} von {n}",
+    step_files: "Datei {d} von {n}",
 
     the_record: "DIE AUFZEICHNUNG",
     recorded_row: "Aufgezeichnet",
@@ -706,6 +726,10 @@ const GERMAN: Strings = Strings {
                    Ältere Lesezeit und einzeln entfernte Bücher kommen nicht \
                    zurück.",
     rebuild_do: "Erneut lesen",
+    rebuild_head: "Aus den Protokollen zurückholen",
+    wipe_doing: "Setzt die Aufzeichnung zurück.",
+    restore_doing: "Holt die Sicherung zurück.",
+    rebuild_doing: "Liest jedes Protokoll auf dem Gerät.",
     clear: "Löschen",
     clear_ask: "Die Zeiten dieses Buches löschen?",
     clear_note: "{what} werden gelöscht, und das Buch steht wieder bei 0 %. \
@@ -875,6 +899,8 @@ const JAPANESE: Strings = Strings {
     first_run_1: "初回起動：端末に残るすべての記録を",
     first_run_2: "一度読み込みます。数分かかります。",
     catching_up: "追加された記録を読み込み中。",
+    step_logs: "ログ {d}/{n}",
+    step_files: "ファイル {d}/{n}",
 
     the_record: "記録",
     recorded_row: "記録の中身",
@@ -903,6 +929,10 @@ const JAPANESE: Strings = Strings {
                    今ある記録が失われることはありません。ログより古い読書と、\
                    1冊ずつ記録から外した本は戻りません。",
     rebuild_do: "読み直す",
+    rebuild_head: "ログから戻す",
+    wipe_doing: "記録をリセットしています。",
+    restore_doing: "バックアップを記録に戻しています。",
+    rebuild_doing: "端末に残っているログを読み直しています。",
     clear: "消去",
     clear_ask: "この本の読書記録を消去しますか？",
     clear_note: "{what}を削除し、進捗は0%に戻ります。本を残せば数値のない状態で一覧に残り、\
@@ -1057,6 +1087,8 @@ const SIMPLIFIED: Strings = Strings {
     first_run_1: "首次运行：设备上保留的每份记录",
     first_run_2: "都会读取一次，需要几分钟。",
     catching_up: "正在读取新增的记录。",
+    step_logs: "日志 {d}/{n}",
+    step_files: "文件 {d}/{n}",
 
     the_record: "记录",
     recorded_row: "已记录",
@@ -1084,6 +1116,10 @@ const SIMPLIFIED: Strings = Strings {
     rebuild_note: "设备上仍保留的日志会从头读一遍，需要几分钟。现有记录不会丢失。\
                    比日志更早的阅读，以及逐本从记录中移除的书，不会回来。",
     rebuild_do: "重新读取",
+    rebuild_head: "从日志取回",
+    wipe_doing: "正在重置记录。",
+    restore_doing: "正在取回备份。",
+    rebuild_doing: "正在重新读取设备上的日志。",
     clear: "清除",
     clear_ask: "清除这本书的阅读记录？",
     clear_note: "将删除{what}，进度回到 0%。保留书籍时，它仍在列表中，只是没有任何数值；\
@@ -1247,6 +1283,8 @@ const TRADITIONAL: Strings = Strings {
     first_run_1: "首次執行：裝置上保留的每份記錄",
     first_run_2: "都會讀取一次，需要幾分鐘。",
     catching_up: "正在讀取新增的記錄。",
+    step_logs: "日誌 {d}/{n}",
+    step_files: "檔案 {d}/{n}",
 
     the_record: "記錄",
     recorded_row: "已記錄",
@@ -1274,6 +1312,10 @@ const TRADITIONAL: Strings = Strings {
     rebuild_note: "裝置上仍保留的日誌會從頭讀一遍，需要幾分鐘。現有記錄不會遺失。\
                    比日誌更早的閱讀，以及逐本從記錄中移除的書，不會回來。",
     rebuild_do: "重新讀取",
+    rebuild_head: "從日誌取回",
+    wipe_doing: "正在重設記錄。",
+    restore_doing: "正在取回備份。",
+    rebuild_doing: "正在重新讀取裝置上的日誌。",
     clear: "清除",
     clear_ask: "清除這本書的閱讀記錄？",
     clear_note: "將刪除{what}，進度回到 0%。保留書籍時，它仍在列表中，只是沒有任何數值；\

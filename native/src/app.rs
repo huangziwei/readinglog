@@ -449,6 +449,10 @@ impl App {
                             self.update(fb, input)?;
                             self.draw(fb)?;
                         }
+                        Action::Resetting(about) => {
+                            self.resetting(fb, about)?;
+                            self.draw(fb)?;
+                        }
                         Action::Nothing => {}
                     }
                 }
@@ -717,9 +721,10 @@ impl App {
             Hit::Wipe(keep) => return self.ask_reset(view::Reset::Wipe(keep)),
             Hit::Restore(at) => return self.ask_reset(view::Reset::Restore(at)),
             Hit::Rebuild => return self.ask_reset(view::Reset::Rebuild),
-            Hit::Wiped(keep) => return self.wipe(keep),
-            Hit::Restored(at) => return self.restore(at),
-            Hit::Rebuilt => return self.reread(),
+            // `App::resetting` carries these out, holding `fb`.
+            Hit::Wiped(keep) => return Action::Resetting(view::Reset::Wipe(keep)),
+            Hit::Restored(at) => return Action::Resetting(view::Reset::Restore(at)),
+            Hit::Rebuilt => return Action::Resetting(view::Reset::Rebuild),
         }
         Action::Redraw
     }
@@ -744,7 +749,7 @@ impl App {
     }
 
     /// Put one of the config page's questions up, with the figures it states
-    /// gathered now: the dialog itself walks nothing.
+    /// gathered here: the dialog itself walks nothing.
     fn ask_reset(&mut self, about: view::Reset) -> Action {
         let (jackets, archives) = crate::backup::sizes(self.dir());
         let confirm = match about {
@@ -793,9 +798,42 @@ impl App {
         Action::Redraw
     }
 
-    /// Empty the record, keeping an archive of it first under `keep`.
-    fn wipe(&mut self, keep: bool) -> Action {
+    /// Carry `about` out under a banner over the whole screen, drawn from
+    /// `Reset::doing`. `restore` and `reread` count their files onto it.
+    fn resetting(&mut self, fb: &mut Framebuffer, about: view::Reset) -> Result<()> {
         self.state.confirm = None;
+        let (headline, note) = about.doing(self.lang.strings());
+        self.banner(fb, &headline, &note, "", true)?;
+        match about {
+            view::Reset::Wipe(keep) => self.wipe(keep),
+            view::Reset::Restore(at) => self.restore(fb, &headline, &note, at),
+            view::Reset::Rebuild => self.reread(fb, &headline, &note),
+        }
+        self.relearn();
+        Ok(())
+    }
+
+    /// `catalog::read` through `Store::remember` and `Store::keep_covers`,
+    /// then `Stats::build`. `Store::absorb` writes `sessions` and `ends`;
+    /// every title, author and jacket in `Store::books` arrives here.
+    fn relearn(&mut self) {
+        let books = crate::catalog::read();
+        let dir = self.dir.clone();
+        let refreshed = self.store.remember(&books) + self.store.keep_covers(&dir);
+        eprintln!(
+            "reset: {} catalog rows, {refreshed} book records refreshed, {} held",
+            books.len(),
+            self.store.books.len(),
+        );
+        if refreshed > 0 {
+            self.store_it("reset");
+        }
+        self.covers.forget();
+        self.rebuild();
+    }
+
+    /// Empty the record, keeping an archive of it first under `keep`.
+    fn wipe(&mut self, keep: bool) {
         let keeping = match keep {
             true => crate::backup::Keep::Archive,
             false => crate::backup::Keep::Nothing,
@@ -807,60 +845,70 @@ impl App {
             // `reset` writes the archive first and leaves `store` on a failure.
             Err(err) => {
                 eprintln!("reset: nothing was reset — {err}");
-                return Action::Redraw;
             }
         }
-        self.covers.forget();
-        self.rebuild();
-        Action::Redraw
     }
 
-    /// Fold the archive at `at` in the list back into the record.
-    fn restore(&mut self, at: usize) -> Action {
-        self.state.confirm = None;
+    /// Fold the archive at `at` in the list back into the record, counting the
+    /// files coming out of it onto the banner.
+    fn restore(&mut self, fb: &mut Framebuffer, headline: &str, note: &[String], at: usize) {
         let held = crate::backup::list(self.dir());
         let Some(backup) = held.get(at) else {
-            return Action::Redraw;
+            return;
         };
+        let path = backup.path.clone();
         let dir = self.dir.clone();
-        match crate::backup::take(&dir, &backup.path, &mut self.store) {
+        // `backup::take` holds `self.store`, `App::banner` holds `self`.
+        let counting = self.lang.strings().step_files;
+        let mut store = std::mem::take(&mut self.store);
+        let mut painted = usize::MAX;
+        let took = crate::backup::take(&dir, &path, &mut store, &mut |done, total| {
+            if done == painted {
+                return;
+            }
+            painted = done;
+            let step = crate::ui::splash::step(counting, done, total);
+            let _ = self.banner(fb, headline, note, &step, false);
+        });
+        self.store = store;
+        match took {
             Ok(taken) => {
-                eprintln!(
-                    "restore: {} sittings from {}",
-                    taken.added,
-                    backup.path.display()
-                );
+                eprintln!("restore: {} sittings from {}", taken.added, path.display());
                 self.store_it("restore");
                 // `Taken::whole`: `store` holds every row the archive carried.
                 if taken.whole {
-                    match std::fs::remove_file(&backup.path) {
-                        Ok(()) => {
-                            eprintln!("restore: {} is now in the record", backup.path.display())
-                        }
-                        Err(err) => eprintln!("restore: {} stands — {err}", backup.path.display()),
+                    match std::fs::remove_file(&path) {
+                        Ok(()) => eprintln!("restore: {} is now in the record", path.display()),
+                        Err(err) => eprintln!("restore: {} stands — {err}", path.display()),
                     }
                 } else {
                     eprintln!(
                         "restore: {} holds more than the record took",
-                        backup.path.display()
+                        path.display()
                     );
                 }
             }
-            Err(err) => eprintln!("restore: {} would not open — {err}", backup.path.display()),
+            Err(err) => eprintln!("restore: {} would not open — {err}", path.display()),
         }
-        self.covers.forget();
-        self.rebuild();
-        Action::Redraw
     }
 
-    /// Read the device's whole log again and fold it in.
-    fn reread(&mut self) -> Action {
-        self.state.confirm = None;
-        let added = self.store.rebuild(&mut |_, _| {});
+    /// `Store::rebuild`, counting the log files it opens onto the banner.
+    fn reread(&mut self, fb: &mut Framebuffer, headline: &str, note: &[String]) {
+        // `Store::rebuild` holds `self.store`, `App::banner` holds `self`.
+        let counting = self.lang.strings().step_logs;
+        let mut store = std::mem::take(&mut self.store);
+        let mut painted = usize::MAX;
+        let added = store.rebuild(&mut |done, total| {
+            if done == painted {
+                return;
+            }
+            painted = done;
+            let step = crate::ui::splash::step(counting, done, total);
+            let _ = self.banner(fb, headline, note, &step, false);
+        });
+        self.store = store;
         eprintln!("reread: {added} sittings the record did not hold");
         self.store_it("reread");
-        self.rebuild();
-        Action::Redraw
     }
 
     /// Put one book's reading back to zero, taking its record with it under
@@ -961,4 +1009,6 @@ enum Action {
     Quit,
     /// Go looking for a newer release, over the whole screen.
     Update,
+    /// Carry out one of the config page's resets, over the whole screen.
+    Resetting(view::Reset),
 }
