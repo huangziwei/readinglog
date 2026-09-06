@@ -104,23 +104,53 @@ pub fn payloads(line: &str) -> impl Iterator<Item = &str> {
         .filter(|p| !p.is_empty())
 }
 
-/// The book's own end position within one payload, the **last** `EndPos` before
-/// the `NextTOCEntry…` group. Taking the first reads a moving chapter boundary
-/// as the book's identity, cutting the sitting into a run per chapter.
+/// Each place `text` states a value for `name`, in order. `name` carries the
+/// `:` ending it and starts a field: the byte before it is a `,`, a `:`, or
+/// nothing.
+fn fields<'a>(text: &'a str, name: &'static str) -> impl Iterator<Item = usize> + 'a {
+    let bytes = text.as_bytes();
+    text.match_indices(name).filter_map(move |(at, _)| {
+        let before = at.checked_sub(1).map(|i| bytes[i]);
+        matches!(before, None | Some(b',') | Some(b':')).then_some(at + name.len())
+    })
+}
+
+/// The `kind` and the place a position field states, `at` past its `<name>:`.
+/// `value` ends at the next `,` or `;`. Shapes: `YJPosition:<token>:<n>`,
+/// `HTMLPosition:<n>`, `MobiPosition:<n>`, `MobiSerializedPosition:<n> <n>`.
+fn stated(text: &str, at: usize) -> Option<(&str, i64)> {
+    let rest = &text[at..];
+    let value = &rest[..rest.find([',', ';']).unwrap_or(rest.len())];
+    let (kind, tail) = value.split_once(':')?;
+    if !kind.ends_with("Position") {
+        return None;
+    }
+    // `from`..`end` is the last digit run of `tail`. It opens `tail` or follows
+    // a `:` or a ` `.
+    let end = tail.rfind(|c: char| c.is_ascii_digit())? + 1;
+    let from = tail[..end]
+        .rfind(|c: char| !c.is_ascii_digit())
+        .map_or(0, |i| i + 1);
+    matches!(tail[..from].chars().next_back(), None | Some(':' | ' '))
+        .then(|| tail[from..end].parse().ok())
+        .flatten()
+        .map(|position| (kind, position))
+}
+
+/// The book's own end position within one payload: the **last** `EndPos` ahead
+/// of the `NextTOCEntry` group, and the first where `payload` carries no group.
+/// The `EndPos` inside that group is a chapter boundary.
 pub fn end_position(payload: &str) -> Option<i64> {
-    const KEY: &str = "EndPos:YJPosition: ";
-    let at = match payload.find("NextTOCEntry") {
-        // No `EndPos` ahead of the group leaves only the chapter's, which is
-        // no answer.
-        Some(toc) => payload[..toc].rfind(KEY)?,
-        None => payload.find(KEY)?,
+    let (ahead, group) = match payload.find("NextTOCEntry") {
+        Some(toc) => (&payload[..toc], true),
+        None => (payload, false),
     };
-    let rest = &payload[at + KEY.len()..];
-    let tail = &rest[rest.find(':')? + 1..];
-    let end = tail
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(tail.len());
-    tail[..end].parse().ok()
+    let mut found = fields(ahead, "EndPos:");
+    let at = match group {
+        true => found.last()?,
+        false => found.next()?,
+    };
+    stated(ahead, at).map(|(_, position)| position)
 }
 
 /// The book a whole line is about, from whichever of its payloads names one.
@@ -172,8 +202,10 @@ pub fn observation(line: &str) -> Option<Observation> {
         // A payload carrying `CurrentPos` and an end position, with no
         // `TotalTime` and no name — the whole record of an untimed sitting.
         .or_else(|| {
-            payloads(line)
-                .find(|p| end_position(p).is_some() && p.contains("CurrentPos:YJPosition: "))
+            payloads(line).find(|p| {
+                end_position(p).is_some()
+                    && fields(p, "CurrentPos:").any(|at| stated(p, at).is_some())
+            })
         })?;
     Some(Observation {
         position: end_position(chosen)?,
@@ -222,16 +254,13 @@ pub fn field_num(line: &str, name: &str) -> Option<i64> {
     rest[..end].parse().ok()
 }
 
-/// The `BookEndPosition.FromBook` this line states.
+/// The `BookEndPosition.FromBook` `line` states, as `p_contentSize` holds it.
+/// An `HTMLPosition` book end is `p_contentSize - 1`; every other class states
+/// `p_contentSize`.
 pub fn from_book(line: &str) -> Option<i64> {
-    const KEY: &str = "BookEndPosition.FromBook:YJPosition: ";
-    let at = line.find(KEY)?;
-    let rest = &line[at + KEY.len()..];
-    let tail = &rest[rest.find(':')? + 1..];
-    let end = tail
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(tail.len());
-    tail[..end].parse().ok()
+    let (kind, position) =
+        fields(line, "BookEndPosition.FromBook:").find_map(|at| stated(line, at))?;
+    Some(position + i64::from(kind == "HTMLPosition"))
 }
 
 /// Map each book's per-line `EndPos` fingerprint to its [`from_book`].
@@ -263,6 +292,9 @@ mod tests {
     use super::*;
 
     const PAGE: &str = "260807:101501 cvm[6144]: I ReadingTimerController:Information::NextPage,Verdict:Processed,PageStartPos:YJPosition: AfQJAAAAAAAA:54205,IntervalTime:39890,IntervalWords:320,TotalTime:7390020,TotalWords:49583,CurrentPos:YJPosition: AfQJAAAAAAAA:54205,EndPos:YJPosition: AbcVAAAPAAAA:148207,PosLeft:94002,NextTOCEntryPosition:YJPosition: AT4KAAAAAAAA:56499,NextTOCEntryLength:10,CurrentPos:YJPosition: AfQJAAAAAAAA:54205,EndPos:YJPosition: AT4KAAAAAAAA:56499,PosLeft:2294;";
+
+    /// The `PAGE` event as `HTMLPosition` states it.
+    const MOBI8: &str = "260906:192404 cvm[6144]: I ReadingTimerController:Information::NextPage,Verdict:Processed,PageStartPos:HTMLPosition:7731097,IntervalTime:785,IntervalWords:12,TotalTime:329785,TotalWords:1905,CurrentPos:HTMLPosition:7731097,EndPos:HTMLPosition:19886489,PosLeft:12155392,%Left:0.6112,NextTOCEntryPosition:HTMLPosition:7800000,NextTOCEntryLength:10,CurrentPos:HTMLPosition:7731097,EndPos:HTMLPosition:7800000,PosLeft:68903;";
 
     #[test]
     fn a_stamp_reads_its_day_and_its_clock() {
@@ -364,5 +396,50 @@ mod tests {
             vec![(938_016, 938_018)],
             "148207 reached 938018 across a close"
         );
+    }
+
+    #[test]
+    fn a_mobi8_page_line_observes_its_book_and_its_counter() {
+        // 19886489 leads the NextTOCEntry group; 7800000 is the chapter's.
+        assert_eq!(book_position(MOBI8), Some(19_886_489));
+        let obs = observation(MOBI8).expect("a page event");
+        assert_eq!(obs.position, 19_886_489);
+        assert_eq!(obs.total_ms, Some(329_785));
+        assert_eq!(obs.words, Some(1_905));
+        assert!(obs.page_turn);
+    }
+
+    #[test]
+    fn a_mobi8_book_end_is_raised_to_the_extent_the_catalog_states() {
+        let open = "260906:192401 java[1]: I ReadingTimerController:Information::OpenBook,StoredBookData:TimeRead:329 sec. WPM:0. Version:0,Title:<private>;";
+        let info = "260906:192402 java[1]: I ReadingTimerController:Information::BookEndPosition.FromBook:HTMLPosition:19886521,BookEndPosition.LastWordPos.override:HTMLPosition:19886489,CurrentPos:HTMLPosition:7731097,EndPos:HTMLPosition:19886489,PosLeft:12155392;";
+        // `FromBook` 19886521 against `p_contentSize` 19886522.
+        assert_eq!(from_book(info), Some(19_886_522));
+        assert_eq!(
+            frombook_map([open, info, MOBI8]),
+            vec![(19_886_489, 19_886_522)]
+        );
+    }
+
+    #[test]
+    fn a_place_read_back_out_of_a_sidecar_states_itself_last() {
+        let close = "260906:193015 java[1]: I ReadingTimerController:Information::CloseBook,CurrentPos:MobiSerializedPosition:12 4507,EndPos:MobiSerializedPosition:9 938016,PosLeft:933509;";
+        assert_eq!(book_position(close), Some(938_016));
+        // `EndPos:938016` names no class.
+        assert_eq!(
+            book_position(
+                "260906:193015 java[1]: I ReadingTimerController:Information::CloseBook,EndPos:938016,PosLeft:0;"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn an_untimed_sitting_is_read_whatever_stack_wrote_it() {
+        let line = "260906:192500 java[1]: I ReadingTimerController:Information::CurrentPos:HTMLPosition:7731097,EndPos:HTMLPosition:19886489,PosLeft:12155392;";
+        let obs = observation(line).expect("a book and a place");
+        assert_eq!(obs.position, 19_886_489);
+        assert_eq!(obs.total_ms, None);
+        assert!(!obs.page_turn);
     }
 }

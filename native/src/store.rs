@@ -291,10 +291,11 @@ impl Store {
         self.starts_at().max(self.floor.clone())
     }
 
-    /// [`Self::read_from`] before the floor is applied.
+    /// [`Self::read_from`] before the floor is applied. An empty `sessions`
+    /// answers the empty string, and [`Self::mark`] bounds nothing.
     fn starts_at(&self) -> String {
         let Some(newest) = self.sessions.last() else {
-            return self.mark.clone();
+            return String::new();
         };
         let start = log_stamp(&newest.started_at).unwrap_or_default();
         if self.mark.is_empty() || self.open_at_mark(newest) {
@@ -1656,14 +1657,20 @@ mod tests {
     }
 
     #[test]
-    fn the_pass_starts_at_the_mark_with_no_sitting_and_at_nothing_with_neither() {
+    fn a_record_holding_no_sitting_reads_the_whole_log() {
         let bare = Store {
             mark: "260808:213000".into(),
             ..Store::default()
         };
-        assert_eq!(bare.read_from(), "260808:213000");
+        assert_eq!(bare.read_from(), "");
         assert_eq!(Store::default().read_from(), "");
-        // A first run over a store that never recorded a mark reads everything.
+        // `floor` bounds the pass.
+        let floored = Store {
+            mark: "260808:213000".into(),
+            floor: "260808:213000".into(),
+            ..Store::default()
+        };
+        assert_eq!(floored.read_from(), "260808:213000");
         assert_eq!(one_sitting("").read_from(), "260807:101501");
     }
 
@@ -2242,6 +2249,27 @@ mod tests {
         };
         held.merge(&store);
         assert_eq!(held.extent_of(148_207), 148_213);
+    }
+
+    #[test]
+    fn a_mobi8_sitting_reaches_the_book_the_catalog_names() {
+        let mut store = Store::default();
+        let lines = [
+            "260906:192401 java[1]: I ReadingTimerController:Information::OpenBook,StoredBookData:TimeRead:329 sec. WPM:0. Version:0,Title:<private>;".to_string(),
+            "260906:192402 java[1]: I ReadingTimerController:Information::BookEndPosition.FromBook:HTMLPosition:19886521,CurrentPos:HTMLPosition:7731097,EndPos:HTMLPosition:19886489,PosLeft:12155392;".to_string(),
+            "260906:192404 cvm[6144]: I ReadingTimerController:Information::NextPage,Verdict:Processed,PageStartPos:HTMLPosition:7731097,IntervalTime:785,IntervalWords:12,TotalTime:329785,TotalWords:1905,CurrentPos:HTMLPosition:7731097,EndPos:HTMLPosition:19886489,PosLeft:12155392,%Left:0.6112;".to_string(),
+            "260906:192425 cvm[6144]: I ReadingTimerController:Information::NextPage,Verdict:Processed,PageStartPos:HTMLPosition:7731725,IntervalTime:21217,IntervalWords:172,TotalTime:351002,TotalWords:2077,CurrentPos:HTMLPosition:7731725,EndPos:HTMLPosition:19886489,PosLeft:12154764,%Left:0.6111;".to_string(),
+        ];
+        assert_eq!(store.absorb(&lines, ""), (1, 0));
+
+        // `p_contentSize` 19886522 against `FromBook` 19886521.
+        store.remember(&[shelved(19_886_522, "*8F3C", "A Sideload", -1.0)]);
+        let extent = store.extent_of(store.sessions[0].end_position);
+        assert_eq!(extent, 19_886_522);
+        assert_eq!(
+            store.book_for(extent, None).map(|b| b.title.as_str()),
+            Some("A Sideload")
+        );
     }
 
     #[test]

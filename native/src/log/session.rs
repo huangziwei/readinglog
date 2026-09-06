@@ -609,6 +609,28 @@ mod tests {
         assert_eq!(out[0].ended_at, "2026-08-07T10:15:43");
     }
 
+    /// An `OpenBook` and two `NextPage` lines stating `HTMLPosition` places.
+    const MOBI8: [&str; 3] = [
+        "260906:192401 java[1]: I ReadingTimerController:Information::OpenBook,StoredBookData:TimeRead:329 sec. WPM:0. Version:0,Title:<private>;",
+        "260906:192404 cvm[6144]: I ReadingTimerController:Information::NextPage,Verdict:Processed,PageStartPos:HTMLPosition:7731097,IntervalTime:785,IntervalWords:12,TotalTime:329785,TotalWords:1905,CurrentPos:HTMLPosition:7731097,EndPos:HTMLPosition:19886489,PosLeft:12155392,%Left:0.6112;",
+        "260906:192425 cvm[6144]: I ReadingTimerController:Information::NextPage,Verdict:Processed,PageStartPos:HTMLPosition:7731725,IntervalTime:21217,IntervalWords:172,TotalTime:351002,TotalWords:2077,CurrentPos:HTMLPosition:7731725,EndPos:HTMLPosition:19886489,PosLeft:12154764,%Left:0.6111;",
+    ];
+
+    #[test]
+    fn a_mobi8_run_is_measured_the_way_a_kfx_one_is() {
+        let out = parse_sessions(MOBI8);
+        assert_eq!(out.len(), 1);
+        // `vouch` seeds 329000 ms; 351002 stands at the last turn.
+        assert_eq!(out[0].seconds, 22);
+        assert_eq!(out[0].end_position, 19_886_489);
+        assert_eq!(out[0].page_turns, 2);
+        assert_eq!(out[0].words, 172);
+        assert_eq!(out[0].measure, Measure::Counted);
+        assert_eq!(out[0].started_at, "2026-09-06T19:24:01");
+        assert_eq!(out[0].ended_at, "2026-09-06T19:24:25");
+        assert_eq!(out[0].progress, Some(1.0 - 0.6111));
+    }
+
     #[test]
     fn the_hours_of_a_session_add_back_up_to_the_session() {
         let out = parse_sessions(CVM);
