@@ -29,9 +29,8 @@ fn main() {
     }
 }
 
-/// Which build this is, on one line. The one mode that opens nothing — no
-/// display, no log, no store — which is why `update` runs a freshly downloaded
-/// copy this way before it moves anything into place.
+/// Which build this is, on one line. The one mode that opens nothing: no
+/// display, no log, no store.
 fn version() -> Result<()> {
     println!("{}", readinglog_native::update::VERSION);
     Ok(())

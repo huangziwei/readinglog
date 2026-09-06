@@ -31,11 +31,9 @@ pub enum PageButton {
 
 pub struct Buttons {
     file: File,
-    /// Whether `EVIOCGRAB` succeeded. A failed grab leaves the stock framework
-    /// reading presses too, and this device reading them all the same.
+    /// Whether `EVIOCGRAB` succeeded.
     grabbed: bool,
-    /// Framework orientation, set by [`Buttons::set_orientation`]. `Down` swaps
-    /// `Prev` and `Next`, holding "forward" under the same thumb.
+    /// Orientation. `Down` swaps `Prev` and `Next`.
     orientation: Orientation,
 }
 
@@ -64,7 +62,7 @@ impl Buttons {
         self.file.as_raw_fd()
     }
 
-    /// Update orientation so a 180° flip swaps prev/next (see field docs).
+    /// Sets `orientation`. A 180° flip swaps prev/next.
     pub fn set_orientation(&mut self, orientation: Orientation) {
         self.orientation = orientation;
     }
@@ -89,8 +87,8 @@ impl Buttons {
                 KEY_PAGEDOWN => Some(PageButton::Prev),
                 _ => None,
             };
-            // On a 180° flip the physical buttons swap sides; swap prev/next so
-            // "forward" stays under the same thumb as the rotated display.
+            // On a 180° flip the physical buttons swap sides: prev/next swap
+            // with them.
             return Ok(match (btn, self.orientation) {
                 (Some(PageButton::Next), Orientation::Down) => Some(PageButton::Prev),
                 (Some(PageButton::Prev), Orientation::Down) => Some(PageButton::Next),

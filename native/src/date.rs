@@ -80,9 +80,8 @@ pub fn secs_of(at: &str) -> i64 {
     n(0..2) * 3600 + n(3..5) * 60 + n(6..8)
 }
 
-/// Now, as `(day count, seconds into the day)` on the device's own clock.
-/// Local and never UTC: every stamp in the log is local wall clock with no zone
-/// on it, and a UTC "today" would file a late night on the wrong day.
+/// The local clock, as `(day count, seconds into the day)`. Every stamp in
+/// the log is local wall clock with no zone on it.
 pub fn now() -> (i64, i64) {
     // SAFETY: `localtime_r` fills a caller-owned `tm` and takes the zone from
     // the process environment. No pointer outlives the call.
@@ -90,8 +89,8 @@ pub fn now() -> (i64, i64) {
         let clock = libc::time(std::ptr::null_mut());
         let mut tm: libc::tm = std::mem::zeroed();
         if libc::localtime_r(&clock, &mut tm).is_null() {
-            // A clock the C library will not break down still orders events;
-            // the epoch's own day is the honest answer.
+            // A clock `localtime_r` will not break down takes the epoch's
+            // own day.
             return (0, 0);
         }
         (
@@ -148,8 +147,8 @@ pub fn month_name(year: i64, month: i64, s: &Strings) -> String {
 }
 
 /// The week `day` falls in: the year that owns it, and its number from one. A
-/// week belongs to the year holding four of its seven days — the ISO 8601 rule,
-/// taken from the week's own fourth day so a Sunday start reads the same way.
+/// week belongs to the year holding four of its seven days, taken from the
+/// week's own fourth day.
 pub fn week_of_year(day: i64, week: WeekStart) -> (i64, i64) {
     let opens = |d: i64| d - week.column_of(weekday(d)) as i64;
     let first = opens(day);
@@ -161,8 +160,7 @@ pub fn week_of_year(day: i64, week: WeekStart) -> (i64, i64) {
 }
 
 /// `day` moved `by` months. A date the shorter month has no room for lands on
-/// the last of it, so stepping back from 31 March reaches the end of February
-/// and stepping on from there reaches the end of March again.
+/// the last of it: stepping back from 31 March reaches the end of February.
 pub fn shift_months(day: i64, by: i64) -> i64 {
     let (y, m, d) = civil_from_days(day);
     let months = y * 12 + (m - 1) + by;
@@ -344,9 +342,9 @@ mod tests {
     fn a_week_takes_its_number_from_the_year_holding_most_of_it() {
         let mon = WeekStart::Monday;
         let of = |y, m, d| week_of_year(days_from_civil(y, m, d), mon);
-        // The ISO 8601 answers: 2026 opens on a Thursday, so the week across
-        // that New Year is 2026's first, and 2016 opens on a Friday, so its
-        // own first days close 2015.
+        // 2026 opens on a Thursday and the week across that New Year is
+        // 2026's first; 2016 opens on a Friday and its own first days close
+        // 2015.
         assert_eq!(of(2026, 1, 1), (2026, 1));
         assert_eq!(of(2025, 12, 29), (2026, 1));
         assert_eq!(of(2025, 12, 28), (2025, 52));

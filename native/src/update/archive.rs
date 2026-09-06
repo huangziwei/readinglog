@@ -1,6 +1,6 @@
 //! The zip reader [`unpack`] lands a release archive with: stored and
-//! deflated entries only, no zip64. Sizes come from the central directory, so
-//! a streaming zipper's empty local headers read the same as any other.
+//! deflated entries only, no zip64. Sizes come from the central directory,
+//! and a streaming zipper's empty local headers read the same as any other.
 
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom};
@@ -16,21 +16,17 @@ const EOCD_LEN: usize = 22;
 const CD_LEN: usize = 46;
 const LOCAL_LEN: usize = 30;
 
-/// How far back from the end to look for [`EOCD_SIG`]. A zip comment may be
-/// 64 KB and the record itself is [`EOCD_LEN`] bytes.
+/// How far back from the end to look for [`EOCD_SIG`].
 const EOCD_SEARCH: usize = 64 * 1024 + EOCD_LEN;
 
-/// The `0xFFFFFFFF` a field takes when its real value lives in a zip64 extra
-/// field. Refused rather than guessed at.
+/// The `0xFFFFFFFF` a field takes under zip64. Refused.
 const ZIP64_MARK: u32 = 0xFFFF_FFFF;
 
 /// Compression methods this reads.
 const STORED: u16 = 0;
 const DEFLATED: u16 = 8;
 
-/// Ceiling on one entry's uncompressed size. The largest thing the archive
-/// carries is the ARM binary; past this a malformed header stops the unpack
-/// rather than filling the device.
+/// Ceiling on one entry's uncompressed size. Past this the unpack stops.
 const MAX_ENTRY: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug)]
@@ -117,8 +113,8 @@ impl Archive {
         if u32le(&header, 0) != LOCAL_SIG {
             return Err(Error::Malformed(format!("{}: no local header", entry.path)));
         }
-        // The local header's own sizes are not read: a streaming zipper leaves
-        // them zero. Its two length fields are still needed to find the data.
+        // The local header's own sizes are not read: a streaming zipper
+        // leaves them zero. Its two length fields locate the data.
         let names = u16le(&header, 26) as u64 + u16le(&header, 28) as u64;
         self.file
             .seek(SeekFrom::Start(entry.offset + LOCAL_LEN as u64 + names))?;
@@ -179,7 +175,7 @@ pub fn prefix_for<'a, I: IntoIterator<Item = &'a str>>(paths: I, marker: &str) -
 
 /// Every file under the root `marker` names — see [`prefix_for`] — into the
 /// staging directory `dest`, returning how many. Unix modes are not carried
-/// across, so the caller marks what has to be executable.
+/// across: the caller marks what has to be executable.
 pub fn unpack(zip: &Path, marker: &str, dest: &Path) -> Result<usize> {
     let mut archive = Archive::open(zip)?;
     let entries = archive.entries().to_vec();
@@ -212,8 +208,8 @@ pub fn unpack(zip: &Path, marker: &str, dest: &Path) -> Result<usize> {
     Ok(written)
 }
 
-/// `rest` under `dest`, or `None` for `/etc/x`, `../x`, or anything else that
-/// would land outside it.
+/// `rest` under `dest`, or `None` for `/etc/x`, `../x`, and anything else
+/// landing outside it.
 fn safe_join(dest: &Path, rest: &str) -> Option<PathBuf> {
     let relative = Path::new(rest);
     for part in relative.components() {
@@ -236,8 +232,7 @@ fn read_central_directory(file: &mut File) -> Result<Vec<Entry>> {
     file.seek(SeekFrom::Start(len - window as u64))?;
     file.read_exact(&mut tail)?;
 
-    // Last match wins: a zip whose comment happens to hold the signature would
-    // otherwise be read from the wrong record.
+    // Last match wins: a zip comment can hold the signature.
     let eocd = (0..=tail.len().saturating_sub(EOCD_LEN))
         .rev()
         .find(|&i| u32le(&tail, i) == EOCD_SIG)
@@ -355,9 +350,8 @@ mod tests {
                 h
             };
 
-            // Local header. Its sizes are deliberately left at zero, the way a
-            // streaming zipper writes them, so the reader has to take the real
-            // ones from the central directory.
+            // Local header. Its sizes are left at zero, the way a streaming
+            // zipper writes them; the real ones are in the central directory.
             let mut local = head(LOCAL_SIG, &[20, 0, 0x08, 0]);
             local.extend_from_slice(&method.to_le_bytes());
             local.extend_from_slice(&[0u8; 4]); // time, date
@@ -481,7 +475,7 @@ mod tests {
         let zip = dir.join("a.zip");
         let mut bytes = sample();
         // Flip a byte inside the deflate stream. The CRC in the central
-        // directory still describes what the entry should have been.
+        // directory describes what the entry should have been.
         let at = bytes.len() / 3;
         bytes[at] ^= 0xFF;
         fs::write(&zip, bytes).unwrap();

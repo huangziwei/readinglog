@@ -34,11 +34,10 @@ pub enum Hit {
     /// [`Stats::books`]. Leaves the app, as [`Hit::Exit`] does.
     Open(usize),
     /// Ask to set `BookRecord::finished` on a book, by its index in
-    /// [`Stats::books`] and the value a tap would set. Puts the question up
-    /// rather than answering it: [`Hit::Answer`] answers.
+    /// [`Stats::books`] and the value a tap sets. [`Hit::Answer`] answers it.
     Finished(usize, bool),
-    /// Ask to read a book again, by its index in [`Stats::books`]. Puts the
-    /// question up rather than answering it: [`Hit::Answer`] answers.
+    /// Ask to read a book again, by its index in [`Stats::books`].
+    /// [`Hit::Answer`] answers it.
     Restart(usize),
     /// Carry out the question [`State::asked`] holds. A restart leaves the app,
     /// as [`Hit::Open`] does.
@@ -55,7 +54,7 @@ pub enum Hit {
     ShowUnnamed(bool),
     /// The colours the charts are drawn in.
     ColorScheme(crate::settings::ColorScheme),
-    /// Go looking for a newer release of this app.
+    /// Go looking for a newer release.
     Update,
     Prev,
     Next,
@@ -281,21 +280,17 @@ pub struct State {
     pub picked: bool,
     /// The book whose own screen is open, over whichever tab opened it.
     pub book: Option<usize>,
-    /// The question standing over the open book's screen, and the book it
-    /// names.
+    /// The question over the open book's screen, and the book it names.
     pub asked: Option<(usize, Ask)>,
     /// How far down the book list has been paged.
     pub books_from: usize,
     /// Which books the Books screen lists.
     pub shelf: Shelf,
-    /// The stretch that list is narrowed to, which a span's own Finished
-    /// figure opens it under.
+    /// The stretch that list is narrowed to.
     pub window: Option<Window>,
     /// The order it lists them in, which a tab change keeps.
     pub sort: Sort,
-    /// Whether the day picked off the grid was asked to open as its own page.
-    /// A span whose books are listed under its grid narrows that list to the
-    /// picked day, and opens the day only on this.
+    /// Whether the day picked off the grid opens as its own page.
     pub opened_day: bool,
     /// Which page of All Time is showing, of [`alltime::PAGES`].
     pub alltime_page: usize,
@@ -612,8 +607,8 @@ mod tests {
         assert_eq!(named(Span::Year, ja), "2026年");
         assert_eq!(named(Span::Month, ja), "2026年9月");
         assert_eq!(named(Span::Week, ja), "2026年第36週");
-        // A week is numbered off the year holding most of it, so the last
-        // days of December are named by the year they run into.
+        // A week is numbered off the year holding most of it: the last days
+        // of December are named by the year they run into.
         let turn = Window {
             span: Span::Week,
             day: date::days_from_civil(2025, 12, 30),

@@ -1,6 +1,6 @@
 //! Reading Log: the log parser, the device catalog, the session store, the
 //! statistics over them, and the screens drawn from those. Every module the
-//! device binary runs is here, so a host binary draws the same screens.
+//! device binary runs is here.
 
 pub mod app;
 pub mod catalog;

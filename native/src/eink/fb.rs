@@ -99,20 +99,16 @@ struct Surface {
     win: Window,
     gc: Gcontext,
     depth: u8,
-    /// Wire bytes per pixel for `depth`, from `pixmap_formats`: 1 on depth-8,
-    /// 4 on depth-24/32.
+    /// Wire bytes per pixel for `depth`, from `pixmap_formats`.
     bytes_per_pixel: usize,
-    /// R, G, B offsets within a `bytes_per_pixel`-wide wire pixel. Depth-24
-    /// little-endian BGRX is `[2, 1, 0]`. Unused on depth-8.
+    /// R, G, B offsets within a `bytes_per_pixel`-wide wire pixel.
     chan: [usize; 3],
     /// Per-`PutImage` byte budget (server max request length minus header slack).
     max_req_bytes: usize,
 }
 
 pub struct Framebuffer {
-    /// Where a frame is presented. `None` on a surface opened by
-    /// [`Framebuffer::offscreen`], which is read through
-    /// [`Framebuffer::capture_png`] instead.
+    /// Where a frame is presented. `None` under [`Framebuffer::offscreen`].
     surface: Option<Surface>,
     pub var: Var,
     /// Packed RGB ([`CH`] bytes/pixel), stride `xres * CH`. Every draw writes here.

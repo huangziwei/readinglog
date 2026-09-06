@@ -9,12 +9,10 @@ use anyhow::{Context, Result};
 
 use super::fb::{Framebuffer, MxcfbRect, WAVEFORM_MODE_GC16};
 
-/// Where screenshots land — the same directory stock Kindle screenshots use,
-/// so they show up where expected when the Kindle is plugged in over USB.
+/// Where screenshots land — the same directory stock Kindle screenshots use.
 const SCREENSHOT_DIR: &str = "/mnt/us/screenshots";
 
-/// Holds the white flash long enough to read as deliberate, past
-/// a refresh glitch, short enough not to feel like a hang.
+/// How long the white flash is held.
 const FLASH_MS: u64 = 120;
 
 /// The screen to a timestamped PNG, a white flash, then the screen restored.
@@ -34,8 +32,8 @@ pub fn capture(fb: &mut Framebuffer) -> Result<PathBuf> {
     let snap = fb.backing_snapshot();
     let cap = fb.capture_png(&path);
 
-    // White flash → brief hold → restore. send_update widens to full rows, so a
-    // full-screen rect repaints everything; GC16 is the clean full refresh.
+    // White flash → brief hold → restore. send_update widens to full rows, and
+    // a full-screen rect repaints everything. GC16 is the clean full refresh.
     let (w, h) = (fb.var.xres, fb.var.yres);
     let full = MxcfbRect {
         top: 0,

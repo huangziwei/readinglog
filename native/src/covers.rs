@@ -1,5 +1,5 @@
 //! Copies of book covers under [`COVERS_DIR`], made by [`keep`] from the
-//! `source` it is given and named by [`file_name`].
+//! `source` it is given and named by `file_name`.
 
 use std::path::{Path, PathBuf};
 
@@ -28,7 +28,7 @@ pub fn path(dir: &Path, key: &str) -> PathBuf {
 
 /// Copy `source` to [`path`], through a `.partial` sibling and a rename.
 ///
-/// `Err` on a `source` of zero bytes or over [`MAX_BYTES`].
+/// `Err` on a `source` of zero bytes or over `MAX_BYTES`.
 pub fn keep(dir: &Path, key: &str, source: &Path) -> std::io::Result<PathBuf> {
     let bytes = std::fs::metadata(source)?.len();
     if bytes == 0 || bytes > MAX_BYTES {

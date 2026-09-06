@@ -24,8 +24,7 @@ use readinglog_native::ui::theme::Theme;
 use readinglog_native::update::{Doing, Failure, Outcome};
 use readinglog_native::view::{Ask, Shelf, Sort, Span, Window};
 
-/// The day the preview is set to, and the second of it: a Wednesday evening in
-/// the middle of a month.
+/// The day the preview is set to, and the second of it.
 const DAY: (i64, i64, i64) = (2026, 9, 16);
 const NOW: i64 = 20 * 3600 + 15 * 60;
 
@@ -411,8 +410,8 @@ fn set_span(app: &mut App, shot: &Shot, week: WeekStart) -> Result<()> {
                 day,
             }));
         }
-        // The longest window name beside the widest sort label, which is the
-        // pairing that squeezes the window chip.
+        // `Span::Week` sets the widest window chip, `Sort::Progress` the
+        // widest sort chip.
         "windowprogress" => {
             app.set_shelf(Shelf::Finished);
             let day = last_finished(app);

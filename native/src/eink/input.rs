@@ -11,9 +11,7 @@ use super::buttons::{Buttons, PageButton};
 use super::touch::{Touch, TouchEvent};
 use crate::orientation::Orientation;
 
-/// How long [`Input::next`] blocks before surfacing a `Tick`, bounding how
-/// quickly a device rotation reaches the main loop. Fires on an idle poll:
-/// real input returns first.
+/// How long [`Input::next`] blocks before surfacing a `Tick`.
 const TICK_MS: libc::c_int = 500;
 
 /// A unified input event from either device.
@@ -28,8 +26,7 @@ pub enum InputEvent {
 
 pub struct Input {
     touch: Touch,
-    /// `None` when no page-button device was found/openable — the picker runs
-    /// touch-only and `poll` watches just the touchscreen.
+    /// `None` where no page-button device was found or openable.
     buttons: Option<Buttons>,
 }
 
@@ -49,14 +46,14 @@ impl Input {
 
     /// Block until the next event from either device (see
     /// [`Self::next_deadline`]); the everyday call, with only the idle
-    /// [`TICK_MS`] wake and no arm deadline.
+    /// `TICK_MS` wake and no arm deadline.
     pub fn event(&mut self) -> Result<InputEvent> {
         self.next_deadline(None)
     }
 
     /// [`Self::event`] with an [`InputEvent::Tick`] at `deadline`, past a busy
     /// touch fd: the timeout is the remaining time to the absolute `deadline`,
-    /// recomputed each iteration. `None` gives a plain [`TICK_MS`] idle tick.
+    /// recomputed each iteration. `None` gives a plain `TICK_MS` idle tick.
     pub fn next_deadline(&mut self, deadline: Option<Instant>) -> Result<InputEvent> {
         let touch_fd: RawFd = self.touch.raw_fd();
         loop {

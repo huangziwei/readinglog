@@ -13,8 +13,7 @@ use super::{Ctx, Hit, Shelf, Sort, State, Window, band};
 /// Lines a title takes before the rest of it is ellipsized.
 const TITLE_LINES: usize = 2;
 
-/// The four marks along the foot: the ends of the list at the ends of the row,
-/// one step either side of the count.
+/// The four marks along the foot: both ends, and one step either way.
 const JUMP_FIRST: &str = "«";
 const JUMP_LAST: &str = "»";
 const STEP_BACK: &str = "‹";
@@ -40,10 +39,9 @@ fn figures_width(cx: &mut Ctx, figure: &str) -> i32 {
     cx.text.measure_width(figure) as i32
 }
 
-/// Books on `shelf` in `order`, by their index in [`Stats::books`], which is
-/// held most recently read first. [`Sort::Recent`] is that order untouched, and
-/// the stable sorts below fall back to it on a tie. A book stands inside
-/// `days` where the day it was last put down does.
+/// Books on `shelf` in `order`, by their index in [`Stats::books`], held most
+/// recently read first. [`Sort::Recent`] is that order untouched, and the
+/// stable sorts fall back to it on a tie.
 pub fn listed(
     stats: &Stats,
     shelf: Shelf,
@@ -96,7 +94,7 @@ pub fn list_box(theme: &Theme, area: Rect, chips: bool) -> Rect {
     }
 }
 
-/// Rows one page of the list holds, [`foot_height`] taken off first.
+/// Rows one page of the list holds, `foot_height` taken off first.
 pub fn rows_per_page(theme: &Theme, area: Rect) -> usize {
     (((area.h - foot_height(theme)) / row_height(theme)).max(1)) as usize
 }
@@ -166,9 +164,8 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
 }
 
 /// The order the list is in, at the right of the shelf chips' own row. One
-/// chip, not one to an order: the row has no width for three more at every
-/// text size. A tap opens the order after this one, and the box it took is
-/// answered for whatever stands beside it.
+/// chip for all three orders. A tap opens the order after this one, and the
+/// box it took is returned.
 fn sort_chip(cx: &mut Ctx, area: Rect, on: Sort) -> Rect {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
@@ -502,8 +499,7 @@ mod tests {
             shelves(&all_done, Shelf::All),
             [Shelf::All, Shelf::Finished]
         );
-        // Standing on that shelf when the last book is read through, the row
-        // goes on naming it rather than filling a chip the list is not under.
+        // The shelf showing is named wherever the list stands.
         assert_eq!(
             shelves(&all_done, Shelf::Unfinished),
             [Shelf::All, Shelf::Finished, Shelf::Unfinished]

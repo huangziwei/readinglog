@@ -13,12 +13,10 @@ use crate::ui::{charts, theme::Theme};
 
 use super::{Ask, Ctx, Hit, band};
 
-/// The most columns the strip along the bottom is cut into. A book read over
-/// more days than this gives each column a block of them.
+/// The most columns the strip along the bottom is cut into.
 const SPAN_COLUMNS: i64 = 30;
 
-/// Lines a title takes before the rest of it is ellipsized, where the column
-/// it is set in has room for them.
+/// Lines a title takes before the rest of it is ellipsized.
 const TITLE_LINES: usize = 2;
 
 /// Rows of figures the reading section lists.

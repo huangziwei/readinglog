@@ -1,11 +1,10 @@
 //! Reading one syslog line. The reading-timer lines are a flat `key:value,`
-//! list inside `;`-terminated payloads, each headed by an event name; the
-//! `fastmetrics` records beside them carry a JSON-ish body instead.
+//! list inside `;`-terminated payloads, each headed by an event name. The
+//! `fastmetrics` records beside them carry a JSON-ish body.
 
 use crate::date;
 
-/// The tag every reading-timer line carries; the cheap prefilter before any
-/// parsing.
+/// The tag every reading-timer line carries.
 pub const TIMER_MARKER: &str = "ReadingTimerController";
 
 /// One stamped moment in the log.
@@ -15,9 +14,7 @@ pub struct Moment {
     pub day: String,
     /// Seconds into `day`.
     pub secs: i64,
-    /// The same instant as a single running count of seconds. Elapsed time is
-    /// measured on this and never on `secs`, which runs backwards at midnight
-    /// and reads a whole night's absence as no time at all.
+    /// The same instant as one running count of seconds.
     pub abs: i64,
     /// `YYYY-MM-DDTHH:MM:SS` — the form a session stores.
     pub at: String,
@@ -54,7 +51,7 @@ pub fn stamp(line: &str) -> Option<Moment> {
 }
 
 /// The `YYMMDD:HHMMSS` a line begins with, or `None`. The form a watermark
-/// travels in: log prefixes and dump filenames are both this shape, so every
+/// travels in: log prefixes and dump filenames are both this shape, and every
 /// comparison is string ordering with no date arithmetic.
 pub fn line_stamp(line: &str) -> Option<&str> {
     stamp(line).map(|_| &line[..13])
@@ -81,7 +78,7 @@ pub fn log_stamp(iso: &str) -> Option<String> {
 }
 
 /// A whole-number field of a reading-timer payload. The name must start a
-/// field — the line's separator or a `,` — so `Time` does not match inside
+/// field — the line's separator or a `,`. `Time` does not match inside
 /// `IntervalTime`.
 pub fn field(line: &str, name: &str) -> Option<i64> {
     let needle = format!("{name}:");
@@ -113,9 +110,8 @@ pub fn payloads(line: &str) -> impl Iterator<Item = &str> {
 pub fn end_position(payload: &str) -> Option<i64> {
     const KEY: &str = "EndPos:YJPosition: ";
     let at = match payload.find("NextTOCEntry") {
-        // No `EndPos` ahead of the group means the book's was cut away, and
-        // what remains describes the chapter — no answer, rather than a wrong
-        // one.
+        // No `EndPos` ahead of the group leaves only the chapter's, which is
+        // no answer.
         Some(toc) => payload[..toc].rfind(KEY)?,
         None => payload.find(KEY)?,
     };
@@ -132,9 +128,8 @@ pub fn book_position(line: &str) -> Option<i64> {
     payloads(line).find_map(end_position)
 }
 
-/// True when the line names `event` rather than merely containing the word: an
-/// event is `<sep><Event>,`, `<sep>` being the `Information::` prefix or the
-/// `;` ending the payload before it. Both separators are load-bearing.
+/// True when `line` names `event` as `<sep><Event>,`, `<sep>` being the
+/// `Information::` prefix or the `;` ending the payload before it.
 pub fn names(line: &str, event: &str) -> bool {
     let bytes = line.as_bytes();
     line.match_indices(event).any(|(at, _)| {
@@ -162,8 +157,8 @@ pub struct Observation {
 pub fn observation(line: &str) -> Option<Observation> {
     let page_turn = names(line, "NextPage");
     let closes = names(line, "CloseBook");
-    // A named page event with no counter still marks a turn; the device omits
-    // `TotalTime` from the ones it declines to credit.
+    // A named page event with no counter marks a turn. `TotalTime` is absent
+    // from the uncredited ones.
     let named = page_turn || closes || names(line, "PreviousPage") || names(line, "GoToPosition");
     // The payload holding the counter, or — for those uncredited events — any
     // that at least says which book.
@@ -336,7 +331,7 @@ mod tests {
         let rec = "260814:111900 fastmetrics[1]: D fastmetrics: SchemaName[ereader_book_consume_content], Fields[{ \t\"context\" : \"Book:Reading\", \t\"words_count\" : 217, \t\"span_type\" : \"Text\" } ]. :";
         assert_eq!(field_text(rec, "context"), Some("Book:Reading"));
         assert_eq!(field_num(rec, "words_count"), Some(217));
-        // `field_text` on an unquoted value would run into the next field.
+        // `field_text` runs into the next field on an unquoted value.
         assert_eq!(field_num(rec, "context"), None);
     }
 

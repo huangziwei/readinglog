@@ -1,6 +1,6 @@
-//! Every size on screen, from the panel and the text size the reader set. Type
-//! is a fixed pixel size — see [`BODY_PX`] — and so is everything derived from
-//! it; [`Theme::pad`] and [`Theme::gap`] alone read the panel's width.
+//! Every size on screen, from the panel and a [`TextSize`]. Type is a fixed
+//! pixel size — see `BODY_PX` — as is everything derived from it.
+//! [`Theme::pad`] and [`Theme::gap`] alone read the panel's width.
 
 use crate::settings::TextSize;
 
@@ -17,8 +17,7 @@ pub struct Theme {
     /// A section heading.
     pub head_px: f32,
     pub body_px: f32,
-    /// The strip along the bottom, which never scales: its five cells hold
-    /// Rhythmus at [`BODY_PX`] and nothing wider.
+    /// The strip along the bottom, which never scales.
     pub tab_px: f32,
     /// An axis label, a date under a bar, a unit beside a figure.
     pub small_px: f32,
@@ -27,9 +26,7 @@ pub struct Theme {
     pub tabs_h: i32,
 }
 
-/// A row of the UI, in pixels of em. Fixed, not a share of the panel: every
-/// Kindle this runs on is ~300 ppi, so a size in pixels is a size on the page.
-/// The larger panel's job is to show *more*, not bigger.
+/// A row of the UI, in pixels of em, fixed on every ~300 ppi panel.
 const BODY_PX: f32 = 38.0;
 
 /// A section heading.
@@ -40,7 +37,7 @@ impl Theme {
         Self::sized(xres, yres, TextSize::default())
     }
 
-    /// [`Theme::for_screen`] at the size the reader set.
+    /// [`Theme::for_screen`] at `size`.
     pub fn sized(xres: u32, yres: u32, size: TextSize) -> Self {
         let w = xres as i32;
         let body = (BODY_PX * size.scale()).round();
@@ -79,9 +76,8 @@ mod tests {
 
     #[test]
     fn type_is_the_same_size_on_every_panel() {
-        // These panels are all ~300 ppi, so a size in pixels is a size on the
-        // page. A 10.2" Scribe shows more rows than a 7" Paperwhite; it does
-        // not show larger ones.
+        // These panels are all ~300 ppi, and a size in pixels is a size on
+        // the page.
         let reference = Theme::for_screen(1264, 1680);
         for (w, h) in PANELS {
             let t = Theme::for_screen(w, h);

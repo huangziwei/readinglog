@@ -1,5 +1,5 @@
 //! Fetching a newer Reading Log from the project's own GitHub releases. The
-//! extension folder also holds the reading record, so [`place`] moves the
+//! extension folder also holds the reading record: `place` moves the
 //! archive's files over their counterparts and never swaps the folder.
 
 pub mod archive;
@@ -14,35 +14,26 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::lang::Strings;
 
-/// The version this build is, as `Cargo.toml` states it. What a release tag is
-/// held against.
+/// The version this build is, as `Cargo.toml` states it.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// The project, as GitHub names it. One spelling: the API URL, the page a
-/// failure sends someone to, and the `User-Agent` all read it.
+/// The project, as GitHub names it.
 pub const REPO: &str = "huangziwei/readinglog";
 
-/// Where to go on a computer when this cannot do it. Short enough to be typed
-/// off a screen, which is the whole point of it.
+/// Where to go on a computer when this cannot do it.
 pub const RELEASES_URL: &str = "github.com/huangziwei/readinglog/releases";
 
-/// The folder this app installs into, and the folder it keeps its record in.
-/// Only the files the archive carries are replaced; `sessions.tsv`, `settings`
-/// and `covers/` are not in it and are never touched.
+/// The folder `place` installs into, and the folder holding the record.
 pub const EXTENSION_DIR: &str = "/mnt/us/extensions/readinglog";
 
-/// An entry that names the archive's own root: `extensions/readinglog/bin/`
-/// plus this. Also the last file [`place`] moves.
+/// The archive's own root, and the last file `place` moves.
 pub const MARKER: &str = "bin/readinglog";
 
-/// Where the archive lands and where it is unpacked, both under the folder
-/// they replace: `/mnt/us/extensions/` is what KUAL builds its menu from, and
-/// a staging folder left there would stand in it as a second Reading Log.
+/// Where the archive lands and where it is unpacked.
 const ARCHIVE: &str = ".new.zip";
 const STAGING: &str = ".new";
 
-/// Releases to look through, newest first. Well past the depth at which this
-/// project last published an archive.
+/// Releases to look through, newest first.
 const RELEASES_PER_PAGE: u32 = 30;
 
 /// Is this one of the archives a release publishes? The version rides the
@@ -51,7 +42,7 @@ fn is_asset(name: &str) -> bool {
     name.starts_with("readinglog-") && name.ends_with("-kindle.zip")
 }
 
-/// The release an update would install.
+/// The release an update installs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Release {
     pub tag: String,
@@ -80,8 +71,8 @@ pub struct ApiAsset {
     pub browser_download_url: String,
 }
 
-/// What the update is doing now, for the banner drawing it. No words: `lang`
-/// owns every one this app draws, and this runs on a worker thread.
+/// What the update is doing, for the banner drawing it. No words: `lang`
+/// owns every one drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Doing {
     /// Asking GitHub what the newest release is.
@@ -96,7 +87,7 @@ pub enum Doing {
 
 impl Doing {
     /// The banner: a headline, and the lines under it. The second is blank
-    /// until there is a figure, so the verb over it holds still.
+    /// until there is a figure.
     pub fn banner(&self, s: &Strings) -> (String, Vec<String>) {
         let said = match self {
             Doing::Asking => s.update_asking,
@@ -107,9 +98,8 @@ impl Doing {
         (s.update_row.into(), vec![said.into(), self.got()])
     }
 
-    /// Can a tap still stop it? The flag is read while the release list is
-    /// awaited and between chunks of the download; past that the copy is
-    /// being moved into place, and stopping would leave it half replaced.
+    /// Whether a tap stops it: read while the release list is awaited and
+    /// between chunks of the download.
     pub fn stoppable(&self) -> bool {
         matches!(self, Doing::Asking | Doing::Downloading { .. })
     }
@@ -127,7 +117,7 @@ impl Doing {
 /// fetch it on a computer whichever it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Failure {
-    /// GitHub could not be reached, or would not answer.
+    /// GitHub could not be reached, or gave no answer.
     NoAnswer,
     /// It answered, and no release it lists carries an archive.
     NoRelease,
@@ -135,7 +125,7 @@ pub enum Failure {
     BadDownload,
     /// The binary inside does not run on this Kindle.
     WrongBuild,
-    /// It runs, and the folder would not take it.
+    /// It runs, and the folder did not take it.
     NotPlaced,
 }
 
@@ -158,7 +148,7 @@ pub enum Outcome {
     /// No route off this Kindle. Said before anything is asked for: the
     /// resolver's own timeout is the difference between this and a hang.
     Offline,
-    /// The newest release is the one already running.
+    /// The newest release is the one running.
     UpToDate,
     /// In place, at this version. Nothing on screen is running it yet.
     Installed(String),
@@ -169,8 +159,8 @@ pub enum Outcome {
 
 impl Outcome {
     /// The banner: a headline, and the lines under it. Every ending that is
-    /// not an update says where to get one by hand — there is no browser
-    /// here, so the line is an address to type into a computer.
+    /// not an update says where to get one by hand, as an address to type
+    /// into a computer.
     pub fn banner(&self, s: &Strings) -> (String, Vec<String>) {
         match self {
             Outcome::UpToDate => (
@@ -188,7 +178,7 @@ impl Outcome {
     }
 }
 
-/// `why`, then where to go instead.
+/// `why`, then [`RELEASES_URL`].
 fn by_hand(why: &str, s: &Strings) -> Vec<String> {
     vec![why.into(), s.update_by_hand.into(), RELEASES_URL.into()]
 }
@@ -317,8 +307,7 @@ pub fn run_into(dest: &Path, cancel: &AtomicBool, say: &dyn Fn(Doing)) -> Outcom
         Err(why) => return Outcome::Failed(why),
     };
     // A tap while GitHub was being waited on. Read here as well as between
-    // chunks of the download, so a tap is answered the same way wherever it
-    // lands while [`Doing::stoppable`] holds.
+    // chunks of the download, wherever [`Doing::stoppable`] holds.
     if cancel.load(Ordering::Relaxed) {
         return Outcome::Stopped;
     }
@@ -340,7 +329,7 @@ pub fn run_into(dest: &Path, cancel: &AtomicBool, say: &dyn Fn(Doing)) -> Outcom
     }
 }
 
-/// The release an update would install.
+/// The release an update installs.
 pub fn available(client: &http::Client) -> Result<Release, Failure> {
     let url = format!("https://api.github.com/repos/{REPO}/releases?per_page={RELEASES_PER_PAGE}");
     let body = client
@@ -360,7 +349,7 @@ pub fn available(client: &http::Client) -> Result<Release, Failure> {
 
 /// Download, unpack, prove and move in. `Err(None)` is a tap on the banner.
 /// Nothing in `dest` is touched until the staged copy has stated its own
-/// version, so a failure before [`place`] leaves the install as it was.
+/// version. A failure before [`place`] leaves the install as it was.
 fn fetch(
     client: &http::Client,
     release: &Release,
@@ -418,8 +407,8 @@ fn fetch(
         }
     }
 
-    // The archive may or may not carry Unix modes depending on what wrote it,
-    // so nothing under bin/ is assumed to have come out executable.
+    // The archive may or may not carry Unix modes. Nothing under bin/ is
+    // assumed executable.
     mark_executable(&staging.join("bin"));
 
     if !states_version(&staging.join(MARKER), &release.tag) {
@@ -433,15 +422,15 @@ fn fetch(
     placed.map_err(Some)
 }
 
-/// `<path>.<suffix>`, which shares a parent with `path` so a rename between
-/// the two stays on one filesystem.
+/// `<path>.<suffix>`, sharing a parent with `path`: a rename between the two
+/// stays on one filesystem.
 fn beside(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(format!("{}.{suffix}", path.display()))
 }
 
 /// Does the staged copy run on this Kindle, and is it the release it came
-/// from? `--version` opens neither the display nor a log, so running it
-/// settles the ABI, that it starts, and which release the archive holds.
+/// from? `--version` opens neither the display nor a log, and settles the
+/// ABI, that it starts, and which release the archive holds.
 fn states_version(exe: &Path, tag: &str) -> bool {
     let Ok(out) = Command::new(exe).arg("--version").output() else {
         eprintln!("update: the staged copy would not run");
@@ -459,8 +448,7 @@ fn states_version(exe: &Path, tag: &str) -> bool {
 }
 
 /// Every file under `staging` over its counterpart in `dest`. [`MARKER`] goes
-/// last: it is the file this process runs from, so a move that fails partway
-/// leaves a runnable folder rather than an empty one.
+/// last: it is the file this process runs from.
 fn place(staging: &Path, dest: &Path) -> Result<(), Failure> {
     let mut files = Vec::new();
     walk(staging, Path::new(""), &mut files);
@@ -506,8 +494,8 @@ fn replace(from: &Path, to: &Path) -> bool {
         return false;
     }
     if fs::rename(from, to).is_ok() {
-        // A copy still open cannot always be unlinked. Left where it is, the
-        // next update clears it above.
+        // A copy held open cannot always be unlinked. The next update clears
+        // it above.
         let _ = fs::remove_file(&aside);
         return true;
     }
@@ -858,7 +846,7 @@ mod tests {
         let dir = tmpdir("replace");
         let (from, to) = (dir.join("new"), dir.join("live"));
         fs::write(&to, b"working").unwrap();
-        // Nothing at `from`, so the second rename fails.
+        // Nothing at `from`: the second rename fails.
         assert!(!replace(&from, &to));
         assert_eq!(fs::read(&to).unwrap(), b"working");
         assert!(!dir.join("live.old").exists());

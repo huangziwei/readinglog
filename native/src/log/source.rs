@@ -11,8 +11,7 @@ pub const LIVE_LOG: &str = "/var/log/messages";
 /// The directory `tinyrot` gzips [`LIVE_LOG`]'s rotated chunks into, on flash.
 pub const LOG_DIR: &str = "/var/local/log";
 
-/// What a rotated chunk's name begins with:
-/// `messages_00000807_20260807101501.gz`.
+/// What a rotated chunk's name begins with.
 const CHUNK_PREFIX: &str = "messages_";
 
 /// Where the firmware keeps its daily snapshots.
@@ -27,8 +26,7 @@ pub struct Sources {
     pub live: usize,
     pub chunks: usize,
     pub dumps: usize,
-    /// Files passed over on their name alone, having nothing past the
-    /// watermark.
+    /// Files passed over on their name alone.
     pub skipped: usize,
     /// Files that decoded only partway, giving up their intact prefix.
     pub truncated: usize,
@@ -42,8 +40,8 @@ pub struct Collected {
 }
 
 /// Every marker line at or after `watermark`, across the three sources.
-/// `watermark` is `YYMMDD:HHMMSS` — the shape a line begins with and a filename
-/// encodes, so every comparison is string ordering. `on` takes opened, to open.
+/// `watermark` is `YYMMDD:HHMMSS`, the shape a line begins with and a
+/// filename encodes. `on` takes opened, to open.
 pub fn collect_from(
     live: &Path,
     log_dir: &Path,
@@ -305,8 +303,8 @@ mod tests {
         let (log_dir, dump_dir) = (dir.join("log"), dir.join("dumps"));
         std::fs::create_dir_all(&log_dir).unwrap();
         std::fs::create_dir_all(&dump_dir).unwrap();
-        // A snapshot holds everything up to the instant its name encodes, so
-        // the newer one carries the older one's lines as well as its own.
+        // A snapshot holds everything up to the instant its name encodes: the
+        // newer one carries the older one's lines as well as its own.
         let newer = PAGE.replace("260807:101501", "260809:101501");
         std::fs::write(dump_dir.join("log_backup_260807101501.gz"), PAGE).unwrap();
         std::fs::write(

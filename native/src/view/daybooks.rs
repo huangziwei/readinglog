@@ -15,7 +15,7 @@ use super::{Ctx, Hit, band};
 /// Lines a title takes before the rest of it is ellipsized.
 const TITLE_LINES: usize = 2;
 
-/// The shortest height [`row`] draws into: a cover, a title, an author, a
+/// The shortest height `row` draws into: a cover, a title, an author, a
 /// progress bar and a span strip.
 pub fn row_floor(theme: &Theme) -> i32 {
     theme.row_h * 2

@@ -1,5 +1,5 @@
 //! The record of what was read, at [`STORE_DIR`]. Every pass folds
-//! `log::source` and `catalog` into [`STORE_FILE`]. A sitting is written once,
+//! `log::source` and `catalog` into `STORE_FILE`. A sitting is written once,
 //! except one a pass finds in progress and re-measures from its own start.
 
 use std::io::Write as _;
@@ -20,7 +20,7 @@ const STORE_FILE: &str = "sessions.tsv";
 /// What the first line reads. The number names the parse below it.
 const HEADER: &str = "#readinglog\t2";
 
-/// The percentage [`BookRecord::stand_at`] sets [`BookRecord::finished`] at.
+/// The percentage `BookRecord::stand_at` sets [`BookRecord::finished`] at.
 pub const FINISHED_PERCENT: f64 = 99.5;
 
 /// What `catalog` stated about one book, on the last pass that named it.
@@ -35,24 +35,19 @@ pub struct BookRecord {
     pub author: String,
     pub thumbnail: String,
     pub language: String,
-    /// The catalog's `p_percentFinished`, 0 through 100. Negative where
-    /// unstated.
+    /// The catalog's `p_percentFinished`, 0 through 100, negative where unstated.
     pub percent: f64,
     /// Whether `catalog` stated a `p_location` for this book on the last pass.
     pub on_device: bool,
     /// The store's own copy of the cover, under `covers::COVERS_DIR`.
     pub cover: String,
-    /// The `p_location` `catalog` last stated, which `open::uri` names.
-    /// Empty for a book the catalog has only ever named in the library.
+    /// The `p_location` `catalog` last stated, empty where it named none.
     pub location: String,
-    /// Whether this book is read through. [`Store::set_finished`] sets it, and
-    /// [`Self::stand_at`] on a place at or past [`FINISHED_PERCENT`].
+    /// Whether this book is read through, set by [`Store::set_finished`].
     pub finished: bool,
-    /// The place [`Store::restart`] was called at. Until the catalog names a
-    /// place before it, `percent` holds 0.
+    /// The place [`Store::restart`] was called at.
     pub restart: Option<f64>,
-    /// The catalog's `p_readState` on the last pass that named this book,
-    /// negative where it states none. [`Self::take_mark`] reads it.
+    /// The catalog's `p_readState`, negative where it states none.
     pub read_state: i64,
 }
 
@@ -138,7 +133,7 @@ impl Store {
     }
 
     /// Read the store, or an empty one where there is none to read. A file
-    /// that will not parse reads as empty; one stamped with an older [`HEADER`]
+    /// that will not parse reads as empty; one stamped with an older `HEADER`
     /// keeps `books` and `ends` and gives up `sessions` and `mark`.
     pub fn load(dir: &Path) -> Self {
         let Ok(text) = std::fs::read_to_string(Self::file(dir)) else {
@@ -200,7 +195,7 @@ impl Store {
     }
 
     /// The instant a pass must start reading the log at: [`Self::mark`], except
-    /// under [`Self::open_at_mark`], where it is the newest sitting's own start
+    /// under `Self::open_at_mark`, where it is the newest sitting's own start
     /// and that sitting is re-measured whole.
     pub fn read_from(&self) -> String {
         let Some(newest) = self.sessions.last() else {
@@ -335,7 +330,7 @@ impl Store {
             .collect()
     }
 
-    /// Copy the `thumbnail` of each slot [`Self::read_slots`] answers into
+    /// Copy the `thumbnail` of each slot `Self::read_slots` answers into
     /// `dir`, point its `cover` at the copy, and delete every other file there.
     /// Answers how many records changed.
     pub fn keep_covers(&mut self, dir: &Path) -> usize {

@@ -1,12 +1,10 @@
-//! The interface language: what the device is set to, and every word this app
-//! draws in it. [`Strings`] is one struct of `&'static str`, and a language
-//! that forgets a word does not compile. Nothing is loaded at runtime.
+//! [`Lang`] names an interface language. [`Strings`] holds every word drawn
+//! in one, as a `&'static str` per field.
 
 use std::path::Path;
 
-/// `template` with `{d}` set to `count`, and an ending in brackets kept only
-/// where `count` is not one: `{d} DAY[S]` reads "1 DAY" and "30 DAYS". A
-/// language with one form writes no brackets.
+/// `template` with `{d}` set to `count`, and text in brackets kept only where
+/// `count` is not one: `{d} DAY[S]` gives "1 DAY" and "30 DAYS".
 pub fn counted(template: &str, count: i64) -> String {
     let mut out = String::with_capacity(template.len());
     let mut dropping = false;
@@ -21,13 +19,12 @@ pub fn counted(template: &str, count: i64) -> String {
     out.replace("{d}", &count.to_string())
 }
 
-/// `template` with `{v}` set to `version`. Beside [`counted`]: a language
-/// whose word order puts the number elsewhere moves the brace.
+/// `template` with `{v}` set to `version`.
 pub fn at_version(template: &str, version: &str) -> String {
     template.replace("{v}", version)
 }
 
-/// The languages the interface is written in.
+/// The languages [`Strings`] is written in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lang {
     #[default]
@@ -38,11 +35,11 @@ pub enum Lang {
     TraditionalChinese,
 }
 
-/// Where the device writes the locale the config picker set.
+/// The file [`Lang::detect`] reads.
 const LOCALE_FILE: &str = "/var/local/system/locale";
 
 impl Lang {
-    /// Every language, in the order the config page lists them.
+    /// Every [`Lang`], in display order.
     pub const ALL: [Lang; 5] = [
         Lang::English,
         Lang::German,
@@ -51,9 +48,7 @@ impl Lang {
         Lang::Japanese,
     ];
 
-    /// What the button says: one character each, in the language's own script.
-    /// 简 says everything 简体中文 does in a fifth of the width, and five of
-    /// these stand on one line where five spelled-out names do not.
+    /// One or two characters per [`Lang`], in that language's own script.
     pub fn label(self) -> &'static str {
         match self {
             Lang::English => "EN",
@@ -64,7 +59,7 @@ impl Lang {
         }
     }
 
-    /// What the setting is stored as: one letter.
+    /// The letter [`Lang::from_letter`] reads.
     pub fn letter(self) -> char {
         match self {
             Lang::English => 'e',
@@ -75,7 +70,8 @@ impl Lang {
         }
     }
 
-    /// The language a stored letter names. Anything else is English.
+    /// The [`Lang`] a [`Lang::letter`] names. Any other `s` gives
+    /// `Lang::English`.
     pub fn from_letter(s: &str) -> Lang {
         match s.trim() {
             "d" => Lang::German,
@@ -86,9 +82,7 @@ impl Lang {
         }
     }
 
-    /// The convention this language's own labels are set in, as a tag
-    /// `font::Script::of_language` reads. A tag, never a `Script`: this module
-    /// compiles into the host library beside `date`, which cannot see `ui`.
+    /// The tag `font::Script::of_language` reads for this [`Lang`].
     pub fn language_tag(self) -> &'static str {
         match self {
             Lang::English => "en",
@@ -99,7 +93,7 @@ impl Lang {
         }
     }
 
-    /// The words themselves.
+    /// The [`Strings`] for this [`Lang`].
     pub fn strings(self) -> &'static Strings {
         match self {
             Lang::English => &ENGLISH,
@@ -110,13 +104,13 @@ impl Lang {
         }
     }
 
-    /// What the device is set to. English wherever the file is missing,
-    /// unreadable, or names a language [`Lang`] does not carry.
+    /// The [`Lang`] `LOCALE_FILE` names. `Lang::English` where that file is
+    /// missing, unreadable, or names no [`Lang`].
     pub fn detect() -> Lang {
         Self::detect_in(Path::new(LOCALE_FILE))
     }
 
-    /// [`Lang::detect`] against a named file.
+    /// [`Lang::detect`] against `path`.
     pub fn detect_in(path: &Path) -> Lang {
         std::fs::read_to_string(path)
             .ok()
@@ -126,9 +120,8 @@ impl Lang {
     }
 }
 
-/// The language a `LANG=` line names, or `None` where there is no such line.
-/// The file is shell: the value may be quoted and `LC_ALL` may sit beside it.
-/// Only `LANG` is read — the two are written together and `LANG` is first.
+/// The [`Lang`] a `LANG=` line in `text` names, quotes trimmed. `None` where
+/// `text` holds no such line.
 fn of_locale_file(text: &str) -> Option<Lang> {
     let value = text.lines().find_map(|line| {
         line.trim()
@@ -138,9 +131,8 @@ fn of_locale_file(text: &str) -> Option<Lang> {
     of_posix(value)
 }
 
-/// The language a POSIX locale names. **The codeset rides on the region** —
-/// the device writes `zh_CN.utf8`, not `zh_CN` — and every subtag is cut at
-/// its first `.` before it is read.
+/// The [`Lang`] `value` names. Every subtag is cut at its first `.`:
+/// `zh_CN.utf8` reads as `zh` and `CN`.
 pub fn of_posix(value: &str) -> Option<Lang> {
     let mut subtags = value
         .split(['-', '_'])
@@ -150,8 +142,6 @@ pub fn of_posix(value: &str) -> Option<Lang> {
         "de" => Some(Lang::German),
         "ja" => Some(Lang::Japanese),
         "zh" => {
-            // A region is read where one is given: nothing else names
-            // Traditional.
             for subtag in subtags {
                 match subtag.to_ascii_lowercase().as_str() {
                     "hant" | "tw" | "hk" | "mo" => return Some(Lang::TraditionalChinese),
@@ -161,42 +151,35 @@ pub fn of_posix(value: &str) -> Option<Lang> {
             Some(Lang::SimplifiedChinese)
         }
         "en" => Some(Lang::English),
-        // es, fr, it, nl, pt, ru — locales this app has no words for.
         _ => None,
     }
 }
 
-/// Every word the interface draws. Durations keep `h` and `m` in German:
-/// `5 Std 8 Min` sets three figures across the Book screen at 1258 px into a
-/// row 1186 px wide. Chinese and Japanese take their own units, which fit.
+/// Every word drawn in one [`Lang`].
 pub struct Strings {
-    // The strip along the bottom.
+    // Tab strip.
     pub exit: &'static str,
     pub config: &'static str,
     pub today: &'static str,
     pub rhythm: &'static str,
     pub books: &'static str,
-    // Today. The three figures, then the heading over the day's books — the
-    // day's own date heads its timeline and needs no word here.
+    // Today.
     pub read_today: &'static str,
     pub pages_turned: &'static str,
     pub current_streak: &'static str,
     pub what_was_read: &'static str,
 
-    // Rhythm. The four spans the picker offers, the heading over the hour
-    // columns, and the word before the busiest hour of them.
+    // Rhythm.
     pub all_time: &'static str,
     pub week: &'static str,
-    /// The week's number in its year, written around the digits: `W38`,
-    /// `KW 38`, `第38週`. A language that puts nothing after them leaves
-    /// [`Strings::week_no_after`] empty.
+    /// Before a week number's digits, [`Strings::week_no_after`] after them.
     pub week_no: &'static str,
     pub week_no_after: &'static str,
     pub month: &'static str,
     pub year: &'static str,
 
-    // All Time. The line stating what the record covers, `{m}` its opening
-    // month and `{d}` the days it runs to, then the twelve figures under it.
+    // All Time.
+    /// `{m}` is the opening month, `{d}` the days run to.
     pub since_days: &'static str,
     pub total_read: &'static str,
     pub days_read: &'static str,
@@ -210,35 +193,34 @@ pub struct Strings {
     pub longest_sitting: &'static str,
     pub a_sitting: &'static str,
 
-    // The Books screen, whose two chips narrow the list to one shelf.
+    // Books.
     pub shelf_every: &'static str,
     pub shelf_finished: &'static str,
     pub shelf_unfinished: &'static str,
-    /// What a shelf holding nothing states.
+    /// The line for a shelf with no books.
     pub nothing_on_the_shelf: &'static str,
-    /// The orders the Books screen lists in.
+    /// The three list orders.
     pub by_recent: &'static str,
     pub by_time: &'static str,
     pub by_progress: &'static str,
-    /// The heading over each band of the Trends page: an average day and an
-    /// average week, then what the record holds in each month of the year.
+    /// Headings over the [`Strings::trends`] bands.
     pub an_average_day: &'static str,
     pub an_average_week: &'static str,
     pub by_month: &'static str,
     /// The heading over the sitting histogram, and the word closing its count.
     pub sitting_lengths: &'static str,
     pub in_all: &'static str,
-    /// The word before the fullest column of a fold.
+    /// The word before the fullest column.
     pub most: &'static str,
-    /// The second page of All Time, named at the right of its own top line.
+    /// The second page of [`Strings::all_time`].
     pub trends: &'static str,
-    /// The chip returning a span page to the one holding today.
+    /// The chip returning a span page to today.
     pub now: &'static str,
-    /// The chip opening the day picked off a grid as its own page.
+    /// The chip opening one day as its own page.
     pub open_day: &'static str,
     pub nothing_read: &'static str,
 
-    // Books. `{a}–{b} of {c}`, where `of` is this word.
+    /// The word in `{a}–{b} of {c}`.
     pub of: &'static str,
 
     // Book.
@@ -255,26 +237,21 @@ pub struct Strings {
     /// The day a book read through was last put down.
     pub finished_on: &'static str,
     pub on_the_device: &'static str,
-    /// The control handing a book back to the Kindle's reader: the long form
-    /// where it stands alone, the short one where `restart` stands beside it.
+    /// The long form, and the short one drawn beside `restart`.
     pub continue_reading: &'static str,
     pub continue_short: &'static str,
-    /// The answer that marks a book read through, and the answer that takes the
-    /// mark off, each under the question it answers.
+    /// The two marking answers, each with its question and note.
     pub mark_finished: &'static str,
     pub mark_ask: &'static str,
     pub mark_note: &'static str,
     pub mark_unfinished: &'static str,
     pub unmark_ask: &'static str,
     pub unmark_note: &'static str,
-    /// The place a book stood at as a day or a span ended. `{d}` is that
-    /// figure, rounded.
+    /// The place a book stood at as a span ended. `{d}` is that figure.
     pub percent_reached: &'static str,
-    /// The figure on a bar, over the place its reading stands at. `{d}` is that
-    /// figure, rounded.
+    /// The figure on a bar. `{d}` is that figure, rounded.
     pub percent_plain: &'static str,
-    /// The control that hands a book back to be read from its beginning, the
-    /// question it puts, and what that question states.
+    /// The restart control, its question, and what that question states.
     pub restart: &'static str,
     pub restart_ask: &'static str,
     pub restart_note: &'static str,
@@ -282,8 +259,7 @@ pub struct Strings {
     pub cancel: &'static str,
     pub yes: &'static str,
     pub no: &'static str,
-    /// The heading over a book's own reading, start to finish. `{d}` is the
-    /// days it spans, filled by [`counted`].
+    /// A book's own reading, start to finish. `{d}` is filled by [`counted`].
     pub the_journey: &'static str,
     pub read: &'static str,
     pub left: &'static str,
@@ -299,8 +275,7 @@ pub struct Strings {
     pub the_calendar: &'static str,
     pub language_row: &'static str,
     pub week_starts_on: &'static str,
-    /// The reading section of the config page, and the row setting whether a
-    /// total counts books the catalog names none of.
+    /// The record section, and the row counting unnamed books.
     pub the_record: &'static str,
     pub unnamed_row: &'static str,
     pub unnamed_show: &'static str,
@@ -319,20 +294,18 @@ pub struct Strings {
     pub size_large: &'static str,
 
     // Updating.
-    /// The About section of the config page: the version this build is, and
-    /// the button that goes looking for a newer one.
+    /// The About section: the version, and the button checking for a newer one.
     pub about: &'static str,
     pub version_row: &'static str,
     pub update_row: &'static str,
     pub update_check: &'static str,
-    /// The banner, while an update runs. `update_tap_to_stop` is the only way
-    /// out of it.
+    /// The banner, while an update runs.
     pub update_asking: &'static str,
     pub update_downloading: &'static str,
     pub update_checking: &'static str,
     pub update_placing: &'static str,
     pub update_tap_to_stop: &'static str,
-    /// How it ended. `{v}` is a version — see [`at_version`].
+    /// How an update ended. `{v}` is a version, filled by [`at_version`].
     pub update_up_to_date: &'static str,
     pub update_this_version: &'static str,
     pub update_installed: &'static str,
@@ -347,14 +320,12 @@ pub struct Strings {
     pub update_wrong_build: &'static str,
     pub update_not_placed: &'static str,
 
-    /// Hours and minutes, appended to a number with no space in English and
-    /// CJK, with one in German.
+    /// Hours and minutes, appended across [`Strings::unit_space`].
     pub hours: &'static str,
     pub minutes: &'static str,
     pub unit_space: bool,
 
-    /// Whether a date runs year first: `2026年9月3日` against `3 September
-    /// 2026`. Set for Chinese and Japanese.
+    /// Whether a date runs year first: `2026年9月3日`.
     pub date_ymd: bool,
 
     pub months: [&'static str; 12],
@@ -522,7 +493,6 @@ const ENGLISH: Strings = Strings {
 
 const GERMAN: Strings = Strings {
     exit: "Beenden",
-    // `Einstellungen` sets 235 px, and a cell on the 1264 px panel holds 196.
     config: "Optionen",
     today: "Heute",
     rhythm: "Rhythmus",
@@ -654,8 +624,6 @@ const GERMAN: Strings = Strings {
     update_wrong_build: "Diese Fassung läuft nicht auf diesem Kindle.",
     update_not_placed: "Die neue Fassung ließ sich nicht einsetzen.",
 
-    // `5 Std 8 Min` sets the Book screen's three figures 1258 px across a row
-    // 1186 px wide. `h`/`m` are read in German and are what fits.
     hours: "h",
     minutes: "m",
     unit_space: false,
@@ -1143,9 +1111,9 @@ mod tests {
         assert_eq!(counted("{d} DAY[S]", 1), "1 DAY");
         assert_eq!(counted("{d} DAY[S]", 30), "30 DAYS");
         assert_eq!(counted("SEIT {m} · {d} TAG[E]", 1), "SEIT {m} · 1 TAG");
-        // A language whose noun does not change writes no brackets.
+        // A `template` with no brackets.
         assert_eq!(counted("{d}\u{65e5}", 1), "1\u{65e5}");
-        // Every language's own line reads for one day and for many.
+        // `since_days` and `the_journey`, for one and for many.
         for lang in Lang::ALL {
             let s = lang.strings();
             for said in [s.since_days, s.the_journey] {
@@ -1160,8 +1128,7 @@ mod tests {
 
     use super::*;
 
-    /// Every value that can reach [`LOCALE_FILE`]. Nothing else reaches
-    /// [`of_posix`].
+    /// Every value that can reach [`LOCALE_FILE`].
     const DEVICE_LOCALES: &[(&str, Option<Lang>)] = &[
         ("de_DE.utf8", Some(Lang::German)),
         ("ja_JP.utf8", Some(Lang::Japanese)),
@@ -1190,27 +1157,26 @@ mod tests {
 
     #[test]
     fn the_codeset_does_not_hide_the_region() {
-        // `zh_CN.utf8` splits to ["zh", "CN.utf8"], and a region matched
-        // whole misses it. Every subtag is cut at its first `.`.
+        // `zh_CN.utf8` splits to ["zh", "CN.utf8"]; every subtag is cut at
+        // its first `.`.
         assert_eq!(of_posix("zh_CN.utf8"), Some(Lang::SimplifiedChinese));
         assert_eq!(of_posix("zh_TW.utf8"), Some(Lang::TraditionalChinese));
         assert_eq!(of_posix("zh-Hant-TW"), Some(Lang::TraditionalChinese));
         assert_eq!(of_posix("zh-Hans-CN"), Some(Lang::SimplifiedChinese));
-        // The device ships no Traditional locale, and a bare `zh` is the
-        // Simplified one it does ship.
+        // A bare `zh` gives `Lang::SimplifiedChinese`.
         assert_eq!(of_posix("zh"), Some(Lang::SimplifiedChinese));
     }
 
     #[test]
     fn the_locale_file_is_read_the_way_the_picker_writes_it() {
-        // The pair the picker writes, `LANG` first.
+        // `LANG` first.
         let written = "LANG=en_US.UTF-8\nLC_ALL=en_US.UTF-8\n";
         assert_eq!(of_locale_file(written), Some(Lang::English));
         assert_eq!(
             of_locale_file("LANG=zh_CN.utf8\nLC_ALL=zh_CN.utf8\n"),
             Some(Lang::SimplifiedChinese)
         );
-        // `LC_ALL` alone is not read: the two are written together.
+        // `LC_ALL` alone gives `None`.
         assert_eq!(of_locale_file("LC_ALL=de_DE.utf8\n"), None);
         // Shell quoting, and a file that names nothing.
         assert_eq!(of_locale_file("LANG=\"de_DE.utf8\"\n"), Some(Lang::German));
@@ -1220,8 +1186,6 @@ mod tests {
 
     #[test]
     fn a_device_with_no_locale_file_reads_as_english() {
-        // A missing file is the ordinary case off the device, and on one that
-        // never ran the picker.
         assert_eq!(
             Lang::detect_in(Path::new("/nonexistent/locale")),
             Lang::English
@@ -1230,11 +1194,9 @@ mod tests {
 
     #[test]
     fn the_labels_are_one_character_each() {
-        // Five chips on one line is what the abbreviation buys; a spelled-out
-        // name wraps the row and drops the last language off it.
         let labels: Vec<&str> = Lang::ALL.iter().map(|l| l.label()).collect();
         assert_eq!(labels, ["EN", "DE", "简", "繁", "日"]);
-        // And the letters they are stored as round-trip.
+        // `Lang::letter` round-trips through `Lang::from_letter`.
         for lang in Lang::ALL {
             assert_eq!(Lang::from_letter(&lang.letter().to_string()), lang);
         }
@@ -1243,20 +1205,18 @@ mod tests {
 
     #[test]
     fn every_language_names_the_convention_it_is_set_in() {
-        // The tags round-trip through the parser the catalog's own tags go
-        // through: a label and a book title choose faces alike.
+        // `language_tag` gives the tag `font::Script::of_language` reads.
         assert_eq!(Lang::Japanese.language_tag(), "ja");
         assert_eq!(Lang::TraditionalChinese.language_tag(), "zh-Hant");
         assert_eq!(Lang::SimplifiedChinese.language_tag(), "zh-Hans");
-        // Latin names no Han convention.
+        // `en` and `de` name no Han convention.
         assert_eq!(Lang::English.language_tag(), "en");
         assert_eq!(Lang::German.language_tag(), "de");
     }
 
     #[test]
     fn no_language_leaves_a_word_empty() {
-        // The struct makes a missing field a compile error; this catches a
-        // field filled in with nothing.
+        // A field filled in with nothing.
         for lang in Lang::ALL {
             let s = lang.strings();
             let named: [(&str, &str); 10] = [
@@ -1287,13 +1247,11 @@ mod tests {
     #[test]
     fn the_nav_labels_fit_the_narrowest_panel() {
         // Five cells of 252 px on a 1264 px panel, 238 usable inside the
-        // inverted block. Measured at BODY_PX against the real faces: German
-        // `Rhythmus` sets 182 px, `Optionen` 163, `Einstellungen` 235.
+        // inverted block.
         for lang in Lang::ALL {
             let s = lang.strings();
             for label in [s.exit, s.config, s.today, s.rhythm, s.books] {
-                // A Latin cell at 0.6 em a character is the pessimistic
-                // metric; CJK is one em and shorter in characters.
+                // Latin at 0.6 em a character, CJK at one.
                 let em: f32 = if label.chars().any(|c| c as u32 > 0x2E80) {
                     1.0
                 } else {

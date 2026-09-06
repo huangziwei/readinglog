@@ -55,8 +55,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, page: usize) {
     }
 }
 
-/// The arrows onto the page either side. Each is its own hit box, and a swipe
-/// does the same thing.
+/// The arrows onto the page either side, each its own hit box.
 const BACK: &str = "‹";
 const FORWARD: &str = "›";
 
@@ -71,8 +70,7 @@ fn edge_height(theme: &Theme) -> i32 {
 fn edges(cx: &mut Ctx, line: Rect, left: Option<&str>, right: Option<&str>) {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
-    // One baseline for both ends, taken from the type the line is set in, so
-    // an arrow and a name stand on the same line whatever size each takes.
+    // One baseline for both ends, taken from the type the line is set in.
     cx.text.set_px(theme.small_px);
     let baseline = line.y + cx.text.cap_height() as i32;
     for (said, at_left) in [(left, true), (right, false)] {
@@ -161,7 +159,7 @@ fn band(cx: &mut Ctx, area: Rect, name: &str, fold: &Fold, axis: &[String], ever
 }
 
 /// A duration over its bar, as the rows it is set in: the hour and minute
-/// parts stack, so `2h 22m` fits the width of `22m`. A bucket under a minute
+/// parts stack: `2h 22m` fits the width of `22m`. A bucket under a minute
 /// states nothing.
 pub(super) fn duration_rows(secs: i64, s: &Strings) -> Vec<String> {
     if secs < 60 {
@@ -218,7 +216,7 @@ fn sittings(cx: &mut Ctx, area: Rect) {
 }
 
 /// The length the band at `at` opens at, for the axis under it. The last band
-/// holds everything above its own opening, and says so.
+/// holds everything above its own opening, and states as much.
 fn sitting_name(at: usize, s: &Strings) -> String {
     // The scale opens where a run first counts as reading, not at zero.
     if at == 0 {

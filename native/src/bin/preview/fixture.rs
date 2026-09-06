@@ -11,8 +11,7 @@ use readinglog_native::store::{BookRecord, FINISHED_PERCENT, Store};
 /// Days of reading laid down behind the day being drawn.
 pub const DAYS: i64 = 1150;
 
-/// The [`SHELF`] slot `BookRecord::finished` is set on: the `percent: 46.0`
-/// entry, whose title names its notes and its index.
+/// The [`SHELF`] slot `BookRecord::finished` is set on.
 const MARKED: usize = 7;
 
 /// A book on the shelf, and the stretch of days it was read over.
@@ -404,8 +403,7 @@ pub fn binge_day(last: i64) -> i64 {
     last - BINGE_DAY
 }
 
-/// Books keyed by an extent no record carries: what the log holds where the
-/// catalog never stated a book's own number.
+/// Books keyed by an extent no record carries.
 const GHOSTS: i64 = 5;
 
 /// Days between one day of ghost sittings and the next.

@@ -13,8 +13,7 @@ const CATALOG_PATHS: [&str; 3] = [
     "/var/local/cc.db",
 ];
 
-/// Column separator and row separator for the `sqlite3` output. Neither can
-/// occur in a title, an author or a path.
+/// Column and row separators for the `sqlite3` output.
 const COL: &str = "\u{1}";
 const ROW: &str = "\u{2}";
 
@@ -75,8 +74,7 @@ pub fn read_state_for(read: bool) -> i64 {
 /// One book the catalog names, on the device or in the library.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Book {
-    /// `p_contentSize`, the number a sitting is keyed by. Zero on a cloud row,
-    /// which states none.
+    /// `p_contentSize`, the number a sitting is keyed by. Zero on a cloud row.
     pub extent: i64,
     /// `p_cdeKey`, the key `Session::asin` carries.
     pub cde_key: String,
@@ -84,27 +82,21 @@ pub struct Book {
     pub cde_type: String,
     pub title: String,
     pub author: String,
-    /// `p_percentFinished`, 0 through 100. Negative where the catalog states
-    /// none.
+    /// `p_percentFinished`, 0 through 100, negative where unstated.
     pub percent: f64,
-    /// `p_thumbnail`, a path under `/mnt/us/system/thumbnails/`. Empty where
-    /// the catalog names none.
+    /// `p_thumbnail`, a path. Empty where the catalog names none.
     pub thumbnail: String,
     /// `p_lastAccess`, epoch seconds.
     pub last_access: i64,
-    /// `p_languages_0`, a BCP-47 tag. Empty where the catalog states none.
-    /// `font::Script::of_language` reads it.
+    /// `p_languages_0`, a BCP-47 tag, empty where the catalog states none.
     pub language: String,
-    /// False on a `*`-prefixed `cde_key`: a scriptlet, `My Clippings.txt`, a
-    /// hotfix runner. Each carries reading time and `Stats::build` drops it.
+    /// False on a `*`-prefixed `cde_key`, which `Stats::build` drops.
     pub is_book: bool,
-    /// `p_location`, the file the device holds this book in. Empty on a cloud
-    /// row, which names none. `open::uri` makes it the URI a launch names.
+    /// `p_location`, the file holding this book. Empty on a cloud row.
     pub location: String,
     /// Whether `location` names a file.
     pub on_device: bool,
-    /// `p_readState`, negative where the column is NULL. [`read_state_says`]
-    /// reads it.
+    /// `p_readState`, negative where the column is NULL.
     pub read_state: i64,
 }
 

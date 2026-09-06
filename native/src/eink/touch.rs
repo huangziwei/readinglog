@@ -1,6 +1,6 @@
 //! evdev touchscreen reader. Multi-touch protocol B: `Down` and `Up` flush at
 //! `SYN_REPORT`; a move between them updates `cur_x/cur_y`. Events are 16 raw
-//! bytes. [`pick_from_devices`] scores `/proc/bus/input/devices` nodes.
+//! bytes. `pick_from_devices` scores `/proc/bus/input/devices` nodes.
 
 use std::fs::{File, OpenOptions};
 use std::io::Read;
@@ -30,9 +30,7 @@ const INPUT_PROP_DIRECT: u32 = 1;
 
 const EVENT_BYTES: usize = 16;
 
-/// Side of the square corner zones for the two-finger screenshot gesture, in
-/// user-visible pixels. ~14% of the KOA2's 1264px width — clearly "a corner"
-/// without demanding pixel precision.
+/// Side of the screenshot gesture's corner zones, in user-visible pixels.
 const SCREENSHOT_CORNER_PX: u32 = 180;
 
 /// Boundary touch events reaching the main loop: `Down` on a landing contact,
@@ -72,31 +70,22 @@ pub struct Touch {
     file: File,
     cur_x: i32,
     cur_y: i32,
-    /// Set on `ABS_MT_TRACKING_ID >= 0`, cleared when the matching
-    /// `SYN_REPORT` flushes a `Down`. Down and Up live in different packets,
-    /// so this outlives one [`Touch::next_event`] call.
+    /// Set on `ABS_MT_TRACKING_ID >= 0`, cleared as a `Down` flushes.
     down_pending: bool,
     up_pending: bool,
-    /// Slot state for the two-corner screenshot gesture. `ABS_MT_SLOT` is
-    /// sticky across packets: slot 0 drives `Down`/`Up`, slot 1 is the
-    /// secondary, higher slots are ignored.
+    /// `ABS_MT_SLOT`: slot 0 drives `Down`/`Up`, slot 1 is the secondary.
     cur_slot: usize,
     slot0_active: bool,
     slot1_active: bool,
     slot1_x: i32,
     slot1_y: i32,
-    /// Latches the gesture to fire once per two-contact episode (rising edge);
-    /// reset when the contacts drop below two.
+    /// Latches the gesture to one firing per two-contact episode.
     screenshot_latched: bool,
-    /// After a screenshot fires, swallow the trailing slot-0 `Up` so the lift
-    /// in a corner doesn't register as a stray tap on whatever's underneath.
+    /// After a screenshot fires, swallow the trailing slot-0 `Up`.
     suppress_next_up: bool,
-    /// Once grabbed, no other reader sees events from this device. The stock
-    /// screenshot recognizer is starved, and [`TouchEvent::Screenshot`]
-    /// replaces it.
+    /// Once grabbed, no other reader sees events from this device.
     grabbed: bool,
-    /// The orientation the framebuffer was opened with. Raw touch coords
-    /// mirror by the same amount, matching what the panel draws.
+    /// The orientation the framebuffer was opened with.
     orientation: Orientation,
     fb_xres: u32,
     fb_yres: u32,
@@ -117,9 +106,7 @@ impl Touch {
         // boolean (see drivers/input/evdev.c). Pass 1.
         let grab_res = unsafe { libc::ioctl(file.as_raw_fd(), EVIOCGRAB as _, 1) };
         let grabbed = grab_res == 0;
-        // A failed grab leaves the device readable and non-exclusive: a swipe
-        // reaches the stock home screen and the framework repaints over this
-        // window. Logged plainly.
+        // A failed grab leaves the device readable and non-exclusive.
         if grabbed {
             eprintln!("touch: EVIOCGRAB ok — exclusive");
         } else {
@@ -158,8 +145,7 @@ impl Touch {
     }
 
     /// Sets the orientation transforming raw coords. The X server rotates the
-    /// display and raw evdev coords stay panel-fixed, so a 180° flip lands
-    /// here.
+    /// display and raw evdev coords stay panel-fixed.
     pub fn set_orientation(&mut self, orientation: Orientation) {
         self.orientation = orientation;
     }
@@ -214,8 +200,7 @@ impl Touch {
                         self.up_pending = false;
                         self.down_pending = false;
                         if self.suppress_next_up {
-                            // Post-screenshot lift — don't surface it; keep
-                            // draining so it doesn't fire a stray tap.
+                            // Post-screenshot lift: drained, not surfaced.
                             self.suppress_next_up = false;
                         } else {
                             let (x, y) = self.transform_coords();
@@ -265,14 +250,14 @@ impl Touch {
 
     /// Map raw panel coords to user-visible framebuffer coords for the current
     /// orientation. Shared by the slot-0 `Down`/`Up` path and the two-finger
-    /// gesture so corner detection matches what's drawn.
+    /// gesture.
     fn transform_xy(&self, x: i32, y: i32) -> (u32, u32) {
         let raw_x = x.max(0) as u32;
         let raw_y = y.max(0) as u32;
         match self.orientation {
             Orientation::Up => (raw_x, raw_y),
-            // Mirror both axes so the touch coordinate space
-            // matches the orientation-transformed fb writes.
+            // Both axes mirrored, matching the orientation-transformed fb
+            // writes.
             Orientation::Down => (
                 self.fb_xres.saturating_sub(1).saturating_sub(raw_x),
                 self.fb_yres.saturating_sub(1).saturating_sub(raw_y),
@@ -324,8 +309,7 @@ impl Drop for Touch {
     }
 }
 
-/// Names that are never a finger panel. A pen digitizer satisfies every
-/// capability test a touchscreen does, leaving the name as the one separator.
+/// Names that are never a finger panel.
 const PEN_NAMES: [&str; 4] = ["wacom", "digitizer", "stylus", "pen"];
 
 /// Finger-panel names across the fleet. `pt_mt` is the Scribe's Parade
@@ -342,9 +326,7 @@ const TOUCH_NAMES: [&str; 9] = [
     "pt_mt",
 ];
 
-/// The firmware's own answer. Newer firmware (Scribe 5.19.4.0.1) ships
-/// `/dev/input/touch` and `/dev/input/stylus` beside the `eventN` nodes, and
-/// this alias outranks [`pick_from_devices`].
+/// The firmware's own alias, which outranks [`pick_from_devices`].
 const TOUCH_ALIAS: &str = "/dev/input/touch";
 
 fn find_touch_device() -> Result<PathBuf> {
@@ -365,8 +347,8 @@ fn find_touch_device_by_scan() -> Result<PathBuf> {
     }
 }
 
-/// The scan's decision, split out from the I/O so it can be tested against real
-/// `/proc/bus/input/devices` captures. Returns the winning `eventN`.
+/// The scan's decision, split out from the I/O. Returns the winning
+/// `eventN`.
 fn pick_from_devices(raw: &str) -> Option<String> {
     // Word width of the kernel's bitmap longs, needed to index `B: ABS=`.
     // Derived once from the whole file (see `bitmap_word_bits`).
@@ -424,9 +406,7 @@ fn pick_from_devices(raw: &str) -> Option<String> {
         eprintln!("touch: using /dev/input/{node} (name={name:?}, score={score})");
         return Some(node);
     }
-    // Nothing else qualified, so a pen-named node is better than no input at
-    // all — a device with an unusable picker is worse than one driven by the
-    // wrong digitizer, and the log says plainly which happened.
+    // Nothing else qualified: a pen-named node is taken last.
     let (node, name) = pen_fallback?;
     eprintln!("touch: using /dev/input/{node} (name={name:?}) — pen-named, but the only candidate");
     Some(node)

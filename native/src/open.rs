@@ -1,14 +1,11 @@
-//! Handing a book back to the Kindle's own reader.
-//!
 //! [`ask`] writes a `file://` URI built from the catalog's `p_location` into
-//! [`REQUEST`], and `bin/readinglog.sh` files it with `com.lab126.appmgrd`
-//! once this process has left the screen.
+//! [`REQUEST`], which `bin/readinglog.sh` files once this process has left
+//! the screen.
 
 use std::io;
 use std::path::Path;
 
-/// The file a launch is asked for through, under [`crate::store::STORE_DIR`]:
-/// the URI, then [`At::GOTO`] for [`At::Beginning`], then `location`.
+/// The file a launch is asked for through.
 pub const REQUEST: &str = "open";
 
 /// Which end of the book [`ask`] asks for.
@@ -34,8 +31,7 @@ impl At {
     }
 }
 
-/// The ASCII characters escaped inside a path. Every other printable
-/// character, and every byte above ASCII, travels as itself.
+/// The ASCII characters escaped inside a path.
 const ESCAPED: &str = " \"#%<>?[\\]^`{|}";
 
 /// `path` as a `file://` URI.
@@ -52,10 +48,8 @@ pub fn uri(path: &str) -> String {
     out
 }
 
-/// Ask for `location` to be opened `at`, once this process exits, by writing
-/// [`REQUEST`] under `dir`.
-///
-/// Through a `.partial` sibling and a rename.
+/// Ask for `location` to be opened `at` by writing [`REQUEST`] under `dir`,
+/// through a `.partial` sibling and a rename.
 pub fn ask(dir: &Path, location: &str, at: At) -> io::Result<()> {
     let target = dir.join(REQUEST);
     let partial = target.with_extension("partial");

@@ -24,8 +24,7 @@ pub fn height(text: &mut TextRenderer, theme: &Theme) -> i32 {
 pub struct Band {
     /// How full the track draws, from [`BookStat::bar_percent`].
     pub fill: i64,
-    /// The place the figure names and the notch cuts at. `None` draws
-    /// neither.
+    /// The place the figure names and the notch cuts at.
     pub at: Option<i64>,
     /// Whether the `Finished` chip stands at the right.
     pub finished: bool,

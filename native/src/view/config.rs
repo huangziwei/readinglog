@@ -12,9 +12,7 @@ use crate::update;
 
 use super::{Ctx, Hit};
 
-/// The index no option is drawn filled at. A row of one chip that is a button
-/// rather than a setting takes it: nothing it does is a state this page could
-/// be showing.
+/// The index no option is drawn filled at.
 const NONE_ON: usize = usize::MAX;
 
 /// One setting: what it is called, and the values it takes.
@@ -31,7 +29,7 @@ enum Line<'a> {
     /// A setting: its name, its values, and which is in use.
     Set(Row<'a>),
     /// A fact the page states and does not set. Its value stands at the same
-    /// column the chips do, so a stated line and a set one read as one list.
+    /// column the chips do.
     Says { label: &'a str, value: String },
 }
 
@@ -144,7 +142,7 @@ fn sections<'a>(lang: Lang, settings: &Settings, colour: bool) -> Vec<Section<'a
         hit: |i| Hit::ShowUnnamed(i == 0),
     };
 
-    // Never filled: it is a button rather than a setting.
+    // Never filled: one chip, a button.
     let update = Row {
         label: s.update_row,
         options: vec![(s.update_check.to_string(), plain)],
@@ -275,8 +273,7 @@ fn chip_box(row: Rect, column: i32, block: i32) -> Rect {
 mod tests {
     use super::*;
 
-    /// The setting at line `at` of section `of`. Panics where that line is a
-    /// fact rather than a setting, which is what the caller meant to read.
+    /// The setting at line `at` of section `of`. Panics on a [`Line::Says`].
     fn row<'a>(page: &'a [Section<'a>], of: usize, at: usize) -> &'a Row<'a> {
         match &page[of].lines[at] {
             Line::Set(row) => row,

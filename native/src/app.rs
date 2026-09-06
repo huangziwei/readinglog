@@ -24,13 +24,10 @@ use crate::ui::theme::Theme;
 use crate::update::{self, Doing, Outcome};
 use crate::view::{self, Ctx, Hit, State};
 
-/// The shortest time between two repaints of the update banner. Every one is a
-/// whole-screen [`WAVEFORM_MODE_GC16`] and a percentage moves several times a
-/// second; this is what keeps that from flashing the panel.
+/// The shortest time between two repaints of the update banner.
 const BANNER_REDRAW: Duration = Duration::from_millis(700);
 
-/// How long an update's last word stays up before the settings come back. A
-/// tap ends it sooner.
+/// How long an update's last word stays up. A tap ends it sooner.
 const OUTCOME_LINGER: Duration = Duration::from_secs(12);
 
 pub struct App {
@@ -328,8 +325,7 @@ impl App {
                 true => painted + BANNER_REDRAW,
                 false => Instant::now() + BANNER_REDRAW,
             };
-            // A tap anywhere stops it: the banner is the whole screen and has
-            // no room for a button that would only ever be pressed once.
+            // A tap anywhere stops it: the banner is the whole screen.
             if let InputEvent::Touch(TouchEvent::Up { .. }) = input.next_deadline(Some(due))?
                 && doing.stoppable()
                 && !cancel.swap(true, Ordering::Relaxed)
@@ -373,7 +369,7 @@ impl App {
         crate::ui::splash::show(fb, &mut self.text, &self.theme, &said, first)
     }
 
-    /// [`App::banner`] at a step of the update running now. The way out is
+    /// [`App::banner`] at one step of a running update. The way out is
     /// offered only while [`Doing::stoppable`] says there is one.
     fn doing(&mut self, fb: &mut Framebuffer, doing: Doing, first: bool) -> Result<()> {
         let (headline, note) = doing.banner(self.lang.strings());
@@ -395,7 +391,7 @@ impl App {
         Ok(())
     }
 
-    /// Run until [`Action::Quit`].
+    /// Run until `Action::Quit`.
     pub fn run(&mut self, fb: &mut Framebuffer, input: &mut Input) -> Result<()> {
         self.draw(fb)?;
         let mut down: Option<(u32, u32)> = None;

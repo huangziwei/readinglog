@@ -11,8 +11,7 @@ use super::power::{Awake, is_state_change};
 /// The gap between two reader events that cuts a session.
 pub const SESSION_GAP_SECS: i64 = 30 * 60;
 
-/// How far a session's opening counter may outrun the wall clock before it is
-/// rejected. `StoredBookData` states whole seconds and can round one past.
+/// How far a session's opening counter may outrun the wall clock.
 const SEED_SLACK_SECS: i64 = 60;
 
 /// How a session's seconds were arrived at, ranked best first.

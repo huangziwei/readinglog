@@ -7,8 +7,7 @@ use crate::ui::{charts, chrome, theme::Theme};
 
 use super::{Ctx, daybooks};
 
-/// Rows of `theme.row_h` that `bands` gives the timeline, axis labels
-/// included.
+/// Rows of `theme.row_h` that `bands` gives the timeline.
 const STRIP_ROWS: i32 = 2;
 
 /// Half-rows of air `bands` sets over the figures and under them.

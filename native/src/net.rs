@@ -1,6 +1,5 @@
-//! Is there a route off this device? Reading `/proc/net/route` answers in a
-//! file read where a name lookup would wait out its own timeout. Says offline
-//! only when certain: a table it cannot read is not an answer.
+//! A route off this device, read from `/proc/net/route`. Offline only when
+//! certain: a table that cannot be read is no answer.
 
 use std::fs;
 

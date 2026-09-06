@@ -1,6 +1,5 @@
-//! The one place Reading Log touches the network: [`Client`] talks to GitHub
-//! and nowhere else, over bundled roots — a Kindle's own are years stale — and
-//! RustCrypto rather than `ring`, whose C build script ends the cross link.
+//! The one place the network is touched: [`Client`] talks to GitHub and
+//! nowhere else, over bundled roots.
 
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
@@ -9,22 +8,19 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-/// Identify honestly, and resolvably: GitHub's API rejects a request with no
-/// `User-Agent` at all, and what it should name is the software making the
-/// request rather than one person's device.
+/// Names the software making the request. GitHub's API rejects a request
+/// carrying no `User-Agent`.
 pub const USER_AGENT: &str = concat!(
     "readinglog/",
     env!("CARGO_PKG_VERSION"),
     " (+https://github.com/huangziwei/readinglog)"
 );
 
-/// An unreachable host should reach the banner quickly rather than looking
-/// like a hang.
+/// Time to a connection.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Time to the response head. A quiet socket past this is not coming back.
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
-/// Whole-body time for the release asset: several megabytes over a Kindle's
-/// Wi-Fi is slow but healthy.
+/// Whole-body time for the release asset.
 const BODY_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Refuse a release list larger than this. Thirty releases run to ~100 KB.
@@ -32,8 +28,7 @@ const MAX_TEXT: u64 = 4 * 1024 * 1024;
 /// Refuse an asset larger than this. The release zip is a few megabytes.
 const MAX_ASSET: u64 = 64 * 1024 * 1024;
 
-/// Bytes per read from the socket, and so how often [`Client::download`] looks
-/// at `cancel` and reports progress.
+/// Bytes per read from the socket, and per [`Client::download`] progress.
 const CHUNK: usize = 64 * 1024;
 
 #[derive(Debug)]
@@ -63,8 +58,7 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {}
 
 impl Error {
-    /// One short line for the banner, which has no room for a transport error
-    /// string and a reader who is holding an e-reader rather than a terminal.
+    /// One short line for the banner.
     pub fn hint(&self) -> &'static str {
         match self {
             Error::Unreachable(_) => "no network",
@@ -91,8 +85,8 @@ impl Default for Client {
 
 impl Client {
     pub fn new() -> Self {
-        // ureq is built with `rustls-no-provider`, so there is no default to
-        // fall back on: a missing provider is a compile error, not a surprise.
+        // ureq is built with `rustls-no-provider`: a missing provider is a
+        // compile error.
         let tls = ureq::tls::TlsConfig::builder()
             .provider(ureq::tls::TlsProvider::Rustls)
             .unversioned_rustls_crypto_provider(Arc::new(rustls_rustcrypto::provider()))
@@ -126,9 +120,9 @@ impl Client {
             .map_err(|e| Error::Body(e.to_string()))
     }
 
-    /// A release asset, straight to `dest`. `progress` takes the bytes so far
-    /// and the declared length, when there is one; a partial file is removed
-    /// on failure so it is never left looking like an archive.
+    /// A release asset, straight to `dest`. `progress` takes the bytes
+    /// transferred and the declared length. A partial file is removed on
+    /// failure.
     pub fn download(
         &self,
         url: &str,
@@ -187,8 +181,7 @@ impl Client {
         }
         sink.flush().map_err(|e| Error::Body(e.to_string()))?;
 
-        // A transfer cut short still writes a whole-looking file, and an
-        // archive missing its tail is a confusing thing to fail on later.
+        // A transfer cut short writes a whole-looking file.
         if total.is_some_and(|want| want != got) {
             return Err(Error::Body(format!(
                 "{got} bytes of {}",

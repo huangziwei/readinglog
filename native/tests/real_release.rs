@@ -1,6 +1,6 @@
 //! `update` against the release list GitHub actually serves. Skipped unless
-//! `READINGLOG_NETWORK=1`: the only check that the release JSON still carries
-//! the fields `ApiRelease` names, and that the asset is still called that.
+//! `READINGLOG_NETWORK=1`: the one check that the release JSON carries the
+//! fields `ApiRelease` names, and that the asset is called that.
 
 use std::sync::atomic::AtomicBool;
 

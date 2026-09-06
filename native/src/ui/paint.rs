@@ -15,7 +15,6 @@ pub const INK: u8 = 0x00;
 pub const WHITE_RGB: [u8; 3] = [WHITE; 3];
 
 /// The Rec. 601 luma of each [`Palette::steps`] entry, lightest first.
-/// [`PALE`], [`LIGHT`], [`DARK`] and [`INK`] carry all but the middle.
 pub const STEP_LUMAS: [u8; 5] = [225, 193, 142, 93, 16];
 
 /// The five steps a value is banded onto, lightest first, and the ink on the
@@ -337,8 +336,7 @@ mod tests {
         (rgb[0] as i32 * 77 + rgb[1] as i32 * 150 + rgb[2] as i32 * 29) >> 8
     }
 
-    /// A luma may sit this far from [`STEP_LUMAS`]. 鳶 sits 7 from
-    /// `STEP_LUMAS[3]` and 4 from [`DARK`].
+    /// How far a luma may sit from [`STEP_LUMAS`].
     const SLACK: i32 = 8;
 
     /// Every [`Palette`] const in this module.

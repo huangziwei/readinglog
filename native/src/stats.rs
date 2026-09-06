@@ -1,6 +1,6 @@
-//! Everything the screens draw, computed once from the store. A sitting's
-//! `end_position`, through `Store::extent_of`, is the catalog's `p_contentSize`,
-//! which is what a [`BookRecord`] is keyed by.
+//! [`Stats`] is built once from a [`Store`]. A sitting's `end_position`,
+//! through `Store::extent_of`, is the catalog's `p_contentSize`, which a
+//! [`BookRecord`] is keyed by.
 
 use crate::date;
 use crate::log::session::{Measure, Session};
@@ -12,8 +12,7 @@ use crate::store::{BookRecord, FINISHED_PERCENT, Store};
 pub struct BookStat {
     /// The catalog's number for this book, and the key the views address it by.
     pub extent: i64,
-    /// `BookRecord::cde_key`, which `Store::set_finished` addresses the record
-    /// by alongside `extent`.
+    /// `BookRecord::cde_key`, which `Store::set_finished` addresses.
     pub cde_key: String,
     /// `BookRecord::cde_type`, which `mark::set` names the book by.
     pub cde_type: String,
@@ -24,8 +23,7 @@ pub struct BookStat {
     pub percent: f64,
     /// Whether the catalog names this book as one the device holds.
     pub on_device: bool,
-    /// The file the device holds this book in, which `open::uri` names.
-    /// Empty where the catalog names none.
+    /// The file holding this book, which `open::uri` names.
     pub location: String,
     /// The catalog language tag, which picks the face a CJK title is set in.
     pub language: String,
@@ -53,7 +51,7 @@ impl BookStat {
     }
 
     /// The percentage every figure for this book states, through
-    /// [`whole_per_cent`]. Below zero outside [`Self::has_percent`], and
+    /// `whole_per_cent`. Below zero outside [`Self::has_percent`], and
     /// `finished` does not carry it.
     pub fn percent_shown(&self) -> i64 {
         whole_per_cent(self.percent)
@@ -110,9 +108,9 @@ impl BookStat {
         }
     }
 
-    /// What is left to read, at this book's own rate; zero on a book read
-    /// through. `None` is "no answer", not "none left": no percent, barely
-    /// opened, or no time against it cannot be estimated.
+    /// Seconds left to read, at this book's own rate. `Some(0)` under
+    /// [`Self::is_finished`], `None` where `percent` or `seconds` carries too
+    /// little to divide.
     pub fn time_left(&self) -> Option<i64> {
         if self.is_finished() {
             return Some(0);
@@ -129,9 +127,7 @@ impl BookStat {
     }
 }
 
-/// `value`, 0 through 100, as whole per cent. Half rounds to even, which is
-/// what `NumberFormat.getPercentInstance()` does: the reader's own chrome and
-/// the library's `{percentRead, number, percent}` both set a figure through it.
+/// `value`, 0 through 100, as whole per cent, through `round_ties_even`.
 fn whole_per_cent(value: f64) -> i64 {
     value.round_ties_even() as i64
 }
@@ -145,25 +141,21 @@ pub struct Sitting {
     pub seconds: i64,
     /// Index into [`Stats::books`]. `None` where no record names the book.
     pub book: Option<usize>,
-    /// The catalog number this sitting was keyed by, named or not. Two unnamed
-    /// sittings sharing it were read in the same book.
+    /// The catalog number this sitting was keyed by, named or not.
     pub key: i64,
     pub measure: Measure,
     pub page_turns: i64,
     /// [`Session::hours`], the seconds read in each clock hour of `day`.
     pub hours: Vec<(u8, i64)>,
-    /// [`Session::progress`], the place the book stood at as this sitting
-    /// ended.
+    /// [`Session::progress`], where the book stood as this sitting ended.
     pub progress: Option<f64>,
 }
 
-/// The sitting histogram: five minutes a band to two hours, and one more band
-/// holding everything above. The axis closes on a round `2h+`.
+/// The sitting histogram: five minutes a band, and one band above them all.
 pub const SITTING_STEP_SECS: i64 = 5 * 60;
 pub const SITTING_BANDS: usize = 25;
 
-/// The shortest run the histogram counts as reading at all. A book opened and
-/// shut again leaves a run of seconds.
+/// The shortest run [`Stats::sitting_bands`] counts.
 pub const SITTING_FLOOR_SECS: i64 = 60;
 
 /// What a stretch of days came to, from [`Stats::tally`].
@@ -270,7 +262,6 @@ impl Stats {
             }
         }
 
-        // A book's day count needs every sitting seen before it can be stated.
         for (slot, book) in out.books.iter_mut().enumerate() {
             book.days = distinct_days(&out.sittings, slot);
         }
@@ -485,8 +476,7 @@ impl Stats {
     /// twenty-four, and every bucket takes the same divisor.
     pub fn average_day(&self, today: i64) -> Fold {
         let over = self.opened(today)..=today;
-        // `days_over` counts the days with reading on them, which every `a
-        // day` figure divides by, [`Tally::a_day`] included.
+        // `days_over` counts the days with reading on them, the `a_day` divisor.
         let days = self.days_over(over.clone()).max(1);
         let hours = self.hours_over(over.clone());
         let values = hours.iter().map(|secs| secs / days).collect();
@@ -512,9 +502,8 @@ impl Stats {
         self.fold(values, self.span_seconds(over) * 7 / days.max(1))
     }
 
-    /// The record laid out by month of the year, summed over every occurrence
-    /// the record holds. A total, not an average: a month covered four times
-    /// stands against one covered three.
+    /// A [`Fold`] by month of the year, summed over every occurrence and
+    /// undivided.
     pub fn by_month(&self, today: i64) -> Fold {
         let counted = self.months_over(self.opened(today)..=today);
         let total = counted.iter().sum();
@@ -896,8 +885,7 @@ mod tests {
 
     #[test]
     fn a_book_read_through_states_the_catalogs_figure_on_the_day_it_ended() {
-        // The device's own `J5LSDTFS…` — Dr Jekyll, read through on 5 September
-        // with `%Left` last sampled at 0.994690, a page short of the end.
+        // A book read through on 5 September, `progress` last at 0.994690.
         let mut store = Store::default();
         store.books.push(BookRecord {
             extent: 142_294,
@@ -931,7 +919,7 @@ mod tests {
 
     #[test]
     fn a_half_per_cent_rounds_to_even_the_way_the_device_rounds_it() {
-        // `NumberFormat.getPercentInstance()` is HALF_EVEN at no decimals.
+        // `whole_per_cent` rounds halves to even.
         for (raw, shown) in [
             (46.5, 46),
             (47.5, 48),

@@ -276,14 +276,11 @@ fn now_chip(cx: &mut Ctx, area: Rect, x: i32) -> Rect {
 /// Rows of `theme.row_h` a week's bars are never drawn shorter than.
 const WEEK_BARS: (i32, i32) = (2, 1);
 
-/// The share of a bar its own hours are cut into, at its foot, and the rows of
-/// `theme.row_h` that share never passes.
+/// The share of a bar its own hours are cut into, and that share's ceiling.
 const WEEK_CLOCK: (i32, i32) = (1, 3);
 const WEEK_CLOCK_CAP: (i32, i32) = (2, 5);
 
-/// The share of its column a day's bar is drawn at. Wide enough to carry the
-/// day's hours inside it, and short of the whole: the columns read as seven
-/// bars and not as one band broken by gaps.
+/// The share of its column a day's bar is drawn at.
 const WEEK_BAR_WIDTH: (i32, i32) = (7, 8);
 
 /// The two rows a week's grid stacks: the dates, and one bar to a day with
@@ -571,8 +568,7 @@ fn more_books(cx: &mut Ctx, inner: Rect, lane: usize, over: usize) {
     cx.text.draw(cx.fb, bar.right() - w, baseline, &more, false);
 }
 
-/// Rows of `theme.row_h` the shortest cover is drawn at. [`grid_of`] floors
-/// its own row count on it.
+/// Rows of `theme.row_h` the shortest cover is drawn at.
 const COVER_FLOOR: i32 = 3;
 
 /// The air the cover grid keeps: between one jacket and the next, under the

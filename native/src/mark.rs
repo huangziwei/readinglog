@@ -1,4 +1,4 @@
-//! [`PROPERTY`] on [`SOURCE`], set through `lipc-hash-prop`.
+//! `PROPERTY` on `SOURCE`, set through `lipc-hash-prop`.
 //! `MarkAsReadHandler` answers on it and files a `ContentReadStateRecord`.
 
 use std::io::Write as _;
@@ -10,8 +10,7 @@ const SOURCE: &str = "com.lab126.readnow";
 /// The hasharray property `MarkAsReadHandler` answers on.
 const PROPERTY: &str = "kppMarkAsReadAction";
 
-/// The `kppMAR` values setting `ReadState.READ_MANUAL` and
-/// `ReadState.UNREAD_MANUAL`.
+/// The `kppMAR` values setting a book read and unread.
 const READ: &str = "actionRead";
 const UNREAD: &str = "actionUnread";
 
@@ -35,7 +34,7 @@ fn hash(cde_key: &str, cde_type: &str, read: bool) -> Option<String> {
     ))
 }
 
-/// Set [`PROPERTY`] to mark the book `cde_key` names read or unread,
+/// Set `PROPERTY` to mark the book `cde_key` names read or unread,
 /// answering whether `lipc-hash-prop` ran and exited clean.
 pub fn set(cde_key: &str, cde_type: &str, read: bool) -> bool {
     let Some(said) = hash(cde_key, cde_type, read) else {

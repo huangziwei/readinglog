@@ -1,6 +1,6 @@
-//! The `fastmetrics` records the reader shell writes beside the reading timer,
-//! for every book including the ones the timer declines to count. Bracketed in
-//! the marker strings: `ereader_open_book` prefixes `..._failure_backup`.
+//! The `fastmetrics` records written beside the reading timer, for every book
+//! including the ones the timer declines to count. Bracketed in the marker
+//! strings: `ereader_open_book` prefixes `..._failure_backup`.
 
 use super::line::{field_num, field_text};
 
@@ -16,8 +16,8 @@ pub const METRIC_MARKERS: [&str; 8] = [
 ];
 
 /// What one record contributes to the run open around it. The records name no
-/// book: they state a page and a turn for whatever the reader had open, which
-/// is the run the reading-timer lines are already tracking.
+/// book: they state a page and a turn for the run the reading-timer lines
+/// track.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Metric {
     /// `ereader_book_consume_content`: a page, with the words on it.
@@ -41,9 +41,8 @@ pub fn metric(line: &str) -> Option<Metric> {
         return Some(Metric::Close);
     }
     if line.contains(METRIC_MARKERS[3]) || line.contains(METRIC_MARKERS[4]) {
-        // The two records carrying an `action_id`, one per reader stack. The
-        // `ereader_content_point` beside them carries a `point_type` and no
-        // action, being a chapter boundary rather than a turn.
+        // The two records carrying an `action_id`, one per reader stack.
+        // `ereader_content_point` carries a `point_type` and no action.
         return match field_text(line, "action_id") {
             Some(a) if a.starts_with("Next") => Some(Metric::Forward),
             Some(a) if a.starts_with("Prev") => Some(Metric::Back),
@@ -53,9 +52,9 @@ pub fn metric(line: &str) -> Option<Metric> {
     None
 }
 
-/// The `cde_key` a reader-shell record states for the book it is about, which
-/// the reading-timer lines redact. It is the catalog's own `p_cdeKey`; `N/A` is
-/// the reader shell's filler for a book it has no key for.
+/// The `cde_key` a record states for the book it is about, which the
+/// reading-timer lines redact. The catalog's own `p_cdeKey`; `N/A` stands
+/// for a book with no key.
 pub fn cde_key(line: &str) -> Option<&str> {
     if !METRIC_MARKERS.iter().any(|m| line.contains(m)) {
         return None;
@@ -66,9 +65,7 @@ pub fn cde_key(line: &str) -> Option<&str> {
     }
 }
 
-/// The widest a page's dwell may run past what its words justify, and the
-/// narrowest it may fall short. Below the floor the page was skipped past;
-/// above the ceiling the reader was idle on it, and the ceiling is what counts.
+/// The band a page's dwell may run in, against what its words justify.
 const DWELL_FLOOR: f64 = 0.5;
 const DWELL_CEILING: f64 = 1.5;
 
@@ -76,14 +73,12 @@ const DWELL_CEILING: f64 = 1.5;
 const WPM_MIN: f64 = 0.0;
 const WPM_MAX: f64 = 500.0;
 
-/// What a page with no usable rate may count, in seconds. A fixed-layout page
-/// states no words, so no rate applies to it and only the dwell itself remains.
+/// What a page with no usable rate may count, in seconds.
 const WORDLESS_FLOOR: f64 = 3.0;
 const WORDLESS_CEILING: f64 = 120.0;
 
-/// How much of a page's dwell counts as reading, in milliseconds. The device's
-/// own rule, from `PageHeuristicsImpl` with the `KFTResources` defaults,
-/// applied verbatim so these figures stay comparable with the device's own.
+/// How much of a page's dwell counts as reading, in milliseconds. The
+/// device's own rule, applied verbatim.
 pub fn dwell_ms(wpm: Option<f64>, words: i64, dwell_ms: i64) -> i64 {
     let secs = dwell_ms as f64 / 1000.0;
     match wpm {
@@ -166,7 +161,7 @@ mod tests {
     fn a_page_skipped_past_counts_nothing_and_one_idled_on_counts_its_ceiling() {
         // Under half of the 60 s the words justify.
         assert_eq!(dwell_ms(Some(200.0), 200, 20_000), 0);
-        // Over 1.5x it, so 90 s is what counts of the 10 minutes.
+        // Over 1.5x it: 90 s counts of the 10 minutes.
         assert_eq!(dwell_ms(Some(200.0), 200, 600_000), 90_000);
     }
 

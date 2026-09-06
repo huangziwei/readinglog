@@ -159,8 +159,7 @@ pub struct Settings {
     pub color_scheme: ColorScheme,
     /// Whether a total counts reading on books the catalog names none of.
     pub show_unnamed: bool,
-    /// Lines this build does not know, kept verbatim: a downgrade drops none
-    /// of what a later build wrote.
+    /// Lines this build does not know, kept verbatim.
     unknown: Vec<String>,
 }
 

@@ -11,8 +11,7 @@ use crate::ui::paint::{self, WHITE};
 use crate::ui::text::TextRenderer;
 use crate::ui::theme::Theme;
 
-/// Lines the headline takes, and lines each line of the note takes, before
-/// what is left of it is ellipsized. Past these it is not a banner.
+/// Lines the headline takes, and lines each line of the note takes.
 const HEADLINE_LINES: usize = 2;
 const NOTE_LINES: usize = 3;
 
@@ -56,8 +55,7 @@ pub fn show(
 
     text.set_px(theme.body_px);
     for line in said.note {
-        // An empty line still takes one: a banner whose figure comes and goes
-        // would otherwise walk the line above it up and down the screen.
+        // An empty line takes one line of height.
         if line.is_empty() {
             y += text.line_height() as i32;
             continue;

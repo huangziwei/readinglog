@@ -86,8 +86,7 @@ pub fn weekday_head(
 pub struct Heatmap {
     /// Every day of the year and the box it occupies.
     pub cells: Vec<(i64, Rect)>,
-    /// Each month, and the box its name stands in over the first week column
-    /// opening inside it.
+    /// Each month, and the box its name stands in.
     pub months: Vec<(i64, Rect)>,
     /// Seven weekday rows for each block, in order, for the names beside them.
     pub rows: Vec<Rect>,
@@ -183,7 +182,7 @@ pub struct Run {
 
 /// `days` — one entry per day of a week, each holding that day's books longest
 /// first — laid into `depth` lanes a column. A book read on consecutive days
-/// holds one lane across them, so the caller draws one bar for the run.
+/// holds one lane across them, as one bar for the run.
 pub fn lanes(days: &[Vec<usize>], depth: usize) -> Vec<Vec<Option<Run>>> {
     let mut out: Vec<Vec<Option<Run>>> = Vec::with_capacity(days.len());
     for (column, books) in days.iter().enumerate() {
@@ -227,14 +226,14 @@ pub fn lanes(days: &[Vec<usize>], depth: usize) -> Vec<Vec<Option<Run>>> {
 }
 
 /// One day's twenty-four hours as bars across `area`, in `rgb`, against `peak`
-/// — the busiest hour of every day drawn beside this one, so a quiet day and a
-/// busy one are read off the same scale.
+/// — the busiest hour of every day drawn beside this one, one scale across
+/// them all.
 pub fn hour_shape(fb: &mut Framebuffer, area: Rect, hours: &[i64; 24], peak: i64, rgb: [u8; 3]) {
     if peak <= 0 || area.h <= 0 || area.w < 24 {
         return;
     }
-    // A bar takes the whole hour it stands for, so the hours run together
-    // into one shape and not a row of needles.
+    // A bar takes the whole hour it stands for: the hours run together into
+    // one shape.
     let step = (area.w / 24).max(1);
     for (hour, secs) in hours.iter().enumerate() {
         let h = ((area.h as i64 * secs / peak) as i32).max(2 * (*secs > 0) as i32);
@@ -298,8 +297,8 @@ pub fn columns(
         text.set_px(px);
         text.measure_width(s) as i32
     });
-    // The row states its figures only where every bar has the width for one,
-    // so a row is either figured throughout or bare.
+    // The row states its figures only where every bar has the width for one:
+    // figured throughout, or bare.
     text.set_px(px);
     let stated = all_fit(&said, |s| text.measure_width(s) as i32, room);
 
@@ -319,9 +318,8 @@ pub fn columns(
         }
     }
 
-    // The axis is named from the right, so the last bucket — the one that can
-    // carry an overflow — always states itself and an earlier name gives way
-    // where the two would run together.
+    // The axis is named from the right: the last bucket states itself, and an
+    // earlier name gives way where the two run together.
     let mut marks: Vec<usize> = (0..values.len()).step_by(every.max(1)).collect();
     if marks.last() != Some(&(values.len() - 1)) {
         marks.push(values.len() - 1);
@@ -352,7 +350,7 @@ fn holds(theme: &Theme, h: i32, line: i32, rows: usize) -> bool {
     rows > 0 && h >= line * rows as i32 + inset(theme) * 2
 }
 
-/// `rows` as the one line a bar too short for them carries instead.
+/// `rows` as the one line a bar too short for them carries.
 fn joined(rows: Vec<String>) -> Vec<String> {
     match rows.is_empty() {
         true => rows,
@@ -395,8 +393,7 @@ fn figure_px(
     px
 }
 
-/// How far under [`Theme::small_px`] a figure may be set before it stops being
-/// readable on the panel.
+/// How far under [`Theme::small_px`] a figure may be set.
 const FIGURE_FLOOR: f32 = 0.6;
 
 /// Whether every figure of `said` measures within `room`, which is what
@@ -498,18 +495,16 @@ mod tests {
     /// The panels this primitive has to hold up on.
     const PANELS: [(i32, i32); 3] = [(1264, 1680), (1272, 1696), (1860, 2480)];
 
-    /// A metric with no font behind it: every character 0.6 em, which is wider
-    /// than Ember sets and narrower than an ideograph, so a figure that fits
-    /// under it fits on the device.
+    /// A metric with no font behind it: every character 0.6 em, wider than
+    /// Ember sets and narrower than an ideograph.
     fn stub_width(px: f32, s: &str) -> i32 {
         (s.chars().count() as f32 * px * 0.6).round() as i32
     }
 
     #[test]
     fn a_figure_is_set_narrow_enough_for_the_bar_it_stands_in() {
-        // One size for the whole row, taken from the widest figure. A unit
-        // of two ideographs sets far wider than an `h`, so the widest line is
-        // what the row has to hold.
+        // One size for the whole row, taken from the widest figure. A unit of
+        // two ideographs sets far wider than an `h`.
         for (w, h) in PANELS {
             let theme = Theme::for_screen(w as u32, h as u32);
             for count in [7usize, 12, 24, 25] {
@@ -683,8 +678,8 @@ mod tests {
 
     #[test]
     fn a_sunday_week_moves_every_day_one_column_right() {
-        // The same days in the same order, starting a column later — and the
-        // grid still holds every day of the month.
+        // The same days in the same order, starting a column later. The grid
+        // holds every day of the month.
         let area = Rect::new(0, 0, 700, 600);
         for (year, month) in [(2026, 8), (2026, 2), (2024, 2), (2026, 11)] {
             let mon = month_cells(area, year, month, 0, WeekStart::Monday);

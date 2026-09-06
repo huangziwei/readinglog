@@ -13,8 +13,6 @@ use super::theme::Theme;
 /// The screens, in the order their tabs sit in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
-    /// The settings, first because it sits beside Exit and neither is a
-    /// figure about reading.
     Config,
     Home,
     Rhythm,
@@ -41,13 +39,11 @@ pub fn clear(fb: &mut Framebuffer, theme: &Theme) {
     paint::fill(fb, theme.screen, WHITE);
 }
 
-// Exit is set, not drawn: no face on this firmware carries a power symbol,
-// and the only close marks that exist sit in `code2000` and the display faces,
-// where they would stand against Ember's letters in another face's weight.
+// Exit is set, not drawn: no face on this firmware carries a power symbol.
 
 /// The bottom strip: Exit, then the four tabs, in five cells of one width,
 /// answering a hit box each. The tab showing is drawn in reverse; a book is
-/// shown over the tab it was opened from, so tapping that tab closes it.
+/// shown over the tab it was opened from, and a tap on that tab closes it.
 pub fn tabs(
     fb: &mut Framebuffer,
     text: &mut TextRenderer,
@@ -128,8 +124,8 @@ pub fn section(
 }
 
 /// The row a figure or a chip stands on at the right of a section heading,
-/// centred on the title's own ink. Everything on the row takes this one centre,
-/// so a baseline derived from it lands on the title's own.
+/// centred on the title's own ink. Everything on the row takes this one
+/// centre.
 pub fn heading_row(text: &mut TextRenderer, theme: &Theme, head: Rect) -> Rect {
     text.set_px(theme.small_px);
     let cap = text.cap_height() as i32;
@@ -142,7 +138,7 @@ pub fn section_height(text: &mut TextRenderer, theme: &Theme) -> i32 {
     text.line_height() as i32 + theme.gap + theme.gap / 2
 }
 
-/// The height [`figure`] draws into, set no larger than `ceiling`.
+/// The height `figure` draws into, set no larger than `ceiling`.
 pub fn figure_height_at(text: &mut TextRenderer, theme: &Theme, ceiling: f32) -> i32 {
     text.set_px(ceiling);
     let value = text.cap_height() as i32;
@@ -150,7 +146,7 @@ pub fn figure_height_at(text: &mut TextRenderer, theme: &Theme, ceiling: f32) ->
     value + theme.gap + text.line_height() as i32
 }
 
-/// The height [`figure`] draws into at [`Theme::display_px`].
+/// The height `figure` draws into at [`Theme::display_px`].
 pub fn figure_height(text: &mut TextRenderer, theme: &Theme) -> i32 {
     figure_height_at(text, theme, theme.display_px)
 }
@@ -205,10 +201,9 @@ pub fn figures(
     figures_at(fb, text, theme, row, stated, theme.display_px, &[]);
 }
 
-/// [`figures`] set no larger than `ceiling`, for a row standing among a page's
-/// bands and not at its head. A figure `opens` names is underlined, the way a
-/// figure of the All Time board is, and the boxes are answered for the hit the
-/// caller takes on one.
+/// [`figures`] set no larger than `ceiling`, for a row standing among a
+/// page's bands. A figure `opens` names is underlined, and each box is
+/// answered for the hit the caller takes on it.
 pub fn figures_at(
     fb: &mut Framebuffer,
     text: &mut TextRenderer,
@@ -300,7 +295,7 @@ pub fn chip_height(theme: &Theme) -> i32 {
 
 /// Where the second column starts on every row: from the widest label, pulled
 /// back until the widest chip run fits, held between `width / 3` and
-/// `width / 2`. One column for the whole page, so the rows line up.
+/// `width / 2`. One column for the whole page.
 pub fn chip_column(
     text: &mut TextRenderer,
     theme: &Theme,
@@ -318,7 +313,7 @@ pub fn chip_column(
     column_from(widest, &runs, width)
 }
 
-/// [`chip_column`]'s arithmetic, over widths already measured.
+/// [`chip_column`]'s arithmetic, over measured widths.
 fn column_from(widest_label: i32, runs: &[i32], width: i32) -> i32 {
     let wanted = widest_label + CHIP_GAP * 3;
     let room = runs.iter().map(|run| width - run).min().unwrap_or(i32::MAX);
@@ -339,9 +334,8 @@ fn run_width(
     chips + CHIP_GAP * (options.len().saturating_sub(1)) as i32
 }
 
-/// Where every chip of a row lands, wrapped to `width`, laid out from `(0, 0)`.
-/// Separated from the paint so a dropped chip — a setting the reader cannot
-/// reach — is caught by a test.
+/// Where every chip of a row lands, wrapped to `width`, laid out from
+/// `(0, 0)`. Separated from the paint.
 pub fn chip_layout(
     text: &mut TextRenderer,
     theme: &Theme,
@@ -419,9 +413,8 @@ mod tests {
     use crate::font::Script;
     use crate::lang::Lang;
 
-    /// A metric with no font behind it: every character 0.6 em, which is
-    /// wider than Ember sets and narrower than an ideograph, so a layout that
-    /// fits under it fits on the device.
+    /// A metric with no font behind it: every character 0.6 em, wider than
+    /// Ember sets and narrower than an ideograph.
     fn measured(theme: &Theme, options: &[(&str, Script)], width: i32) -> Vec<Rect> {
         let height = chip_height(theme);
         let (mut x, mut y) = (0, 0);
@@ -441,8 +434,7 @@ mod tests {
 
     #[test]
     fn every_chip_is_placed_however_narrow_the_row() {
-        // A dropped chip is a setting the reader cannot reach. Every option
-        // gets a box, on every panel, in every language.
+        // Every option gets a box, on every panel, in every language.
         let names: Vec<(&str, Script)> = Lang::ALL
             .iter()
             .map(|l| (l.label(), Script::Unknown))
@@ -471,8 +463,7 @@ mod tests {
 
     #[test]
     fn the_language_row_stands_on_one_line() {
-        // What the abbreviations are for: all five languages stand on one
-        // line on the narrow panel. A row that wraps still draws.
+        // All five languages stand on one line on the narrow panel.
         let theme = Theme::for_screen(1264, 1680);
         let names: Vec<(&str, Script)> = Lang::ALL
             .iter()
