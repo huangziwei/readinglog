@@ -14,10 +14,15 @@ pub fn bar_height(theme: &Theme) -> i32 {
     theme.gap.max(6)
 }
 
-/// The height a band takes: the bar and the figure over it.
+/// The height a band takes: the bar and the figure over it, set on `line`.
+pub fn height_on(theme: &Theme, line: i32) -> i32 {
+    bar_height(theme) + theme.gap / 2 + line
+}
+
+/// [`height_on`] the line `text` sets the figure on.
 pub fn height(text: &mut TextRenderer, theme: &Theme) -> i32 {
     text.set_px(theme.small_px);
-    bar_height(theme) + theme.gap / 2 + text.line_height() as i32
+    height_on(theme, text.line_height() as i32)
 }
 
 /// What one band states.

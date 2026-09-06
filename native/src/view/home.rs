@@ -128,7 +128,8 @@ mod tests {
             let theme = Theme::for_screen(w, h);
             let area = crate::ui::chrome::content(&theme, Rect::new(0, 0, w as i32, h as i32));
             let [_, _, list] = bands(area, &theme, FIGURES, HEAD);
-            let rows = daybooks::fits(&theme, list.h - HEAD, 99);
+            let floor = daybooks::tests::SET.floor(&theme);
+            let rows = daybooks::fits(floor, list.h - HEAD, 99);
             assert!(rows >= 4, "{w}x{h}: room for {rows} of the day's books");
         }
     }

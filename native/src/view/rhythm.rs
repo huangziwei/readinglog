@@ -1164,7 +1164,7 @@ mod tests {
     fn a_day_page_holds_more_than_one_book_under_its_timeline() {
         for (w, h) in PANELS {
             let (theme, list) = day_list(w, h);
-            let shown = daybooks::fits(&theme, list.h, 9);
+            let shown = daybooks::fits(daybooks::tests::SET.floor(&theme), list.h, 9);
             assert!(shown >= 2, "{w}x{h}: room for {shown} books");
         }
     }
@@ -1174,7 +1174,7 @@ mod tests {
         for (w, h) in PANELS {
             let (theme, list) = day_list(w, h);
             for books in 0..=20usize {
-                let deep = daybooks::fits(&theme, list.h, books);
+                let deep = daybooks::fits(daybooks::tests::SET.floor(&theme), list.h, books);
                 let last = super::super::last_page_at(books, deep);
                 let (mut from, mut seen) = (0usize, 0usize);
                 loop {

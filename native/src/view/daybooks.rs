@@ -6,24 +6,75 @@ use crate::date;
 use crate::font::Script;
 use crate::ui::cover;
 use crate::ui::paint::{self, INK, LIGHT, PALE, Rect};
+use crate::ui::text::TextRenderer;
 use crate::ui::theme::Theme;
 
 use crate::ui::chrome;
 
 use super::{Ctx, Hit, band};
 
-/// Lines a title takes before the rest of it is ellipsized.
+/// Lines a title takes where its row has the height for them, before the rest
+/// of it is ellipsized.
 const TITLE_LINES: usize = 2;
 
-/// The shortest height `row` draws into: a cover, a title, an author, a
-/// progress bar and a span strip.
-pub fn row_floor(theme: &Theme) -> i32 {
-    theme.row_h * 2
+/// The heights a row is set in.
+#[derive(Clone, Copy)]
+pub struct Metrics {
+    /// How far a title's first line stands over its own baseline.
+    pub cap: i32,
+    /// A title line.
+    pub line: i32,
+    /// An author's line, which the band's figure is set on too.
+    pub small: i32,
 }
 
-/// Books an `h`-tall list holds, of `count`.
-pub fn fits(theme: &Theme, h: i32, count: usize) -> usize {
-    count.min(((h / row_floor(theme)).max(1)) as usize)
+impl Metrics {
+    /// The heights `text` sets a row in.
+    pub fn of(text: &mut TextRenderer, theme: &Theme) -> Self {
+        text.set_px(theme.body_px);
+        let (cap, line) = (text.cap_height() as i32, text.line_height() as i32);
+        text.set_px(theme.small_px);
+        Self {
+            cap,
+            line,
+            small: text.line_height() as i32,
+        }
+    }
+
+    /// The height the block in a row takes: a `lines`-line title, an author
+    /// under it where `named`, and the band closing them.
+    fn block(self, theme: &Theme, lines: usize, named: bool) -> i32 {
+        self.cap
+            + lines as i32 * self.line
+            + named as i32 * theme.gap / 2
+            + theme.gap
+            + band::height_on(theme, self.small)
+    }
+
+    /// Title lines a block `h` tall holds, of [`TITLE_LINES`]. A block too
+    /// short for one line still sets one.
+    fn lines(self, theme: &Theme, h: i32, named: bool) -> usize {
+        (2..=TITLE_LINES)
+            .rev()
+            .find(|&lines| self.block(theme, lines, named) <= h)
+            .unwrap_or(1)
+    }
+
+    /// The shortest height [`row`] draws into: a block on one title line, the
+    /// air over it, and the span strip across the foot.
+    pub fn floor(self, theme: &Theme) -> i32 {
+        self.block(theme, 1, true) + theme.gap + theme.gap * 3
+    }
+}
+
+/// [`Metrics::floor`] as `text` sets it.
+pub fn row_floor(text: &mut TextRenderer, theme: &Theme) -> i32 {
+    Metrics::of(text, theme).floor(theme)
+}
+
+/// Books an `h`-tall list holds, of `count`, each row standing `floor` tall.
+pub fn fits(floor: i32, h: i32, count: usize) -> usize {
+    count.min(((h / floor).max(1)) as usize)
 }
 
 /// One day's books under their own heading, opened at `from`, which is held
@@ -41,7 +92,7 @@ pub fn paged(cx: &mut Ctx, area: Rect, day: i64, from: usize) {
     let inner = chrome::section(cx.fb, cx.text, theme, area, cx.s().what_was_read);
     let read = cx.stats.book_totals(day..=day);
     let box_ = rows_box(cx, inner, day);
-    let deep = fits(theme, box_.h, read.len());
+    let deep = fits(row_floor(cx.text, theme), box_.h, read.len());
     let from = from.min(super::last_page_at(read.len(), deep));
     let to = (from + deep).min(read.len());
     if read.len() > deep {
@@ -104,18 +155,17 @@ fn heading_chip(cx: &mut Ctx, row: Rect, x: i32, label: &str, hit: Hit, w: i32) 
 }
 
 /// The height each of `rows` is drawn at: they share `area`, held between
-/// [`row_floor`] and half again.
-fn row_span(theme: &Theme, area: Rect, rows: usize) -> i32 {
-    let floor = row_floor(theme);
+/// `floor` and half again.
+fn row_span(floor: i32, area: Rect, rows: usize) -> i32 {
     (area.h / rows.max(1) as i32).clamp(floor, floor * 3 / 2)
 }
 
 /// Where [`note`] stands under `rows` rows of `box_`. A day of no rows draws
 /// `nothing_read`, `empty` tall, and the note stands under that.
-fn note_at(theme: &Theme, box_: Rect, rows: usize, empty: i32) -> i32 {
+fn note_at(floor: i32, box_: Rect, rows: usize, empty: i32) -> i32 {
     let drawn = match rows {
         0 => empty,
-        n => n as i32 * row_span(theme, box_, n),
+        n => n as i32 * row_span(floor, box_, n),
     };
     (box_.y + drawn).min(box_.bottom())
 }
@@ -159,11 +209,12 @@ pub fn draw_noting(cx: &mut Ctx, area: Rect, day: i64, read: &[(usize, i64)]) {
     let theme: &Theme = cx.theme;
     let (books, seconds) = cx.stats.unnamed_over(day..=day);
     let box_ = rows_box(cx, area, day);
-    let shown = fits(theme, box_.h, read.len());
+    let floor = row_floor(cx.text, theme);
+    let shown = fits(floor, box_.h, read.len());
     draw(cx, box_, day, &read[..shown]);
     cx.text.set_px(theme.body_px);
     let empty = cx.text.line_height() as i32 + theme.gap * 2;
-    let under = note_at(theme, box_, shown, empty);
+    let under = note_at(floor, box_, shown, empty);
     note(
         cx,
         Rect::new(area.x, under, area.w, area.bottom() - under),
@@ -185,7 +236,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, day: i64, read: &[(usize, i64)]) {
             .draw_in(script, cx.fb, area.x, baseline, cx.s().nothing_read, false);
         return;
     }
-    let each = row_span(theme, area, read.len());
+    let each = row_span(row_floor(cx.text, theme), area, read.len());
     for (slot, (index, secs)) in read.iter().enumerate() {
         let box_ = Rect::new(area.x, area.y + slot as i32 * each, area.w, each);
         row(cx, box_, day, *index, *secs);
@@ -225,22 +276,22 @@ fn row(cx: &mut Ctx, area: Rect, day: i64, index: usize, secs: i64) {
     let (words, figures) = body.split_left((body.w - column_w).max(theme.gap));
     let words = Rect::new(words.x, words.y, (words.w - theme.gap * 2).max(1), words.h);
 
-    let lines = cx
-        .text
-        .wrap_and_clamp_in(script, &title, words.w as u32, TITLE_LINES);
-    let title_h = lines.len() as i32 * cx.text.line_height() as i32;
-    cx.text.set_px(theme.small_px);
-    let author_h = match author.is_empty() {
-        true => 0,
-        false => theme.gap / 2 + cx.text.line_height() as i32,
-    };
-    let band_h = band::height(cx.text, theme);
-    cx.text.set_px(theme.small_px);
-    let block_h = title_h + author_h + theme.gap + band_h;
+    // The block keeps to `body`, and takes the air under it where the row is
+    // too short for that — never the span strip.
+    let named = !author.is_empty();
+    let set = Metrics::of(cx.text, theme);
+    cx.text.set_px(theme.body_px);
+    let room = body.h + theme.gap;
+    let lines = cx.text.wrap_and_clamp_in(
+        script,
+        &title,
+        words.w as u32,
+        set.lines(theme, room, named),
+    );
+    let block_h = set.block(theme, lines.len(), named);
 
     // `block_h` centres in `body`.
-    cx.text.set_px(theme.body_px);
-    let top = body.y + (body.h - block_h).max(0) / 2 + cx.text.cap_height() as i32;
+    let top = body.y + (body.h - block_h).max(0) / 2 + set.cap;
     let mut y = top;
     for line in &lines {
         cx.text.draw_in(script, cx.fb, words.x, y, line, false);
@@ -248,7 +299,7 @@ fn row(cx: &mut Ctx, area: Rect, day: i64, index: usize, secs: i64) {
     }
 
     cx.text.set_px(theme.small_px);
-    if !author.is_empty() {
+    if named {
         y += theme.gap / 2;
         let clipped = cx
             .text
@@ -270,7 +321,12 @@ fn row(cx: &mut Ctx, area: Rect, day: i64, index: usize, secs: i64) {
 
     // The band closes the block, across the whole of `body`.
     if percent.is_some() || done {
-        let foot = Rect::new(body.x, y + theme.gap, body.w, band_h);
+        let foot = Rect::new(
+            body.x,
+            y + theme.gap,
+            body.w,
+            band::height_on(theme, set.small),
+        );
         let of = band::Band {
             fill: match done {
                 true => 100,
@@ -313,37 +369,77 @@ fn day_spans(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A stand-in for the height `nothing_read` takes.
     const EMPTY: i32 = 60;
 
+    /// A stand-in for [`Metrics::of`]: Ember at the medium text size.
+    pub(crate) const SET: Metrics = Metrics {
+        cap: 26,
+        line: 48,
+        small: 38,
+    };
+
+    /// Three shipped panel sizes, and one larger than all of them.
+    const PANELS: [(u32, u32); 4] = [(1264, 1680), (1272, 1696), (1860, 2480), (2400, 3200)];
+
     #[test]
     fn the_note_stands_under_what_the_list_drew() {
         let theme = Theme::for_screen(1264, 1680);
+        let floor = SET.floor(&theme);
         let box_ = Rect::new(0, 100, 1186, 900);
         // A list of no rows wrote a line, which the note clears.
-        assert_eq!(note_at(&theme, box_, 0, EMPTY), box_.y + EMPTY);
+        assert_eq!(note_at(floor, box_, 0, EMPTY), box_.y + EMPTY);
         for rows in 1..=4usize {
-            let at = note_at(&theme, box_, rows, EMPTY);
-            let each = row_span(&theme, box_, rows);
+            let at = note_at(floor, box_, rows, EMPTY);
+            let each = row_span(floor, box_, rows);
             assert_eq!(at, box_.y + rows as i32 * each, "{rows} rows");
             assert!(at > box_.y, "{rows} rows: the note sits on the first row");
         }
         // More rows than the box holds keep the note inside it.
-        assert!(note_at(&theme, box_, 40, EMPTY) <= box_.bottom());
+        assert!(note_at(floor, box_, 40, EMPTY) <= box_.bottom());
+    }
+
+    #[test]
+    fn a_row_at_the_floor_holds_the_block_it_draws() {
+        for (w, h) in PANELS {
+            let theme = Theme::for_screen(w, h);
+            let floor = SET.floor(&theme);
+            for each in [floor, floor * 5 / 4, floor * 3 / 2] {
+                // What the air over the block and the span strip under it leave.
+                let room = each - theme.gap * 4;
+                for named in [true, false] {
+                    let lines = SET.lines(&theme, room, named);
+                    assert!(
+                        SET.block(&theme, lines, named) <= room,
+                        "{w}x{h}: a {lines}-line block overruns {room} px of a {each} px row"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_title_takes_its_second_line_only_where_the_block_holds_it() {
+        let theme = Theme::for_screen(1264, 1680);
+        let two = SET.block(&theme, TITLE_LINES, true);
+        assert_eq!(SET.lines(&theme, two, true), TITLE_LINES);
+        assert_eq!(SET.lines(&theme, two - 1, true), 1);
+        // A block shorter than one line still sets one.
+        assert_eq!(SET.lines(&theme, 0, true), 1);
     }
 
     #[test]
     fn a_list_never_counts_more_rows_than_it_can_draw() {
         let theme = Theme::for_screen(1264, 1680);
+        let floor = SET.floor(&theme);
         for h in [200, 400, 900, 1100] {
             for count in 0..=9usize {
-                let shown = fits(&theme, h, count);
+                let shown = fits(floor, h, count);
                 assert!(shown <= count, "{h} px: {shown} rows out of {count} books");
                 if shown > 0 {
-                    let floor = row_floor(&theme);
                     let each = (h / shown as i32).clamp(floor, floor * 3 / 2);
                     assert!(
                         shown as i32 * each <= h.max(floor),
