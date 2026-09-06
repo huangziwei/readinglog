@@ -4,6 +4,7 @@
 
 use super::line::{
     Moment, Observation, end_position, observation, opened_at_counter, payloads, stamp,
+    toc_and_book,
 };
 use super::metric::{Metric, cde_key, dwell_ms, metric};
 use super::power::{Awake, is_state_change};
@@ -444,6 +445,15 @@ pub fn parse_sessions<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<Sess
     // `lines` is collected: [`Awake`] reads the whole stream before the first
     // sitting closes against it.
     let lines: Vec<&str> = events.into_iter().collect();
+    // `chapters` are the positions only ever stated as a chapter's start.
+    let mut toc: Vec<i64> = Vec::new();
+    let mut book: Vec<i64> = Vec::new();
+    for line in lines.iter().copied() {
+        let (t, b) = toc_and_book(line);
+        toc.extend(t);
+        book.extend(b);
+    }
+    let chapters: Vec<i64> = toc.into_iter().filter(|p| !book.contains(p)).collect();
     // [`Awake::witnessed`] reads its instants here.
     let read_at: Vec<i64> = lines
         .iter()
@@ -459,11 +469,9 @@ pub fn parse_sessions<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<Sess
     let mut opened: Option<Opened> = None;
     // `gapped` holds a break until an observation acts on it.
     let mut gapped = false;
-    // The catalog key most recently named, for the run it belongs to. Cleared
-    // at a break.
-    let mut named: Option<String> = None;
-    // Records seen before any run is open, drained into the run and dropped
-    // at a break.
+    // The catalog key most recently named, and when, for the run it belongs to.
+    let mut named: Option<(i64, String)> = None;
+    // Records no open run reached, drained into the run that opens over them.
     let mut pending: Vec<(Moment, Metric)> = Vec::new();
 
     for line in lines.iter().copied() {
@@ -484,17 +492,23 @@ pub fn parse_sessions<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<Sess
             });
         }
 
+        // `live` is a run reaching [`SESSION_GAP_SECS`] past its own newest
+        // observation. A record beyond it waits for the next run.
+        let live = open
+            .as_ref()
+            .is_some_and(|cur| now.abs - cur.last.abs <= SESSION_GAP_SECS);
+
         if let Some(key) = cde_key(line) {
-            named = Some(key.to_string());
-            if let Some(cur) = open.as_mut() {
-                cur.asin = named.clone();
+            named = Some((now.abs, key.to_string()));
+            if live && let Some(cur) = open.as_mut() {
+                cur.asin = Some(key.to_string());
             }
         }
 
-        let Some(obs) = observation(line) else {
-            // `pending` holds a record that arrives ahead of a run.
+        let Some(obs) = observation(line).filter(|o| !chapters.contains(&o.position)) else {
+            // `pending` holds a record no open run reaches.
             if let Some(m) = metric(line) {
-                match open.as_mut() {
+                match open.as_mut().filter(|_| live) {
                     Some(cur) => cur.observe_metric(&now, &m, &awake),
                     None => pending.push((now.clone(), m)),
                 }
@@ -525,8 +539,6 @@ pub fn parse_sessions<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<Sess
             None => {}
             Some(Break::Left) => {
                 out.push(open.take().expect("a run to break").finish(&awake));
-                named = None;
-                pending.clear();
             }
             Some(Break::Midnight(boundary)) => {
                 out.push(open.take().expect("a run to cut").finish_at(&boundary));
@@ -537,9 +549,12 @@ pub fn parse_sessions<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<Sess
         let fresh = open.is_none();
         let cur = open.get_or_insert_with(|| Open::new(obs.position, &now, seed.take()));
         if fresh {
-            cur.asin = named.clone();
-            // `pending` in order, from `cur.began`.
+            // `named` and `pending` in order, from `cur.began`.
             let from = cur.began.abs;
+            cur.asin = named
+                .as_ref()
+                .filter(|(at, _)| *at >= from)
+                .map(|(_, key)| key.clone());
             for (at, m) in std::mem::take(&mut pending) {
                 if at.abs >= from {
                     cur.observe_metric(&at, &m, &awake);
@@ -629,6 +644,61 @@ mod tests {
         assert_eq!(out[0].started_at, "2026-09-06T19:24:01");
         assert_eq!(out[0].ended_at, "2026-09-06T19:24:25");
         assert_eq!(out[0].progress, Some(1.0 - 0.6111));
+    }
+
+    /// A `cde_key` record at `hhmmss`.
+    fn keyed(hhmmss: &str, key: &str) -> String {
+        format!(
+            "260906:{hhmmss} fastmetrics[1]: D fastmetrics: \
+             SchemaName[ereader_reader_page_turn_latency_ops], Fields[{{ \
+             \"action\" : \"PageTurnTotalTime\", \"cde_key\" : \"{key}\" }} ]. :"
+        )
+    }
+
+    /// A lone `CurrentPos`/`EndPos` group at `hhmmss` over `end`, the shape a
+    /// chapter's progress and an untimed sitting share.
+    fn lone(hhmmss: &str, end: i64) -> String {
+        format!(
+            "260906:{hhmmss} java[1]: I ReadingTimerController:Information::\
+             CurrentPos:HTMLPosition: 7340,EndPos:HTMLPosition: {end},PosLeft:21488,%Left:0.013;"
+        )
+    }
+
+    #[test]
+    fn a_run_gone_quiet_does_not_take_the_next_books_key() {
+        let mut lines = vec![page("101501", 7_390_020), page("101543", 7_431_463)];
+        // A month on, another book's key, its open, and its own turns.
+        lines.push(MOBI8[0].replace("260906:192401", "260906:121001"));
+        lines.push(keyed("121002", "B00NEXTONE"));
+        lines.push(MOBI8[1].replace("260906:192404", "260906:121004"));
+        lines.push(MOBI8[2].replace("260906:192425", "260906:121025"));
+
+        let out = parse_sessions(lines.iter().map(String::as_str));
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].end_position, 148_207);
+        assert_eq!(out[0].asin, None, "the first run took a later book's key");
+        assert_eq!(out[1].end_position, 19_886_489);
+        assert_eq!(out[1].asin.as_deref(), Some("B00NEXTONE"));
+    }
+
+    #[test]
+    fn a_chapter_the_toc_names_is_no_book_of_its_own() {
+        // 19886489 leads the group and 28828 is the `NextTOCEntry` position,
+        // which states itself alone on the last line.
+        let toc = format!(
+            "{},NextTOCEntryPosition:HTMLPosition: 28828,NextTOCEntryLength:20405,\
+             CurrentPos:HTMLPosition: 7340,EndPos:HTMLPosition: 28828,PosLeft:21488;",
+            MOBI8[1].trim_end_matches(';')
+        );
+        let lines = [
+            MOBI8[0].to_string(),
+            toc,
+            MOBI8[2].to_string(),
+            lone("192500", 28_828),
+        ];
+        let out = parse_sessions(lines.iter().map(String::as_str));
+        assert_eq!(out.len(), 1, "a chapter opened a sitting of its own");
+        assert_eq!(out[0].end_position, 19_886_489);
     }
 
     #[test]

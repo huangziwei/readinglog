@@ -158,6 +158,24 @@ pub fn book_position(line: &str) -> Option<i64> {
     payloads(line).find_map(end_position)
 }
 
+/// Every `NextTOCEntryPosition` `line` states, and the [`end_position`] of each
+/// payload stating one.
+pub fn toc_and_book(line: &str) -> (Vec<i64>, Vec<i64>) {
+    let mut toc = Vec::new();
+    let mut book = Vec::new();
+    for payload in payloads(line) {
+        if !payload.contains("NextTOCEntry") {
+            continue;
+        }
+        toc.extend(fields(payload, "NextTOCEntryPosition:").filter_map(|at| {
+            let (_, position) = stated(payload, at)?;
+            Some(position)
+        }));
+        book.extend(end_position(payload));
+    }
+    (toc, book)
+}
+
 /// True when `line` names `event` as `<sep><Event>,`, `<sep>` being the
 /// `Information::` prefix or the `;` ending the payload before it.
 pub fn names(line: &str, event: &str) -> bool {
