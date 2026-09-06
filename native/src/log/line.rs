@@ -170,8 +170,7 @@ pub fn observation(line: &str) -> Option<Observation> {
                 .flatten()
         })
         // A payload carrying `CurrentPos` and an end position, with no
-        // `TotalTime` and no name. On a book the device refuses to time it is
-        // the whole record of the sitting.
+        // `TotalTime` and no name — the whole record of an untimed sitting.
         .or_else(|| {
             payloads(line)
                 .find(|p| end_position(p).is_some() && p.contains("CurrentPos:YJPosition: "))
@@ -223,30 +222,37 @@ pub fn field_num(line: &str, name: &str) -> Option<i64> {
     rest[..end].parse().ok()
 }
 
-/// Map each book's per-line `EndPos` fingerprint to the `FromBook` the catalog
-/// knows it by as `p_contentSize`; joining on `EndPos` matches nothing. The
-/// pending value drops at every `OpenBook`, or a book inherits another's.
-pub fn frombook_map<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<(i64, i64)> {
+/// The `BookEndPosition.FromBook` this line states.
+pub fn from_book(line: &str) -> Option<i64> {
     const KEY: &str = "BookEndPosition.FromBook:YJPosition: ";
+    let at = line.find(KEY)?;
+    let rest = &line[at + KEY.len()..];
+    let tail = &rest[rest.find(':')? + 1..];
+    let end = tail
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(tail.len());
+    tail[..end].parse().ok()
+}
+
+/// Map each book's per-line `EndPos` fingerprint to its [`from_book`].
+/// `pending` drops before an `OpenBook` and after a `CloseBook`.
+pub fn frombook_map<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<(i64, i64)> {
     let mut map: Vec<(i64, i64)> = Vec::new();
     let mut pending: Option<i64> = None;
     for line in events {
         if names(line, "OpenBook") {
             pending = None;
         }
-        if let Some(at) = line.find(KEY) {
-            let rest = &line[at + KEY.len()..];
-            pending = rest.split_once(':').and_then(|(_, tail)| {
-                let end = tail
-                    .find(|c: char| !c.is_ascii_digit())
-                    .unwrap_or(tail.len());
-                tail[..end].parse().ok()
-            });
+        if let Some(stated) = from_book(line) {
+            pending = Some(stated);
         }
         if let (Some(from_book), Some(ep)) = (pending, book_position(line))
             && !map.iter().any(|(k, _)| *k == ep)
         {
             map.push((ep, from_book));
+        }
+        if names(line, "CloseBook") {
+            pending = None;
         }
     }
     map
@@ -340,7 +346,23 @@ mod tests {
         let open = "260811:072945 java[1]: I ReadingTimerController:Information::OpenBook,StoredBookData:null;";
         let info = "260811:072948 java[1]: I ReadingTimerController:Information::BookEndPosition.FromBook:YJPosition: AZI/AAAAAAAA:938018,BookEndPosition.LastWordPos.override:YJPosition: Aag/AACDAQAA:938016,CurrentPos:YJPosition: AWUDAAAAAAAA:2,EndPos:YJPosition: Aag/AACDAQAA:938016,PosLeft:938014;";
         assert_eq!(frombook_map([open, info]), vec![(938_016, 938_018)]);
+        assert_eq!(from_book(info), Some(938_018));
+        assert_eq!(from_book(PAGE), None);
         // An open with no BookEndPosition of its own inherits nothing.
         assert_eq!(frombook_map([info, open, PAGE]), vec![(938_016, 938_018)]);
+    }
+
+    #[test]
+    fn a_close_ends_the_reach_of_the_book_end_it_states() {
+        let info = "260811:072948 java[1]: I ReadingTimerController:Information::BookEndPosition.FromBook:YJPosition: AZI/AAAAAAAA:938018,CurrentPos:YJPosition: AWUDAAAAAAAA:2,EndPos:YJPosition: Aag/AACDAQAA:938016,PosLeft:938014;";
+        let close = "260811:073010 java[1]: I ReadingTimerController:Information::CloseBook,CurrentPos:YJPosition: AWUDAAAAAAAA:2,EndPos:YJPosition: Aag/AACDAQAA:938016,PosLeft:938014;";
+        // The close states the closing book's own position and is paired.
+        assert_eq!(frombook_map([info, close]), vec![(938_016, 938_018)]);
+        // `PAGE` is another book at 148207, and takes nothing from the close.
+        assert_eq!(
+            frombook_map([info, close, PAGE]),
+            vec![(938_016, 938_018)],
+            "148207 reached 938018 across a close"
+        );
     }
 }

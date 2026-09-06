@@ -55,9 +55,11 @@ pub struct BookRecord {
 }
 
 impl BookRecord {
-    /// False on a `*`-prefixed `cde_key`, which names a file and not a book.
+    /// Whether this record names a book. [`Self::cde_key`] carries a `*` for
+    /// a file with no content key, and [`crate::catalog::is_reading`] answers
+    /// for those from [`Self::location`].
     pub fn is_book(&self) -> bool {
-        !self.cde_key.starts_with('*')
+        !self.cde_key.starts_with('*') || crate::catalog::is_reading(&self.location)
     }
 
     /// Whether the place this record holds calls the book read through.
@@ -126,6 +128,8 @@ pub struct Store {
     pub ends: Vec<(i64, i64)>,
     /// Every book `catalog` has named, ascending by `extent` then `cde_key`.
     pub books: Vec<BookRecord>,
+    /// `extent → cde_key`, every pairing any pass has seen, ascending.
+    pub keys: Vec<(i64, String)>,
     /// The newest log line any pass has read, as `YYMMDD:HHMMSS`.
     pub mark: String,
     /// Where the record was last emptied, as `YYMMDD:HHMMSS`. No ordinary pass
@@ -212,6 +216,13 @@ impl Store {
                         out.ends.push((k, v));
                     }
                 }
+                Some("k") => {
+                    if let (Some(Ok(k)), Some(v)) = (f.next().map(str::parse::<i64>), f.next())
+                        && !v.is_empty()
+                    {
+                        out.keys.push((k, v.to_string()));
+                    }
+                }
                 Some("s") => out.sessions.extend(read_session(&mut f)),
                 Some("b") => out.books.extend(read_book(&mut f)),
                 Some("c") => out.cleared.extend(read_cleared(&mut f)),
@@ -258,6 +269,9 @@ impl Store {
         }
         for (k, v) in &self.ends {
             out.push_str(&format!("e\t{k}\t{v}\n"));
+        }
+        for (extent, key) in &self.keys {
+            out.push_str(&format!("k\t{extent}\t{}\n", flat(key)));
         }
         for b in &self.books {
             out.push_str(&write_book(b));
@@ -312,8 +326,9 @@ impl Store {
         };
         // Ahead of the sittings: `Self::barred` places one through `ends`.
         for (k, v) in crate::log::line::frombook_map(refs.iter().copied()) {
-            if !self.ends.iter().any(|(key, _)| *key == k) {
-                self.ends.push((k, v));
+            match self.ends.iter_mut().find(|(key, _)| *key == k) {
+                Some(held) => held.1 = v,
+                None => self.ends.push((k, v)),
             }
         }
         self.sort_ends();
@@ -445,6 +460,9 @@ impl Store {
             if book.percent >= 0.0 {
                 stated.push(slot);
             }
+            if book.extent != 0 && !book.cde_key.is_empty() {
+                self.learn_key(book.extent, &book.cde_key);
+            }
         }
         self.note_progress(&stated);
         self.sort_books();
@@ -550,8 +568,21 @@ impl Store {
         {
             return Some(i);
         }
-        let key = key.filter(|k| !k.is_empty())?;
-        self.books.iter().position(|b| b.cde_key == key)
+        if let Some(k) = key.filter(|k| !k.is_empty())
+            && let Some(i) = self.books.iter().position(|b| b.cde_key == k)
+        {
+            return Some(i);
+        }
+        self.key_at(extent)
+            .and_then(|k| self.books.iter().position(|b| b.cde_key == k))
+    }
+
+    /// The `cde_key` some pass paired `extent` with, where exactly one did.
+    /// Two books sharing an extent name neither.
+    fn key_at(&self, extent: i64) -> Option<&str> {
+        let mut found = self.keys.iter().filter(|(e, _)| *e == extent);
+        let (_, only) = found.next()?;
+        found.next().is_none().then_some(only.as_str())
     }
 
     /// Set [`BookRecord::finished`] on the record [`Self::book_for`] answers
@@ -616,8 +647,16 @@ impl Store {
     pub fn merge(&mut self, other: &Store) -> usize {
         let before = self.sessions.len();
         self.sessions.extend(other.sessions.iter().cloned());
-        self.ends.extend(other.ends.iter().copied());
+        for &(k, v) in &other.ends {
+            match self.ends.iter_mut().find(|(key, _)| *key == k) {
+                Some(held) => held.1 = v,
+                None => self.ends.push((k, v)),
+            }
+        }
         self.books.extend(other.books.iter().cloned());
+        for (extent, key) in &other.keys {
+            self.learn_key(*extent, key);
+        }
         self.sort();
         self.sessions.len() - before
     }
@@ -643,9 +682,16 @@ impl Store {
             .filter(|(k, _)| sessions.iter().any(|s| s.end_position == *k))
             .copied()
             .collect();
+        let key = self.books[slot].cde_key.clone();
         Store {
             sessions,
             ends,
+            keys: self
+                .keys
+                .iter()
+                .filter(|(_, k)| *k == key)
+                .cloned()
+                .collect(),
             books: vec![self.books[slot].clone()],
             // `mark`, `floor` and the `c` rows key the record, not one book.
             mark: String::new(),
@@ -727,12 +773,22 @@ impl Store {
                 && a.ended_at == b.ended_at
         });
         self.sort_ends();
+        self.keys.sort();
+        self.keys.dedup();
         self.sort_books();
         self.sort_cleared();
     }
 
     /// Orders and de-duplicates `ends` on their key, which is what
     /// [`Self::extent_of`] searches.
+    /// Hold `extent` against `key`, in order. A pairing held stands.
+    fn learn_key(&mut self, extent: i64, key: &str) {
+        let at = (extent, key.to_string());
+        if let Err(i) = self.keys.binary_search(&at) {
+            self.keys.insert(i, at);
+        }
+    }
+
     fn sort_ends(&mut self) {
         self.ends.sort_unstable();
         self.ends.dedup_by_key(|(k, _)| *k);
@@ -1063,6 +1119,7 @@ mod tests {
                 session("2026-08-08T21:00:00", "2026-08-08T21:30:00", 938_016, 1_800),
             ],
             ends: vec![(938_016, 938_018)],
+            keys: Vec::new(),
             books: Vec::new(),
             mark: "260808:213000".into(),
             floor: String::new(),
@@ -1092,6 +1149,7 @@ mod tests {
                 2_400,
             )],
             ends: vec![(938_016, 938_018)],
+            keys: Vec::new(),
             books: vec![BookRecord {
                 extent: 148_207,
                 title: "A Book".into(),
@@ -1200,7 +1258,6 @@ mod tests {
             thumbnail: "/mnt/us/system/thumbnails/t.jpg".into(),
             last_access: 0,
             language: "en".into(),
-            is_book: !key.starts_with('*'),
             location: format!("/mnt/us/documents/{title}.kfx"),
             on_device: true,
             read_state: -1,
@@ -1487,6 +1544,7 @@ mod tests {
                 1_720,
             )],
             ends: Vec::new(),
+            keys: Vec::new(),
             books: Vec::new(),
             mark: String::new(),
             floor: String::new(),
@@ -1574,6 +1632,7 @@ mod tests {
                 2_400,
             )],
             ends: Vec::new(),
+            keys: Vec::new(),
             books: Vec::new(),
             mark: mark.into(),
             floor: String::new(),
@@ -2118,10 +2177,102 @@ mod tests {
     fn a_sitting_is_keyed_by_the_number_the_catalog_uses() {
         let store = Store {
             ends: vec![(938_016, 938_018)],
+            keys: Vec::new(),
             ..Store::default()
         };
         assert_eq!(store.extent_of(938_016), 938_018);
         // A book no line ever mapped keeps its own key.
         assert_eq!(store.extent_of(148_207), 148_207);
+    }
+
+    #[test]
+    fn a_stored_mapping_gives_way_to_what_the_log_states_again() {
+        let mut store = Store {
+            // 148207 against another book's end.
+            ends: vec![(148_207, 938_018)],
+            ..Store::default()
+        };
+        let lines = [
+            "260807:100000 java[1]: I ReadingTimerController:Information::OpenBook,StoredBookData:null;".to_string(),
+            "260807:100001 java[1]: I ReadingTimerController:Information::BookEndPosition.FromBook:YJPosition: AZI/AAAAAAAA:148213,CurrentPos:YJPosition: AWUDAAAAAAAA:2,EndPos:YJPosition: AbcVAAAPAAAA:148207,PosLeft:6;".to_string(),
+        ];
+        store.absorb(&lines, "");
+        assert_eq!(store.extent_of(148_207), 148_213);
+
+        // `merge` takes it too.
+
+        let mut held = Store {
+            ends: vec![(148_207, 938_018)],
+            ..Store::default()
+        };
+        held.merge(&store);
+        assert_eq!(held.extent_of(148_207), 148_213);
+    }
+
+    #[test]
+    fn a_sitting_reaches_its_book_at_an_extent_the_record_no_longer_carries() {
+        let mut store = Store {
+            books: vec![BookRecord {
+                // The copy the catalog names today.
+                extent: 148_199,
+                cde_key: "BTIFIHP3JYKFKDNZLSD7CODVHTDUEOIM".into(),
+                title: "A Volume".into(),
+                ..BookRecord::default()
+            }],
+            ends: vec![(148_207, 148_213)],
+            ..Store::default()
+        };
+        assert!(store.book_for(148_213, None).is_none());
+
+        // `remember` at 148213, under the key the record carries.
+        store.remember(&[shelved(
+            148_213,
+            "BTIFIHP3JYKFKDNZLSD7CODVHTDUEOIM",
+            "A Volume",
+            -1.0,
+        )]);
+        // `remember` again at 148199, which the record takes.
+        store.remember(&[shelved(
+            148_199,
+            "BTIFIHP3JYKFKDNZLSD7CODVHTDUEOIM",
+            "A Volume",
+            -1.0,
+        )]);
+        assert_eq!(store.books[0].extent, 148_199, "the record follows");
+
+        assert_eq!(
+            store.book_for(148_213, None).map(|b| &b.title[..]),
+            Some("A Volume")
+        );
+        // Written down and read back.
+        let read = Store::from_text(&store.text());
+        assert_eq!(read.keys, store.keys);
+        assert_eq!(
+            read.book_for(148_213, None).map(|b| &b.title[..]),
+            Some("A Volume")
+        );
+    }
+
+    #[test]
+    fn an_extent_two_books_have_carried_names_neither() {
+        let mut store = Store {
+            books: vec![
+                BookRecord {
+                    extent: 1,
+                    cde_key: "ONE".into(),
+                    ..BookRecord::default()
+                },
+                BookRecord {
+                    extent: 2,
+                    cde_key: "TWO".into(),
+                    ..BookRecord::default()
+                },
+            ],
+            ..Store::default()
+        };
+        store.learn_key(999, "ONE");
+        assert!(store.book_for(999, None).is_some());
+        store.learn_key(999, "TWO");
+        assert!(store.book_for(999, None).is_none());
     }
 }

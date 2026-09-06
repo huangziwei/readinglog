@@ -290,11 +290,9 @@ impl Stats {
         out
     }
 
-    /// What the longest streak would be with one book's reading taken out.
-    ///
-    /// A day survives unless that book was the only thing read on it, so this
-    /// is the same walk `streaks` makes over the days left standing. It is
-    /// what tells a reader that clearing one book costs them a run of days.
+    /// The longest streak over the days `book` does not stand alone on.
+    /// [`Self::book_days`] holds that book's seconds per day, and a day with
+    /// seconds past them goes to [`streaks`].
     pub fn streak_without(&self, book: usize) -> i64 {
         let mine = self.book_days(book);
         let left: Vec<(i64, i64)> = self
@@ -750,7 +748,6 @@ mod tests {
             thumbnail: "/mnt/us/system/thumbnails/t.jpg".into(),
             last_access: 0,
             language: "en".into(),
-            is_book: true,
             location: "/mnt/us/documents/bible.kfx".into(),
             on_device: true,
             read_state: -1,
@@ -1150,6 +1147,7 @@ mod tests {
             // The first book's page events key it 148207; the catalog calls the
             // same book 148209.
             ends: vec![(148_207, 148_209)],
+            keys: Vec::new(),
             books: Vec::new(),
             mark: "260807:091000".into(),
             floor: String::new(),
@@ -1359,7 +1357,6 @@ mod tests {
             thumbnail: String::new(),
             last_access: 0,
             language: String::new(),
-            is_book: false,
             location: "/mnt/us/documents/ReadingLog.sh".into(),
             on_device: true,
             read_state: -1,
@@ -1380,6 +1377,44 @@ mod tests {
         // The totals are the ones from `store()` alone.
         assert_eq!(stats.total_seconds, 1_800 + 1_200 + 1_800 + 600);
         assert_eq!(stats.day_seconds(day(2026, 8, 7)), 600);
+    }
+
+    #[test]
+    fn a_sideload_carrying_the_same_key_shape_is_a_book_and_is_listed() {
+        let mut shelf = catalog();
+        shelf.push(Book {
+            extent: 888,
+            cde_key: "*cc33dd44".into(),
+            cde_type: "EBOK".into(),
+            title: "A Sideloaded Book".into(),
+            author: "A Writer".into(),
+            percent: 4.0,
+            thumbnail: String::new(),
+            last_access: 0,
+            language: String::new(),
+            location: "/mnt/us/documents/sideload.epub".into(),
+            on_device: true,
+            read_state: -1,
+        });
+        let mut s = store();
+        s.remember(&shelf);
+        s.sessions.push(sitting(
+            "2026-08-07T12:00:00",
+            "2026-08-07T12:12:00",
+            888,
+            720,
+            12,
+        ));
+
+        let stats = Stats::build(&s, day(2026, 8, 7), true);
+        let book = stats
+            .books
+            .iter()
+            .find(|b| b.title == "A Sideloaded Book")
+            .expect("a row of its own");
+        assert_eq!(book.seconds, 720);
+        assert_eq!(stats.skipped_seconds, 0);
+        assert_eq!(stats.day_seconds(day(2026, 8, 7)), 600 + 720);
     }
 
     #[test]
@@ -1418,7 +1453,6 @@ mod tests {
             thumbnail: String::new(),
             last_access: 0,
             language: String::new(),
-            is_book: true,
             location: "/mnt/us/documents/other.kfx".into(),
             on_device: true,
             read_state: -1,

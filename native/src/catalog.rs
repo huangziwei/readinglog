@@ -19,7 +19,7 @@ const ROW: &str = "\u{2}";
 
 /// The columns [`parse_row`] takes, in order. `p_location` is empty on a cloud
 /// row, which states no `p_contentSize` and no `p_percentFinished`. A
-/// `*`-prefixed `p_cdeKey` is kept — see [`Book::is_book`].
+/// `*`-prefixed `p_cdeKey` is kept — see [`is_reading`].
 const COLUMNS: &str = "coalesce(p_contentSize, 0), p_cdeKey, p_cdeType, \
      coalesce(p_titles_0_nominal, ''), coalesce(p_credits_0_name_collation, ''), \
      coalesce(p_percentFinished, -1), coalesce(p_thumbnail, ''), \
@@ -90,8 +90,6 @@ pub struct Book {
     pub last_access: i64,
     /// `p_languages_0`, a BCP-47 tag, empty where the catalog states none.
     pub language: String,
-    /// False on a `*`-prefixed `cde_key`, which `Stats::build` drops.
-    pub is_book: bool,
     /// `p_location`, the file holding this book. Empty on a cloud row.
     pub location: String,
     /// Whether `location` names a file.
@@ -159,7 +157,6 @@ fn parse_row(row: &str) -> Option<Book> {
     if cde_key.is_empty() {
         return None;
     }
-    let is_book = !cde_key.starts_with('*');
     let cde_type = next().to_string();
     let title = next().to_string();
     let collation = next().to_string();
@@ -181,11 +178,28 @@ fn parse_row(row: &str) -> Option<Book> {
         thumbnail,
         last_access,
         language,
-        is_book,
         location,
         on_device,
         read_state,
     })
+}
+
+const LAUNCHER_EXTENSIONS: [&str; 4] = ["sh", "run_hotfix", "run_emergency", "kual"];
+
+const CLIPPINGS_FILE: &str = "My Clippings.txt";
+
+/// Whether `location` names a book. False on [`CLIPPINGS_FILE`] and on a
+/// [`LAUNCHER_EXTENSIONS`] extension, true on every other name, an empty
+/// `location` included.
+pub fn is_reading(location: &str) -> bool {
+    let name = location.rsplit('/').next().unwrap_or(location);
+    if name == CLIPPINGS_FILE {
+        return false;
+    }
+    let extension = name.rsplit_once('.').map_or("", |(_, e)| e);
+    !LAUNCHER_EXTENSIONS
+        .iter()
+        .any(|handled| extension.eq_ignore_ascii_case(handled))
 }
 
 /// The `display` name in `j_credits`, else `collation` unpadded.
@@ -267,7 +281,9 @@ mod tests {
               (33333, 'B02AUDIO01', 'AUDI', 'An Audiobook', 'A Narrator', 0.0, '', 0, '', 1, \
                '/mnt/us/audible/book.aax', ''), \
               (777, '*aa11bb22', 'PDOC', 'Reading Log', '', 0.0, '', 0, '', 0, \
-               '/mnt/us/documents/ReadingLog.sh', '');";
+               '/mnt/us/documents/ReadingLog.sh', ''), \
+              (60230, '*cc33dd44', 'EBOK', 'A Sideloaded Book', 'A Writer', 4.0, '', 0, '', 0, \
+               '/mnt/us/documents/sideload.epub', '');";
         let out = Command::new("sqlite3")
             .arg(&path)
             .arg(sql)
@@ -330,7 +346,7 @@ mod tests {
         // and the second reads the rest.
         let db = fixture("nomark");
         let books = read_from(&db);
-        assert_eq!(books.len(), 6, "{books:#?}");
+        assert_eq!(books.len(), 7, "{books:#?}");
         assert!(books.iter().all(|b| b.read_state < 0));
         let _ = std::fs::remove_file(&db);
     }
@@ -339,10 +355,9 @@ mod tests {
     fn every_book_row_is_read_and_marked_for_where_it_sits() {
         let db = fixture("filters");
         let books = read_from(&db);
-        // Three books held, the clippings file, the scriptlet, and one book in
-        // the library alone.
-        assert_eq!(books.len(), 6, "{books:#?}");
-        assert_eq!(books.iter().filter(|b| b.on_device).count(), 5);
+        // Four books held, the clippings file, the scriptlet, one library row.
+        assert_eq!(books.len(), 7, "{books:#?}");
+        assert_eq!(books.iter().filter(|b| b.on_device).count(), 6);
         assert!(!books.iter().any(|b| b.cde_type == "AUDI"));
         let _ = std::fs::remove_file(&db);
     }
@@ -459,18 +474,43 @@ mod tests {
     fn a_loose_file_is_read_and_marked_no_book() {
         let db = fixture("loose");
         let books = read_from(&db);
-        let script = books
-            .iter()
-            .find(|b| b.title == "Reading Log")
-            .expect("the scriptlet");
-        assert!(!script.is_book);
-        let clippings = books
-            .iter()
-            .find(|b| b.title == "My Clippings.txt")
-            .expect("the clippings file");
-        assert!(!clippings.is_book);
-        assert!(books.iter().filter(|b| b.is_book).count() == 4);
+        let file = |title: &str| {
+            books
+                .iter()
+                .find(|b| b.title == title)
+                .unwrap_or_else(|| panic!("{title}"))
+                .location
+                .clone()
+        };
+        assert!(!is_reading(&file("Reading Log")));
+        assert!(!is_reading(&file("My Clippings.txt")));
+        assert!(is_reading(&file("A Sideloaded Book")));
+        assert_eq!(books.iter().filter(|b| is_reading(&b.location)).count(), 5);
         let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn a_launcher_is_named_by_its_file_whatever_its_case_and_place() {
+        for launcher in [
+            "/mnt/us/documents/ReadingLog.sh",
+            "/mnt/us/documents/scriptlets/KUAL.SH",
+            "/mnt/us/documents/Run Hotfix.run_hotfix",
+            "/mnt/us/documents/Run Emergency.run_emergency",
+            "/mnt/us/documents/KUAL.kual",
+            "/mnt/us/documents/My Clippings.txt",
+        ] {
+            assert!(!is_reading(launcher), "{launcher}");
+        }
+        for book in [
+            "/mnt/us/documents/sideload.epub",
+            "/mnt/us/documents/dictionaries/moedict.mobi",
+            "/mnt/us/documents/notes.txt",
+            "/mnt/us/documents/paper.pdf",
+            "/mnt/us/documents/no-extension-at-all",
+            "",
+        ] {
+            assert!(is_reading(book), "{book}");
+        }
     }
 
     #[test]
