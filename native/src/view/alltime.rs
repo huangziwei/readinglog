@@ -249,8 +249,7 @@ fn cells(cx: &Ctx) -> Vec<Cell> {
     // page states its own days.
     let all = cx.stats.tally(opened(cx)..=cx.today);
     let sittings = (cx.stats.sittings.len() as i64).max(1);
-    // Every book the record holds, whether or not the shelf can name it.
-    let books = (cx.stats.books.len() + cx.stats.unnamed_books()) as i64;
+    let books = cx.stats.book_count() as i64;
     let finished = finished_books(cx);
     let (best_day, best_day_secs) = best_day(cx);
     let (sat_on, sat_secs) = longest_sitting(cx);

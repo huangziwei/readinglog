@@ -7,8 +7,8 @@ use crate::log::session::{Measure, Session};
 use crate::settings::WeekStart;
 use crate::store::{BookRecord, FINISHED_PERCENT, Store};
 
-/// The day a book with no reading stands on. Every screen reads `days` and
-/// `sittings` for that, and draws no date.
+/// The day a book with no reading stands on. `days` and `sittings` carry no
+/// entry for it.
 pub const NO_DAY: i64 = i64::MIN;
 
 /// One book, with everything ever read in it.
@@ -206,8 +206,8 @@ pub struct Stats {
 
 impl Stats {
     /// Total up everything the store holds. `store.books` names each book and
-    /// `catalog` is not read here; `today` places the current streak. Dropping
-    /// `unnamed` leaves every total over the books the screens can list.
+    /// `catalog` is not read here; `today` places the current streak. A false
+    /// `unnamed` leaves every total over `books` alone.
     pub fn build(store: &Store, today: i64, unnamed: bool) -> Self {
         let mut out = Self::default();
         // One slot per book, in first-seen order; the sort comes last.
@@ -440,6 +440,11 @@ impl Stats {
             Some((first, _)) => self.unnamed_over(*first..=self.last_day()).0,
             None => 0,
         }
+    }
+
+    /// `books` and [`Self::unnamed_books`] together.
+    pub fn book_count(&self) -> usize {
+        self.books.len() + self.unnamed_books()
     }
 
     /// The last day the record holds.
@@ -1269,6 +1274,9 @@ mod tests {
         assert!(dropped.sittings.iter().all(|s| s.book.is_some()));
         // The books themselves are untouched.
         assert_eq!(dropped.books, kept.books);
+        // `book_count` holds the unnamed key; `books` holds none of it.
+        assert_eq!(kept.book_count(), dropped.book_count() + 1);
+        assert_eq!(dropped.book_count(), dropped.books.len());
     }
 
     #[test]

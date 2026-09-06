@@ -756,7 +756,7 @@ impl App {
             view::Reset::Wipe(keep) => view::Confirm {
                 about,
                 sittings: self.stats.sittings.len(),
-                books: self.stats.books.len(),
+                books: self.stats.book_count(),
                 // The archive's weight, or the room `covers::sweep` returns.
                 bytes: match keep {
                     true => jackets + self.store.text().len() as u64,
@@ -769,12 +769,14 @@ impl App {
                 let Some(backup) = held.get(at) else {
                     return Action::Nothing;
                 };
-                // `peek` once: the figures the question states.
+                // `peek` once: the figures the question states. `inside` is
+                // totalled whole, whatever `show_unnamed` stands at.
                 let inside = crate::backup::peek(&backup.path).unwrap_or_default();
+                let held = crate::stats::Stats::build(&inside, self.today, true);
                 view::Confirm {
                     about,
-                    sittings: inside.sessions.len(),
-                    books: inside.books.len(),
+                    sittings: held.sittings.len(),
+                    books: held.book_count(),
                     bytes: backup.bytes,
                     named: backup
                         .path

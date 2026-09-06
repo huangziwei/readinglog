@@ -68,6 +68,7 @@ struct Section<'a> {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Record {
     pub sittings: usize,
+    /// [`crate::stats::Stats::book_count`].
     pub books: usize,
     /// One label per archive, newest first, as its chip reads.
     pub backups: Vec<String>,
@@ -85,7 +86,7 @@ impl Record {
     ) -> Record {
         Record {
             sittings: stats.sittings.len(),
-            books: stats.books.len(),
+            books: stats.book_count(),
             backups: labels(&crate::backup::list(dir), lang.strings()),
             floored,
         }
@@ -228,8 +229,7 @@ fn sections<'a>(
         one_row: false,
     };
 
-    // What the reader is about to act on, standing on the page before either
-    // chip is touched.
+    // `recorded` states the record `reset` and `restore` below act on.
     let recorded = (record.sittings > 0).then(|| Line::Says {
         label: s.recorded_row,
         value: format!(
@@ -250,10 +250,8 @@ fn sections<'a>(
         one_row: false,
     });
 
-    // The device's own logs where a reset put a floor up, then the archives,
-    // newest first. The logs lead: this run keeps one line, and it is the
-    // oldest archives that should fall off it rather than the one way back
-    // that stands when there are no archives at all.
+    // `restore_logs` leads where `record.floored`, then `record.backups`,
+    // newest first. `one_row` holds the chips to one line.
     let logs = record.floored;
     let restore = (!record.backups.is_empty() || logs).then(|| Row {
         label: s.restore_row,
@@ -392,10 +390,9 @@ fn section_height(cx: &mut Ctx, section: &Section, theme: &Theme, width: i32, ai
     chrome::section_height(cx.text, theme) + rows + air
 }
 
-/// Where each page of sections starts and stops, given what each is tall and
-/// the room a page has. A section taller than the page gets one to itself and
-/// is clipped there, which is the old behaviour and only reachable by a
-/// section grown past a whole screen.
+/// Where each page of sections starts and stops, from what each is tall in
+/// `tall` and the `room` a page has. A section taller than `room` takes a page
+/// to itself and is clipped there.
 fn paged(tall: &[i32], room: i32) -> Vec<(usize, usize)> {
     let mut out: Vec<(usize, usize)> = Vec::new();
     let (mut from, mut used) = (0, 0);
@@ -470,17 +467,13 @@ pub fn draw(
     let column = chrome::chip_column(cx.text, theme, &labels, &runs, area.w);
     let width = (area.w - column).max(1);
 
-    // Every section, measured whole, then dealt into pages that fit. Nothing
-    // here scrolls, and a section drawn into no room draws over the one above
-    // it — so a page that will not hold everything holds what it can and the
-    // rest go on the next.
+    // Each section's whole height, which `paged` deals into pages.
     let tall: Vec<i32> = page
         .iter()
         .map(|s| section_height(cx, s, theme, width, air))
         .collect();
-    // Packed against the room a page has once the pager has taken its band —
-    // and where that leaves everything on one page, packed again against the
-    // whole area, there being no pager to make room for.
+    // `leaves` is packed against `area.h` less the band `pager` takes, and
+    // against the whole of `area.h` where one page holds every section.
     let leaves = match paged(&tall, area.h - theme.row_h).len() > 1 {
         true => paged(&tall, area.h - theme.row_h),
         false => paged(&tall, area.h),

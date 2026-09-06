@@ -264,7 +264,7 @@ fn record_line(cx: &mut Ctx, foot: Rect, baseline: i32) {
     }
     let said = format!(
         "{} {} · {unnamed} {}",
-        cx.stats.books.len() + unnamed,
+        cx.stats.book_count(),
         s.in_the_record,
         s.unidentified
     );
