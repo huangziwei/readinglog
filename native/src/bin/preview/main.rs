@@ -22,7 +22,7 @@ use readinglog_native::ui::paint;
 use readinglog_native::ui::text::TextRenderer;
 use readinglog_native::ui::theme::Theme;
 use readinglog_native::update::{Doing, Failure, Outcome};
-use readinglog_native::view::{Ask, Shelf, Sort, Span};
+use readinglog_native::view::{Ask, Shelf, Sort, Span, Window};
 
 /// The day the preview is set to, and the second of it: a Wednesday evening in
 /// the middle of a month.
@@ -39,13 +39,11 @@ const PANELS: &[(&str, u32, u32)] = &[
 /// Where the PNGs land under `--out`.
 const OUT: &str = "artifacts/preview";
 
-/// Where the fixture's jackets are drawn, under `--art`. An input the store's
-/// records point at, held apart from any run's output directory.
+/// Where the fixture's jackets are drawn, under `--art`, apart from [`OUT`].
 const ART: &str = "artifacts/preview/art";
 
 /// The update banner a shot can name, and what it is saying. The one screen
-/// with no tab under it, drawn over the whole panel, and where a translation
-/// that runs long shows.
+/// with no tab under it, drawn over the whole panel.
 const BANNERS: &[(&str, Said)] = &[
     ("asking", || Banner::Doing(Doing::Asking)),
     ("downloading", || {
@@ -65,8 +63,7 @@ const BANNERS: &[(&str, Said)] = &[
     }),
 ];
 
-/// What one of them is saying, made on demand: an [`Outcome`] holds a
-/// `String` and a `const` cannot.
+/// What one of [`BANNERS`] is saying, made when a shot names it.
 type Said = fn() -> Banner;
 
 /// Either half of the banner's life: running, or over.
@@ -128,8 +125,7 @@ struct Opts {
     sheet: Option<String>,
     scale: u32,
     crop: Option<sheet::Crop>,
-    /// Whether every hit box is outlined over the frame. A tap target draws
-    /// nothing of its own.
+    /// Whether every hit box is outlined over the frame.
     hits: bool,
     /// The scheme drawn in.
     scheme: ColorScheme,
@@ -240,8 +236,7 @@ fn run() -> Result<()> {
         started.elapsed().as_secs_f32(),
         opts.out.display()
     );
-    // A directory holding shots this run did not draw mixes two rounds, and
-    // nothing in the filename says which round a picture belongs to.
+    // The PNGs `standing` held that `wrote` names none of.
     let stale = standing.iter().filter(|p| !wrote.contains(p)).count();
     if stale > 0 {
         eprintln!(
@@ -367,6 +362,18 @@ fn outline_hits(app: &App, fb: &mut Framebuffer) {
     }
 }
 
+/// The last day the record holds a book read through on, and the day showing
+/// where it holds none.
+fn last_finished(app: &App) -> i64 {
+    app.stats()
+        .books
+        .iter()
+        .filter(|b| b.is_finished())
+        .map(|b| b.last_day)
+        .max()
+        .unwrap_or(app.state().day)
+}
+
 /// Rhythm's zoom, where the shot names one.
 fn set_span(app: &mut App, shot: &Shot, week: WeekStart) -> Result<()> {
     let Some(of) = shot.of.as_deref() else {
@@ -383,6 +390,35 @@ fn set_span(app: &mut App, shot: &Shot, week: WeekStart) -> Result<()> {
         "unfinished-furthest" => {
             app.set_shelf(Shelf::Unfinished);
             app.set_sort(Sort::Furthest);
+        }
+        // The list a span's own Finished figure opens: what was read through
+        // inside one year, under the chip that drops the window.
+        "window" => {
+            app.set_shelf(Shelf::Finished);
+            let day = app.state().day;
+            app.set_window(Some(Window {
+                span: Span::Year,
+                day,
+            }));
+        }
+        // The same list under the tightest span, whose name is the longest a
+        // chip carries: the week a book was last read through in.
+        "windowweek" => {
+            app.set_shelf(Shelf::Finished);
+            let day = last_finished(app);
+            app.set_window(Some(Window {
+                span: Span::Week,
+                day,
+            }));
+        }
+        // A window the record holds no reading inside, which no figure opens
+        // and a shelf tap can reach.
+        "windowempty" => {
+            let day = Span::Year.step(app.state().day, -3);
+            app.set_window(Some(Window {
+                span: Span::Year,
+                day,
+            }));
         }
         "longest" => app.set_sort(Sort::Longest),
         "furthest" => app.set_sort(Sort::Furthest),
@@ -406,17 +442,7 @@ fn set_span(app: &mut App, shot: &Shot, week: WeekStart) -> Result<()> {
         "year" => app.set_span(Span::Year),
         "day" => app.open_day(app.state().day),
         // The day a book was read through on, where a row carries the chip.
-        "dayfinished" => {
-            let day = app
-                .stats()
-                .books
-                .iter()
-                .filter(|b| b.is_finished())
-                .map(|b| b.last_day)
-                .max()
-                .unwrap_or(app.state().day);
-            app.open_day(day);
-        }
+        "dayfinished" => app.open_day(last_finished(app)),
         // The year with a day picked off its heatmap, which narrows the
         // covers to that day and offers the way into it.
         "picked" => {
@@ -452,8 +478,7 @@ fn set_span(app: &mut App, shot: &Shot, week: WeekStart) -> Result<()> {
     Ok(())
 }
 
-/// The fixture's fullest day, its book list opened at `from`: how a day of
-/// more books than the page holds reads.
+/// The fixture's fullest day, its book list opened at `from`.
 fn busy(app: &mut App, from: usize) {
     let day = fixture::binge_day(app.state().day);
     app.open_day(day);
@@ -502,7 +527,7 @@ fn list() {
             "today" => "  (:quiet :empty :busy)",
             "book" => "  (:<index> :<index>:restart :<index>:mark :<index>:unmark)",
             "books" => {
-                "  (:finished :unfinished :unfinished-furthest :longest :furthest\n   :mid :last)"
+                "  (:finished :unfinished :unfinished-furthest :longest :furthest\n   :mid :last :window :windowweek :windowempty)"
             }
             _ => "",
         };
@@ -602,6 +627,9 @@ fn everything() -> Vec<Shot> {
         "books:longest",
         "books:furthest",
         "books:mid",
+        "books:window",
+        "books:windowweek",
+        "books:windowempty",
         "book",
         "config",
         "update:downloading",

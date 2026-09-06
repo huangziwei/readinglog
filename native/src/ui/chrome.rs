@@ -164,7 +164,7 @@ fn figure_width(text: &mut TextRenderer, theme: &Theme, value: &str, label: &str
     value.max(text.measure_width(label) as i32)
 }
 
-/// A figure at `px` with its name under it.
+/// A figure at `px` with its name under it, answering the box the name took.
 fn figure(
     fb: &mut Framebuffer,
     text: &mut TextRenderer,
@@ -173,7 +173,7 @@ fn figure(
     value: &str,
     label: &str,
     px: f32,
-) {
+) -> Rect {
     text.set_px(px);
     let w = text.measure_width(value) as i32;
     let top = area.y + text.cap_height() as i32;
@@ -181,13 +181,15 @@ fn figure(
 
     text.set_px(theme.small_px);
     let lw = text.measure_width(label) as i32;
-    text.draw(
-        fb,
+    let baseline = top + theme.gap + text.line_height() as i32;
+    let named = Rect::new(
         area.x + (area.w - lw) / 2,
-        top + theme.gap + text.line_height() as i32,
-        label,
-        false,
+        baseline - text.cap_height() as i32,
+        lw,
+        text.cap_height() as i32,
     );
+    text.draw(fb, named.x, baseline, label, false);
+    named
 }
 
 /// `stated` spread across `row`, the first flush left and the last flush right,
@@ -200,11 +202,13 @@ pub fn figures(
     row: Rect,
     stated: &[(String, &str)],
 ) {
-    figures_at(fb, text, theme, row, stated, theme.display_px);
+    figures_at(fb, text, theme, row, stated, theme.display_px, &[]);
 }
 
-/// [`figures`] set no larger than `ceiling`, for a row that is one band of a
-/// page rather than its head.
+/// [`figures`] set no larger than `ceiling`, for a row standing among a page's
+/// bands and not at its head. A figure `opens` names is underlined, the way a
+/// figure of the All Time board is, and the boxes are answered for the hit the
+/// caller takes on one.
 pub fn figures_at(
     fb: &mut Framebuffer,
     text: &mut TextRenderer,
@@ -212,7 +216,8 @@ pub fn figures_at(
     row: Rect,
     stated: &[(String, &str)],
     ceiling: f32,
-) {
+    opens: &[bool],
+) -> Vec<Rect> {
     // Air enough that two figures read as two and not as one long number.
     // The size gives way to it, never the air.
     let air = theme.gap * 3;
@@ -227,9 +232,23 @@ pub fn figures_at(
         measure(text, px).iter().sum::<i32>() + between
     });
     let widths = measure(text, px);
-    for (cell, (value, label)) in row.spread(&widths, air).into_iter().zip(stated) {
-        figure(fb, text, theme, cell, value, label, px);
+    let mut out = Vec::with_capacity(stated.len());
+    for (at, (cell, (value, label))) in row.spread(&widths, air).into_iter().zip(stated).enumerate()
+    {
+        let named = figure(fb, text, theme, cell, value, label, px);
+        if opens.get(at).copied().unwrap_or(false) {
+            paint::hline(
+                fb,
+                named.x,
+                named.bottom() + theme.gap / 2,
+                named.w,
+                LIGHT,
+                2,
+            );
+        }
+        out.push(cell);
     }
+    out
 }
 
 /// The size a row of figures is set at: `display` where the set fits `room`,

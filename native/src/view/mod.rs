@@ -68,8 +68,8 @@ pub enum Hit {
     /// Where a book list opens, as an index into it. The screen drawing the
     /// list holds the index inside the list: a step past either end is no step.
     ListPage(usize),
-    /// The books tab, narrowed to one shelf.
-    Shelved(Shelf),
+    /// The books tab, narrowed to one shelf and one stretch of days.
+    Shelved(Shelf, Option<Window>),
     /// Where the Books list opens, as an index into it.
     BooksPage(usize),
     /// The order the Books screen lists in.
@@ -244,6 +244,48 @@ impl Span {
     }
 }
 
+/// The stretch a book list is narrowed to: a span, and a day inside it. A book
+/// belongs to the window where the day it was last put down falls in
+/// [`Self::days`], which is the rule `Stats::finished_over` counts by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Window {
+    pub span: Span,
+    pub day: i64,
+}
+
+impl Window {
+    /// The days this window covers.
+    pub fn days(self, week: WeekStart) -> std::ops::RangeInclusive<i64> {
+        self.span.days(self.day, week)
+    }
+
+    /// What the chip stating this window reads, which is short enough for a
+    /// chip and names the year wherever the stretch is smaller than one.
+    pub fn name(self, week: WeekStart, s: &Strings) -> String {
+        let (year, month, _) = date::civil_from_days(self.day);
+        let at = (month - 1).clamp(0, 11) as usize;
+        match self.span {
+            Span::AllTime => s.all_time.to_string(),
+            Span::Year => match s.date_ymd {
+                true => format!("{year}年"),
+                false => year.to_string(),
+            },
+            Span::Month => match s.date_ymd {
+                true => format!("{year}年{}", s.months_short[at]),
+                false => format!("{} {year}", s.months_short[at]),
+            },
+            Span::Week => {
+                let days = self.days(week);
+                let (from, to) = (
+                    date::short_day(*days.start(), s),
+                    date::short_day(*days.end(), s),
+                );
+                format!("{from} – {to}")
+            }
+        }
+    }
+}
+
 /// What the screens are drawn at: the tab, the day, the span, the open book.
 #[derive(Debug, Clone, PartialEq)]
 pub struct State {
@@ -262,6 +304,9 @@ pub struct State {
     pub books_from: usize,
     /// Which books the Books screen lists.
     pub shelf: Shelf,
+    /// The stretch that list is narrowed to, which a span's own Finished
+    /// figure opens it under.
+    pub window: Option<Window>,
     /// The order it lists them in, which a tab change keeps.
     pub sort: Sort,
     /// Whether the day picked off the grid was asked to open as its own page.
@@ -285,6 +330,7 @@ impl State {
             asked: None,
             books_from: 0,
             shelf: Shelf::default(),
+            window: None,
             sort: Sort::default(),
             opened_day: false,
             alltime_page: 0,
@@ -301,6 +347,7 @@ impl State {
             && self.asked.is_none()
             && !self.picked
             && self.shelf == Shelf::All
+            && self.window.is_none()
         {
             return false;
         }
@@ -310,6 +357,7 @@ impl State {
         self.picked = false;
         self.opened_day = false;
         self.shelf = Shelf::All;
+        self.window = None;
         self.alltime_page = 0;
         self.list_from = 0;
         true
@@ -566,5 +614,39 @@ mod tests {
         assert_eq!(s.day, third() + 1);
         s.shift(-3);
         assert_eq!(s.day, third() - 2);
+    }
+
+    #[test]
+    fn a_window_names_its_stretch_and_the_year_it_falls_in() {
+        let day = third();
+        let (en, ja) = (Lang::English.strings(), Lang::Japanese.strings());
+        let week = WeekStart::Monday;
+        let named = |span, s| Window { span, day }.name(week, s);
+        assert_eq!(named(Span::Year, en), "2026");
+        assert_eq!(named(Span::Month, en), "Sep 2026");
+        assert_eq!(named(Span::Week, en), "Aug 31 – Sep 6");
+        assert_eq!(named(Span::Year, ja), "2026年");
+        assert_eq!(named(Span::Month, ja), "2026年9月");
+        // The stretch a window covers is the span's own.
+        for span in Span::CALENDAR {
+            let window = Window { span, day };
+            assert_eq!(window.days(week), span.days(day, week));
+            assert!(window.days(week).contains(&day));
+        }
+    }
+
+    #[test]
+    fn a_tab_tap_drops_the_window_the_list_was_under() {
+        let mut s = State::new(third());
+        s.go(Tab::Books);
+        s.shelf = Shelf::Finished;
+        s.window = Some(Window {
+            span: Span::Year,
+            day: third(),
+        });
+        assert!(s.go(Tab::Books), "the tab under a window still navigates");
+        assert_eq!(s.shelf, Shelf::All);
+        assert!(s.window.is_none());
+        assert!(!s.go(Tab::Books), "and the whole shelf stays put");
     }
 }

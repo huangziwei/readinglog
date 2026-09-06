@@ -116,6 +116,17 @@ pub fn short_day(days: i64, s: &Strings) -> String {
     }
 }
 
+/// "Aug 9, 2026", or "2026年8月9日" — [`short_day`] placed in its year, for a
+/// row stating one date against another.
+pub fn year_day(days: i64, s: &Strings) -> String {
+    let (y, m, d) = civil_from_days(days);
+    let month = s.months_short[(m - 1).clamp(0, 11) as usize];
+    match s.date_ymd {
+        true => format!("{y}年{month}{d}日"),
+        false => format!("{month} {d}, {y}"),
+    }
+}
+
 /// "Sun, 9 August 2026", or "2026年8月9日 日".
 pub fn long_day(days: i64, s: &Strings) -> String {
     let (y, m, d) = civil_from_days(days);
@@ -295,6 +306,17 @@ mod tests {
         assert_eq!(month_name(2026, 9, ja), "2026年9月");
         assert_eq!(long_day(day, en()), "Thu, 3 September 2026");
         assert_eq!(month_name(2026, 9, en()), "September 2026");
+    }
+
+    #[test]
+    fn a_dated_row_places_its_day_in_a_year() {
+        let day = days_from_civil(2026, 9, 3);
+        let ja = Lang::Japanese.strings();
+        assert_eq!(short_day(day, en()), "Sep 3");
+        assert_eq!(year_day(day, en()), "Sep 3, 2026");
+        assert_eq!(year_day(day, ja), "2026年9月3日");
+        // A day of another year states that year and not this one.
+        assert_eq!(year_day(days_from_civil(2019, 1, 31), en()), "Jan 31, 2019");
     }
 
     #[test]

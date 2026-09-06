@@ -265,7 +265,7 @@ fn cells(cx: &Ctx) -> Vec<Cell> {
         Cell {
             value: all.finished.to_string(),
             label: s.finished,
-            opens: (!finished.is_empty()).then_some(Hit::Shelved(Shelf::Finished)),
+            opens: (!finished.is_empty()).then_some(Hit::Shelved(Shelf::Finished, None)),
         },
         plain(a_book(cx, &finished, s), s.a_book),
         plain(cx.stats.current_streak.to_string(), s.current_streak),

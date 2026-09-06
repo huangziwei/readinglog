@@ -8,7 +8,7 @@ use crate::settings::WeekStart;
 use crate::ui::paint::{self, INK, LIGHT, PALE, Rect, WHITE, WHITE_RGB};
 use crate::ui::{charts, chrome, cover, theme::Theme};
 
-use super::{Ctx, Hit, Span, State, alltime, daybooks, home};
+use super::{Ctx, Hit, Shelf, Span, State, Window, alltime, daybooks, home};
 
 /// Books a day of a month names, the rest counted in `+n`.
 const LANES: usize = 4;
@@ -113,7 +113,7 @@ fn span_page(cx: &mut Ctx, area: Rect, state: &State) {
     // today needs no way back to itself.
     let adrift = !days.contains(&cx.today);
     span_nav(cx, nav, &span.name(day, cx.week, s), adrift);
-    span_figures(cx, stated, days.clone());
+    span_figures(cx, stated, span, day);
 
     match span {
         // `alltime::draw` takes the page ahead of `span_page`.
@@ -201,18 +201,25 @@ fn span_figure_px(theme: &Theme) -> f32 {
 }
 
 /// What the span holding `days` came to: the reading, the days it fell on,
-/// what one of those days averaged, and the books read through inside it.
-fn span_figures(cx: &mut Ctx, area: Rect, days: std::ops::RangeInclusive<i64>) {
+/// what one of those days averaged, and the books read through inside it. The
+/// last of those opens the Books list under this same span.
+fn span_figures(cx: &mut Ctx, area: Rect, span: Span, day: i64) {
     let s = cx.s();
-    let span = cx.stats.tally(days);
+    let days = span.days(day, cx.week);
+    let tally = cx.stats.tally(days);
     let stated = [
-        (date::duration_coarse(span.read, s), s.total_read),
-        (span.days_read.to_string(), s.days_read),
-        (date::duration(span.a_day, s), s.a_day),
-        (span.finished.to_string(), s.finished),
+        (date::duration_coarse(tally.read, s), s.total_read),
+        (tally.days_read.to_string(), s.days_read),
+        (date::duration(tally.a_day, s), s.a_day),
+        (tally.finished.to_string(), s.finished),
     ];
+    let opens = [false, false, false, tally.finished > 0];
     let ceiling = span_figure_px(cx.theme);
-    chrome::figures_at(cx.fb, cx.text, cx.theme, area, &stated, ceiling);
+    let cells = chrome::figures_at(cx.fb, cx.text, cx.theme, area, &stated, ceiling, &opens);
+    if let (true, Some(cell)) = (opens[3], cells.get(3)) {
+        let window = Window { span, day };
+        cx.hit(Hit::Shelved(Shelf::Finished, Some(window)), *cell);
+    }
 }
 
 /// `title` between two arrows, each its own hit box. `back` draws the chip

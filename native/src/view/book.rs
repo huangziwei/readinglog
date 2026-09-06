@@ -171,9 +171,9 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
             s.reading_speed,
             book.wpm().map_or("—".into(), |w| format!("{w} {}", s.wpm)),
         ),
-        (s.started, date::short_day(book.first_day, s)),
-        (s.last_read, date::short_day(book.last_day, s)),
-        (s.measured_as, measure_note(&book, s)),
+        (s.started, date::year_day(book.first_day, s)),
+        (s.last_read, date::year_day(book.last_day, s)),
+        (s.finished_on, finished_note(&book, s)),
         (s.on_the_device, where_note(&book, s)),
     ];
     let rows = inner.rows(lines.len() as i32, 0);
@@ -455,21 +455,16 @@ fn figures(cx: &mut Ctx, words: Rect, book: &BookStat) {
 fn where_note(book: &BookStat, s: &Strings) -> String {
     match book.on_device {
         true => s.yes.into(),
-        false => s.no_removed.into(),
+        false => s.no.into(),
     }
 }
 
-/// Which of the three regimes produced this book's figure. `seconds`,
-/// `dwell_seconds` and `awake_seconds` are not one claim: a counter, a per-page
-/// measurement, and an upper bound.
-fn measure_note(book: &BookStat, s: &Strings) -> String {
-    let measured = book.seconds - book.dwell_seconds - book.awake_seconds;
-    match (measured, book.dwell_seconds, book.awake_seconds) {
-        (_, 0, 0) => s.kindle_timer.into(),
-        (0, d, 0) if d > 0 => s.page_by_page.into(),
-        (0, 0, _) => s.time_awake.into(),
-        (_, _, 0) => s.timer_and_pages.into(),
-        _ => s.part_bounded.into(),
+/// The day a book read through was last put down, which is the day it counts
+/// as finished on. A book short of the end states none.
+fn finished_note(book: &BookStat, s: &Strings) -> String {
+    match book.is_finished() {
+        true => date::year_day(book.last_day, s),
+        false => "—".into(),
     }
 }
 
@@ -634,21 +629,6 @@ mod tests {
     }
 
     #[test]
-    fn a_figure_says_which_of_the_three_regimes_produced_it() {
-        assert_eq!(
-            measure_note(&book(600, 0, 0), en()),
-            "the Kindle's own timer"
-        );
-        assert_eq!(measure_note(&book(600, 600, 0), en()), "page by page");
-        assert_eq!(
-            measure_note(&book(600, 0, 600), en()),
-            "time awake, a bound"
-        );
-        assert_eq!(measure_note(&book(900, 300, 0), en()), "timer and pages");
-        assert_eq!(measure_note(&book(900, 300, 300), en()), "part bounded");
-    }
-
-    #[test]
     fn the_cover_is_the_size_of_a_cover_and_still_leaves_the_words_room() {
         for (w, h) in [(1264, 1680), (1272, 1696), (1860, 2480)] {
             let theme = Theme::for_screen(w, h);
@@ -663,5 +643,25 @@ mod tests {
                 "{w}x{h}: the cover took the measure the title needs"
             );
         }
+    }
+
+    #[test]
+    fn the_last_two_rows_answer_the_mark_and_the_catalog() {
+        let day = crate::date::days_from_civil(2026, 9, 3);
+        let read = BookStat {
+            last_day: day,
+            ..book(600, 0, 0)
+        };
+        assert_eq!(finished_note(&read, en()), "—");
+        assert_eq!(where_note(&read, en()), "no");
+        // The mark dates the row, and the day is the one the book was last
+        // put down on.
+        let done = BookStat {
+            finished: true,
+            on_device: true,
+            ..read
+        };
+        assert_eq!(finished_note(&done, en()), "Sep 3, 2026");
+        assert_eq!(where_note(&done, en()), "yes");
     }
 }

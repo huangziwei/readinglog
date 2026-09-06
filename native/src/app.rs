@@ -171,6 +171,12 @@ impl App {
         self.state.books_from = 0;
     }
 
+    /// List the books of `window`, whatever stretch the screen was left on.
+    pub fn set_window(&mut self, window: Option<crate::view::Window>) {
+        self.state.window = window;
+        self.state.books_from = 0;
+    }
+
     /// Draw Rhythm at `day`, with no day picked off the grid.
     pub fn set_day(&mut self, day: i64) {
         self.state.day = day;
@@ -624,13 +630,15 @@ impl App {
                 self.state.sort = order;
                 self.state.books_from = 0;
             }
-            // A shelf is reached from the board, and lands on the Books tab.
-            Hit::Shelved(shelf) => {
-                if self.state.tab == Tab::Books && self.state.shelf == shelf {
+            // A shelf is reached from a figure, and lands on the Books tab.
+            Hit::Shelved(shelf, window) => {
+                let on = self.state.shelf == shelf && self.state.window == window;
+                if self.state.tab == Tab::Books && on {
                     return Action::Nothing;
                 }
                 self.state.tab = Tab::Books;
                 self.state.shelf = shelf;
+                self.state.window = window;
                 self.state.book = None;
                 self.state.books_from = 0;
             }
@@ -708,8 +716,12 @@ impl App {
                 let chips = !self.stats.books.is_empty();
                 let area =
                     view::books::list_box(&self.theme, chrome::content_box(&self.theme), chips);
+                let over = self
+                    .state
+                    .window
+                    .map(|window| window.days(self.settings.week_start));
                 let count =
-                    view::books::listed(&self.stats, self.state.shelf, self.state.sort).len();
+                    view::books::listed(&self.stats, self.state.shelf, self.state.sort, over).len();
                 let step = view::books::rows_per_page(&self.theme, area) as i64;
                 let last = view::books::last_page_at(&self.theme, area, count);
                 let from = self.state.books_from as i64 + by * step;

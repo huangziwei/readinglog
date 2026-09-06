@@ -8,7 +8,7 @@ use crate::ui::cover;
 use crate::ui::paint::{self, INK, LIGHT, Rect};
 use crate::ui::theme::Theme;
 
-use super::{Ctx, Hit, Shelf, Sort, State, band};
+use super::{Ctx, Hit, Shelf, Sort, State, Window, band};
 
 /// Lines a title takes before the rest of it is ellipsized.
 const TITLE_LINES: usize = 2;
@@ -19,6 +19,9 @@ const JUMP_FIRST: &str = "«";
 const JUMP_LAST: &str = "»";
 const STEP_BACK: &str = "‹";
 const STEP_ON: &str = "›";
+
+/// The mark on the window chip, which a tap on it takes off the list.
+const DROP: &str = "×";
 
 /// The height one book takes, set by the cover it carries.
 fn row_height(theme: &Theme) -> i32 {
@@ -39,13 +42,23 @@ fn figures_width(cx: &mut Ctx, figure: &str) -> i32 {
 
 /// Books on `shelf` in `order`, by their index in [`Stats::books`], which is
 /// held most recently read first. [`Sort::Recent`] is that order untouched, and
-/// the stable sorts below fall back to it on a tie.
-pub fn listed(stats: &Stats, shelf: Shelf, order: Sort) -> Vec<usize> {
+/// the stable sorts below fall back to it on a tie. A book stands inside
+/// `days` where the day it was last put down does.
+pub fn listed(
+    stats: &Stats,
+    shelf: Shelf,
+    order: Sort,
+    days: Option<std::ops::RangeInclusive<i64>>,
+) -> Vec<usize> {
     let mut out: Vec<usize> = (0..stats.books.len())
         .filter(|at| match shelf {
             Shelf::All => true,
             Shelf::Finished => stats.books[*at].is_finished(),
             Shelf::Unfinished => !stats.books[*at].is_finished(),
+        })
+        .filter(|at| {
+            days.as_ref()
+                .is_none_or(|days| days.contains(&stats.books[*at].last_day))
         })
         .collect();
     match order {
@@ -106,12 +119,22 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
     // The row stands whenever there are books: a shelf with nothing read
     // through offers no `Finished` chip, but every shelf can be reordered.
     let (head, _) = area.split_top(chrome::chip_height(theme) + theme.gap * 2);
-    if shelved(cx.stats) {
-        shelf_chips(cx, head, state.shelf);
+    let sort = sort_chip(cx, head, state.sort);
+    let opens = match shelved(cx.stats) {
+        true => shelf_chips(cx, head, state.shelf, state.window) + theme.gap * 2,
+        false => head.x,
+    };
+    if let Some(window) = state.window {
+        window_chip(cx, head, opens, sort.x - theme.gap * 2, window, state.shelf);
     }
-    sort_chip(cx, head, state.sort);
     let area = list_box(theme, area, true);
-    let shelf = listed(cx.stats, state.shelf, state.sort);
+    let over = state.window.map(|window| window.days(cx.week));
+    let shelf = listed(cx.stats, state.shelf, state.sort, over);
+    if shelf.is_empty() {
+        let said = cx.s().nothing_on_the_shelf;
+        bare(cx, area, said);
+        return;
+    }
 
     let row_h = row_span(theme, area);
     let fits = rows_per_page(theme, area);
@@ -134,15 +157,16 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
         pager(cx, foot, &label, [from > 0, to < shelf.len()], last);
     }
     // The record's own count closes the last page of the whole shelf.
-    if to == shelf.len() && state.shelf == Shelf::All {
+    if to == shelf.len() && state.shelf == Shelf::All && state.window.is_none() {
         record_line(cx, foot, counted + line);
     }
 }
 
 /// The order the list is in, at the right of the shelf chips' own row. One
 /// chip, not one to an order: the row has no width for three more at every
-/// text size. A tap opens the order after this one.
-fn sort_chip(cx: &mut Ctx, area: Rect, on: Sort) {
+/// text size. A tap opens the order after this one, and the box it took is
+/// answered for whatever stands beside it.
+fn sort_chip(cx: &mut Ctx, area: Rect, on: Sort) -> Rect {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
     let said = on.label(cx.lang);
@@ -166,6 +190,7 @@ fn sort_chip(cx: &mut Ctx, area: Rect, on: Sort) {
         false,
     );
     cx.hit(Hit::Sorted(on.next()), chip);
+    chip
 }
 
 /// The width a mark along the foot takes, its air included.
@@ -261,9 +286,10 @@ fn centred(cx: &mut Ctx, foot: Rect, baseline: i32, said: &str) {
     );
 }
 
-/// The shelves as a chip apiece, the one showing filled, each its own hit box.
-/// The second chip carries [`tapped_to`].
-fn shelf_chips(cx: &mut Ctx, area: Rect, on: Shelf) {
+/// The shelves as a chip apiece, the one showing filled, each its own hit box,
+/// answering the right edge of the last of them. The second chip carries
+/// [`tapped_to`], and every chip keeps the window the list is under.
+fn shelf_chips(cx: &mut Ctx, area: Rect, on: Shelf, window: Option<Window>) -> i32 {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
     let shelves = on.chips();
@@ -275,13 +301,54 @@ fn shelf_chips(cx: &mut Ctx, area: Rect, on: Shelf) {
     let at = usize::from(on != Shelf::All);
     let cycled = tapped_to(cx.stats, on);
     let drawn = chrome::chips(cx.fb, cx.text, theme, area, &options, &placed, at);
+    let mut edge = area.x;
     for (slot, chip) in drawn.into_iter().enumerate() {
         let to = match slot {
             0 => Shelf::All,
             _ => cycled,
         };
-        cx.hit(Hit::Shelved(to), chip);
+        cx.hit(Hit::Shelved(to, window), chip);
+        edge = edge.max(chip.right());
     }
+    edge
+}
+
+/// The stretch the list is narrowed to, standing between `opens` and `until`,
+/// filled the way the shelf showing is. Its name carries [`DROP`], and a tap
+/// opens the same shelf over the whole record.
+fn window_chip(cx: &mut Ctx, area: Rect, opens: i32, until: i32, window: Window, shelf: Shelf) {
+    let theme: &Theme = cx.theme;
+    let script = cx.ui_script();
+    let said = format!("{} {DROP}", window.name(cx.week, cx.s()));
+    cx.text.set_px(theme.body_px);
+    let w = cx.text.measure_width_in(script, &said) as i32 + chrome::chip_pad() * 2;
+    let chip = Rect::new(
+        opens,
+        area.y,
+        w.min((until - opens).max(1)),
+        chrome::chip_height(theme),
+    );
+    paint::fill(cx.fb, chip, INK);
+    let tw = cx.text.measure_width_in(script, &said) as i32;
+    let baseline = chip.center_y() + cx.text.cap_height() as i32 / 2;
+    cx.text.draw_in(
+        script,
+        cx.fb,
+        chip.x + (chip.w - tw) / 2,
+        baseline,
+        &said,
+        true,
+    );
+    cx.hit(Hit::Shelved(shelf, None), chip);
+}
+
+/// `said` at the head of `area`, for a list with no row to draw.
+fn bare(cx: &mut Ctx, area: Rect, said: &str) {
+    let script = cx.ui_script();
+    cx.text.set_px(cx.theme.body_px);
+    let baseline = area.y + cx.text.line_height() as i32;
+    cx.text
+        .draw_in(script, cx.fb, area.x, baseline, said, false);
 }
 
 fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
@@ -447,9 +514,12 @@ mod tests {
     fn a_shelf_holding_the_finished_holds_none_of_them_on_the_next_tap() {
         // 100 and 99.9 are read through; 98 and a book with no figure are not.
         let stats = shelf_of(&[100.0, 98.0, -1.0, 99.9]);
-        assert_eq!(listed(&stats, Shelf::All, Sort::Recent), [0, 1, 2, 3]);
-        assert_eq!(listed(&stats, Shelf::Finished, Sort::Recent), [0, 3]);
-        assert_eq!(listed(&stats, Shelf::Unfinished, Sort::Recent), [1, 2]);
+        assert_eq!(listed(&stats, Shelf::All, Sort::Recent, None), [0, 1, 2, 3]);
+        assert_eq!(listed(&stats, Shelf::Finished, Sort::Recent, None), [0, 3]);
+        assert_eq!(
+            listed(&stats, Shelf::Unfinished, Sort::Recent, None),
+            [1, 2]
+        );
     }
 
     #[test]
@@ -457,8 +527,14 @@ mod tests {
         let stats = shelf_of(&[100.0, 40.0, -1.0, 100.0, 92.0]);
         // Every book read through leads on `Furthest`, and the shelf without
         // them opens where reading is left.
-        assert_eq!(listed(&stats, Shelf::All, Sort::Furthest), [0, 3, 4, 1, 2]);
-        assert_eq!(listed(&stats, Shelf::Unfinished, Sort::Furthest), [4, 1, 2]);
+        assert_eq!(
+            listed(&stats, Shelf::All, Sort::Furthest, None),
+            [0, 3, 4, 1, 2]
+        );
+        assert_eq!(
+            listed(&stats, Shelf::Unfinished, Sort::Furthest, None),
+            [4, 1, 2]
+        );
     }
 
     /// A content box holding exactly `rows` rows and the page counter.
@@ -540,5 +616,33 @@ mod tests {
             assert_eq!(seen, count, "{count} books: {seen} of them reachable");
             assert_eq!(from, last, "{count} books: paging stops short of {last}");
         }
+    }
+
+    #[test]
+    fn a_window_holds_the_books_last_put_down_inside_it() {
+        use crate::settings::WeekStart;
+        let mut stats = shelf_of(&[100.0, 40.0, 100.0]);
+        let inside = crate::date::days_from_civil(2026, 3, 4);
+        let before = crate::date::days_from_civil(2025, 12, 30);
+        for (book, day) in stats.books.iter_mut().zip([inside, inside, before]) {
+            book.last_day = day;
+        }
+        let year = Window {
+            span: crate::view::Span::Year,
+            day: inside,
+        }
+        .days(WeekStart::Monday);
+        let over = |shelf| listed(&stats, shelf, Sort::Recent, Some(year.clone()));
+        assert_eq!(over(Shelf::All), [0, 1]);
+        assert_eq!(over(Shelf::Finished), [0]);
+        assert_eq!(over(Shelf::Unfinished), [1]);
+        // The two shelves under a window cut the whole of it in two, which is
+        // what lets a Finished figure state the count the list holds.
+        assert_eq!(
+            over(Shelf::Finished).len() + over(Shelf::Unfinished).len(),
+            2
+        );
+        // With no window, the book of the year before stands with them.
+        assert_eq!(listed(&stats, Shelf::All, Sort::Recent, None), [0, 1, 2]);
     }
 }
