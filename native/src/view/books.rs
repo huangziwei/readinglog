@@ -76,12 +76,15 @@ pub fn shelved(stats: &Stats) -> bool {
     stats.books.iter().any(|b| b.is_finished())
 }
 
-/// The shelf a tap on the second chip lands on. [`Shelf::Unfinished`] is
-/// stepped over where every book is read through.
-pub fn tapped_to(stats: &Stats, on: Shelf) -> Shelf {
-    match on.cycled() {
-        Shelf::Unfinished if stats.books.iter().all(BookStat::is_finished) => Shelf::All,
-        next => next,
+/// The shelves the row draws a chip apiece for. A record read through end to
+/// end offers no `Unfinished` chip, that shelf holding nothing — unless it is
+/// the shelf showing, which the row names wherever the list stands.
+pub fn shelves(stats: &Stats, on: Shelf) -> &'static [Shelf] {
+    const EVERY: [Shelf; 3] = [Shelf::All, Shelf::Finished, Shelf::Unfinished];
+    let read_through = stats.books.iter().all(BookStat::is_finished);
+    match read_through && on != Shelf::Unfinished {
+        true => &EVERY[..2],
+        false => &EVERY,
     }
 }
 
@@ -287,27 +290,22 @@ fn centred(cx: &mut Ctx, foot: Rect, baseline: i32, said: &str) {
 }
 
 /// The shelves as a chip apiece, the one showing filled, each its own hit box,
-/// answering the right edge of the last of them. The second chip carries
-/// [`tapped_to`], and every chip keeps the window the list is under.
+/// answering the right edge of the last of them. A chip stands for the shelf
+/// it names and keeps the window the list is under.
 fn shelf_chips(cx: &mut Ctx, area: Rect, on: Shelf, window: Option<Window>) -> i32 {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
-    let shelves = on.chips();
+    let shelves = shelves(cx.stats, on);
     let options: Vec<(&str, crate::font::Script)> = shelves
         .iter()
         .map(|shelf| (shelf.label(cx.lang), script))
         .collect();
     let placed = chrome::chip_layout(cx.text, theme, &options, area.w);
-    let at = usize::from(on != Shelf::All);
-    let cycled = tapped_to(cx.stats, on);
+    let at = shelves.iter().position(|shelf| *shelf == on).unwrap_or(0);
     let drawn = chrome::chips(cx.fb, cx.text, theme, area, &options, &placed, at);
     let mut edge = area.x;
-    for (slot, chip) in drawn.into_iter().enumerate() {
-        let to = match slot {
-            0 => Shelf::All,
-            _ => cycled,
-        };
-        cx.hit(Hit::Shelved(to, window), chip);
+    for (shelf, chip) in shelves.iter().zip(drawn) {
+        cx.hit(Hit::Shelved(*shelf, window), chip);
         edge = edge.max(chip.right());
     }
     edge
@@ -489,25 +487,27 @@ mod tests {
     }
 
     #[test]
-    fn the_second_chip_cycles_through_every_shelf_and_back() {
-        assert_eq!(Shelf::All.cycled(), Shelf::Finished);
-        assert_eq!(Shelf::Finished.cycled(), Shelf::Unfinished);
-        assert_eq!(Shelf::Unfinished.cycled(), Shelf::All);
-        // The chip states the shelf it is on, and rests on `Finished`.
-        assert_eq!(Shelf::All.chips()[1], Shelf::Finished);
-        assert_eq!(Shelf::Finished.chips()[1], Shelf::Finished);
-        assert_eq!(Shelf::Unfinished.chips()[1], Shelf::Unfinished);
+    fn every_shelf_holding_something_gets_its_own_chip() {
+        let mixed = shelf_of(&[100.0, 40.0]);
+        assert_eq!(
+            shelves(&mixed, Shelf::All),
+            [Shelf::All, Shelf::Finished, Shelf::Unfinished]
+        );
     }
 
     #[test]
-    fn a_record_read_through_end_to_end_steps_over_the_empty_shelf() {
+    fn a_record_read_through_end_to_end_offers_no_unfinished_chip() {
         let all_done = shelf_of(&[100.0, 100.0]);
-        assert_eq!(tapped_to(&all_done, Shelf::All), Shelf::Finished);
-        assert_eq!(tapped_to(&all_done, Shelf::Finished), Shelf::All);
-        // A record with anything left in it takes the whole cycle.
-        let mixed = shelf_of(&[100.0, 40.0]);
-        assert_eq!(tapped_to(&mixed, Shelf::Finished), Shelf::Unfinished);
-        assert_eq!(tapped_to(&mixed, Shelf::Unfinished), Shelf::All);
+        assert_eq!(
+            shelves(&all_done, Shelf::All),
+            [Shelf::All, Shelf::Finished]
+        );
+        // Standing on that shelf when the last book is read through, the row
+        // goes on naming it rather than filling a chip the list is not under.
+        assert_eq!(
+            shelves(&all_done, Shelf::Unfinished),
+            [Shelf::All, Shelf::Finished, Shelf::Unfinished]
+        );
     }
 
     #[test]

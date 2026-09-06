@@ -98,24 +98,6 @@ pub enum Shelf {
 }
 
 impl Shelf {
-    /// The two chips the row draws: every book, then the shelf this one
-    /// narrows to.
-    pub fn chips(self) -> [Shelf; 2] {
-        match self {
-            Shelf::Unfinished => [Shelf::All, Shelf::Unfinished],
-            _ => [Shelf::All, Shelf::Finished],
-        }
-    }
-
-    /// The shelf a tap on the second chip lands on.
-    pub fn cycled(self) -> Shelf {
-        match self {
-            Shelf::All => Shelf::Finished,
-            Shelf::Finished => Shelf::Unfinished,
-            Shelf::Unfinished => Shelf::All,
-        }
-    }
-
     /// What this shelf is called, in the interface's own language.
     pub fn label(self, lang: Lang) -> &'static str {
         let s = lang.strings();
@@ -274,13 +256,15 @@ impl Window {
                 true => format!("{year}年{}", s.months_short[at]),
                 false => format!("{} {year}", s.months_short[at]),
             },
+            // A week is named by its number, not by the two dates it runs
+            // between: those are long, name no year, and read alike.
             Span::Week => {
-                let days = self.days(week);
-                let (from, to) = (
-                    date::short_day(*days.start(), s),
-                    date::short_day(*days.end(), s),
-                );
-                format!("{from} – {to}")
+                let (of, no) = date::week_of_year(self.day, week);
+                let numbered = format!("{}{no}{}", s.week_no, s.week_no_after);
+                match s.date_ymd {
+                    true => format!("{of}年{numbered}"),
+                    false => format!("{of} {numbered}"),
+                }
             }
         }
     }
@@ -624,9 +608,17 @@ mod tests {
         let named = |span, s| Window { span, day }.name(week, s);
         assert_eq!(named(Span::Year, en), "2026");
         assert_eq!(named(Span::Month, en), "Sep 2026");
-        assert_eq!(named(Span::Week, en), "Aug 31 – Sep 6");
+        assert_eq!(named(Span::Week, en), "2026 W36");
         assert_eq!(named(Span::Year, ja), "2026年");
         assert_eq!(named(Span::Month, ja), "2026年9月");
+        assert_eq!(named(Span::Week, ja), "2026年第36週");
+        // A week is numbered off the year holding most of it, so the last
+        // days of December are named by the year they run into.
+        let turn = Window {
+            span: Span::Week,
+            day: date::days_from_civil(2025, 12, 30),
+        };
+        assert_eq!(turn.name(week, en), "2026 W1");
         // The stretch a window covers is the span's own.
         for span in Span::CALENDAR {
             let window = Window { span, day };

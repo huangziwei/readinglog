@@ -60,13 +60,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, of: Band) -> Rect {
     let chip = of.finished.then(|| chip(cx, area, baseline));
     let room = left_of(area, chip, theme.gap * 2);
     if let Some(at) = of.at {
-        // A book read through states the place it stands at; one in progress
-        // has its own fill saying the same thing.
-        let said = match of.finished {
-            true => cx.s().percent_at,
-            false => cx.s().percent_plain,
-        };
-        mark(cx, room, track, at, said, of.fill > at);
+        mark(cx, room, track, at, cx.s().percent_plain, of.fill > at);
     }
     track
 }

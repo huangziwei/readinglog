@@ -267,13 +267,10 @@ pub struct Strings {
     pub mark_unfinished: &'static str,
     pub unmark_ask: &'static str,
     pub unmark_note: &'static str,
-    /// The figure over the place a bar's reading stands at. `{d}` is `percent`,
-    /// rounded.
-    pub percent_at: &'static str,
     /// The place a book stood at as a day or a span ended. `{d}` is that
     /// figure, rounded.
     pub percent_reached: &'static str,
-    /// The figure on a bar whose own fill states the same place. `{d}` is that
+    /// The figure on a bar, over the place its reading stands at. `{d}` is that
     /// figure, rounded.
     pub percent_plain: &'static str,
     /// The control that hands a book back to be read from its beginning, the
@@ -439,7 +436,6 @@ const ENGLISH: Strings = Strings {
     unmark_ask: "Remove the Finished mark?",
     unmark_note: "It leaves the Finished shelf, and the library marks it unread. The \
                   progress, the time, the sittings and the days read do not change.",
-    percent_at: "{d}% now",
     percent_reached: "at {d}%",
     percent_plain: "{d}%",
     restart: "Restart",
@@ -559,7 +555,7 @@ const GERMAN: Strings = Strings {
 
     shelf_every: "Alle",
     shelf_finished: "Fertig",
-    shelf_unfinished: "Unfertig",
+    shelf_unfinished: "Offen",
     nothing_on_the_shelf: "Keine Bücher hier.",
     by_recent: "Zuletzt",
     by_longest: "Längste",
@@ -591,16 +587,15 @@ const GERMAN: Strings = Strings {
     on_the_device: "Auf dem Gerät",
     continue_reading: "Weiterlesen",
     continue_short: "Weiter",
-    mark_finished: "Fertig markieren",
+    mark_finished: "Als fertig markieren",
     mark_ask: "Dieses Buch als fertig markieren?",
     mark_note: "Es kommt in das Regal Fertig, und die Bibliothek markiert es als gelesen. \
                 Fortschritt, gelesene Zeit, Sitzungen und Tage bleiben unverändert.",
-    mark_unfinished: "Unfertig markieren",
+    mark_unfinished: "Als offen markieren",
     unmark_ask: "Markierung Fertig entfernen?",
     unmark_note: "Es verlässt das Regal Fertig, und die Bibliothek markiert es als \
                   ungelesen. Fortschritt, gelesene Zeit, Sitzungen und Tage bleiben \
                   unverändert.",
-    percent_at: "{d} % jetzt",
     percent_reached: "bei {d} %",
     percent_plain: "{d} %",
     restart: "Neu beginnen",
@@ -759,7 +754,6 @@ const JAPANESE: Strings = Strings {
     mark_unfinished: "未読了にする",
     unmark_ask: "読了の印を外しますか？",
     unmark_note: "読了の棚から外れ、ライブラリでも未読になります。進捗、読んだ時間、回数、日数は変わりません。",
-    percent_at: "現在{d}%",
     percent_reached: "{d}%まで",
     percent_plain: "{d}%",
     restart: "最初から",
@@ -904,7 +898,6 @@ const SIMPLIFIED: Strings = Strings {
     mark_unfinished: "标记未读完",
     unmark_ask: "取消读完标记？",
     unmark_note: "本书将离开已读完书架，图书馆中也标记为未读。进度、已读的时间、次数与天数不变。",
-    percent_at: "当前{d}%",
     percent_reached: "至{d}%",
     percent_plain: "{d}%",
     restart: "重新开始",
@@ -1060,7 +1053,6 @@ const TRADITIONAL: Strings = Strings {
     mark_unfinished: "標記未讀完",
     unmark_ask: "取消讀完標記？",
     unmark_note: "本書將離開已讀完書架，圖書館中也標記為未讀。進度、已讀的時間、次數與天數不變。",
-    percent_at: "目前{d}%",
     percent_reached: "至{d}%",
     percent_plain: "{d}%",
     restart: "重新開始",
