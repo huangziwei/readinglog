@@ -116,21 +116,21 @@ pub enum Sort {
     #[default]
     Recent,
     /// Most time read first.
-    Longest,
+    Time,
     /// Furthest through first.
-    Furthest,
+    Progress,
 }
 
 impl Sort {
-    pub const ALL: [Sort; 3] = [Sort::Recent, Sort::Longest, Sort::Furthest];
+    pub const ALL: [Sort; 3] = [Sort::Recent, Sort::Time, Sort::Progress];
 
     /// What this order is called, in the interface's own language.
     pub fn label(self, lang: Lang) -> &'static str {
         let s = lang.strings();
         match self {
             Sort::Recent => s.by_recent,
-            Sort::Longest => s.by_longest,
-            Sort::Furthest => s.by_furthest,
+            Sort::Time => s.by_time,
+            Sort::Progress => s.by_progress,
         }
     }
 

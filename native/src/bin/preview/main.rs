@@ -387,9 +387,9 @@ fn set_span(app: &mut App, shot: &Shot, week: WeekStart) -> Result<()> {
         }
         "finished" => app.set_shelf(Shelf::Finished),
         "unfinished" => app.set_shelf(Shelf::Unfinished),
-        "unfinished-furthest" => {
+        "unfinished-progress" => {
             app.set_shelf(Shelf::Unfinished);
-            app.set_sort(Sort::Furthest);
+            app.set_sort(Sort::Progress);
         }
         // The list a span's own Finished figure opens: what was read through
         // inside one year, under the chip that drops the window.
@@ -411,6 +411,17 @@ fn set_span(app: &mut App, shot: &Shot, week: WeekStart) -> Result<()> {
                 day,
             }));
         }
+        // The longest window name beside the widest sort label, which is the
+        // pairing that squeezes the window chip.
+        "windowprogress" => {
+            app.set_shelf(Shelf::Finished);
+            let day = last_finished(app);
+            app.set_window(Some(Window {
+                span: Span::Week,
+                day,
+            }));
+            app.set_sort(Sort::Progress);
+        }
         // A window the record holds no reading inside, which no figure opens
         // and a shelf tap can reach.
         "windowempty" => {
@@ -420,8 +431,8 @@ fn set_span(app: &mut App, shot: &Shot, week: WeekStart) -> Result<()> {
                 day,
             }));
         }
-        "longest" => app.set_sort(Sort::Longest),
-        "furthest" => app.set_sort(Sort::Furthest),
+        "time" => app.set_sort(Sort::Time),
+        "progress" => app.set_sort(Sort::Progress),
         "last" => app.open_books(usize::MAX),
         // A page with a list either side of it, where both jump marks stand.
         "mid" => app.open_books(5),
@@ -527,7 +538,7 @@ fn list() {
             "today" => "  (:quiet :empty :busy)",
             "book" => "  (:<index> :<index>:restart :<index>:mark :<index>:unmark)",
             "books" => {
-                "  (:finished :unfinished :unfinished-furthest :longest :furthest\n   :mid :last :window :windowweek :windowempty)"
+                "  (:finished :unfinished :unfinished-progress :time :progress\n   :mid :last :window :windowweek :windowprogress :windowempty)"
             }
             _ => "",
         };
@@ -624,11 +635,12 @@ fn everything() -> Vec<Shot> {
         "books",
         "books:finished",
         "books:unfinished",
-        "books:longest",
-        "books:furthest",
+        "books:time",
+        "books:progress",
         "books:mid",
         "books:window",
         "books:windowweek",
+        "books:windowprogress",
         "books:windowempty",
         "book",
         "config",

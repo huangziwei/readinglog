@@ -63,9 +63,9 @@ pub fn listed(
         .collect();
     match order {
         Sort::Recent => {}
-        Sort::Longest => out.sort_by_key(|at| -stats.books[*at].seconds),
+        Sort::Time => out.sort_by_key(|at| -stats.books[*at].seconds),
         // A book the catalog states no percent for sorts as though unopened.
-        Sort::Furthest => out.sort_by_key(|at| -stats.books[*at].percent_shown().max(0)),
+        Sort::Progress => out.sort_by_key(|at| -stats.books[*at].percent_shown().max(0)),
     }
     out
 }
@@ -528,11 +528,11 @@ mod tests {
         // Every book read through leads on `Furthest`, and the shelf without
         // them opens where reading is left.
         assert_eq!(
-            listed(&stats, Shelf::All, Sort::Furthest, None),
+            listed(&stats, Shelf::All, Sort::Progress, None),
             [0, 3, 4, 1, 2]
         );
         assert_eq!(
-            listed(&stats, Shelf::Unfinished, Sort::Furthest, None),
+            listed(&stats, Shelf::Unfinished, Sort::Progress, None),
             [4, 1, 2]
         );
     }
