@@ -262,7 +262,7 @@ fn missing_advance(px: f32) -> u32 {
 }
 
 /// A hollow box standing on the baseline, for a character no face in the
-/// chain has. Stroked 2px on purpose: a hairline outline is exactly what
+/// chain has. `STROKE` is two pixels because a hairline outline is what
 /// makes a font's own `.notdef` fall apart under [`COVERAGE_THRESHOLD`].
 fn draw_missing(fb: &mut Framebuffer, x: i32, y_baseline: i32, px: f32, fg: u8) {
     const STROKE: i32 = 2;

@@ -150,8 +150,8 @@ pub(crate) mod tests {
         );
     }
 
-    /// The whole point of the density: a line of body text covers the same
-    /// stretch of paper on a 167 ppi panel as on a 300 ppi one.
+    /// A line of body text covers the same stretch of paper on a 167 ppi
+    /// panel as on a 300 ppi one.
     #[test]
     fn a_body_line_is_one_size_on_the_page_at_every_density() {
         let reference = Theme::for_screen(1264, 1680);
