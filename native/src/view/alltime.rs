@@ -430,6 +430,6 @@ fn figure(cx: &mut Ctx, box_: Rect, cell: &Cell, px: f32) {
     cx.text
         .draw_in(script, cx.fb, at, baseline, cell.label, false);
     if cell.opens.is_some() {
-        paint::hline(cx.fb, at, baseline + theme.gap / 2, lw, LIGHT, 2);
+        paint::hline(cx.fb, at, baseline + theme.gap / 2, lw, LIGHT, theme.rule());
     }
 }

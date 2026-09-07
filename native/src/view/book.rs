@@ -53,7 +53,7 @@ fn controls_split(
     said: [Option<&str>; 2],
 ) -> Vec<Rect> {
     text.set_px(theme.body_px);
-    let pad = chrome::chip_pad() * 4;
+    let pad = chrome::chip_pad(theme) * 4;
     let read: Vec<i32> = said
         .iter()
         .flatten()
@@ -114,7 +114,8 @@ fn reset_box(
     s: &Strings,
 ) -> Rect {
     text.set_px(theme.body_px);
-    let w = (text.measure_width_in(script, s.clear) as i32 + chrome::chip_pad() * 4).min(band.w);
+    let w =
+        (text.measure_width_in(script, s.clear) as i32 + chrome::chip_pad(theme) * 4).min(band.w);
     let h = chrome::chip_height(theme);
     let step = h + theme.gap;
     let rows = (band.h + theme.gap) / step.max(1);
@@ -469,6 +470,7 @@ fn days_note(book: &BookStat, s: &Strings) -> String {
 mod tests {
     use super::*;
     use crate::lang::Lang;
+    use crate::ui::theme::tests::PANELS;
 
     fn en() -> &'static Strings {
         Lang::English.strings()
@@ -581,7 +583,7 @@ mod tests {
 
     #[test]
     fn every_control_stands_inside_the_width_it_was_given() {
-        for (w, h) in [(1264, 1680), (1272, 1696), (1860, 2480)] {
+        for (w, h) in PANELS {
             let theme = Theme::for_screen(w, h);
             let width = chrome::content_box(&theme).w;
             // Two that fit one row, and two that cannot.
@@ -608,7 +610,7 @@ mod tests {
 
     #[test]
     fn the_controls_stand_inside_the_band_the_heading_took_for_them() {
-        for (w, h) in [(1264, 1680), (1272, 1696), (1860, 2480)] {
+        for (w, h) in PANELS {
             let theme = Theme::for_screen(w, h);
             let one = chrome::chip_height(&theme);
             for rows in [1, 2] {
@@ -627,13 +629,12 @@ mod tests {
 
     #[test]
     fn the_cover_is_the_size_of_a_cover_and_still_leaves_the_words_room() {
-        for (w, h) in [(1264, 1680), (1272, 1696), (1860, 2480)] {
+        for (w, h) in PANELS {
             let theme = Theme::for_screen(w, h);
             let art = cover::width_for(cover_height(&theme));
-            assert!(
-                art > theme.screen.w / 8,
-                "{w}x{h}: a {art} px cover is a stamp"
-            );
+            // A jacket is a physical size, not a share of the width: a wider
+            // panel shows more of the page beside it, not a larger cover.
+            assert!(art >= theme.px(250), "{w}x{h}: a {art} px cover is a stamp");
             let box_ = chrome::content_box(&theme);
             assert!(
                 box_.w - art - theme.gap * 2 > box_.w / 2,

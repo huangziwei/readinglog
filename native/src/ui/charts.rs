@@ -465,13 +465,21 @@ pub fn timeline(
     // `now` down the strip.
     if let Some(secs) = now {
         let x = at(secs);
-        paint::vline(fb, x, strip.y - theme.gap / 2, strip.h + theme.gap, DARK, 2);
+        paint::vline(
+            fb,
+            x,
+            strip.y - theme.gap / 2,
+            strip.h + theme.gap,
+            DARK,
+            theme.rule(),
+        );
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::theme::tests::PANELS;
 
     #[test]
     fn a_month_takes_the_rows_it_reaches_into_and_fills_them() {
@@ -492,9 +500,6 @@ mod tests {
         }
     }
 
-    /// The panels this primitive has to hold up on.
-    const PANELS: [(i32, i32); 3] = [(1264, 1680), (1272, 1696), (1860, 2480)];
-
     /// A metric with no font behind it: every character 0.6 em, wider than
     /// Ember sets and narrower than an ideograph.
     fn stub_width(px: f32, s: &str) -> i32 {
@@ -506,9 +511,9 @@ mod tests {
         // One size for the whole row, taken from the widest figure. A unit of
         // two ideographs sets far wider than an `h`.
         for (w, h) in PANELS {
-            let theme = Theme::for_screen(w as u32, h as u32);
+            let theme = Theme::for_screen(w, h);
             for count in [7usize, 12, 24, 25] {
-                let plot = Rect::new(0, 0, w - theme.pad * 2, 400);
+                let plot = Rect::new(0, 0, theme.screen.w - theme.pad * 2, 400);
                 let gap = if count > 16 { 2 } else { theme.gap / 2 };
                 let cell = plot.columns(count as i32, gap)[0];
                 let room = bar_width(&theme, cell.w) - theme.gap / 2;

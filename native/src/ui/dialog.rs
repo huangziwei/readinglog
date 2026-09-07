@@ -13,6 +13,10 @@ use crate::view::{Ctx, Hit};
 const HEAD_LINES: usize = 2;
 const NOTE_LINES: usize = 8;
 
+/// The outline standing a question off the screen under it, in design pixels:
+/// heavier than a rule, because it is the edge of the thing being answered.
+const BORDER: i32 = 3;
+
 /// What a question says and what may be answered.
 pub struct Question<'a> {
     pub heading: &'a str,
@@ -48,7 +52,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, question: &Question) {
         .answers
         .iter()
         .map(|(l, _)| {
-            (cx.text.measure_width_in(script, l) as i32 + chrome::chip_pad() * 4).min(inner)
+            (cx.text.measure_width_in(script, l) as i32 + chrome::chip_pad(theme) * 4).min(inner)
         })
         .collect();
     let chip = chrome::chip_height(theme);
@@ -67,7 +71,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, question: &Question) {
         high,
     );
     paint::fill(cx.fb, panel, WHITE);
-    paint::stroke(cx.fb, panel, INK, 3);
+    paint::stroke(cx.fb, panel, INK, theme.px(BORDER));
 
     let (heads, rest) = panel.inset(pad).split_top(head_h + theme.gap * 2);
     let (notes, feet) = rest.split_top(note_h + theme.gap * 3);

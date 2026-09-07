@@ -171,14 +171,14 @@ fn sort_chip(cx: &mut Ctx, area: Rect, on: Sort) -> Rect {
     let script = cx.ui_script();
     let said = on.label(cx.lang);
     cx.text.set_px(theme.body_px);
-    let w = cx.text.measure_width_in(script, said) as i32 + chrome::chip_pad() * 2;
+    let w = cx.text.measure_width_in(script, said) as i32 + chrome::chip_pad(theme) * 2;
     let chip = Rect::new(
         area.right() - w,
         area.y,
         w.min(area.w),
         chrome::chip_height(theme),
     );
-    paint::stroke(cx.fb, chip, INK, 2);
+    paint::stroke(cx.fb, chip, INK, theme.rule());
     let tw = cx.text.measure_width_in(script, said) as i32;
     let baseline = chip.center_y() + cx.text.cap_height() as i32 / 2;
     cx.text.draw_in(
@@ -316,7 +316,7 @@ fn window_chip(cx: &mut Ctx, area: Rect, opens: i32, until: i32, window: Window,
     let script = cx.ui_script();
     let said = format!("{} {DROP}", window.name(cx.week, cx.s()));
     cx.text.set_px(theme.body_px);
-    let w = cx.text.measure_width_in(script, &said) as i32 + chrome::chip_pad() * 2;
+    let w = cx.text.measure_width_in(script, &said) as i32 + chrome::chip_pad(theme) * 2;
     let chip = Rect::new(
         opens,
         area.y,
@@ -451,6 +451,7 @@ mod tests {
     use super::*;
     use crate::stats::BookStat;
     use crate::ui::chrome;
+    use crate::ui::theme::tests::PANELS;
 
     /// A shelf of books at `percents`, held most recent first.
     fn shelf_of(percents: &[f64]) -> Stats {
@@ -556,7 +557,7 @@ mod tests {
 
     #[test]
     fn the_page_counter_never_lands_on_the_last_row() {
-        for (w, h) in [(1264, 1680), (1272, 1696), (1860, 2480)] {
+        for (w, h) in PANELS {
             let theme = Theme::for_screen(w, h);
             let area = chrome::content_box(&theme);
             let rows = rows_per_page(&theme, area) as i32;
@@ -571,11 +572,14 @@ mod tests {
 
     #[test]
     fn a_cover_is_worth_looking_at_on_every_panel() {
-        for (w, h) in [(1264, 1680), (1272, 1696), (1860, 2480)] {
+        for (w, h) in PANELS {
             let theme = Theme::for_screen(w, h);
             let art = cover::width_for(row_height(&theme) - theme.gap * 2);
-            // `art` against the panel's own width.
-            assert!(art >= 100, "{w}x{h}: a {art} px cover is a smudge");
+            // `art` against the panel's own density and width.
+            assert!(
+                art >= theme.px(100),
+                "{w}x{h}: a {art} px cover is a smudge"
+            );
             assert!(
                 art < theme.screen.w / 6,
                 "{w}x{h}: a {art} px cover crowds the words"

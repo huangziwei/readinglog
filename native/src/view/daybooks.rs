@@ -371,24 +371,25 @@ fn day_spans(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::ui::theme::tests::PANELS;
 
     /// A stand-in for the height `nothing_read` takes.
     const EMPTY: i32 = 60;
 
-    /// A stand-in for [`Metrics::of`]: Ember at the medium text size.
-    pub(crate) const SET: Metrics = Metrics {
-        cap: 26,
-        line: 48,
-        small: 38,
-    };
-
-    /// Three shipped panel sizes, and one larger than all of them.
-    const PANELS: [(u32, u32); 4] = [(1264, 1680), (1272, 1696), (1860, 2480), (2400, 3200)];
+    /// A stand-in for [`Metrics::of`]: Ember at the medium text size, in
+    /// design pixels, which the panel's own density puts into its pixels.
+    pub(crate) fn set(theme: &Theme) -> Metrics {
+        Metrics {
+            cap: theme.px(26),
+            line: theme.px(48),
+            small: theme.px(38),
+        }
+    }
 
     #[test]
     fn the_note_stands_under_what_the_list_drew() {
         let theme = Theme::for_screen(1264, 1680);
-        let floor = SET.floor(&theme);
+        let floor = set(&theme).floor(&theme);
         let box_ = Rect::new(0, 100, 1186, 900);
         // A list of no rows wrote a line, which the note clears.
         assert_eq!(note_at(floor, box_, 0, EMPTY), box_.y + EMPTY);
@@ -406,14 +407,15 @@ pub(crate) mod tests {
     fn a_row_at_the_floor_holds_the_block_it_draws() {
         for (w, h) in PANELS {
             let theme = Theme::for_screen(w, h);
-            let floor = SET.floor(&theme);
+            let set = set(&theme);
+            let floor = set.floor(&theme);
             for each in [floor, floor * 5 / 4, floor * 3 / 2] {
                 // What the air over the block and the span strip under it leave.
                 let room = each - theme.gap * 4;
                 for named in [true, false] {
-                    let lines = SET.lines(&theme, room, named);
+                    let lines = set.lines(&theme, room, named);
                     assert!(
-                        SET.block(&theme, lines, named) <= room,
+                        set.block(&theme, lines, named) <= room,
                         "{w}x{h}: a {lines}-line block overruns {room} px of a {each} px row"
                     );
                 }
@@ -424,17 +426,18 @@ pub(crate) mod tests {
     #[test]
     fn a_title_takes_its_second_line_only_where_the_block_holds_it() {
         let theme = Theme::for_screen(1264, 1680);
-        let two = SET.block(&theme, TITLE_LINES, true);
-        assert_eq!(SET.lines(&theme, two, true), TITLE_LINES);
-        assert_eq!(SET.lines(&theme, two - 1, true), 1);
+        let set = set(&theme);
+        let two = set.block(&theme, TITLE_LINES, true);
+        assert_eq!(set.lines(&theme, two, true), TITLE_LINES);
+        assert_eq!(set.lines(&theme, two - 1, true), 1);
         // A block shorter than one line still sets one.
-        assert_eq!(SET.lines(&theme, 0, true), 1);
+        assert_eq!(set.lines(&theme, 0, true), 1);
     }
 
     #[test]
     fn a_list_never_counts_more_rows_than_it_can_draw() {
         let theme = Theme::for_screen(1264, 1680);
-        let floor = SET.floor(&theme);
+        let floor = set(&theme).floor(&theme);
         for h in [200, 400, 900, 1100] {
             for count in 0..=9usize {
                 let shown = fits(floor, h, count);

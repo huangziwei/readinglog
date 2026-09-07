@@ -29,11 +29,23 @@ use readinglog_native::view::{Ask, Reset, Shelf, Sort, Span, Window};
 const DAY: (i64, i64, i64) = (2026, 9, 16);
 const NOW: i64 = 20 * 3600 + 15 * 60;
 
-/// The panels, by the name `--panel` takes.
+/// The panels, by the name `--panel` takes. The first is what a run draws
+/// when it names none, and the tag `panel_tag` leaves off a filename.
+///
+/// The density each carries is `ui::scale`'s: 300 ppi from the Voyage on, and
+/// 212 and 167 on the two older families. `--panel WxH` draws any other size.
 const PANELS: &[(&str, u32, u32)] = &[
-    // Paperwhite, Colorsoft, Oasis 2.
+    // Colorsoft, Oasis 2-3.
     ("pw", 1264, 1680),
     ("scribe", 1860, 2480),
+    // Paperwhite 5-6.
+    ("pw5", 1236, 1648),
+    // Voyage, Paperwhite 3-4, Basic 4.
+    ("voyage", 1072, 1448),
+    // Paperwhite 1-2, at 212 ppi.
+    ("pw2", 758, 1024),
+    // Kindle Touch, Basic 1-2, at 167 ppi.
+    ("basic", 600, 800),
 ];
 
 /// Where the PNGs land under `--out`.

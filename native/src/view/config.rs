@@ -569,6 +569,7 @@ fn chip_box(row: Rect, column: i32, block: i32) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::theme::tests::PANELS;
 
     /// The setting at line `at` of section `of`. Panics on a [`Line::Says`].
     fn row<'a>(page: &'a [Section<'a>], of: usize, at: usize) -> &'a Row<'a> {
@@ -595,7 +596,7 @@ mod tests {
 
     #[test]
     fn the_sections_stand_a_half_row_apart() {
-        for (w, h) in [(1264, 1680), (1272, 1696), (1860, 2480)] {
+        for (w, h) in PANELS {
             let theme = Theme::for_screen(w, h);
             let air = between(&theme);
             assert!(air >= theme.row_h / 2, "{w}x{h}: {air} px between sections");

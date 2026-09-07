@@ -141,6 +141,13 @@ fn show() -> Result<()> {
     let dir = Path::new(store::STORE_DIR);
     let mut store = Store::open(dir);
     let theme = ui::theme::Theme::for_screen(fb.var.xres, fb.var.yres);
+    eprintln!(
+        "panel: {}x{} at {} ppi, body {} px",
+        fb.var.xres,
+        fb.var.yres,
+        theme.dpi(),
+        theme.body_px,
+    );
     let mut text = ui::text::TextRenderer::load(theme.body_px)?;
     eprintln!("fonts: {}", text.chain_description());
     // `splash` draws before `App` and detects for itself.

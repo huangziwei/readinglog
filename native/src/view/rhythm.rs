@@ -336,7 +336,8 @@ fn day_head(cx: &mut Ctx, area: Rect, day: i64) {
         false,
     );
     if today {
-        paint::hline(cx.fb, area.x, area.bottom() - 2, area.w, INK, 2);
+        let rule = theme.rule();
+        paint::hline(cx.fb, area.x, area.bottom() - rule, area.w, INK, rule);
     }
 }
 
@@ -496,6 +497,7 @@ fn year_heatmap(cx: &mut Ctx, area: Rect, day: i64, picked: bool) {
         .map(|(day, _)| cx.stats.day_seconds(*day))
         .max()
         .unwrap_or(0);
+    let rule = theme.rule();
     for (at, cell) in &map.cells {
         let secs = cx.stats.day_seconds(*at);
         match cx.palette.level(charts::level(secs, peak)) {
@@ -506,10 +508,10 @@ fn year_heatmap(cx: &mut Ctx, area: Rect, day: i64, picked: bool) {
             }
         }
         if *at == cx.today {
-            paint::stroke(cx.fb, *cell, INK, 2);
+            paint::stroke(cx.fb, *cell, INK, rule);
         }
         if picked && *at == day {
-            paint::stroke(cx.fb, cell.inset(-2), INK, 2);
+            paint::stroke(cx.fb, cell.inset(-rule), INK, rule);
         }
         // A day with nothing on it takes no tap: an empty cell between two
         // read days holds nothing to open, at the width of a cell.
@@ -927,19 +929,36 @@ fn book_bar(cx: &mut Ctx, bar: Rect, index: usize) {
 mod tests {
     use super::*;
 
-    /// A stand-in for `section_height`.
+    use crate::ui::theme::tests::PANELS;
+
+    /// A stand-in for `section_height`, in design pixels.
     const HEAD: i32 = 40;
 
-    /// A stand-in for `chrome::figure_height`.
+    /// A stand-in for `chrome::figure_height`, in design pixels.
     const FIGURES: i32 = 90;
 
-    /// The panels this screen has to hold up on.
-    const PANELS: [(i32, i32); 3] = [(1264, 1680), (1272, 1696), (1860, 2480)];
-
-    fn page(w: i32, h: i32) -> (Theme, Rect) {
-        let theme = Theme::for_screen(w as u32, h as u32);
-        let area = chrome::content(&theme, Rect::new(0, 0, w, h));
+    fn page(w: u32, h: u32) -> (Theme, Rect) {
+        let theme = Theme::for_screen(w, h);
+        let area = chrome::content(&theme, theme.screen);
         (theme, area)
+    }
+
+    /// [`FIGURES`] on `theme`'s own panel.
+    fn figures(theme: &Theme) -> i32 {
+        theme.px(FIGURES)
+    }
+
+    /// [`HEAD`] on `theme`'s own panel.
+    fn head(theme: &Theme) -> i32 {
+        theme.px(HEAD)
+    }
+
+    /// Whether the page is a 7-inch one. Every band below is one deeper there
+    /// than on a 6-inch page, which is what 4.7 inches of content buys: the
+    /// Paperwhite 1-2 at 212 ppi and the Voyage at 300 are the same page, and
+    /// both hold one row fewer than an Oasis.
+    fn tall_page(theme: &Theme, area: Rect) -> bool {
+        area.h >= theme.px(1400)
     }
 
     /// What `span_page` asks `bands` for at this span.
@@ -954,10 +973,15 @@ mod tests {
             let (theme, area) = page(w, h);
             for span in Span::CALENDAR {
                 let listed = lists_books(span);
-                let [picker, nav, stated, grid, list] =
-                    bands(area, &theme, FIGURES, wanted(span, area, &theme), listed);
+                let [picker, nav, stated, grid, list] = bands(
+                    area,
+                    &theme,
+                    figures(&theme),
+                    wanted(span, area, &theme),
+                    listed,
+                );
                 assert_eq!(picker.y, area.y, "{w}x{h} {span:?}");
-                assert_eq!(stated.h, FIGURES, "{w}x{h} {span:?}");
+                assert_eq!(stated.h, figures(&theme), "{w}x{h} {span:?}");
                 let order = match listed {
                     true => [picker, nav, stated, grid, list],
                     false => [picker, nav, stated, grid, grid],
@@ -979,7 +1003,7 @@ mod tests {
             for span in Span::CALENDAR {
                 let want = wanted(span, area, &theme);
                 let [_, nav, stated, grid, _] =
-                    bands(area, &theme, FIGURES, want, lists_books(span));
+                    bands(area, &theme, figures(&theme), want, lists_books(span));
                 assert!(stated.y > nav.bottom(), "{w}x{h} {span:?}");
                 assert!(stated.bottom() < grid.y, "{w}x{h} {span:?}");
                 assert!(grid.h > stated.h, "{w}x{h} {span:?}: the grid is crowded");
@@ -991,7 +1015,7 @@ mod tests {
     fn a_month_gives_its_grid_the_whole_page() {
         for (w, h) in PANELS {
             let (theme, area) = page(w, h);
-            let [_, nav, _, grid, list] = bands(area, &theme, FIGURES, area.h, false);
+            let [_, nav, _, grid, list] = bands(area, &theme, figures(&theme), area.h, false);
             assert_eq!(list.h, 0, "{w}x{h}");
             assert_eq!(grid.bottom(), area.bottom(), "{w}x{h}");
             assert!(
@@ -1009,20 +1033,21 @@ mod tests {
             let (theme, area) = page(w, h);
             for span in [Span::Week, Span::Year] {
                 let want = wanted(span, area, &theme);
-                let [_, _, _, grid, list] = bands(area, &theme, FIGURES, want, true);
+                let [_, _, _, grid, list] = bands(area, &theme, figures(&theme), want, true);
                 assert_eq!(grid.h, want, "{w}x{h} {span:?}: the grid was cut");
-                let room = list.h - HEAD;
+                let room = list.h - head(&theme);
+                let deep = tall_page(&theme, area) as i32;
                 match span {
-                    // A year names its books by their jackets: a cover and the
-                    // two lines under it, which is three rows of type.
+                    // A year names its books by their jackets: a cover deep
+                    // enough to recognise, and the two lines under it.
                     Span::Year => assert!(
-                        room >= theme.row_h * 3,
+                        room >= theme.row_h * (2 + deep),
                         "{w}x{h}: {room} px for a row of covers"
                     ),
-                    // A week lists them: four rows and the note under them.
+                    // A week lists them, and the note goes under them.
                     _ => {
                         let rows = room / theme.row_h;
-                        assert!(rows >= 4, "{w}x{h}: room for {rows} books");
+                        assert!(rows >= 3 + deep, "{w}x{h}: room for {rows} books");
                     }
                 }
             }
@@ -1052,7 +1077,7 @@ mod tests {
         for (w, h) in PANELS {
             let (theme, area) = page(w, h);
             let want = wanted(Span::Week, area, &theme);
-            let [_, _, _, grid, _] = bands(area, &theme, FIGURES, want, true);
+            let [_, _, _, grid, _] = bands(area, &theme, figures(&theme), want, true);
             let [dates, bars] = week_rows(grid, &theme);
             assert_eq!(dates.bottom(), bars.y, "{w}x{h}");
             assert_eq!(bars.bottom(), grid.bottom(), "{w}x{h}");
@@ -1113,7 +1138,7 @@ mod tests {
         for (w, h) in PANELS {
             let (theme, area) = page(w, h);
             let want = wanted(Span::Week, area, &theme);
-            let [_, _, _, grid, list] = bands(area, &theme, FIGURES, want, true);
+            let [_, _, _, grid, list] = bands(area, &theme, figures(&theme), want, true);
             assert_eq!(grid.h, want, "{w}x{h}: the grid took what it was given");
             let under = theme.small_px as i32 * 2 + cover_air(&theme);
             let least = theme.row_h * COVER_FLOOR + under;
@@ -1130,13 +1155,15 @@ mod tests {
     fn a_month_cell_stacks_its_date_its_lanes_and_its_hours() {
         for (w, h) in PANELS {
             let (theme, area) = page(w, h);
-            let [_, _, _, grid, _] = bands(area, &theme, FIGURES, area.h, false);
+            let [_, _, _, grid, _] = bands(area, &theme, figures(&theme), area.h, false);
             let (_, cells) = grid.split_top(charts::weekday_head_height(&theme));
             let laid = charts::month_cells(cells, 2026, 8, theme.gap, WeekStart::Monday);
             let inner = laid[0].1.inset(theme.gap / 2);
 
+            // Half an inch of cell buys a second book; every cell holds one.
             let depth = lane_count(&theme, inner);
-            assert!(depth >= 2, "{w}x{h}: a cell holds {depth} books");
+            let want = 1 + (inner.h >= theme.px(150)) as usize;
+            assert!(depth >= want, "{w}x{h}: a cell holds {depth} books");
             assert!(
                 lane_box(&theme, inner, 0, inner.w).y >= inner.y + theme.small_px as i32,
                 "{w}x{h}: the first lane sits on the date"
@@ -1150,13 +1177,14 @@ mod tests {
     }
 
     /// The list `day_page` draws the day's books into, on a `w` by `h` panel.
-    fn day_list(w: i32, h: i32) -> (Theme, Rect) {
+    fn day_list(w: u32, h: u32) -> (Theme, Rect) {
         let (theme, area) = page(w, h);
         let (_, rest) = area.split_top(bar_height(&theme) + theme.gap * 2);
-        let [_, _, list] = home::bands(rest, &theme, FIGURES, HEAD);
+        let [_, _, list] = home::bands(rest, &theme, figures(&theme), head(&theme));
+        let head = head(&theme);
         (
             theme,
-            Rect::new(list.x, list.y + HEAD, list.w, list.h - HEAD),
+            Rect::new(list.x, list.y + head, list.w, list.h - head),
         )
     }
 
@@ -1164,7 +1192,7 @@ mod tests {
     fn a_day_page_holds_more_than_one_book_under_its_timeline() {
         for (w, h) in PANELS {
             let (theme, list) = day_list(w, h);
-            let shown = daybooks::fits(daybooks::tests::SET.floor(&theme), list.h, 9);
+            let shown = daybooks::fits(daybooks::tests::set(&theme).floor(&theme), list.h, 9);
             assert!(shown >= 2, "{w}x{h}: room for {shown} books");
         }
     }
@@ -1174,7 +1202,8 @@ mod tests {
         for (w, h) in PANELS {
             let (theme, list) = day_list(w, h);
             for books in 0..=20usize {
-                let deep = daybooks::fits(daybooks::tests::SET.floor(&theme), list.h, books);
+                let deep =
+                    daybooks::fits(daybooks::tests::set(&theme).floor(&theme), list.h, books);
                 let last = super::super::last_page_at(books, deep);
                 let (mut from, mut seen) = (0usize, 0usize);
                 loop {
@@ -1197,7 +1226,7 @@ mod tests {
         let theme = Theme::for_screen(1264, 1680);
         let area = Rect::new(0, 0, 1186, 300);
         for listed in [true, false] {
-            let out = bands(area, &theme, FIGURES, 900, listed);
+            let out = bands(area, &theme, figures(&theme), 900, listed);
             for band in out {
                 assert!(band.h >= 0, "{band:?}");
                 assert!(band.y >= area.y, "{band:?} starts above the page");

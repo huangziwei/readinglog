@@ -53,7 +53,7 @@ pub fn tabs(
 ) -> (Rect, Vec<(Tab, Rect)>) {
     let (strip, _) = theme.screen.split_bottom(theme.tabs_h);
     paint::fill(fb, strip, WHITE);
-    paint::hline(fb, 0, strip.y, strip.w, LIGHT, 2);
+    paint::hline(fb, 0, strip.y, strip.w, LIGHT, theme.rule());
 
     // Exit takes the first of five equal cells; the tabs take the rest.
     let mut cells = strip.columns(Tab::ALL.len() as i32 + 1, 0).into_iter();
@@ -72,7 +72,7 @@ pub fn tabs(
         label,
         false,
     );
-    paint::vline(fb, exit.right(), strip.y, strip.h, LIGHT, 2);
+    paint::vline(fb, exit.right(), strip.y, strip.h, LIGHT, theme.rule());
 
     let mut out = Vec::new();
     for (tab, cell) in Tab::ALL.iter().zip(cells) {
@@ -238,7 +238,7 @@ pub fn figures_at(
                 named.bottom() + theme.gap / 2,
                 named.w,
                 LIGHT,
-                2,
+                theme.rule(),
             );
         }
         out.push(cell);
@@ -279,13 +279,20 @@ pub fn row(
     text.draw(fb, area.right() - w, baseline, value, false);
 }
 
-/// Blank space either side of a chip's text, and between one chip and the next.
+/// Blank space either side of a chip's text, and between one chip and the next,
+/// in design pixels.
 const CHIP_PAD: i32 = 20;
 const CHIP_GAP: i32 = 14;
 
 /// The air a chip keeps either side of its label.
-pub fn chip_pad() -> i32 {
-    CHIP_PAD
+pub fn chip_pad(theme: &Theme) -> i32 {
+    theme.px(CHIP_PAD)
+}
+
+/// The air between one chip and the next, and between a run and the label
+/// beside it.
+fn chip_gap(theme: &Theme) -> i32 {
+    theme.px(CHIP_GAP)
 }
 
 /// How tall one chip is.
@@ -310,7 +317,7 @@ pub fn chip_column(
         .max()
         .unwrap_or(0);
     let runs: Vec<i32> = runs.iter().map(|run| run_width(text, theme, run)).collect();
-    column_from(widest, &runs, width)
+    column_from(widest, &runs, width, chip_gap(theme))
 }
 
 /// [`chip_column`]'s arithmetic, over measured widths.
@@ -319,8 +326,8 @@ pub fn chip_column(
 /// draws it over the chips beside it, which German at the largest text does on
 /// two rows of this page. A run left short of space wraps instead, which
 /// `chip_layout` already does and the row's own height already allows for.
-fn column_from(widest_label: i32, runs: &[i32], width: i32) -> i32 {
-    let wanted = widest_label + CHIP_GAP * 3;
+fn column_from(widest_label: i32, runs: &[i32], width: i32, gap: i32) -> i32 {
+    let wanted = widest_label + gap * 3;
     let room = runs.iter().map(|run| width - run).min().unwrap_or(i32::MAX);
     wanted.min(room.max(wanted).min(width / 2))
 }
@@ -332,11 +339,12 @@ fn run_width(
     options: &[(&str, crate::font::Script)],
 ) -> i32 {
     text.set_px(theme.body_px);
+    let pad = chip_pad(theme);
     let chips: i32 = options
         .iter()
-        .map(|(o, script)| text.measure_width_in(*script, o) as i32 + CHIP_PAD * 2)
+        .map(|(o, script)| text.measure_width_in(*script, o) as i32 + pad * 2)
         .sum();
-    chips + CHIP_GAP * (options.len().saturating_sub(1)) as i32
+    chips + chip_gap(theme) * (options.len().saturating_sub(1)) as i32
 }
 
 /// Where every chip of a row lands, wrapped to `width`, laid out from
@@ -348,17 +356,18 @@ pub fn chip_layout(
     width: i32,
 ) -> Vec<Rect> {
     text.set_px(theme.body_px);
+    let (pad, gap) = (chip_pad(theme), chip_gap(theme));
     let height = chip_height(theme);
     let (mut x, mut y) = (0, 0);
     let mut out = Vec::new();
     for (option, script) in options {
-        let w = text.measure_width_in(*script, option) as i32 + CHIP_PAD * 2;
+        let w = text.measure_width_in(*script, option) as i32 + pad * 2;
         if x > 0 && x + w > width {
             x = 0;
-            y += height + CHIP_GAP;
+            y += height + gap;
         }
         out.push(Rect::new(x, y, w, height));
-        x += w + CHIP_GAP;
+        x += w + gap;
     }
     out
 }
@@ -385,7 +394,7 @@ pub fn outlined(cx: &mut crate::view::Ctx, box_: Rect, said: &str) {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
     cx.text.set_px(theme.body_px);
-    paint::stroke(cx.fb, box_, INK, 2);
+    paint::stroke(cx.fb, box_, INK, theme.rule());
     let tw = cx.text.measure_width_in(script, said) as i32;
     let baseline = box_.center_y() + cx.text.cap_height() as i32 / 2;
     cx.text.draw_in(
@@ -415,7 +424,7 @@ pub fn chips(
         let picked = i == on;
         match picked {
             true => paint::fill(fb, chip, INK),
-            false => paint::stroke(fb, chip, INK, 2),
+            false => paint::stroke(fb, chip, INK, theme.rule()),
         }
         let baseline = chip.center_y() + text.cap_height() as i32 / 2;
         text.draw_in(
@@ -440,21 +449,32 @@ mod tests {
     /// A metric with no font behind it: every character 0.6 em, wider than
     /// Ember sets and narrower than an ideograph.
     fn measured(theme: &Theme, options: &[(&str, Script)], width: i32) -> Vec<Rect> {
+        let (pad, gap) = (chip_pad(theme), chip_gap(theme));
         let height = chip_height(theme);
         let (mut x, mut y) = (0, 0);
         let mut out = Vec::new();
         for (option, _) in options {
             let em = theme.body_px * 0.6;
-            let w = (option.chars().count() as f32 * em) as i32 + CHIP_PAD * 2;
+            let w = (option.chars().count() as f32 * em) as i32 + pad * 2;
             if x > 0 && x + w > width {
                 x = 0;
-                y += height + CHIP_GAP;
+                y += height + gap;
             }
             out.push(Rect::new(x, y, w, height));
-            x += w + CHIP_GAP;
+            x += w + gap;
         }
         out
     }
+
+    /// Every panel the app draws on, densest first.
+    const PANELS: [(u32, u32); 6] = [
+        (1264, 1680),
+        (1860, 2480),
+        (1236, 1648),
+        (1072, 1448),
+        (758, 1024),
+        (600, 800),
+    ];
 
     #[test]
     fn every_chip_is_placed_however_narrow_the_row() {
@@ -463,7 +483,7 @@ mod tests {
             .iter()
             .map(|l| (l.label(), Script::Unknown))
             .collect();
-        for (w, h) in [(1264, 1680), (1860, 2480)] {
+        for (w, h) in PANELS {
             let theme = Theme::for_screen(w, h);
             let area = content_box(&theme);
             let width = area.w - area.w / 3;
@@ -480,20 +500,19 @@ mod tests {
         let em = theme.body_px * 0.6;
         let chips: i32 = options
             .iter()
-            .map(|(o, _)| (o.chars().count() as f32 * em) as i32 + CHIP_PAD * 2)
+            .map(|(o, _)| (o.chars().count() as f32 * em) as i32 + chip_pad(theme) * 2)
             .sum();
-        chips + CHIP_GAP * (options.len().saturating_sub(1)) as i32
+        chips + chip_gap(theme) * (options.len().saturating_sub(1)) as i32
     }
 
     #[test]
     fn the_language_row_stands_on_one_line() {
-        // All five languages stand on one line on the narrow panel.
-        let theme = Theme::for_screen(1264, 1680);
+        // All five languages stand on one line on every panel: the chips and
+        // the type shrink with the density together.
         let names: Vec<(&str, Script)> = Lang::ALL
             .iter()
             .map(|l| (l.label(), Script::Unknown))
             .collect();
-        let area = content_box(&theme);
         let sizes: Vec<(&str, Script)> = [
             ("Small", Script::Unknown),
             ("Medium", Script::Unknown),
@@ -502,27 +521,35 @@ mod tests {
         .into();
         let week: Vec<(&str, Script)> = [("Mon", Script::Unknown), ("Sun", Script::Unknown)].into();
 
-        let em = theme.body_px * 0.6;
-        let widest = ["Language", "Text size", "Week starts on"]
-            .iter()
-            .map(|l| (l.chars().count() as f32 * em) as i32)
-            .max()
-            .unwrap_or(0);
-        let runs = [
-            run_of(&theme, &names),
-            run_of(&theme, &sizes),
-            run_of(&theme, &week),
-        ];
-        let column = column_from(widest, &runs, area.w);
+        for (w, h) in PANELS {
+            let theme = Theme::for_screen(w, h);
+            let area = content_box(&theme);
+            let em = theme.body_px * 0.6;
+            let widest = ["Language", "Text size", "Week starts on"]
+                .iter()
+                .map(|l| (l.chars().count() as f32 * em) as i32)
+                .max()
+                .unwrap_or(0);
+            let runs = [
+                run_of(&theme, &names),
+                run_of(&theme, &sizes),
+                run_of(&theme, &week),
+            ];
+            let column = column_from(widest, &runs, area.w, chip_gap(&theme));
 
-        let placed = measured(&theme, &names, area.w - column);
-        let lines: std::collections::BTreeSet<i32> = placed.iter().map(|c| c.y).collect();
-        assert_eq!(lines.len(), 1, "the language row wraps: {placed:?}");
-        for chip in &placed {
-            assert!(
-                chip.right() <= area.w - column,
-                "{chip:?} runs past the row"
+            let placed = measured(&theme, &names, area.w - column);
+            let lines: std::collections::BTreeSet<i32> = placed.iter().map(|c| c.y).collect();
+            assert_eq!(
+                lines.len(),
+                1,
+                "{w}x{h}: the language row wraps: {placed:?}"
             );
+            for chip in &placed {
+                assert!(
+                    chip.right() <= area.w - column,
+                    "{w}x{h}: {chip:?} runs past the row"
+                );
+            }
         }
     }
 

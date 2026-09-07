@@ -67,30 +67,40 @@ pub fn draw(cx: &mut Ctx, area: Rect, from: usize) {
 mod tests {
     use super::*;
 
-    /// Stand-ins for `figure_height` and `section_height`.
+    use crate::ui::theme::tests::PANELS;
+
+    /// Stand-ins for `figure_height` and `section_height`, in design pixels:
+    /// `theme.px` puts them on the panel the way the real ones land.
     const FIGURES: i32 = 90;
     const HEAD: i32 = 40;
+
+    /// [`FIGURES`] and [`HEAD`] on `theme`'s own panel.
+    fn stand_ins(theme: &Theme) -> (i32, i32) {
+        (theme.px(FIGURES), theme.px(HEAD))
+    }
 
     #[test]
     fn the_bands_run_in_order_with_air_between_and_fill_the_page() {
         let theme = Theme::for_screen(1264, 1680);
+        let (figures, head) = stand_ins(&theme);
         let area = crate::ui::chrome::content_box(&theme);
-        let [top, strip, list] = bands(area, &theme, FIGURES, HEAD);
+        let [top, strip, list] = bands(area, &theme, figures, head);
 
         assert_eq!(list.bottom(), area.bottom());
         for pair in [[top, strip], [strip, list]] {
             let air = pair[1].y - pair[0].bottom();
             assert!(air >= theme.gap, "bands touch: {air}");
         }
-        assert_eq!(top.h, FIGURES, "the figures get the height they asked for");
-        assert_eq!(strip.h, HEAD + theme.row_h * STRIP_ROWS);
+        assert_eq!(top.h, figures, "the figures get the height they asked for");
+        assert_eq!(strip.h, head + theme.row_h * STRIP_ROWS);
     }
 
     #[test]
     fn the_figures_stand_clear_of_the_edge_and_of_the_day_under_them() {
         let theme = Theme::for_screen(1264, 1680);
+        let (figures, head) = stand_ins(&theme);
         let area = crate::ui::chrome::content_box(&theme);
-        let [top, strip, _] = bands(area, &theme, FIGURES, HEAD);
+        let [top, strip, _] = bands(area, &theme, figures, head);
 
         assert!(
             top.y - area.y >= theme.gap * 2,
@@ -107,11 +117,12 @@ mod tests {
     #[test]
     fn the_strip_stays_a_strip_and_the_books_take_the_page() {
         // `strip.h` holds at `STRIP_ROWS` on every panel.
-        let theme = Theme::for_screen(1264, 1680);
-        for (w, h) in [(1264, 1680), (1860, 2480)] {
-            let area = crate::ui::chrome::content(&theme, Rect::new(0, 0, w, h));
-            let [_, strip, list] = bands(area, &theme, FIGURES, HEAD);
-            assert_eq!(strip.h, HEAD + theme.row_h * STRIP_ROWS, "{w}x{h}");
+        for (w, h) in PANELS {
+            let theme = Theme::for_screen(w, h);
+            let (figures, head) = stand_ins(&theme);
+            let area = crate::ui::chrome::content(&theme, theme.screen);
+            let [_, strip, list] = bands(area, &theme, figures, head);
+            assert_eq!(strip.h, head + theme.row_h * STRIP_ROWS, "{w}x{h}");
             assert!(
                 list.h > strip.h,
                 "{w}x{h}: the strip outgrew the list it heads, {} against {}",
@@ -123,22 +134,26 @@ mod tests {
 
     #[test]
     fn a_day_of_several_books_fits_on_one_page() {
-        // `bands` leaves `list` four rows of `row_floor` on every panel.
-        for (w, h) in [(1264, 1680), (1272, 1696), (1860, 2480)] {
+        // `bands` leaves `list` three rows of `row_floor` on every panel, and
+        // four wherever the page has 4.7 inches of content to give.
+        for (w, h) in PANELS {
             let theme = Theme::for_screen(w, h);
-            let area = crate::ui::chrome::content(&theme, Rect::new(0, 0, w as i32, h as i32));
-            let [_, _, list] = bands(area, &theme, FIGURES, HEAD);
-            let floor = daybooks::tests::SET.floor(&theme);
-            let rows = daybooks::fits(floor, list.h - HEAD, 99);
-            assert!(rows >= 4, "{w}x{h}: room for {rows} of the day's books");
+            let (figures, head) = stand_ins(&theme);
+            let area = crate::ui::chrome::content(&theme, theme.screen);
+            let [_, _, list] = bands(area, &theme, figures, head);
+            let floor = daybooks::tests::set(&theme).floor(&theme);
+            let rows = daybooks::fits(floor, list.h - head, 99);
+            let want = 3 + (area.h >= theme.px(1400)) as usize;
+            assert!(rows >= want, "{w}x{h}: room for {rows} of the day's books");
         }
     }
 
     #[test]
     fn a_page_too_short_for_every_band_keeps_them_all_on_it() {
         let theme = Theme::for_screen(1264, 1680);
+        let (figures, head) = stand_ins(&theme);
         let area = Rect::new(0, 0, 1186, 300);
-        let out = bands(area, &theme, FIGURES, HEAD);
+        let out = bands(area, &theme, figures, head);
         for band in out {
             assert!(band.h >= 0, "{band:?}");
             assert!(band.y >= area.y, "{band:?} starts above the page");
