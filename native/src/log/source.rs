@@ -1,24 +1,32 @@
-//! Where the log lines are on the device. `LIVE_LOG` holds the sitting in
-//! progress, `tinyrot` gzips it into [`LOG_DIR`], and `log_backup.sh` gzips a
-//! daily snapshot into [`DUMP_DIR`]. All three overlap; a pass de-duplicates.
+//! Where the log lines are on the device. [`LIVE_LOG`] holds the sitting in
+//! progress, [`LOG_DIR`] its rotated chunks, [`DUMP_DIR`] the daily snapshots.
+//! [`collect_from`] reads all three and de-duplicates.
 
-use std::io::Read;
+use std::collections::BTreeSet;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 /// The live syslog, on the root filesystem's tmpfs.
 pub const LIVE_LOG: &str = "/var/log/messages";
 
-/// The directory `tinyrot` gzips [`LIVE_LOG`]'s rotated chunks into, on flash.
+/// The directory holding [`LIVE_LOG`]'s rotated chunks, on flash.
 pub const LOG_DIR: &str = "/var/local/log";
 
 /// What a rotated chunk's name begins with.
 const CHUNK_PREFIX: &str = "messages_";
 
-/// Where the firmware keeps its daily snapshots.
+/// The directory holding the daily snapshots.
 pub const DUMP_DIR: &str = "/mnt/us/system/logbackup";
 
 /// What a daily snapshot's name begins with: `log_backup_260807101501.gz`.
 const DUMP_PREFIX: &str = "log_backup_";
+
+/// What one read takes off flash at a time.
+const READ_BUF: usize = 64 * 1024;
+
+/// The most one line may take.
+const LINE_CAP: usize = 64 * 1024;
 
 /// What one pass took, and from where.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -49,14 +57,14 @@ pub fn collect_from(
     watermark: &str,
     on: &mut dyn FnMut(usize, usize),
 ) -> Collected {
-    let mut out = Collected::default();
+    let mut from = Sources::default();
     let dumps = dated(
         dump_dir,
         DUMP_PREFIX,
         dump_stamp,
         watermark,
         false,
-        &mut out,
+        &mut from,
     );
     let chunks = dated(
         log_dir,
@@ -64,52 +72,50 @@ pub fn collect_from(
         chunk_stamp,
         watermark,
         true,
-        &mut out,
+        &mut from,
     );
     let total = dumps.len() + chunks.len() + 1;
     let mut done = 0;
     on(done, total);
+    let mut lines = BTreeSet::new();
     for path in dumps {
-        if let Some(dump) = read_maybe_gzip(&path) {
-            if !dump.complete {
-                out.from.truncated += 1;
+        if let Some(took) = scan(&path, watermark, &mut lines) {
+            if !took.complete {
+                from.truncated += 1;
             }
-            out.from.dumps += take_events(&dump.text, watermark, &mut out.lines);
+            from.dumps += took.kept;
         }
         done += 1;
         on(done, total);
     }
-    // `LIVE_LOG` ahead of `LOG_DIR`, without tinyrot's lock: a rotation between
-    // the two reads then duplicates lines into a selection that de-duplicates.
-    if let Some(live) = read_maybe_gzip(live) {
-        out.from.live += take_events(&live.text, watermark, &mut out.lines);
+    // `live` ahead of `chunks`; `lines` de-duplicates what both hold.
+    if let Some(took) = scan(live, watermark, &mut lines) {
+        from.live += took.kept;
     }
     done += 1;
     on(done, total);
     for path in chunks {
-        // A chunk pruned between the listing and the read yields nothing, and
-        // one caught mid-rotation yields its intact prefix.
-        if let Some(chunk) = read_maybe_gzip(&path) {
-            out.from.chunks += take_events(&chunk.text, watermark, &mut out.lines);
+        if let Some(took) = scan(&path, watermark, &mut lines) {
+            from.chunks += took.kept;
         }
         done += 1;
         on(done, total);
     }
-    out.lines.sort();
-    out.lines.dedup();
-    out
+    Collected {
+        lines: lines.into_iter().collect(),
+        from,
+    }
 }
 
 /// The files in `dir` worth opening, oldest first. `straddle` keeps the newest
-/// file at or before `watermark` too: a chunk name states its rotation instant,
-/// which sits past its own content. An unparseable name is read anyway.
+/// file at or before `watermark` too. A name `stamp_of` cannot read is kept.
 fn dated(
     dir: &Path,
     prefix: &str,
     stamp_of: fn(&str) -> Option<String>,
     watermark: &str,
     straddle: bool,
-    out: &mut Collected,
+    from: &mut Sources,
 ) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -136,7 +142,7 @@ fn dated(
             .position(|(stamp, _)| stamp.as_str() > watermark)
             .unwrap_or(found.len()),
     };
-    out.from.skipped += first;
+    from.skipped += first;
     found.split_off(first).into_iter().map(|(_, p)| p).collect()
 }
 
@@ -164,53 +170,102 @@ fn chunk_stamp(name: &str) -> Option<String> {
     (digits.len() == 14).then(|| format!("{}:{}", &digits[2..8], &digits[8..]))
 }
 
-/// Append every marker line in `text` at or after `watermark`, and answer with
-/// how many. At or after, not past: `watermark` is the first line re-read.
-fn take_events(text: &str, watermark: &str, out: &mut Vec<String>) -> usize {
-    let before = out.len();
-    for line in text.lines() {
-        if !super::MARKERS.iter().any(|m| line.contains(m)) {
-            continue;
-        }
-        // A line the parser cannot stamp is kept here and dropped there.
-        match super::line::line_stamp(line) {
-            Some(stamp) if !watermark.is_empty() && stamp < watermark => continue,
-            _ => out.push(line.to_string()),
-        }
-    }
-    out.len() - before
-}
-
-/// A decoded log file, and whether it decoded to the end.
-struct Decoded {
-    text: String,
-    /// False on a truncated decode, leaving `text` a prefix.
+/// What one file gave up.
+struct Took {
+    /// Marker lines held, duplicates of another file's included.
+    kept: usize,
+    /// False on a truncated decode, leaving the lines before the cut.
     complete: bool,
 }
 
-/// Decode a log file, gunzipping a gzipped one, keeping a truncated decode's
-/// intact prefix: `log_backup.sh` gzips a dump while a pass reads it. Lossy,
-/// never `read_to_string` — the syslog carries bytes that are not UTF-8.
-fn read_maybe_gzip(path: &Path) -> Option<Decoded> {
-    let bytes = std::fs::read(path).ok()?;
-    // An empty file is a created-and-unwritten dump.
-    if bytes.is_empty() {
-        return None;
+/// Insert every marker line in `path` at or after `watermark` into `lines`,
+/// gunzipping a gzipped file on the way. `path` is read a line at a time,
+/// never held whole. `None` where `path` gave up no bytes.
+fn scan(path: &Path, watermark: &str, lines: &mut BTreeSet<String>) -> Option<Took> {
+    let mut file = BufReader::with_capacity(READ_BUF, File::open(path).ok()?);
+    let gzipped = file
+        .fill_buf()
+        .is_ok_and(|head| head.starts_with(&[0x1f, 0x8b]));
+    match gzipped {
+        true => take_events(
+            BufReader::with_capacity(READ_BUF, flate2::read::GzDecoder::new(file)),
+            watermark,
+            lines,
+        ),
+        false => take_events(file, watermark, lines),
     }
-    if bytes.starts_with(&[0x1f, 0x8b]) {
-        let mut buf = Vec::new();
-        let complete = flate2::read::GzDecoder::new(&bytes[..])
-            .read_to_end(&mut buf)
-            .is_ok();
-        return (!buf.is_empty()).then(|| Decoded {
-            text: String::from_utf8_lossy(&buf).into_owned(),
-            complete,
-        });
-    }
-    Some(Decoded {
-        text: String::from_utf8_lossy(&bytes).into_owned(),
+}
+
+/// Insert every marker line `src` holds at or after `watermark`, and answer
+/// with how many. At or after, not past: `watermark` is the first line
+/// re-read. `None` where `src` gave up no bytes at all.
+fn take_events(
+    mut src: impl BufRead,
+    watermark: &str,
+    lines: &mut BTreeSet<String>,
+) -> Option<Took> {
+    let mut took = Took {
+        kept: 0,
         complete: true,
-    })
+    };
+    let mut raw = Vec::new();
+    let mut any = false;
+    loop {
+        match read_line(&mut src, &mut raw) {
+            Ok(true) => any = true,
+            Ok(false) => break,
+            Err(_) => {
+                took.complete = false;
+                break;
+            }
+        }
+        // `raw` carries bytes that are not UTF-8.
+        let line = String::from_utf8_lossy(&raw);
+        if !super::MARKERS.iter().any(|m| line.contains(m)) {
+            continue;
+        }
+        // A line `line_stamp` cannot read is kept.
+        if let Some(stamp) = super::line::line_stamp(&line)
+            && !watermark.is_empty()
+            && stamp < watermark
+        {
+            continue;
+        }
+        took.kept += 1;
+        lines.insert(line.into_owned());
+    }
+    any.then_some(took)
+}
+
+/// One line of `src` into `raw`, without its ending, answering whether there
+/// was one. A line running past [`LINE_CAP`] is cut there, and the rest of it
+/// dropped.
+fn read_line(src: &mut impl BufRead, raw: &mut Vec<u8>) -> std::io::Result<bool> {
+    raw.clear();
+    let mut any = false;
+    let mut ended = false;
+    while !ended {
+        let buf = src.fill_buf()?;
+        if buf.is_empty() {
+            break;
+        }
+        any = true;
+        let upto = match buf.iter().position(|b| *b == b'\n') {
+            Some(at) => {
+                ended = true;
+                at
+            }
+            None => buf.len(),
+        };
+        let room = LINE_CAP.saturating_sub(raw.len());
+        raw.extend_from_slice(&buf[..upto.min(room)]);
+        src.consume(upto + usize::from(ended));
+    }
+    // What `str::lines` drops: the carriage return of a CRLF ending.
+    if ended && raw.last() == Some(&b'\r') {
+        raw.pop();
+    }
+    Ok(any)
 }
 
 #[cfg(test)]
@@ -226,6 +281,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         dir
+    }
+
+    /// [`take_events`] over `text`, answering the lines it held.
+    fn took(text: &str, watermark: &str, out: &mut BTreeSet<String>) -> usize {
+        take_events(text.as_bytes(), watermark, out).map_or(0, |t| t.kept)
     }
 
     #[test]
@@ -245,15 +305,25 @@ mod tests {
     #[test]
     fn only_marker_lines_are_taken_and_only_from_the_watermark_on() {
         let text = [PAGE, NOISE, LATER].join("\n");
-        let mut out = Vec::new();
-        assert_eq!(take_events(&text, "", &mut out), 2);
+        let mut out = BTreeSet::new();
+        assert_eq!(took(&text, "", &mut out), 2);
         out.clear();
-        // At the watermark, not past it: a sitting open when it was written has
-        // to be measured from its own start again.
-        assert_eq!(take_events(&text, "260807:101501", &mut out), 2);
+        // `watermark` is the first line taken.
+        assert_eq!(took(&text, "260807:101501", &mut out), 2);
         out.clear();
-        assert_eq!(take_events(&text, "260807:110000", &mut out), 1);
-        assert_eq!(out, vec![LATER.to_string()]);
+        assert_eq!(took(&text, "260807:110000", &mut out), 1);
+        assert_eq!(Vec::from_iter(out), vec![LATER.to_string()]);
+    }
+
+    #[test]
+    fn a_line_running_past_the_cap_is_cut_at_it() {
+        let run = format!("{PAGE}{}", "x".repeat(LINE_CAP));
+        let text = [run.as_str(), LATER].join("\n");
+        let mut out = BTreeSet::new();
+        // `run` is held to `LINE_CAP`, and `LATER` behind it stays whole.
+        assert_eq!(took(&text, "", &mut out), 2);
+        assert!(out.iter().any(|line| line.len() == LINE_CAP));
+        assert!(out.contains(LATER));
     }
 
     #[test]
@@ -284,7 +354,7 @@ mod tests {
         std::fs::create_dir_all(&log_dir).unwrap();
         std::fs::create_dir_all(&dump_dir).unwrap();
         let live = dir.join("messages");
-        // The same line in all three, plus one only the live log has.
+        // `PAGE` in all three, and `LATER` only in the live log.
         std::fs::write(&live, format!("{PAGE}\n{LATER}\n")).unwrap();
         std::fs::write(log_dir.join("messages_00000807_20260807101501.gz"), PAGE).unwrap();
         std::fs::write(dump_dir.join("log_backup_260807101501.gz"), PAGE).unwrap();
@@ -303,8 +373,7 @@ mod tests {
         let (log_dir, dump_dir) = (dir.join("log"), dir.join("dumps"));
         std::fs::create_dir_all(&log_dir).unwrap();
         std::fs::create_dir_all(&dump_dir).unwrap();
-        // A snapshot holds everything up to the instant its name encodes: the
-        // newer one carries the older one's lines as well as its own.
+        // The newer dump carries `PAGE` as well as `newer`.
         let newer = PAGE.replace("260807:101501", "260809:101501");
         std::fs::write(dump_dir.join("log_backup_260807101501.gz"), PAGE).unwrap();
         std::fs::write(
@@ -321,8 +390,7 @@ mod tests {
             &mut |_, _| {},
         );
         assert_eq!(got.from.skipped, 1);
-        // The older dump was never opened, and the older line inside the newer
-        // one was dropped by its own stamp.
+        // The older dump is unopened, and `PAGE` in the newer one dropped.
         assert_eq!(got.lines, vec![newer]);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -333,7 +401,7 @@ mod tests {
         let (log_dir, dump_dir) = (dir.join("log"), dir.join("dumps"));
         std::fs::create_dir_all(&log_dir).unwrap();
         std::fs::create_dir_all(&dump_dir).unwrap();
-        // Rotated at 11:00: it holds the 10:15 line. The watermark is later.
+        // The 11:00 chunk holds `PAGE`, stamped 10:15, and `watermark` is later.
         std::fs::write(log_dir.join("messages_00000807_20260807110000.gz"), PAGE).unwrap();
         std::fs::write(log_dir.join("messages_00000807_20260807130000.gz"), LATER).unwrap();
 
@@ -360,14 +428,16 @@ mod tests {
         let plain = dir.join("plain");
         std::fs::write(&plain, PAGE).unwrap();
 
-        let a = read_maybe_gzip(&gz).expect("a gzipped file");
-        let b = read_maybe_gzip(&plain).expect("a plain file");
-        assert_eq!(a.text, b.text);
-        assert!(a.complete && b.complete);
-        // An empty file is a created-and-unwritten dump, not a decode failure.
+        let (mut a, mut b) = (BTreeSet::new(), BTreeSet::new());
+        let took_gz = scan(&gz, "", &mut a).expect("a gzipped file");
+        let took_plain = scan(&plain, "", &mut b).expect("a plain file");
+        assert_eq!(a, b);
+        assert_eq!(a, BTreeSet::from([PAGE.to_string()]));
+        assert!(took_gz.complete && took_plain.complete);
+        // `scan` answers `None` for an empty file.
         let empty = dir.join("empty");
         std::fs::write(&empty, b"").unwrap();
-        assert!(read_maybe_gzip(&empty).is_none());
+        assert!(scan(&empty, "", &mut BTreeSet::new()).is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

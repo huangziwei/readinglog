@@ -36,6 +36,13 @@ chmod +x "$OUT" 2>/dev/null || true
 echo "==> staged $(ls -lh "$OUT" | awk '{print $5}') -> device/extensions/readinglog/bin/readinglog"
 file "$OUT" 2>/dev/null || true
 
+# $DUMP is scripts/dumplogs.sh under the name kterm runs it by. The scriptlet
+# in device/documents/ and this copy are the same file.
+DUMP="$ROOT/device/extensions/readinglog/bin/dump.sh"
+cp "$ROOT/scripts/dumplogs.sh" "$DUMP"
+chmod +x "$DUMP" 2>/dev/null || true
+echo "==> staged scripts/dumplogs.sh -> device/extensions/readinglog/bin/dump.sh"
+
 # $TILE carries $COVER on its `# Icon:` line, embedded by device/make-tile.sh.
 TILE="$ROOT/device/documents/ReadingLog.sh"
 COVER="$ROOT/device/assets/cover.png"
@@ -56,4 +63,11 @@ cat <<'EOF'
 Launch from the library tile or from KUAL; both run bin/readinglog.sh.
 The session store lives in /mnt/us/extensions/readinglog/sessions.tsv.
 Logs, if anything goes wrong, in /mnt/us/logs/readinglog.log.
+
+Diagnostics, for a bug report, write /mnt/us/dumplogs.zip:
+
+    sh /mnt/us/extensions/readinglog/bin/dump.sh
+
+scripts/dumplogs.sh is the same file, for /mnt/us/documents/ where the
+jailbreak runs scriptlets.
 EOF

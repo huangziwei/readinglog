@@ -8,6 +8,8 @@ artifacts/
 # Staged by build.sh from target/. Named, never the directory: ignoring `bin/`
 # would drop bin/readinglog.sh from the release zip.
 /device/extensions/readinglog/bin/readinglog
+# Staged by build.sh from scripts/dumplogs.sh.
+/device/extensions/readinglog/bin/dump.sh
 .github/assets/calendar.png
 # Written by hand: the host path READINGLOG_FONTS takes.
 /preview.env
