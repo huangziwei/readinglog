@@ -1,6 +1,6 @@
 //! The device's content catalog, `cc.db`, read through `sqlite3`.
-//! `p_contentSize` equals a log line's `BookEndPosition.FromBook`, and
-//! `p_cdeKey` equals `Session::asin`.
+//! `p_contentSize` is what `log::line::from_book` reads a line's
+//! `BookEndPosition.FromBook` as, and `p_cdeKey` equals `Session::asin`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -30,15 +30,23 @@ const COLUMNS: &str = "coalesce(p_contentSize, 0), p_cdeKey, p_cdeType, \
 /// `p_readState`, last of the columns. [`parse_row`] reads a row without it.
 const MARK_COLUMN: &str = ", coalesce(p_readState, -1)";
 
+/// The `p_cdeType` values naming something other than reading. Every other
+/// value is taken, an unknown one and a NULL included: the type a sideload
+/// carries is the book file's own metadata, and a row dropped here is a book
+/// no sitting can ever be named by. [`is_reading`] answers for what is left,
+/// from `p_location`.
+const SKIP_TYPES: &str = "'AUDI'";
+
 const FROM: &str = " from Entries \
      where p_cdeKey is not null and p_cdeKey <> '' \
-       and p_cdeType in ('EBOK', 'PDOC', 'MAGZ')";
+       and (p_cdeType is null or p_cdeType not in ({SKIP_TYPES}))";
 
 /// The query, with [`MARK_COLUMN`] under `mark`.
 fn query(mark: bool) -> String {
+    let from = FROM.replace("{SKIP_TYPES}", SKIP_TYPES);
     match mark {
-        true => format!("select {COLUMNS}{MARK_COLUMN}{FROM}"),
-        false => format!("select {COLUMNS}{FROM}"),
+        true => format!("select {COLUMNS}{MARK_COLUMN}{from}"),
+        false => format!("select {COLUMNS}{from}"),
     }
 }
 
@@ -252,8 +260,8 @@ pub fn path() -> Option<PathBuf> {
 mod tests {
     use super::*;
 
-    /// A store book, a sideload, a magazine, a cloud row, a loose file and an
-    /// audiobook.
+    /// A store book, a sideload, a magazine, a cloud row, a loose file, an
+    /// audiobook and a row the catalog types on its own.
     fn fixture(name: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!("readinglog-catalog-{name}.db"));
         let _ = std::fs::remove_file(&path);
@@ -283,7 +291,9 @@ mod tests {
               (777, '*aa11bb22', 'PDOC', 'Reading Log', '', 0.0, '', 0, '', 0, \
                '/mnt/us/documents/ReadingLog.sh', ''), \
               (60230, '*cc33dd44', 'EBOK', 'A Sideloaded Book', 'A Writer', 4.0, '', 0, '', 0, \
-               '/mnt/us/documents/sideload.epub', '');";
+               '/mnt/us/documents/sideload.epub', ''), \
+              (512345, 'B03SAMPLE1', 'EBSP', 'A Sample', 'A Writer', 0.1, '', 0, 'en', 0, \
+               '/mnt/us/documents/sample.azw3', '');";
         let out = Command::new("sqlite3")
             .arg(&path)
             .arg(sql)
@@ -346,7 +356,7 @@ mod tests {
         // and the second reads the rest.
         let db = fixture("nomark");
         let books = read_from(&db);
-        assert_eq!(books.len(), 7, "{books:#?}");
+        assert_eq!(books.len(), 8, "{books:#?}");
         assert!(books.iter().all(|b| b.read_state < 0));
         let _ = std::fs::remove_file(&db);
     }
@@ -355,10 +365,27 @@ mod tests {
     fn every_book_row_is_read_and_marked_for_where_it_sits() {
         let db = fixture("filters");
         let books = read_from(&db);
-        // Four books held, the clippings file, the scriptlet, one library row.
-        assert_eq!(books.len(), 7, "{books:#?}");
-        assert_eq!(books.iter().filter(|b| b.on_device).count(), 6);
+        // Five books held, the clippings file, the scriptlet, one library row.
+        assert_eq!(books.len(), 8, "{books:#?}");
+        assert_eq!(books.iter().filter(|b| b.on_device).count(), 7);
         assert!(!books.iter().any(|b| b.cde_type == "AUDI"));
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn a_book_the_catalog_types_on_its_own_is_read_like_any_other() {
+        let db = fixture("oddtype");
+        let books = read_from(&db);
+        let odd = books
+            .iter()
+            .find(|b| b.cde_key == "B03SAMPLE1")
+            .expect("the book carrying a type of its own");
+        assert_eq!(odd.cde_type, "EBSP");
+        assert_eq!(odd.extent, 512_345);
+        assert!(
+            odd.on_device,
+            "a type the query does not name is still a file"
+        );
         let _ = std::fs::remove_file(&db);
     }
 
@@ -485,7 +512,7 @@ mod tests {
         assert!(!is_reading(&file("Reading Log")));
         assert!(!is_reading(&file("My Clippings.txt")));
         assert!(is_reading(&file("A Sideloaded Book")));
-        assert_eq!(books.iter().filter(|b| is_reading(&b.location)).count(), 5);
+        assert_eq!(books.iter().filter(|b| is_reading(&b.location)).count(), 6);
         let _ = std::fs::remove_file(&db);
     }
 

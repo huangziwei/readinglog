@@ -445,7 +445,8 @@ pub fn parse_sessions<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<Sess
     // `lines` is collected: [`Awake`] reads the whole stream before the first
     // sitting closes against it.
     let lines: Vec<&str> = events.into_iter().collect();
-    // `chapters` are the positions only ever stated as a chapter's start.
+    // `chapters` are the positions only ever stated as a chapter's start,
+    // ordered: every reader of it below searches it.
     let mut toc: Vec<i64> = Vec::new();
     let mut book: Vec<i64> = Vec::new();
     for line in lines.iter().copied() {
@@ -453,7 +454,14 @@ pub fn parse_sessions<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<Sess
         toc.extend(t);
         book.extend(b);
     }
-    let chapters: Vec<i64> = toc.into_iter().filter(|p| !book.contains(p)).collect();
+    toc.sort_unstable();
+    toc.dedup();
+    book.sort_unstable();
+    book.dedup();
+    let chapters: Vec<i64> = toc
+        .into_iter()
+        .filter(|p| book.binary_search(p).is_err())
+        .collect();
     // [`Awake::witnessed`] reads its instants here.
     let read_at: Vec<i64> = lines
         .iter()
@@ -505,7 +513,8 @@ pub fn parse_sessions<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<Sess
             }
         }
 
-        let Some(obs) = observation(line).filter(|o| !chapters.contains(&o.position)) else {
+        let Some(obs) = observation(line).filter(|o| chapters.binary_search(&o.position).is_err())
+        else {
             // `pending` holds a record no open run reaches.
             if let Some(m) = metric(line) {
                 match open.as_mut().filter(|_| live) {

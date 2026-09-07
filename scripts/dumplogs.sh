@@ -35,6 +35,11 @@ APP_LOG=/mnt/us/logs/readinglog.log
 # $CATALOG_PATHS lists the catalog paths, newest firmware first.
 CATALOG_PATHS="/var/base-local/metadata/cc.db /var/local/metadata/cc.db /var/local/cc.db"
 
+# $SKIP_TYPES lists the p_cdeType values that name something other than
+# reading. It must hold whatever `catalog::SKIP_TYPES` holds: catalog.tsv is
+# read as the rows the app itself sees.
+SKIP_TYPES="'AUDI'"
+
 # $COLUMNS and $FROM select the Entries rows sqlite3 writes to catalog.tsv.
 COLUMNS="coalesce(p_contentSize, 0), p_cdeKey, p_cdeType,
     coalesce(p_titles_0_nominal, ''), coalesce(p_credits_0_name_collation, ''),
@@ -44,7 +49,15 @@ COLUMNS="coalesce(p_contentSize, 0), p_cdeKey, p_cdeType,
     coalesce(p_location, ''), coalesce(p_readState, -1)"
 FROM="from Entries
     where p_cdeKey is not null and p_cdeKey <> ''
-      and p_cdeType in ('EBOK', 'PDOC', 'MAGZ')"
+      and (p_cdeType is null or p_cdeType not in ($SKIP_TYPES))"
+
+# $CENSUS counts every Entries row by p_cdeType, whatever $FROM does with it,
+# and with it the rows carrying no key and the rows naming a file. It tells a
+# row the app never asked for apart from a row the catalog does not hold.
+CENSUS="select coalesce(p_cdeType, '(null)'), count(*),
+    sum(p_cdeKey is null or p_cdeKey = ''),
+    sum(p_location is not null and p_location <> '')
+  from Entries group by 1 order by 2 desc"
 
 # lines counts the lines of $1 and bytes its size, each 0 where $1 is missing.
 lines() {
@@ -216,6 +229,8 @@ if [ -n "$CATALOG" ] && command -v sqlite3 >/dev/null 2>&1; then
             sqlite3 -separator "	" "$CATALOG" "select $COLUMNS $FROM" \
                 > "$WORK/e/catalog.tsv" 2>/dev/null
         }
+    sqlite3 -separator "	" "$CATALOG" "$CENSUS" \
+        > "$WORK/e/catalog-types.tsv" 2>/dev/null
 fi
 
 [ -f "$STORE" ] && cp "$STORE" "$WORK/e/sessions.tsv"
@@ -234,6 +249,8 @@ fi
     echo
     echo "markers.log    $MARKER_LINES lines, off $LIVE live, $CHUNKS chunks, $DUMPS dumps, $DAYS days"
     echo "catalog.tsv    $(lines "$WORK/e/catalog.tsv") rows from ${CATALOG:-nowhere}"
+    echo "catalog-types  type, rows, rows with no key, rows naming a file:"
+    sed 's/^/    /' "$WORK/e/catalog-types.tsv" 2>/dev/null
     echo "sessions.tsv   $(lines "$WORK/e/sessions.tsv") lines"
     echo "readinglog.log $(lines "$WORK/e/readinglog.log") lines, $(exits "$WORK/e/readinglog.log")"
     echo
