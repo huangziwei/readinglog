@@ -7,8 +7,7 @@ use crate::log::session::{Measure, Session};
 use crate::settings::WeekStart;
 use crate::store::{BookRecord, FINISHED_PERCENT, Store};
 
-/// The day a book with no reading stands on. `days` and `sittings` carry no
-/// entry for it.
+/// The day a book with no reading stands on, absent from `days`.
 pub const NO_DAY: i64 = i64::MIN;
 
 /// One book, with everything ever read in it.
@@ -739,6 +738,7 @@ mod tests {
             measure: Measure::Counted,
             asin: None,
             progress: None,
+            ..Session::default()
         }
     }
 
@@ -780,6 +780,7 @@ mod tests {
                 measure: Measure::Counted,
                 asin: None,
                 progress: None,
+                ..Session::default()
             });
         }
         store
@@ -908,6 +909,7 @@ mod tests {
                 measure: Measure::Counted,
                 asin: None,
                 progress: Some(progress),
+                ..Session::default()
             });
         }
         let stats = Stats::build(&store, day(2026, 8, 8), true);
@@ -947,6 +949,7 @@ mod tests {
                 measure: Measure::Counted,
                 asin: None,
                 progress: Some(progress),
+                ..Session::default()
             });
         }
         let ended = day(2026, 9, 5);
@@ -1001,6 +1004,7 @@ mod tests {
                 measure: Measure::Counted,
                 asin: None,
                 progress: None,
+                ..Session::default()
             });
         }
         let today = at(2026, 3, 6);
@@ -1256,6 +1260,7 @@ mod tests {
             measure: Measure::Counted,
             asin: None,
             progress: None,
+            ..Session::default()
         });
         let stats = Stats::build(&s, day(2026, 8, 7), true);
         assert_eq!(stats.unnamed_books(), 1);
@@ -1508,6 +1513,7 @@ mod tests {
             measure: Measure::Counted,
             asin: None,
             progress: None,
+            ..Session::default()
         });
         let stats = Stats::build(&s, day(2026, 8, 7), true);
 

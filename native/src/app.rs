@@ -863,21 +863,29 @@ impl App {
     /// named, over a banner. No sitting is folded in: only the rows placing
     /// one on a book are read again, so what the reader emptied stays gone.
     fn retry(&mut self, fb: &mut Framebuffer, input: &mut Input) -> Result<()> {
-        let (headline, doing) = view::retrying(None, self.lang.strings());
+        // The class rows are read again only where one is missing under a
+        // class no record names: a sitting the record holds no counter for
+        // reaches no sidecar, and the logs state nothing else this needs.
+        let wants = self.store.wants_the_logs();
+        let doing = match wants {
+            true => view::Retrying::Logs,
+            false => view::Retrying::Files,
+        };
+        let (headline, doing) = doing.banner(self.lang.strings());
         self.banner(fb, headline, &doing, "", true)?;
         let before = self.unnamed_books();
-        // The class rows first: a sitting the record holds no counter for
-        // reaches no sidecar.
-        let learned =
-            self.over_the_logs(fb, headline, &doing, |store, on| store.relearn_classes(on));
-        eprintln!("retry: {learned} classes the record held no counter for");
-        if learned > 0 {
-            self.store_it("retry");
+        if wants {
+            let learned =
+                self.over_the_logs(fb, headline, &doing, |store, on| store.relearn_classes(on));
+            eprintln!("retry: {learned} classes the record held no counter for");
+            if learned > 0 {
+                self.store_it("retry");
+            }
         }
         self.relearn();
         let named = before.saturating_sub(self.unnamed_books());
         eprintln!("retry: {before} books no record named, {named} named");
-        let (headline, said) = view::retrying(Some(named), self.lang.strings());
+        let (headline, said) = view::Retrying::Named(named).banner(self.lang.strings());
         self.banner(fb, headline, &said, "", true)?;
         self.hold(input, OUTCOME_LINGER)
     }

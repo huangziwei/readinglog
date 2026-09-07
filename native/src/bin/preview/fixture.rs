@@ -241,6 +241,7 @@ fn sitting(day: i64, at: i64, secs: i64, extent: i64, measure: Measure) -> Sessi
         measure,
         asin: None,
         progress: None,
+        ..Session::default()
     }
 }
 

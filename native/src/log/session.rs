@@ -47,8 +47,28 @@ impl Measure {
     }
 }
 
+/// Timezones are whole minutes from UTC.
+const OFFSET_STEP: i64 = 60;
+
+/// Seconds the device's local clock stands ahead of UTC, from a record stating
+/// an instant the line's own prefix also states. [`Moment::abs`] counts from
+/// 1970, which is the epoch the stamp counts from too.
+fn utc_offset(now: &crate::log::line::Moment, line: &str) -> Option<i64> {
+    if !crate::log::metric::METRIC_MARKERS
+        .iter()
+        .any(|m| line.contains(m))
+    {
+        return None;
+    }
+    let epoch_ms = crate::log::line::field_num(line, "close_timestamp")
+        .or_else(|| crate::log::line::field_num(line, "action_start_time"))?;
+    let raw = now.abs - epoch_ms.div_euclid(1000);
+    // A device whose clock is simply wrong states no zone worth recording.
+    (raw.abs() < 24 * 3600).then(|| (raw as f64 / OFFSET_STEP as f64).round() as i64 * OFFSET_STEP)
+}
+
 /// One parsed sitting.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Session {
     /// `YYYY-MM-DDTHH:MM:SS`, device-local.
     pub started_at: String,
@@ -67,6 +87,16 @@ pub struct Session {
     pub asin: Option<String>,
     /// How far into the book the sitting ended, as a fraction, off `%Left`.
     pub progress: Option<f64>,
+    /// The book's own reading counter where this run began and where it was
+    /// last seen. Both or neither: a run the device never counted has none.
+    pub start_counter_ms: Option<i64>,
+    pub end_counter_ms: Option<i64>,
+    /// The same two readings of the device's own word counter. `end_words`
+    /// beside `end_counter_ms` is the pair a sidecar's `timer.model` states.
+    pub start_words: Option<i64>,
+    pub end_words: Option<i64>,
+    /// Seconds the device's clock stands ahead of UTC, per [`utc_offset`].
+    pub tz_offset_s: Option<i64>,
 }
 
 /// The share of a counter's advance that falls before a boundary inside the
@@ -153,6 +183,8 @@ struct Open {
     began: Moment,
     /// Forward turns from the `fastmetrics` records, apart from `page_turns`.
     metric_turns: i64,
+    /// Words off the pages whose dwell counted. A fixed-layout page has none.
+    metric_words: i64,
     /// Milliseconds of page dwell, and the page at the interval's far end.
     dwell_total_ms: i64,
     dwell_hours_ms: [i64; 24],
@@ -161,6 +193,8 @@ struct Open {
     asin: Option<String>,
     /// The last `%Left` a line stated for this book.
     progress: Option<f64>,
+    /// The offset the newest record stated while this run was open.
+    tz_offset_s: Option<i64>,
 }
 
 impl Open {
@@ -189,11 +223,13 @@ impl Open {
             began: from.clone(),
             last: from,
             metric_turns: 0,
+            metric_words: 0,
             dwell_total_ms: 0,
             dwell_hours_ms: [0; 24],
             open_page: None,
             asin: None,
             progress: None,
+            tz_offset_s: None,
         }
     }
 
@@ -270,6 +306,11 @@ impl Open {
                     };
                     let counts = dwell_ms(self.wpm(), from_words, elapsed);
                     self.dwell_total_ms += counts;
+                    // A page flipped past faster than its words justify counts
+                    // no time, and its words are not read either.
+                    if counts > 0 {
+                        self.metric_words += from_words;
+                    }
                     credit_awake(&mut self.dwell_hours_ms, awake, &from, now, counts);
                 }
                 self.open_page = Some((now.clone(), *words));
@@ -367,10 +408,20 @@ impl Open {
                 0 => self.metric_turns,
                 named => named,
             },
-            words: self.words_hi - self.words_lo.unwrap_or(self.words_hi),
+            // The timer's own span where it stated one, else the pages'
+            // own counts, as `page_turns` above takes the metric records'.
+            words: match self.words_hi - self.words_lo.unwrap_or(self.words_hi) {
+                0 => self.metric_words,
+                span => span,
+            },
             measure,
             asin: self.asin,
             progress: self.progress,
+            start_counter_ms: self.time_lo,
+            end_counter_ms: self.time_lo.map(|_| self.time_hi),
+            start_words: self.words_lo,
+            end_words: self.words_lo.map(|_| self.words_hi),
+            tz_offset_s: self.tz_offset_s,
         }
     }
 }
@@ -442,11 +493,9 @@ fn hours_in_seconds(hours_ms: &[i64; 24], seconds: i64) -> Vec<(u8, i64)> {
 
 /// Turn an ordered, de-duplicated event stream into sessions.
 pub fn parse_sessions<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<Session> {
-    // `lines` is collected: [`Awake`] reads the whole stream before the first
-    // sitting closes against it.
+    // [`Awake`] reads the whole stream before the first sitting closes.
     let lines: Vec<&str> = events.into_iter().collect();
-    // `chapters` are the positions only ever stated as a chapter's start,
-    // ordered: every reader of it below searches it.
+    // `toc` holds the positions only ever stated as a chapter's start.
     let mut toc: Vec<i64> = Vec::new();
     let mut book: Vec<i64> = Vec::new();
     for line in lines.iter().copied() {
@@ -479,6 +528,8 @@ pub fn parse_sessions<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<Sess
     let mut gapped = false;
     // The catalog key most recently named, and when, for the run it belongs to.
     let mut named: Option<(i64, String)> = None;
+    // The offset the newest record stated, for the run that opens over it.
+    let mut zone: Option<i64> = None;
     // Records no open run reached, drained into the run that opens over them.
     let mut pending: Vec<(Moment, Metric)> = Vec::new();
 
@@ -512,6 +563,12 @@ pub fn parse_sessions<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<Sess
                 cur.asin = Some(key.to_string());
             }
         }
+        if let Some(offset) = utc_offset(&now, line) {
+            zone = Some(offset);
+            if let Some(cur) = open.as_mut() {
+                cur.tz_offset_s = zone;
+            }
+        }
 
         let Some(obs) = observation(line).filter(|o| chapters.binary_search(&o.position).is_err())
         else {
@@ -524,8 +581,7 @@ pub fn parse_sessions<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<Sess
             }
             continue;
         };
-        // `gapped` is consumed at the second of two observations, and here
-        // only.
+        // `gapped` is consumed here, at the second of two observations.
         let gapped = std::mem::take(&mut gapped);
 
         // `opened` is read at the first observation after it, whether or not
@@ -556,7 +612,11 @@ pub fn parse_sessions<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<Sess
             }
         }
         let fresh = open.is_none();
-        let cur = open.get_or_insert_with(|| Open::new(obs.position, &now, seed.take()));
+        let cur = open.get_or_insert_with(|| {
+            let mut run = Open::new(obs.position, &now, seed.take());
+            run.tz_offset_s = zone;
+            run
+        });
         if fresh {
             // `named` and `pending` in order, from `cur.began`.
             let from = cur.began.abs;
@@ -758,6 +818,100 @@ mod tests {
         // `seconds` at each end is the counter's own span.
         assert_eq!(out[0].seconds, 40);
         assert_eq!(out[1].seconds, 40);
+    }
+
+    #[test]
+    fn a_close_record_states_the_zone_the_reader_s_clock_stands_in() {
+        // 2026-08-23T13:36:08 local beside the same instant in epoch
+        // milliseconds: the difference is the zone, to the minute.
+        let line = "260823:133608 fastmetrics[1]: D fastmetrics: Emitting a new record. \
+                    SchemaName[ereader_close_book], Fields[{ \"close_timestamp\" : \
+                    1787463368310 }] :";
+        let now = crate::log::line::stamp(line).expect("a stamp");
+        assert_eq!(utc_offset(&now, line), Some(8 * 3600));
+
+        // A line stating no instant, and a record of no schema, state no zone.
+        let bare = "260823:133608 fastmetrics[1]: D fastmetrics: \
+                    SchemaName[ereader_close_book], Fields[{ }] :";
+        assert_eq!(
+            utc_offset(&crate::log::line::stamp(bare).unwrap(), bare),
+            None
+        );
+        let other = "260823:133608 cvm[1]: I Something: \"close_timestamp\" : 1787463368310;";
+        assert_eq!(
+            utc_offset(&crate::log::line::stamp(other).unwrap(), other),
+            None
+        );
+    }
+
+    #[test]
+    fn a_clock_too_far_out_to_be_a_zone_states_none() {
+        // Two days apart is a wrong clock, not a timezone.
+        let line = "260825:133608 fastmetrics[1]: D fastmetrics: Emitting a new record. \
+                    SchemaName[ereader_close_book], Fields[{ \"close_timestamp\" : \
+                    1787463368310 }] :";
+        let now = crate::log::line::stamp(line).expect("a stamp");
+        assert_eq!(utc_offset(&now, line), None);
+    }
+
+    /// An `ereader_book_consume_content` record at `hhmmss`, stating `words`.
+    fn worded_page(hhmmss: &str, words: i64) -> String {
+        format!(
+            "260807:{hhmmss} fastmetrics[9842]: D fastmetrics: Emitting a new record. \
+             SchemaName[ereader_book_consume_content], Fields[{{ \"words_count\" : {words} }} ]. :"
+        )
+    }
+
+    #[test]
+    fn a_run_the_timer_states_no_words_for_counts_the_pages_own() {
+        // `TotalTime` never moves on a book the timer declines to count, and
+        // the word span with it.
+        let lines = [
+            power("105000", "outOfScreenSaver"),
+            page("105005", 7_390_020),
+            worded_page("105010", 300),
+            worded_page("105110", 300),
+            worded_page("105210", 300),
+            page("105220", 7_390_020),
+        ];
+        let out = parse_sessions(lines.iter().map(String::as_str));
+        assert_eq!(out.len(), 1);
+        // Two pages close an interval; the third closes none.
+        assert_eq!(out[0].words, 600, "the pages' own counts went unread");
+        assert_ne!(out[0].measure, Measure::Counted);
+    }
+
+    #[test]
+    fn a_fixed_layout_run_states_no_words_and_none_are_invented() {
+        // Every page of an image-only book states zero words.
+        let lines = [
+            power("105000", "outOfScreenSaver"),
+            page("105005", 7_390_020),
+            wordless_page("105010"),
+            wordless_page("105110"),
+            wordless_page("105210"),
+            page("105220", 7_390_020),
+        ];
+        let out = parse_sessions(lines.iter().map(String::as_str));
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].words, 0, "an image-only book was credited words");
+    }
+
+    #[test]
+    fn a_page_flipped_past_too_fast_to_read_carries_none_of_its_words() {
+        // One page held a hundred seconds, one flipped past in a second. The
+        // dwell counts the first and not the second; the words follow it.
+        let lines = [
+            power("105000", "outOfScreenSaver"),
+            page("105005", 7_390_020),
+            worded_page("105010", 300),
+            worded_page("105150", 300),
+            worded_page("105151", 300),
+            page("105220", 7_390_020),
+        ];
+        let out = parse_sessions(lines.iter().map(String::as_str));
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].words, 300, "a flipped page was counted as read");
     }
 
     /// An `ereader_book_consume_content` record at `hhmmss`, no words on it.

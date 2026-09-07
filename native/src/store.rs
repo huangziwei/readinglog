@@ -19,7 +19,7 @@ pub const STORE_DIR: &str = "/mnt/us/extensions/readinglog";
 const STORE_FILE: &str = "sessions.tsv";
 
 /// What the first line reads. The number names the parse below it.
-const HEADER: &str = "#readinglog\t2";
+pub(crate) const HEADER: &str = "#readinglog\t2";
 
 /// The percentage `BookRecord::stand_at` sets [`BookRecord::finished`] at.
 pub const FINISHED_PERCENT: f64 = 99.5;
@@ -131,17 +131,13 @@ pub struct Store {
     pub books: Vec<BookRecord>,
     /// `extent → cde_key`, every pairing any pass has seen, ascending.
     pub keys: Vec<(i64, String)>,
-    /// `(end position, TotalTime, TotalWords)`, the highest counter each class
-    /// was logged with, ascending.
+    /// `(end position, TotalTime, TotalWords)` per class, ascending.
     pub counters: Vec<(i64, i64, i64)>,
-    /// `extent → the book's file`, from a sidecar holding the same counter,
-    /// ascending.
+    /// `extent → the book's file`, from a sidecar of the same counter.
     pub pairs: Vec<(i64, String)>,
     /// The newest log line any pass has read, as `YYMMDD:HHMMSS`.
     pub mark: String,
-    /// Where the record was last emptied, as `YYMMDD:HHMMSS`. No ordinary pass
-    /// reads under it, and unlike [`Self::mark`] a stale `HEADER` leaves it
-    /// standing. Empty until the first reset asks for one.
+    /// Where the record was last emptied, `YYMMDD:HHMMSS`. No pass reads under it.
     pub floor: String,
     /// Books put back to zero, ascending by `extent` then `key`. No parse
     /// folds a sitting of one that starts below its stamp.
@@ -175,44 +171,33 @@ impl Store {
         Self::from_text(&text)
     }
 
-    /// [`Self::load`], with `backup::keep_text` writing the file whole under
-    /// `backup::BACKUPS_DIR` where its first line is not [`HEADER`].
+    /// [`Self::load`] over the file in `dir`, surrendering no row it holds.
     pub fn open(dir: &Path) -> Self {
         let Ok(text) = std::fs::read_to_string(Self::file(dir)) else {
             return Self::default();
         };
-        if text.lines().next() != Some(HEADER) && !text.trim().is_empty() {
-            match crate::backup::keep_text(dir, &text, &stamp_in(&text)) {
-                Ok(at) => eprintln!(
-                    "store: the record this build supersedes is at {}",
-                    at.display()
-                ),
-                Err(err) => eprintln!("store: the superseded record was not kept — {err}"),
-            }
-        }
         Self::from_text(&text)
     }
 
-    /// [`Self::load`] over `text` in hand.
+    /// Every row `text` holds, whatever stamp it carries. A load surrenders
+    /// nothing: reading older than the device's logs is in no other place.
     pub fn from_text(text: &str) -> Self {
-        Self::parse(text, true)
+        Self::parse(text)
     }
 
-    /// Every row `text` holds, whatever stamp it carries. What `backup::take`
-    /// folds in, against [`Self::from_text`] on a load.
+    /// [`Self::from_text`], for what `backup::take` folds in.
     pub fn from_archive(text: &str) -> Self {
-        Self::parse(text, false)
+        Self::parse(text)
     }
 
     /// The rows of `text`. Under `gated` a stamp this build does not know
     /// gives up `sessions` and `mark`.
-    fn parse(text: &str, gated: bool) -> Self {
+    fn parse(text: &str) -> Self {
         let mut out = Self::default();
-        let mut stamped = false;
         for line in text.lines() {
             let mut f = line.split('\t');
             match f.next() {
-                Some("#readinglog") => stamped = line == HEADER,
+                Some("#readinglog") => {}
                 Some("m") => out.mark = f.next().unwrap_or_default().to_string(),
                 Some("f") => out.floor = f.next().unwrap_or_default().to_string(),
                 Some("e") => {
@@ -251,10 +236,6 @@ impl Store {
                 Some("c") => out.cleared.extend(read_cleared(&mut f)),
                 _ => {}
             }
-        }
-        if gated && !stamped {
-            out.sessions.clear();
-            out.mark.clear();
         }
         out.sort();
         out
@@ -365,10 +346,11 @@ impl Store {
         let parsed: Vec<Session> = parsed.into_iter().filter(|s| !self.barred(s)).collect();
 
         let before = self.sessions.len();
-        // Everything from `cut` on is `parsed`'s to state. An empty `cut`
-        // covers the whole log.
-        self.sessions
-            .retain(|s| !cut.is_empty() && s.started_at < cut);
+        // Everything from `cut` on is `parsed`'s to state. A `cut` no sitting
+        // stated leaves every row standing.
+        if !cut.is_empty() {
+            self.sessions.retain(|s| s.started_at < cut);
+        }
         let dropped = before - self.sessions.len();
         let found = parsed.len();
         self.sessions.extend(parsed);
@@ -444,11 +426,46 @@ impl Store {
         )
     }
 
+    /// Every `EndPos` class this counter pair was ever stated for: the sittings
+    /// carrying their own last reading of it, and the `t` rows standing for
+    /// those a record holds no sitting counter for.
+    fn classes_at(&self, total_ms: i64, words: i64) -> Vec<i64> {
+        let mut out: Vec<i64> = self
+            .sessions
+            .iter()
+            .filter(|s| s.end_counter_ms == Some(total_ms) && s.end_words == Some(words))
+            .map(|s| s.end_position)
+            .chain(
+                self.counters
+                    .iter()
+                    .filter(|(_, ms, words_)| *ms == total_ms && *words_ == words)
+                    .map(|(ep, _, _)| *ep),
+            )
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// Whether a class no record names holds no counter, on the sitting or in
+    /// [`Self::counters`] — what a pass over the logs can add.
+    pub fn wants_the_logs(&self) -> bool {
+        self.sessions.iter().any(|s| {
+            let held = s.end_counter_ms.is_some()
+                || self
+                    .counters
+                    .binary_search_by(|(ep, _, _)| ep.cmp(&s.end_position))
+                    .is_ok();
+            !held
+                && self
+                    .book_for(self.extent_of(s.end_position), s.asin.as_deref())
+                    .is_none()
+        })
+    }
+
     /// Read the whole log for what each `EndPos` class states — its book end
-    /// in [`Self::ends`], its counter in [`Self::counters`] — and fold in no
-    /// sitting. Reading the reader emptied stays gone, and a class the record
-    /// holds no counter for gains one wherever the log still states it.
-    /// Answers the classes that gained a counter.
+    /// in [`Self::ends`], its counter in [`Self::counters`] — folding in no
+    /// sitting. Answers the classes that gained a counter.
     pub fn relearn_classes(&mut self, on: &mut dyn FnMut(usize, usize)) -> usize {
         self.classes_from(
             Path::new(source::LIVE_LOG),
@@ -497,6 +514,18 @@ impl Store {
             ..Store::default()
         };
         whole.absorb(&got.lines, "");
+        // A sitting the log restates is given up for the parse that read it.
+        let mut restated: Vec<(&str, i64, &str)> = whole
+            .sessions
+            .iter()
+            .map(|s| (s.started_at.as_str(), s.end_position, s.ended_at.as_str()))
+            .collect();
+        restated.sort_unstable();
+        self.sessions.retain(|s| {
+            restated
+                .binary_search(&(s.started_at.as_str(), s.end_position, s.ended_at.as_str()))
+                .is_err()
+        });
         let added = self.merge(&whole);
         self.mark = self.mark.clone().max(whole.mark);
         self.floor.clear();
@@ -536,9 +565,7 @@ impl Store {
         self.books.iter().filter(|r| !before.contains(r)).count()
     }
 
-    /// Name reading the catalog cannot, from `sidecars`: each one's
-    /// `timer.model` counter against the one [`Self::counters`] holds for exactly
-    /// one class. Answers how many books were named.
+    /// Name reading the catalog cannot: `sidecars` against [`Self::classes_at`].
     pub fn recover(&mut self, sidecars: &[sidecar::Counter]) -> usize {
         // Drop a pairing whose extent a record carries under another key.
         let books = self.books.clone();
@@ -552,16 +579,9 @@ impl Store {
             if card.total_ms == 0 {
                 continue;
             }
-            let mut found = self
-                .counters
-                .iter()
-                .filter(|(_, ms, words)| *ms == card.total_ms && *words == card.words);
-            let Some(&(end_position, _, _)) = found.next() else {
+            let [end_position] = self.classes_at(card.total_ms, card.words)[..] else {
                 continue;
             };
-            if found.next().is_some() {
-                continue;
-            }
             claims.push((self.extent_of(end_position), &card.file));
         }
         let mut named = 0;
@@ -635,23 +655,13 @@ impl Store {
         }
     }
 
-    /// The slots in [`Self::books`] a sitting is credited to.
-    fn read_slots(&self) -> std::collections::HashSet<usize> {
-        self.sessions
-            .iter()
-            .filter_map(|s| self.slot_for(self.extent_of(s.end_position), s.asin.as_deref()))
-            .filter(|&slot| self.books[slot].is_book())
-            .collect()
-    }
-
-    /// Copy the `thumbnail` of each slot `Self::read_slots` answers into
-    /// `dir`, point its `cover` at the copy, and delete every other file there.
+    /// Copy the `thumbnail` of every book in [`Self::books`] into `dir`, point
+    /// its `cover` at the copy, and delete every file there no record names.
     /// Answers how many records changed.
     pub fn keep_covers(&mut self, dir: &Path) -> usize {
-        let read = self.read_slots();
         let mut kept = 0;
-        for (slot, record) in self.books.iter_mut().enumerate() {
-            if !read.contains(&slot) {
+        for record in self.books.iter_mut() {
+            if !record.is_book() {
                 kept += usize::from(!std::mem::take(&mut record.cover).is_empty());
                 continue;
             }
@@ -671,13 +681,17 @@ impl Store {
                 kept += 1;
             }
         }
-        // An empty `sessions` leaves every file under `dir` standing.
-        if self.sessions.is_empty() {
+        // An empty `books` leaves every file under `dir` standing.
+        if self.books.is_empty() {
             return kept;
         }
-        let held: Vec<&str> = read
+        // A jacket stands as long as the record naming it does, whether or not
+        // a sitting reaches that record.
+        let held: Vec<&str> = self
+            .books
             .iter()
-            .map(|&slot| self.books[slot].cde_key.as_str())
+            .filter(|b| b.is_book())
+            .map(|b| b.cde_key.as_str())
             .collect();
         let swept = covers::sweep(dir, &held);
         if swept > 0 {
@@ -1157,36 +1171,6 @@ fn read_book<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<BookRecord> {
     })
 }
 
-/// What to name an archive of `text` after: the `m` row it states, else the
-/// newest sitting it holds, else the local clock. Only the ordering of the
-/// name depends on it.
-fn stamp_in(text: &str) -> String {
-    let row = |tag: &str| {
-        text.lines()
-            .filter_map(|l| l.strip_prefix(tag))
-            .filter_map(|rest| rest.split('\t').next())
-            .map(str::to_string)
-            .max()
-    };
-    if let Some(mark) = row("m\t").filter(|m| !m.is_empty()) {
-        return mark;
-    }
-    if let Some(newest) = row("s\t").and_then(|at| log_stamp(&at)) {
-        return newest;
-    }
-    let (day, secs) = crate::date::now();
-    let (y, m, d) = crate::date::civil_from_days(day);
-    format!(
-        "{:02}{:02}{:02}:{:02}{:02}{:02}",
-        y % 100,
-        m,
-        d,
-        secs / 3600,
-        secs / 60 % 60,
-        secs % 60
-    )
-}
-
 /// A `c` row as a [`Cleared`]. A row stating no stamp holds nothing back and
 /// is dropped.
 fn read_cleared<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Cleared> {
@@ -1232,8 +1216,9 @@ fn read_hours(text: &str) -> Vec<(u8, i64)> {
 }
 
 fn write_session(s: &Session) -> String {
+    let num = |n: Option<i64>| n.map(|n| n.to_string()).unwrap_or_default();
     format!(
-        "s\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "s\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         s.started_at,
         s.ended_at,
         s.end_position,
@@ -1244,6 +1229,11 @@ fn write_session(s: &Session) -> String {
         s.asin.as_deref().unwrap_or(""),
         s.progress.map(|p| format!("{p:.6}")).unwrap_or_default(),
         write_hours(&s.hours),
+        num(s.start_counter_ms),
+        num(s.end_counter_ms),
+        num(s.start_words),
+        num(s.end_words),
+        num(s.tz_offset_s),
     )
 }
 
@@ -1265,6 +1255,12 @@ fn read_session<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Session> {
         asin: Some(next().to_string()).filter(|a| !a.is_empty()),
         progress: next().parse().ok(),
         hours: read_hours(next()),
+        // A row written before the counters were held states none.
+        start_counter_ms: next().parse().ok(),
+        end_counter_ms: next().parse().ok(),
+        start_words: next().parse().ok(),
+        end_words: next().parse().ok(),
+        tz_offset_s: next().parse().ok(),
     })
 }
 
@@ -1284,6 +1280,7 @@ mod tests {
             measure: Measure::Counted,
             asin: Some("B00OKPCRLG".into()),
             progress: Some(0.355),
+            ..Session::default()
         }
     }
 
@@ -1295,7 +1292,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cover_is_kept_only_for_a_book_the_record_has_reading_against() {
+    fn a_cover_stands_as_long_as_the_book_record_naming_it_does() {
         let dir = scratch("covers");
         let art = dir.join("thumbnail.jpg");
         std::fs::write(&art, b"jpegbytes").expect("a written thumbnail");
@@ -1323,23 +1320,25 @@ mod tests {
             .into_owned();
         std::fs::write(dir.join(covers::COVERS_DIR).join("B01.partial"), b"x").unwrap();
 
-        assert_eq!(store.keep_covers(&dir), 2, "one taken, one given up");
+        assert_eq!(store.keep_covers(&dir), 1, "the read book's cover taken");
         assert!(covers::held(&dir, "B00OKPCRLG"), "the book that was read");
-        assert!(!covers::held(&dir, "B00NEVERRD"), "the book that was not");
-        assert!(store.books[1].cover.is_empty(), "a cover no file backs");
+        assert!(covers::held(&dir, "B00NEVERRD"), "a book with no reading");
+        assert!(!store.books[1].cover.is_empty(), "a jacket on disk unnamed");
+        // The `.partial` goes; both books' jackets stand.
         let left = std::fs::read_dir(dir.join(covers::COVERS_DIR))
             .expect("the covers directory")
             .count();
-        assert_eq!(left, 1, "one book carries reading");
+        assert_eq!(left, 2, "a book record lost its jacket");
 
         // `keep_covers` over the same store takes nothing and drops nothing.
         assert_eq!(store.keep_covers(&dir), 0);
         assert!(covers::held(&dir, "B00OKPCRLG"));
 
-        // An empty `sessions` holds every file under `dir`.
+        // Sittings the parser gave up leave every jacket standing.
         store.sessions.clear();
         store.keep_covers(&dir);
         assert!(covers::held(&dir, "B00OKPCRLG"), "the cache is not emptied");
+        assert!(covers::held(&dir, "B00NEVERRD"), "the cache is not emptied");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1374,7 +1373,19 @@ mod tests {
     }
 
     #[test]
-    fn a_store_from_an_older_parse_gives_up_its_sittings_and_keeps_its_books() {
+    fn a_pass_with_no_stamp_to_cut_at_leaves_every_sitting_standing() {
+        // A stored `started_at` no `log_stamp` reads leaves `read_from` empty.
+        let mut store = Store {
+            sessions: vec![session("nonsense", "nonsense", 148_207, 2_400)],
+            ..Store::default()
+        };
+        assert!(store.read_from().is_empty());
+        store.absorb(&[], "");
+        assert_eq!(store.sessions.len(), 1, "an empty cut emptied the record");
+    }
+
+    #[test]
+    fn a_store_from_an_older_parse_keeps_every_row_it_holds() {
         let dir = scratch("stamped");
         let store = Store {
             sessions: vec![session(
@@ -1409,8 +1420,8 @@ mod tests {
         .expect("an older store");
 
         let read = Store::load(&dir);
-        assert!(read.sessions.is_empty(), "an older parse's sittings held");
-        assert!(read.mark.is_empty(), "the pass would not read them again");
+        assert_eq!(read.sessions, store.sessions, "a load gave sittings up");
+        assert_eq!(read.mark, store.mark, "a load gave the mark up");
         assert_eq!(read.books, store.books, "the names were not the parse's");
         assert_eq!(read.ends, store.ends);
         assert_eq!(
@@ -1430,30 +1441,19 @@ mod tests {
     }
 
     #[test]
-    fn a_superseded_record_is_kept_before_it_is_given_up() {
+    fn a_superseded_record_opens_whole_and_is_not_archived() {
         let dir = scratch("superseded");
         let store = two_books();
         superseded(&dir, &store);
 
+        // Opening an updated build takes nothing and writes nothing beside it.
         let read = Store::open(&dir);
-        assert!(read.sessions.is_empty(), "the sittings were still given up");
-
-        let held = crate::backup::list(&dir);
-        assert_eq!(held.len(), 1, "the record was not kept");
-        assert_eq!(held[0].stamp, "260810-120000", "named for the mark");
-
-        // The entry holds every `s` row of the record.
-        let mut open =
-            crate::update::archive::Archive::open(&held[0].path).expect("a readable archive");
-        let entry = open.entries()[0].clone();
-        let bytes = open.read(&entry).expect("the record inside");
-        let text = String::from_utf8_lossy(&bytes);
-        assert_eq!(text.lines().filter(|l| l.starts_with("s\t")).count(), 3);
-
-        // `peek` reads every row, through `Store::from_archive`.
-        let inside = crate::backup::peek(&held[0].path).expect("a readable archive");
-        assert_eq!(inside.sessions.len(), 3, "the era stayed in the file");
-        assert_eq!(inside.books.len(), 2);
+        assert_eq!(read.sessions, store.sessions, "the sittings were given up");
+        assert_eq!(read.books, store.books);
+        assert!(
+            crate::backup::list(&dir).is_empty(),
+            "an archive nobody asked for"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2319,20 +2319,16 @@ mod tests {
     }
 
     #[test]
-    fn the_floor_outlives_the_mark_a_stale_header_clears() {
+    fn a_stale_header_takes_neither_the_mark_nor_the_floor() {
         let dir = scratch("floored");
         let mut store = two_books();
         store.wipe();
         superseded(&dir, &store);
 
         let read = Store::load(&dir);
-        assert!(read.mark.is_empty(), "the stamp did not clear the mark");
-        assert_eq!(read.floor, "260810:120000", "the floor went with it");
-        assert_eq!(
-            read.read_from(),
-            "260810:120000",
-            "the pass would read the whole log"
-        );
+        assert_eq!(read.mark, store.mark, "the stamp took the mark");
+        assert_eq!(read.floor, "260810:120000", "the stamp took the floor");
+        assert_eq!(read.read_from(), "260810:120000");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2369,7 +2365,7 @@ mod tests {
         assert_eq!(
             rows,
             [
-                "#readinglog\t2",
+                HEADER,
                 "m\t260810:120000",
                 "f\t260810:120000",
                 "c\t555\tB00GONE\t260809:090000",
@@ -2414,6 +2410,41 @@ mod tests {
     }
 
     #[test]
+    fn a_sitting_carrying_its_own_counter_reaches_its_sidecar_with_no_log() {
+        // One sitting holding the counter it was last seen at, with no `t`
+        // row beside it.
+        let mut store = Store {
+            sessions: vec![Session {
+                end_counter_ms: Some(900_000),
+                end_words: Some(4_100),
+                ..session("2026-08-07T10:15:01", "2026-08-07T10:20:00", 148_207, 299)
+            }],
+            ..Store::default()
+        };
+        assert!(store.counters.is_empty());
+        assert!(!store.wants_the_logs(), "the logs hold nothing this needs");
+
+        assert_eq!(store.recover(&[card("Vom Kriege", 900_000, 4_100)]), 1);
+        assert_eq!(store.books.len(), 1);
+        // A counter no sitting states names nothing.
+        assert_eq!(store.recover(&[card("Anderes Buch", 1, 2)]), 0);
+    }
+
+    #[test]
+    fn a_sitting_written_before_the_counters_were_held_still_wants_the_logs() {
+        let store = Store {
+            sessions: vec![session(
+                "2026-08-07T10:15:01",
+                "2026-08-07T10:20:00",
+                148_207,
+                299,
+            )],
+            ..Store::default()
+        };
+        assert!(store.wants_the_logs(), "an old row was taken as complete");
+    }
+
+    #[test]
     fn reading_the_classes_again_reaches_a_sitting_recorded_without_one() {
         let dir = scratch("classes");
         let live = dir.join("messages");
@@ -2445,7 +2476,7 @@ mod tests {
 
         assert_eq!(learned, 2, "the log's classes did not reach the record");
         assert_eq!(store.sessions.len(), 1, "a sitting came in with them");
-        // The sidecar arm can now name the book the sitting was read on.
+        // `card` states the counter the sitting holds.
         let named = store.recover(&[card("Vom Kriege", 900_000, 4_100)]);
         assert_eq!(named, 1, "the counter reached no sidecar");
         assert_eq!(store.books.len(), 1);
@@ -2476,6 +2507,36 @@ mod tests {
         assert_eq!(store.floor, "260807:120000", "the floor came down");
         assert_eq!(store.cleared.len(), 1, "a book's stamp came off");
         assert!(!store.counters.is_empty(), "no class reached the record");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_rebuild_restates_a_sitting_the_log_still_holds() {
+        let dir = scratch("rebuild-measure");
+        let live = dir.join("messages");
+        std::fs::write(
+            &live,
+            format!(
+                "{}\n{}\n",
+                turn("260807:101501", 148_207, 900_000, 4_100),
+                turn("260807:101543", 148_207, 940_000, 4_900)
+            ),
+        )
+        .expect("a log to read");
+
+        // The same sitting the log states, measured by an older parse at zero.
+        let mut store = Store {
+            sessions: vec![Session {
+                words: 0,
+                ..session("2026-08-07T10:15:01", "2026-08-07T10:15:43", 148_207, 42)
+            }],
+            mark: "260807:101543".into(),
+            ..Store::default()
+        };
+        store.rebuild_from(&live, &dir.join("none"), &dir.join("none"), &mut |_, _| {});
+
+        assert_eq!(store.sessions.len(), 1, "the sitting was stated twice");
+        assert_eq!(store.sessions[0].words, 800, "the stale measurement stood");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

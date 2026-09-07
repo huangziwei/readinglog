@@ -288,11 +288,13 @@ pub struct Strings {
     /// The button on that row, standing apart from the two values: read the
     /// logs, the catalog and the sidecars again, and name what they now name.
     pub unnamed_retry: &'static str,
-    /// Its banner: the headline over the pass, the two lines under it while
-    /// it runs, and the two the outcome is stated in. `retry_named` counts.
+    /// Its banner: the headline over the pass, the two lines under a pass that
+    /// reads the logs, the one under a pass that reads the books' own files
+    /// alone, and the two the outcome is stated in. `retry_named` counts.
     pub retry_head: &'static str,
-    pub retry_doing: &'static str,
+    pub retry_logs: &'static str,
     pub retry_minutes: &'static str,
+    pub retry_files: &'static str,
     pub retry_named: &'static str,
     pub retry_none: &'static str,
     /// The row stating what the record holds, above the reset controls.
@@ -500,8 +502,9 @@ const ENGLISH: Strings = Strings {
     unnamed_hide: "Hide",
     unnamed_retry: "Retry",
     retry_head: "Identify the books",
-    retry_doing: "Reading the logs, then the books' own files.",
+    retry_logs: "Reading the logs, then the books' own files.",
     retry_minutes: "This can take a few minutes.",
+    retry_files: "Reading the books' own files.",
     retry_named: "{d} book[s] identified.",
     retry_none: "Nothing new could be identified.",
     recorded_row: "Recorded",
@@ -767,8 +770,9 @@ const GERMAN: Strings = Strings {
     unnamed_hide: "Verbergen",
     unnamed_retry: "Wiederholen",
     retry_head: "Bücher erkennen",
-    retry_doing: "Liest die Protokolle, dann die Dateien der Bücher.",
+    retry_logs: "Liest die Protokolle, dann die Dateien der Bücher.",
     retry_minutes: "Das dauert einige Minuten.",
+    retry_files: "Liest die Dateien der Bücher.",
     retry_named: "{d} Titel erkannt.",
     retry_none: "Nichts Neues erkannt.",
     unidentified: "unbekannt",
@@ -972,8 +976,9 @@ const JAPANESE: Strings = Strings {
     unnamed_hide: "非表示",
     unnamed_retry: "再試行",
     retry_head: "本を特定する",
-    retry_doing: "ログと本のファイルを読んでいます。",
+    retry_logs: "ログと本のファイルを読んでいます。",
     retry_minutes: "数分かかります。",
+    retry_files: "本のファイルを読んでいます。",
     retry_named: "{d}冊を特定しました。",
     retry_none: "新たに特定できた本はありません。",
     unidentified: "冊が不明",
@@ -1163,8 +1168,9 @@ const SIMPLIFIED: Strings = Strings {
     unnamed_hide: "隐藏",
     unnamed_retry: "重试",
     retry_head: "识别书籍",
-    retry_doing: "正在读取日志和书籍文件。",
+    retry_logs: "正在读取日志和书籍文件。",
     retry_minutes: "需要几分钟。",
+    retry_files: "正在读取书籍文件。",
     retry_named: "已识别 {d}本。",
     retry_none: "没有新识别出的书。",
     unidentified: "本未识别",
@@ -1365,8 +1371,9 @@ const TRADITIONAL: Strings = Strings {
     unnamed_hide: "隱藏",
     unnamed_retry: "重試",
     retry_head: "識別書籍",
-    retry_doing: "正在讀取日誌和書籍檔案。",
+    retry_logs: "正在讀取日誌和書籍檔案。",
     retry_minutes: "需要幾分鐘。",
+    retry_files: "正在讀取書籍檔案。",
     retry_named: "已識別 {d}本。",
     retry_none: "沒有新識別出的書。",
     unidentified: "本未識別",

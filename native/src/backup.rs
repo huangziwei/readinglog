@@ -102,19 +102,10 @@ pub fn keep_book(dir: &Path, one: &Store, mark: &str) -> archive::Result<PathBuf
     Ok(at)
 }
 
-/// Write `text` into an archive of one entry, named for `mark`. Answers
-/// where it landed.
-pub fn keep_text(dir: &Path, text: &str, mark: &str) -> archive::Result<PathBuf> {
-    let at = dir.join(BACKUPS_DIR).join(name(Kind::Record, mark));
-    archive::write(&at, &[(RECORD.to_string(), Source::Bytes(text.as_bytes()))])?;
-    Ok(at)
-}
-
 /// What a whole-record reset keeps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Keep {
-    /// An archive of the record and every jacket. `covers::COVERS_DIR` keeps
-    /// its files.
+    /// An archive of the record and the jackets in `covers::COVERS_DIR`.
     Archive,
     /// Nothing. `covers::sweep` empties `covers::COVERS_DIR`.
     Nothing,
@@ -306,6 +297,7 @@ fn jackets_under(dir: &Path) -> Vec<(String, PathBuf)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::HEADER;
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("readinglog-backup-{name}"));
@@ -352,12 +344,12 @@ mod tests {
 
     /// A record of one book with one sitting, and a jacket on disk for it.
     fn read_one(dir: &Path) -> Store {
-        let store = Store::from_text(
-            "#readinglog\t2\n\
+        let store = Store::from_text(&format!(
+            "{HEADER}\n\
              m\t260810:120000\n\
              b\t148207\tB00OKPCRLG\tA Book\tAn Author\t\t\t62.000000\t1\t\t\t0\t\t-1\tEBOK\n\
-             s\t2026-08-07T10:15:01\t2026-08-07T10:55:43\t148207\t2400\t40\t0\ttimed\t\t\t\n",
-        );
+             s\t2026-08-07T10:15:01\t2026-08-07T10:55:43\t148207\t2400\t40\t0\ttimed\t\t\t\n"
+        ));
         std::fs::create_dir_all(dir.join(covers::COVERS_DIR)).unwrap();
         std::fs::write(covers::path(dir, "B00OKPCRLG"), vec![0xFFu8; 64]).unwrap();
         store.save(dir).unwrap();
@@ -454,10 +446,13 @@ mod tests {
         let _ = read_one(&dir);
         // `HEADER` replaced by one this build does not open.
         let text = std::fs::read_to_string(Store::file(&dir)).unwrap();
-        let at = keep_text(
-            &dir,
-            &text.replacen("#readinglog\t2", "#readinglog\t1", 1),
-            "260810:120000",
+        let stamped = text.replacen(HEADER, "#readinglog\t0", 1);
+        let at = dir
+            .join(BACKUPS_DIR)
+            .join(name(Kind::Record, "260810:120000"));
+        archive::write(
+            &at,
+            &[(RECORD.to_string(), Source::Bytes(stamped.as_bytes()))],
         )
         .expect("an archive");
 

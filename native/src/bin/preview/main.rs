@@ -23,17 +23,15 @@ use readinglog_native::ui::splash;
 use readinglog_native::ui::text::TextRenderer;
 use readinglog_native::ui::theme::Theme;
 use readinglog_native::update::{Doing, Failure, Outcome};
-use readinglog_native::view::{Ask, Reset, Shelf, Sort, Span, Window};
+use readinglog_native::view::{Ask, Reset, Retrying, Shelf, Sort, Span, Window};
 
 /// The day the preview is set to, and the second of it.
 const DAY: (i64, i64, i64) = (2026, 9, 16);
 const NOW: i64 = 20 * 3600 + 15 * 60;
 
 /// The panels, by the name `--panel` takes. The first is what a run draws
-/// when it names none, and the tag `panel_tag` leaves off a filename.
-///
-/// The density each carries is `ui::scale`'s: 300 ppi from the Voyage on, and
-/// 212 and 167 on the two older families. `--panel WxH` draws any other size.
+/// when it names none, and the tag `panel_tag` leaves off a filename. The
+/// density each carries is `ui::scale`'s; `--panel WxH` draws any other size.
 const PANELS: &[(&str, u32, u32)] = &[
     // Colorsoft, Oasis 2-3.
     ("pw", 1264, 1680),
@@ -82,9 +80,13 @@ const RESETS: &[(&str, Reset)] = &[
     ("logs", Reset::Rebuild),
 ];
 
-/// The banner over a retry, by the name a `retry:<of>` shot takes and the
-/// books it is stating: none while it runs.
-const RETRIES: &[(&str, Option<usize>)] = &[("doing", None), ("named", Some(3)), ("none", Some(0))];
+/// The banner over a retry, by the name a `retry:<of>` shot takes.
+const RETRIES: &[(&str, Retrying)] = &[
+    ("logs", Retrying::Logs),
+    ("files", Retrying::Files),
+    ("named", Retrying::Named(3)),
+    ("none", Retrying::Named(0)),
+];
 
 /// What one of [`BANNERS`] is saying, made when a shot names it.
 type Said = fn() -> Banner;
@@ -320,8 +322,8 @@ fn thinned_for(shot: &Shot, opts: &Opts, art: &Path) -> Option<Store> {
             store.floor = "260810:120000".into();
             return Some(store);
         }
-        // The book listed last cleared, its record kept: it sorts last either
-        // way, so every other index stands.
+        // The book listed last cleared, its record kept. It sorts last either
+        // way; every other index stands.
         ("book" | "books", Some(of)) if of.ends_with("cleared") => {
             let mut store = fixture::library(opts.day, art);
             let last = Stats::build(&store, opts.day, true).books.last()?.clone();
@@ -461,15 +463,15 @@ fn resetting(app: &mut App, fb: &mut Framebuffer, of: &str) -> Result<()> {
 /// The banner over a retry, at whichever of its lines `of` names, drawn a
 /// third of the way through the logs it counts while it runs.
 fn retrying(app: &mut App, fb: &mut Framebuffer, of: &str) -> Result<()> {
-    let Some((_, named)) = RETRIES.iter().find(|(name, _)| *name == of) else {
+    let Some((_, said)) = RETRIES.iter().find(|(name, _)| *name == of) else {
         return Err(anyhow!("no retry banner called {of}"));
     };
     let s = app.language().strings();
-    let step = match named {
-        None => splash::step(s.step_logs, 31, 97),
-        Some(_) => String::new(),
+    let step = match said {
+        Retrying::Logs => splash::step(s.step_logs, 31, 97),
+        _ => String::new(),
     };
-    let (headline, note) = readinglog_native::view::retrying(*named, s);
+    let (headline, note) = said.banner(s);
     app.banner(fb, headline, &note, &step, true)
 }
 
@@ -775,6 +777,7 @@ fn everything() -> Vec<Shot> {
         "update:done",
         "update:failed",
         "reset:logs",
+        "retry:logs",
         "retry:named",
     ]
     .iter()

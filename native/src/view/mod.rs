@@ -135,16 +135,30 @@ impl Reset {
     }
 }
 
-/// The banner over a retry: the headline naming the act, and what stands under
-/// it — while `named` is `None`, the pass and how long it runs, as the first
-/// run's own splash states them; once it is stated, what the pass came to.
-pub fn retrying(named: Option<usize>, s: &Strings) -> (&'static str, Vec<String>) {
-    let said = match named {
-        None => vec![s.retry_doing.to_string(), s.retry_minutes.to_string()],
-        Some(0) => vec![s.retry_none.to_string()],
-        Some(named) => vec![crate::lang::counted(s.retry_named, named as i64)],
-    };
-    (s.retry_head, said)
+/// What the banner over a retry is saying.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Retrying {
+    /// Running, with every log to read before the books' own files.
+    Logs,
+    /// Running over those files alone, the logs holding no counter the record
+    /// is missing.
+    Files,
+    /// Over, having named this many books.
+    Named(usize),
+}
+
+impl Retrying {
+    /// The headline naming the act, and what stands under it: the pass, with
+    /// how long it runs where that is the long one, else what it came to.
+    pub fn banner(self, s: &Strings) -> (&'static str, Vec<String>) {
+        let said = match self {
+            Retrying::Logs => vec![s.retry_logs.to_string(), s.retry_minutes.to_string()],
+            Retrying::Files => vec![s.retry_files.to_string()],
+            Retrying::Named(0) => vec![s.retry_none.to_string()],
+            Retrying::Named(named) => vec![crate::lang::counted(s.retry_named, named as i64)],
+        };
+        (s.retry_head, said)
+    }
 }
 
 /// A question standing over a book's own screen, which [`Hit::Answer`] carries
