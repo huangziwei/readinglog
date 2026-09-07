@@ -51,10 +51,20 @@ pub enum TouchEvent {
 /// [`classify_swipe`]. [`crate::app::App`] maps these to page turns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SwipeDir {
-    /// Right-to-left drag → next page (the current page slides off to the left).
+    /// Right-to-left drag → next page.
     Next,
     /// Left-to-right drag → previous page.
     Prev,
+}
+
+impl SwipeDir {
+    /// `1` forward, `-1` back.
+    pub fn step(self) -> i64 {
+        match self {
+            Self::Next => 1,
+            Self::Prev => -1,
+        }
+    }
 }
 
 // _IOW('E', 0x90, int). Call sites cast with `as _` for `libc::ioctl`.
@@ -494,6 +504,13 @@ fn first_hex_word(block: &str, prefix: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `Next` steps forward and `Prev` back.
+    #[test]
+    fn a_swipe_steps_both_ways() {
+        assert_eq!(SwipeDir::Next.step(), 1);
+        assert_eq!(SwipeDir::Prev.step(), -1);
+    }
 
     /// Verbatim `/proc/bus/input/devices` from a Kindle Scribe on 5.19.4.0.1:
     /// `WacomDigitizer` precedes `pt_mt`, carrying `EV_ABS` and

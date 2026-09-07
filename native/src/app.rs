@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 
 use crate::date;
+use crate::eink::buttons::PageButton;
 use crate::eink::fb::{Framebuffer, MxcfbRect, WAVEFORM_MODE_GC16};
 use crate::eink::input::{Input, InputEvent};
 use crate::eink::screenshot;
@@ -471,8 +472,12 @@ impl App {
                         Err(err) => eprintln!("screenshot: {err:#}"),
                     }
                 }
-                InputEvent::Page(_) => {
-                    if let Action::Redraw = self.paged(1) {
+                // `page` carries the orientation standing before this read; a
+                // change drops it.
+                InputEvent::Page(page) => {
+                    if !input.follow_orientation_now()
+                        && let Action::Redraw = self.pressed(page)
+                    {
                         self.draw(fb)?;
                     }
                 }
@@ -963,10 +968,12 @@ impl App {
 
     /// `dir` through [`App::paged`].
     fn swiped(&mut self, dir: SwipeDir) -> Action {
-        match dir {
-            SwipeDir::Next => self.paged(1),
-            SwipeDir::Prev => self.paged(-1),
-        }
+        self.paged(dir.step())
+    }
+
+    /// One step from the bezel, [`App::swiped`]'s counterpart.
+    fn pressed(&mut self, page: PageButton) -> Action {
+        self.paged(page.step())
     }
 
     /// One step forward or back: a span on Rhythm, a page of the list, the

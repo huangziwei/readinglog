@@ -19,12 +19,22 @@ const EVENT_BYTES: usize = 16;
 // _IOW('E', 0x90, int). Call sites cast with `as _` for `libc::ioctl`.
 const EVIOCGRAB: libc::c_int = 0x40044590;
 
-/// Which bezel button fired. The KOA2 maps `KEY_PAGEUP` (top) → `Next` and
-/// `KEY_PAGEDOWN` (bottom) → `Prev`.
+/// Which bezel button fired: `KEY_PAGEUP` (top) → `Next`, `KEY_PAGEDOWN`
+/// (bottom) → `Prev`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PageButton {
     Prev,
     Next,
+}
+
+impl PageButton {
+    /// `1` forward, `-1` back.
+    pub fn step(self) -> i64 {
+        match self {
+            Self::Next => 1,
+            Self::Prev => -1,
+        }
+    }
 }
 
 pub struct Buttons {
@@ -163,4 +173,16 @@ fn find_button_device() -> Result<Option<PathBuf>> {
         }
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PageButton;
+
+    /// `Next` steps forward and `Prev` back.
+    #[test]
+    fn a_bezel_press_steps_both_ways() {
+        assert_eq!(PageButton::Next.step(), 1);
+        assert_eq!(PageButton::Prev.step(), -1);
+    }
 }
