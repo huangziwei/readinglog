@@ -145,8 +145,7 @@ impl Failure {
 /// How an update ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
-    /// No route off this Kindle. Said before anything is asked for: the
-    /// resolver's own timeout is the difference between this and a hang.
+    /// No route off this Kindle, said before anything is asked for.
     Offline,
     /// The newest release is the one running.
     UpToDate,
@@ -158,9 +157,8 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    /// The banner: a headline, and the lines under it. Every ending that is
-    /// not an update says where to get one by hand, as an address to type
-    /// into a computer.
+    /// The banner: a headline, and the lines under it. [`Outcome::Offline`] and
+    /// [`Outcome::Failed`] carry [`RELEASES_URL`] through [`by_hand`].
     pub fn banner(&self, s: &Strings) -> (String, Vec<String>) {
         match self {
             Outcome::UpToDate => (
@@ -188,8 +186,7 @@ fn by_hand(why: &str, s: &Strings) -> Vec<String> {
 //------------------------------------------------------------------------------
 
 /// The newest release in `releases` carrying an archive. Drafts and
-/// prereleases are passed over: a prerelease is published to be tried on one
-/// device, and offering it to every device is not what publishing one means.
+/// prereleases are passed over.
 pub fn pick_release(releases: &[ApiRelease]) -> Option<Release> {
     for release in releases {
         if release.draft || release.prerelease {
@@ -228,20 +225,31 @@ fn numbers(version: &str) -> Vec<u64> {
         .collect()
 }
 
+/// Whether `version` carries anything past its dotted numbers, as `0.2.5-dev`
+/// does.
+fn prerelease(version: &str) -> bool {
+    version
+        .trim()
+        .trim_start_matches(['v', 'V'])
+        .split('.')
+        .any(|part| !part.chars().all(|c| c.is_ascii_digit()))
+}
+
 /// Is `offered` a later version than `running`? A missing part is a zero, and
-/// equal is not later: an update is offered only when there is one.
+/// equal is not later: an update is offered only when there is one. Over equal
+/// numbers a tagged `running` sits below an untagged `offered`.
 pub fn newer(offered: &str, running: &str) -> bool {
-    let (offered, running) = (numbers(offered), numbers(running));
-    for at in 0..offered.len().max(running.len()) {
-        let (a, b) = (
-            offered.get(at).copied().unwrap_or(0),
-            running.get(at).copied().unwrap_or(0),
+    let (a, b) = (numbers(offered), numbers(running));
+    for at in 0..a.len().max(b.len()) {
+        let (x, y) = (
+            a.get(at).copied().unwrap_or(0),
+            b.get(at).copied().unwrap_or(0),
         );
-        if a != b {
-            return a > b;
+        if x != y {
+            return x > y;
         }
     }
-    false
+    prerelease(running) && !prerelease(offered)
 }
 
 /// The `sha256sum`-style line for `name`, or the whole file when it carries a
@@ -362,9 +370,7 @@ fn fetch(
     let _ = fs::remove_dir_all(&staging);
     let _ = fs::remove_file(&zip);
 
-    // Every step is a full-screen repaint and a percentage moves several times
-    // a second; a mark that changes every other percent is enough to look
-    // live without flashing the panel.
+    // `last` holds `mark` to one repaint every other percent.
     let last = std::cell::Cell::new(u64::MAX);
     let progress = |got: u64, total: Option<u64>| {
         let mark = match total {
@@ -407,8 +413,7 @@ fn fetch(
         }
     }
 
-    // The archive may or may not carry Unix modes. Nothing under bin/ is
-    // assumed executable.
+    // Nothing under `bin/` is assumed executable.
     mark_executable(&staging.join("bin"));
 
     if !states_version(&staging.join(MARKER), &release.tag) {
@@ -437,8 +442,7 @@ fn states_version(exe: &Path, tag: &str) -> bool {
         return false;
     };
     let said = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    // The same version by [`newer`]'s reckoning, which is the one the offer
-    // was made under: neither is later than the other.
+    // [`newer`] answers false both ways on the same version.
     let same = !newer(&said, tag) && !newer(tag, &said);
     if !out.status.success() || !same {
         eprintln!("update: staged copy says {said:?}, release says {tag:?}");
@@ -483,9 +487,8 @@ fn walk(dir: &Path, at: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// `from` over `to`, whether or not anything stands at `to`. The old copy is
-/// moved aside first: one of these is the running binary, and renaming a busy
-/// file *away* is allowed on filesystems where renaming over it is not.
+/// `from` over `to`, whether or not anything stands at `to`. The copy at `to`
+/// is renamed aside first.
 fn replace(from: &Path, to: &Path) -> bool {
     let aside = beside(to, "old");
     let _ = fs::remove_file(&aside);
@@ -506,8 +509,7 @@ fn replace(from: &Path, to: &Path) -> bool {
 }
 
 /// The downloaded file against the digest the release publishes for it. A
-/// sidecar that cannot be read is not a mismatch; the gate that holds either
-/// way is [`states_version`].
+/// sidecar that cannot be read is not a mismatch.
 fn matches(client: &http::Client, sidecar: &str, name: &str, zip: &Path) -> bool {
     let Ok(text) = client.text(sidecar, "text/plain") else {
         eprintln!("update: the checksum could not be read");
@@ -551,8 +553,7 @@ fn digest_of(path: &Path) -> Option<String> {
     )
 }
 
-/// Every file directly under `dir`, executable. Best effort: the partition is
-/// FAT and its modes come from the mount as often as from the file.
+/// Every file directly under `dir`, executable. Best effort.
 fn mark_executable(dir: &Path) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
@@ -679,6 +680,19 @@ mod tests {
         assert!(!newer(&format!("v{VERSION}"), VERSION));
     }
 
+    /// A tagged build takes the release of its own numbers, and no tagged build
+    /// is offered to the release.
+    #[test]
+    fn a_tagged_build_is_below_its_release() {
+        assert!(newer("0.2.5", "0.2.5-dev"));
+        assert!(newer("v0.2.5", "0.2.5-dev"));
+        assert!(!newer("0.2.5-dev", "0.2.5"));
+        assert!(!newer("0.2.5-dev", "0.2.5-dev"));
+        // `numbers` decides ahead of `prerelease`, either way round.
+        assert!(newer("0.2.6-dev", "0.2.5"));
+        assert!(!newer("0.2.4", "0.2.5-dev"));
+    }
+
     #[test]
     fn a_digest_is_read_off_whichever_shape_the_sidecar_takes() {
         let d = "a".repeat(64);
@@ -772,7 +786,7 @@ mod tests {
 
     #[test]
     fn a_tap_stops_it_only_while_stopping_leaves_nothing_half_done() {
-        // The flag is read here and nowhere later.
+        // `stoppable` gates the flag `run` reads.
         assert!(Doing::Asking.stoppable());
         assert!(
             Doing::Downloading {

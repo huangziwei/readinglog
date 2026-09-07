@@ -103,6 +103,11 @@ impl App {
         self.theme = Theme::sized(self.theme.screen.w as u32, self.theme.screen.h as u32, size);
     }
 
+    /// Rebuild `theme` at `fb`'s size and the stored `text_size`.
+    fn took_size(&mut self, fb: &Framebuffer) {
+        self.theme = Theme::sized(fb.var.xres, fb.var.yres, self.settings.text_size);
+    }
+
     /// Draw in `lang`, past `Lang::detect`.
     pub fn set_language(&mut self, lang: Lang) {
         self.lang = lang;
@@ -428,6 +433,8 @@ impl App {
 
     /// Run until `Action::Quit`.
     pub fn run(&mut self, fb: &mut Framebuffer, input: &mut Input) -> Result<()> {
+        fb.pump_events();
+        self.took_size(fb);
         self.draw(fb)?;
         let mut down: Option<(u32, u32)> = None;
         loop {
@@ -490,6 +497,12 @@ impl App {
                     input.retake();
                     if input.follow_orientation() {
                         down = None;
+                    }
+                    // `Pump::resized` rebuilds `theme` and draws the whole screen.
+                    if pump.resized.is_some() {
+                        self.took_size(fb);
+                        self.draw(fb)?;
+                        continue;
                     }
                     match pump.covered {
                         // Covered: nothing is drawn.
