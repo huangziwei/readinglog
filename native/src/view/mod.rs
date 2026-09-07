@@ -52,6 +52,9 @@ pub enum Hit {
     TextSize(crate::settings::TextSize),
     /// Whether a total counts reading on books the catalog names none of.
     ShowUnnamed(bool),
+    /// Read the logs, the catalog and the sidecars again, to name the books
+    /// nothing on the record names yet.
+    Retry,
     /// The colours the charts are drawn in.
     ColorScheme(crate::settings::ColorScheme),
     /// Go looking for a newer release.
@@ -130,6 +133,18 @@ impl Reset {
         };
         (headline.into(), vec![said.into()])
     }
+}
+
+/// The banner over a retry: the headline naming the act, and what stands under
+/// it — while `named` is `None`, the pass and how long it runs, as the first
+/// run's own splash states them; once it is stated, what the pass came to.
+pub fn retrying(named: Option<usize>, s: &Strings) -> (&'static str, Vec<String>) {
+    let said = match named {
+        None => vec![s.retry_doing.to_string(), s.retry_minutes.to_string()],
+        Some(0) => vec![s.retry_none.to_string()],
+        Some(named) => vec![crate::lang::counted(s.retry_named, named as i64)],
+    };
+    (s.retry_head, said)
 }
 
 /// A question standing over a book's own screen, which [`Hit::Answer`] carries

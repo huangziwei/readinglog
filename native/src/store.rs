@@ -356,10 +356,7 @@ impl Store {
         };
         // Ahead of the sittings: `Self::barred` places one through `ends`.
         for (k, v) in crate::log::line::frombook_map(refs.iter().copied()) {
-            match self.ends.iter_mut().find(|(key, _)| *key == k) {
-                Some(held) => held.1 = v,
-                None => self.ends.push((k, v)),
-            }
+            self.learn_end(k, v);
         }
         self.sort_ends();
         for (ep, ms, words) in crate::log::line::counter_map(refs.iter().copied()) {
@@ -445,6 +442,43 @@ impl Store {
             Path::new(source::DUMP_DIR),
             on,
         )
+    }
+
+    /// Read the whole log for what each `EndPos` class states — its book end
+    /// in [`Self::ends`], its counter in [`Self::counters`] — and fold in no
+    /// sitting. Reading the reader emptied stays gone, and a class the record
+    /// holds no counter for gains one wherever the log still states it.
+    /// Answers the classes that gained a counter.
+    pub fn relearn_classes(&mut self, on: &mut dyn FnMut(usize, usize)) -> usize {
+        self.classes_from(
+            Path::new(source::LIVE_LOG),
+            Path::new(source::LOG_DIR),
+            Path::new(source::DUMP_DIR),
+            on,
+        )
+    }
+
+    /// [`Self::relearn_classes`] over the three log sources named.
+    fn classes_from(
+        &mut self,
+        live: &Path,
+        chunks: &Path,
+        dumps: &Path,
+        on: &mut dyn FnMut(usize, usize),
+    ) -> usize {
+        let got = source::collect_from(live, chunks, dumps, "", on);
+        let lines: Vec<&str> = got.lines.iter().map(String::as_str).collect();
+        let before = self.counters.len();
+        for (k, v) in crate::log::line::frombook_map(lines.iter().copied()) {
+            self.learn_end(k, v);
+        }
+        for (ep, ms, words) in crate::log::line::counter_map(lines.iter().copied()) {
+            self.learn_counter(ep, ms, words);
+        }
+        self.sort_ends();
+        self.counters.sort();
+        self.counters.dedup();
+        self.counters.len() - before
     }
 
     /// [`Self::rebuild`] over the three log sources named.
@@ -774,10 +808,7 @@ impl Store {
         let before = self.sessions.len();
         self.sessions.extend(other.sessions.iter().cloned());
         for &(k, v) in &other.ends {
-            match self.ends.iter_mut().find(|(key, _)| *key == k) {
-                Some(held) => held.1 = v,
-                None => self.ends.push((k, v)),
-            }
+            self.learn_end(k, v);
         }
         self.books.extend(other.books.iter().cloned());
         for (extent, key) in &other.keys {
@@ -934,6 +965,16 @@ impl Store {
         let at = (extent, key.to_string());
         if let Err(i) = self.keys.binary_search(&at) {
             self.keys.insert(i, at);
+        }
+    }
+
+    /// Hold `from_book` as the book end of the class `end_position` names.
+    /// The last statement stands: the timer logs a book's end once and writes
+    /// over it with the place the reading stopped at.
+    fn learn_end(&mut self, end_position: i64, from_book: i64) {
+        match self.ends.iter_mut().find(|(key, _)| *key == end_position) {
+            Some(held) => held.1 = from_book,
+            None => self.ends.push((end_position, from_book)),
         }
     }
 
@@ -2369,6 +2410,72 @@ mod tests {
         assert_eq!(store.sessions.len(), 2, "the older sitting was lost");
         assert!(store.sessions.iter().any(|s| s.end_position == 999));
         assert!(store.floor.is_empty(), "the floor stayed up");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reading_the_classes_again_reaches_a_sitting_recorded_without_one() {
+        let dir = scratch("classes");
+        let live = dir.join("messages");
+        std::fs::write(
+            &live,
+            format!(
+                "{}\n{}\n",
+                turn("260807:101501", 148_207, 900_000, 4_100),
+                turn("260807:101543", 990_111, 1_500_000, 7_000)
+            ),
+        )
+        .expect("a log to read");
+
+        // One sitting, no counter for a sidecar to match, and a mark past
+        // everything the log holds.
+        let mut store = Store {
+            sessions: vec![session(
+                "2026-08-07T10:15:01",
+                "2026-08-07T10:20:00",
+                148_207,
+                299,
+            )],
+            mark: "260807:101543".into(),
+            ..Store::default()
+        };
+        assert!(store.counters.is_empty());
+        let learned =
+            store.classes_from(&live, &dir.join("none"), &dir.join("none"), &mut |_, _| {});
+
+        assert_eq!(learned, 2, "the log's classes did not reach the record");
+        assert_eq!(store.sessions.len(), 1, "a sitting came in with them");
+        // The sidecar arm can now name the book the sitting was read on.
+        let named = store.recover(&[card("Vom Kriege", 900_000, 4_100)]);
+        assert_eq!(named, 1, "the counter reached no sidecar");
+        assert_eq!(store.books.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reading_the_classes_again_hands_back_no_reading_the_reader_emptied() {
+        let dir = scratch("classes-floored");
+        let live = dir.join("messages");
+        std::fs::write(
+            &live,
+            format!(
+                "{}\n{}\n",
+                page("260807:101501", 7_390_020),
+                page("260807:101543", 7_431_463)
+            ),
+        )
+        .expect("a log to read");
+
+        // The two stamps that hold the parser back, both above the log.
+        let mut store = having_cleared("260807:120000");
+        store.mark = "260807:101543".into();
+        store.floor = "260807:120000".into();
+        store.classes_from(&live, &dir.join("none"), &dir.join("none"), &mut |_, _| {});
+
+        assert!(store.sessions.is_empty(), "emptied reading came back");
+        assert_eq!(store.floor, "260807:120000", "the floor came down");
+        assert_eq!(store.cleared.len(), 1, "a book's stamp came off");
+        assert!(!store.counters.is_empty(), "no class reached the record");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

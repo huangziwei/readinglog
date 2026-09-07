@@ -297,7 +297,7 @@ fn shelf_chips(cx: &mut Ctx, area: Rect, on: Shelf, window: Option<Window>) -> i
         .iter()
         .map(|shelf| (shelf.label(cx.lang), script))
         .collect();
-    let placed = chrome::chip_layout(cx.text, theme, &options, area.w);
+    let placed = chrome::chip_layout(cx.text, theme, &options, None, area.w);
     let at = shelves.iter().position(|shelf| *shelf == on).unwrap_or(0);
     let drawn = chrome::chips(cx.fb, cx.text, theme, area, &options, &placed, at);
     let mut edge = area.x;

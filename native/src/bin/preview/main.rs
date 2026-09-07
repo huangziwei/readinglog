@@ -82,6 +82,10 @@ const RESETS: &[(&str, Reset)] = &[
     ("logs", Reset::Rebuild),
 ];
 
+/// The banner over a retry, by the name a `retry:<of>` shot takes and the
+/// books it is stating: none while it runs.
+const RETRIES: &[(&str, Option<usize>)] = &[("doing", None), ("named", Some(3)), ("none", Some(0))];
+
 /// What one of [`BANNERS`] is saying, made when a shot names it.
 type Said = fn() -> Banner;
 
@@ -370,6 +374,9 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
     if shot.name == "reset" {
         return resetting(app, fb, shot.of.as_deref().unwrap_or("logs"));
     }
+    if shot.name == "retry" {
+        return retrying(app, fb, shot.of.as_deref().unwrap_or("named"));
+    }
     let Some((_, tab)) = SCREENS.iter().find(|(name, _)| *name == shot.name) else {
         return Err(anyhow!("no screen or sketch called {}", shot.name));
     };
@@ -449,6 +456,21 @@ fn resetting(app: &mut App, fb: &mut Framebuffer, of: &str) -> Result<()> {
         Reset::Rebuild => splash::step(s.step_logs, 31, 97),
     };
     app.banner(fb, &headline, &note, &step, true)
+}
+
+/// The banner over a retry, at whichever of its lines `of` names, drawn a
+/// third of the way through the logs it counts while it runs.
+fn retrying(app: &mut App, fb: &mut Framebuffer, of: &str) -> Result<()> {
+    let Some((_, named)) = RETRIES.iter().find(|(name, _)| *name == of) else {
+        return Err(anyhow!("no retry banner called {of}"));
+    };
+    let s = app.language().strings();
+    let step = match named {
+        None => splash::step(s.step_logs, 31, 97),
+        Some(_) => String::new(),
+    };
+    let (headline, note) = readinglog_native::view::retrying(*named, s);
+    app.banner(fb, headline, &note, &step, true)
 }
 
 /// Every hit box the frame recorded, outlined over it.
@@ -649,6 +671,9 @@ fn list() {
     // As does `RESETS`.
     let resets: Vec<&str> = RESETS.iter().map(|(name, _)| *name).collect();
     println!("  reset   (:{})", resets.join(" :"));
+    // And `RETRIES`.
+    let retries: Vec<&str> = RETRIES.iter().map(|(name, _)| *name).collect();
+    println!("  retry   (:{})", retries.join(" :"));
     println!("sketches:");
     match sketch::ALL.is_empty() {
         true => println!("  (none)"),
@@ -750,6 +775,7 @@ fn everything() -> Vec<Shot> {
         "update:done",
         "update:failed",
         "reset:logs",
+        "retry:named",
     ]
     .iter()
     .map(|spec| Shot::read(spec))

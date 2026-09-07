@@ -15,6 +15,10 @@ use super::{Confirm, Ctx, Hit, Reset};
 /// The index no option is drawn filled at.
 const NONE_ON: usize = usize::MAX;
 
+/// Where the retry chip sits in the unidentified books row, past its two
+/// values.
+const RETRY_CHIP: usize = 2;
+
 /// One setting: what it is called, and the values it takes.
 struct Row<'a> {
     label: &'a str,
@@ -25,6 +29,9 @@ struct Row<'a> {
     hit: Box<dyn Fn(usize) -> Hit + 'a>,
     /// Whether this run keeps only the chips its first line holds.
     one_row: bool,
+    /// The chip this run breaks before, set off from the values beside it: a
+    /// button standing in a row of settings, never one of the set.
+    apart: Option<usize>,
 }
 
 /// One line of a section.
@@ -53,6 +60,14 @@ impl<'a> Line<'a> {
                 .map(|(text, script)| (text.as_str(), *script))
                 .collect(),
             Line::Says { .. } => Vec::new(),
+        }
+    }
+
+    /// Where this line's run breaks, which a stated line has none of.
+    fn apart(&self) -> Option<usize> {
+        match self {
+            Line::Set(row) => row.apart,
+            Line::Says { .. } => None,
         }
     }
 }
@@ -151,6 +166,7 @@ fn sections<'a>(
             .unwrap_or(0),
         hit: Box::new(|i| Hit::Language(Lang::ALL[i.min(Lang::ALL.len() - 1)])),
         one_row: false,
+        apart: None,
     };
 
     let week = Row {
@@ -171,6 +187,7 @@ fn sections<'a>(
             .unwrap_or(0),
         hit: Box::new(|i| Hit::WeekStart(WeekStart::ALL[i.min(WeekStart::ALL.len() - 1)])),
         one_row: false,
+        apart: None,
     };
 
     let size = Row {
@@ -192,6 +209,7 @@ fn sections<'a>(
             .unwrap_or(1),
         hit: Box::new(|i| Hit::TextSize(TextSize::ALL[i.min(TextSize::ALL.len() - 1)])),
         one_row: false,
+        apart: None,
     };
 
     let scheme = colour.then(|| Row {
@@ -207,17 +225,25 @@ fn sections<'a>(
             .unwrap_or(0),
         hit: Box::new(|i| Hit::ColorScheme(ColorScheme::ALL[i.min(ColorScheme::ALL.len() - 1)])),
         one_row: false,
+        apart: None,
     });
 
+    // The third chip is never filled, and stands apart: it sets nothing, it
+    // reads every source of identity again to name what is unidentified.
     let unnamed = Row {
         label: s.unnamed_row,
         options: vec![
             (s.unnamed_show.to_string(), plain),
             (s.unnamed_hide.to_string(), plain),
+            (s.unnamed_retry.to_string(), plain),
         ],
         on: !settings.show_unnamed as usize,
-        hit: Box::new(|i| Hit::ShowUnnamed(i == 0)),
+        hit: Box::new(|i| match i {
+            RETRY_CHIP => Hit::Retry,
+            i => Hit::ShowUnnamed(i == 0),
+        }),
         one_row: false,
+        apart: Some(RETRY_CHIP),
     };
 
     // Never filled: one chip, a button.
@@ -227,6 +253,7 @@ fn sections<'a>(
         on: NONE_ON,
         hit: Box::new(|_| Hit::Update),
         one_row: false,
+        apart: None,
     };
 
     // `recorded` states the record `reset` and `restore` below act on.
@@ -248,6 +275,7 @@ fn sections<'a>(
         on: NONE_ON,
         hit: Box::new(|i| Hit::Wipe(i == 0)),
         one_row: false,
+        apart: None,
     });
 
     // `restore_logs` leads where `record.floored`, then `record.backups`,
@@ -267,6 +295,7 @@ fn sections<'a>(
             (false, i) => Hit::Restore(i),
         }),
         one_row: true,
+        apart: None,
     });
 
     vec![
@@ -382,7 +411,7 @@ fn section_height(cx: &mut Ctx, section: &Section, theme: &Theme, width: i32, ai
         .iter()
         .map(|line| {
             let options = line.options();
-            let placed = chrome::chip_layout(cx.text, theme, &options, width);
+            let placed = chrome::chip_layout(cx.text, theme, &options, line.apart(), width);
             let block = placed.iter().map(|c| c.bottom()).max().unwrap_or(0);
             (block + theme.gap).max(theme.row_h)
         })
@@ -460,9 +489,9 @@ pub fn draw(
         .iter()
         .flat_map(|s| s.lines.iter().map(Line::label))
         .collect();
-    let runs: Vec<Vec<(&str, Script)>> = page
+    let runs: Vec<chrome::Run> = page
         .iter()
-        .flat_map(|s| s.lines.iter().map(Line::options))
+        .flat_map(|s| s.lines.iter().map(|line| (line.options(), line.apart())))
         .collect();
     let column = chrome::chip_column(cx.text, theme, &labels, &runs, area.w);
     let width = (area.w - column).max(1);
@@ -496,7 +525,10 @@ pub fn draw(
             section.lines.iter().map(Line::options).collect();
         let mut placed: Vec<Vec<Rect>> = borrowed
             .iter()
-            .map(|options| chrome::chip_layout(cx.text, theme, options, width))
+            .zip(section.lines.iter())
+            .map(|(options, line)| {
+                chrome::chip_layout(cx.text, theme, options, line.apart(), width)
+            })
             .collect();
         // A run that may not wrap keeps what fits on its own line. The page
         // has no scroll: a run free to grow pushes the sections under it off
@@ -783,6 +815,58 @@ mod tests {
         assert_eq!((archives.hit)(1), Hit::Restore(0));
         assert_eq!((archives.hit)(2), Hit::Restore(1));
         assert!(archives.one_row, "the run would grow without end");
+    }
+
+    /// The unidentified books row of a page drawn in `lang`, whatever else the
+    /// record section offers under it.
+    fn unnamed_row<'a>(page: &'a [Section<'a>], lang: Lang) -> &'a Row<'a> {
+        let at = page
+            .iter()
+            .position(|section| section.heading == lang.strings().the_record)
+            .expect("the record section");
+        row(page, at, 0)
+    }
+
+    #[test]
+    fn the_unidentified_row_carries_a_retry_past_its_two_values() {
+        let mut settings = Settings::new(Lang::English);
+        let empty = Record::default();
+        let page = sections(Lang::English, &settings, true, &empty);
+        let unnamed = unnamed_row(&page, Lang::English);
+        assert_eq!(unnamed.options.len(), 3);
+        assert_eq!((unnamed.hit)(0), Hit::ShowUnnamed(true));
+        assert_eq!((unnamed.hit)(1), Hit::ShowUnnamed(false));
+        assert_eq!((unnamed.hit)(RETRY_CHIP), Hit::Retry);
+        // Set either way, the lit chip is one of the two values: the button is
+        // never a state this page could be showing.
+        for show in [true, false] {
+            settings.show_unnamed = show;
+            let page = sections(Lang::English, &settings, true, &empty);
+            let unnamed = unnamed_row(&page, Lang::English);
+            assert_eq!(unnamed.on, !show as usize);
+            assert_ne!(unnamed.on, RETRY_CHIP, "the button drawn filled");
+            assert_eq!(
+                unnamed.apart,
+                Some(RETRY_CHIP),
+                "the button reads as a value"
+            );
+        }
+    }
+
+    #[test]
+    fn every_language_names_the_retry_and_keeps_it_off_the_two_values() {
+        for lang in Lang::ALL {
+            let s = lang.strings();
+            let settings = Settings::new(lang);
+            let empty = Record::default();
+            let page = sections(lang, &settings, true, &empty);
+            let unnamed = unnamed_row(&page, lang);
+            let retry = unnamed.options[RETRY_CHIP].0.as_str();
+            assert!(!retry.is_empty(), "{lang:?}");
+            assert_eq!(retry, s.unnamed_retry, "{lang:?}");
+            assert_ne!(retry, s.unnamed_show, "{lang:?}");
+            assert_ne!(retry, s.unnamed_hide, "{lang:?}");
+        }
     }
 
     #[test]

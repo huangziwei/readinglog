@@ -464,6 +464,10 @@ impl App {
                             self.update(fb, input)?;
                             self.draw(fb)?;
                         }
+                        Action::Retry => {
+                            self.retry(fb, input)?;
+                            self.draw(fb)?;
+                        }
                         Action::Resetting(about) => {
                             self.resetting(fb, about)?;
                             self.draw(fb)?;
@@ -754,6 +758,7 @@ impl App {
                 self.state.books_from = at;
             }
             Hit::Update => return Action::Update,
+            Hit::Retry => return Action::Retry,
             Hit::Prev => return self.paged(-1),
             Hit::Next => return self.paged(1),
             Hit::Clear(index) => return self.put(index, view::Ask::Clear),
@@ -854,6 +859,34 @@ impl App {
         Ok(())
     }
 
+    /// Read every source of identity again and state how many books that
+    /// named, over a banner. No sitting is folded in: only the rows placing
+    /// one on a book are read again, so what the reader emptied stays gone.
+    fn retry(&mut self, fb: &mut Framebuffer, input: &mut Input) -> Result<()> {
+        let (headline, doing) = view::retrying(None, self.lang.strings());
+        self.banner(fb, headline, &doing, "", true)?;
+        let before = self.unnamed_books();
+        // The class rows first: a sitting the record holds no counter for
+        // reaches no sidecar.
+        let learned =
+            self.over_the_logs(fb, headline, &doing, |store, on| store.relearn_classes(on));
+        eprintln!("retry: {learned} classes the record held no counter for");
+        if learned > 0 {
+            self.store_it("retry");
+        }
+        self.relearn();
+        let named = before.saturating_sub(self.unnamed_books());
+        eprintln!("retry: {before} books no record named, {named} named");
+        let (headline, said) = view::retrying(Some(named), self.lang.strings());
+        self.banner(fb, headline, &said, "", true)?;
+        self.hold(input, OUTCOME_LINGER)
+    }
+
+    /// Books read that no record names, whatever the page is set to show.
+    fn unnamed_books(&self) -> usize {
+        crate::stats::Stats::build(&self.store, self.today, true).unnamed_books()
+    }
+
     /// `catalog::read` through `Store::remember` and `Store::keep_covers`,
     /// then `Stats::build`. `Store::absorb` writes `sessions` and `ends`;
     /// every title, author and jacket in `Store::books` arrives here.
@@ -935,13 +968,20 @@ impl App {
         }
     }
 
-    /// `Store::rebuild`, counting the log files it opens onto the banner.
-    fn reread(&mut self, fb: &mut Framebuffer, headline: &str, note: &[String]) {
-        // `Store::rebuild` holds `self.store`, `App::banner` holds `self`.
+    /// One pass over the device's logs, counting the files it opens onto the
+    /// banner. The pass holds `self.store`, `App::banner` holds `self`, so the
+    /// record is held out for the length of it.
+    fn over_the_logs(
+        &mut self,
+        fb: &mut Framebuffer,
+        headline: &str,
+        note: &[String],
+        pass: impl FnOnce(&mut crate::store::Store, &mut dyn FnMut(usize, usize)) -> usize,
+    ) -> usize {
         let counting = self.lang.strings().step_logs;
         let mut store = std::mem::take(&mut self.store);
         let mut painted = usize::MAX;
-        let added = store.rebuild(&mut |done, total| {
+        let out = pass(&mut store, &mut |done, total| {
             if done == painted {
                 return;
             }
@@ -950,6 +990,12 @@ impl App {
             let _ = self.banner(fb, headline, note, &step, false);
         });
         self.store = store;
+        out
+    }
+
+    /// `Store::rebuild`, counting the log files it opens onto the banner.
+    fn reread(&mut self, fb: &mut Framebuffer, headline: &str, note: &[String]) {
+        let added = self.over_the_logs(fb, headline, note, |store, on| store.rebuild(on));
         eprintln!("reread: {added} sittings the record did not hold");
         self.store_it("reread");
     }
@@ -1052,6 +1098,8 @@ enum Action {
     Quit,
     /// Go looking for a newer release, over the whole screen.
     Update,
+    /// Name the books nothing names yet, over the whole screen.
+    Retry,
     /// Carry out one of the config page's resets, over the whole screen.
     Resetting(view::Reset),
 }

@@ -279,10 +279,11 @@ pub fn row(
     text.draw(fb, area.right() - w, baseline, value, false);
 }
 
-/// Blank space either side of a chip's text, and between one chip and the next,
-/// in design pixels.
+/// Blank space either side of a chip's text, between one chip and the next,
+/// and where a run breaks, in design pixels.
 const CHIP_PAD: i32 = 20;
 const CHIP_GAP: i32 = 14;
+const CHIP_BREAK: i32 = 60;
 
 /// The air a chip keeps either side of its label.
 pub fn chip_pad(theme: &Theme) -> i32 {
@@ -295,10 +296,19 @@ fn chip_gap(theme: &Theme) -> i32 {
     theme.px(CHIP_GAP)
 }
 
+/// The air standing before the chip a run breaks at, in place of [`chip_gap`].
+fn chip_break(theme: &Theme) -> i32 {
+    theme.px(CHIP_BREAK)
+}
+
 /// How tall one chip is.
 pub fn chip_height(theme: &Theme) -> i32 {
     theme.row_h * 2 / 3
 }
+
+/// One row's chips ready to measure: what each reads and in which script, and
+/// the chip the run breaks before.
+pub type Run<'a> = (Vec<(&'a str, crate::font::Script)>, Option<usize>);
 
 /// Where the second column starts on every row: from the widest label, pulled
 /// back until the widest chip run fits, held between `width / 3` and
@@ -307,7 +317,7 @@ pub fn chip_column(
     text: &mut TextRenderer,
     theme: &Theme,
     labels: &[&str],
-    runs: &[Vec<(&str, crate::font::Script)>],
+    runs: &[Run],
     width: i32,
 ) -> i32 {
     text.set_px(theme.body_px);
@@ -316,7 +326,10 @@ pub fn chip_column(
         .map(|label| text.measure_width(label) as i32)
         .max()
         .unwrap_or(0);
-    let runs: Vec<i32> = runs.iter().map(|run| run_width(text, theme, run)).collect();
+    let runs: Vec<i32> = runs
+        .iter()
+        .map(|(run, apart)| run_width(text, theme, run, *apart))
+        .collect();
     column_from(widest, &runs, width, chip_gap(theme))
 }
 
@@ -332,11 +345,12 @@ fn column_from(widest_label: i32, runs: &[i32], width: i32, gap: i32) -> i32 {
     wanted.min(room.max(wanted).min(width / 2))
 }
 
-/// How wide a run of chips is once tiled, gaps included.
+/// How wide a run of chips is once tiled, gaps and any break included.
 fn run_width(
     text: &mut TextRenderer,
     theme: &Theme,
     options: &[(&str, crate::font::Script)],
+    apart: Option<usize>,
 ) -> i32 {
     text.set_px(theme.body_px);
     let pad = chip_pad(theme);
@@ -344,29 +358,53 @@ fn run_width(
         .iter()
         .map(|(o, script)| text.measure_width_in(*script, o) as i32 + pad * 2)
         .sum();
-    chips + chip_gap(theme) * (options.len().saturating_sub(1)) as i32
+    let gaps = chip_gap(theme) * (options.len().saturating_sub(1)) as i32;
+    chips + gaps + broken(theme, options.len(), apart)
+}
+
+/// What a break adds to a run of `count` chips over the gap already counted.
+/// A break at neither end of the run, or none at all, adds nothing.
+fn broken(theme: &Theme, count: usize, apart: Option<usize>) -> i32 {
+    match apart {
+        Some(at) if at > 0 && at < count => chip_break(theme) - chip_gap(theme),
+        _ => 0,
+    }
 }
 
 /// Where every chip of a row lands, wrapped to `width`, laid out from
-/// `(0, 0)`. Separated from the paint.
+/// `(0, 0)` with [`place`]'s break at `apart`. Separated from the paint.
 pub fn chip_layout(
     text: &mut TextRenderer,
     theme: &Theme,
     options: &[(&str, crate::font::Script)],
+    apart: Option<usize>,
     width: i32,
 ) -> Vec<Rect> {
     text.set_px(theme.body_px);
-    let (pad, gap) = (chip_pad(theme), chip_gap(theme));
-    let height = chip_height(theme);
+    let pad = chip_pad(theme);
+    let widths: Vec<i32> = options
+        .iter()
+        .map(|(o, script)| text.measure_width_in(*script, o) as i32 + pad * 2)
+        .collect();
+    place(theme, &widths, apart, width)
+}
+
+/// [`chip_layout`] over measured widths. The chip `apart` names opens on
+/// [`chip_break`] in place of the ordinary gap; one that wraps takes the head
+/// of its line and keeps no break.
+fn place(theme: &Theme, widths: &[i32], apart: Option<usize>, width: i32) -> Vec<Rect> {
+    let (gap, height) = (chip_gap(theme), chip_height(theme));
     let (mut x, mut y) = (0, 0);
     let mut out = Vec::new();
-    for (option, script) in options {
-        let w = text.measure_width_in(*script, option) as i32 + pad * 2;
+    for (i, w) in widths.iter().enumerate() {
+        if x > 0 && apart == Some(i) {
+            x += chip_break(theme) - gap;
+        }
         if x > 0 && x + w > width {
             x = 0;
             y += height + gap;
         }
-        out.push(Rect::new(x, y, w, height));
+        out.push(Rect::new(x, y, *w, height));
         x += w + gap;
     }
     out
@@ -448,22 +486,17 @@ mod tests {
 
     /// A metric with no font behind it: every character 0.6 em, wider than
     /// Ember sets and narrower than an ideograph.
+    fn widths(theme: &Theme, options: &[(&str, Script)]) -> Vec<i32> {
+        let em = theme.body_px * 0.6;
+        options
+            .iter()
+            .map(|(o, _)| (o.chars().count() as f32 * em) as i32 + chip_pad(theme) * 2)
+            .collect()
+    }
+
+    /// [`place`] on those widths, which is what a font would reach.
     fn measured(theme: &Theme, options: &[(&str, Script)], width: i32) -> Vec<Rect> {
-        let (pad, gap) = (chip_pad(theme), chip_gap(theme));
-        let height = chip_height(theme);
-        let (mut x, mut y) = (0, 0);
-        let mut out = Vec::new();
-        for (option, _) in options {
-            let em = theme.body_px * 0.6;
-            let w = (option.chars().count() as f32 * em) as i32 + pad * 2;
-            if x > 0 && x + w > width {
-                x = 0;
-                y += height + gap;
-            }
-            out.push(Rect::new(x, y, w, height));
-            x += w + gap;
-        }
-        out
+        place(theme, &widths(theme, options), None, width)
     }
 
     /// Every panel the app draws on, densest first.
@@ -497,12 +530,56 @@ mod tests {
 
     /// The stub's width for a run of chips, gaps included.
     fn run_of(theme: &Theme, options: &[(&str, Script)]) -> i32 {
-        let em = theme.body_px * 0.6;
-        let chips: i32 = options
-            .iter()
-            .map(|(o, _)| (o.chars().count() as f32 * em) as i32 + chip_pad(theme) * 2)
-            .sum();
+        let chips: i32 = widths(theme, options).iter().sum();
         chips + chip_gap(theme) * (options.len().saturating_sub(1)) as i32
+    }
+
+    #[test]
+    fn a_chip_set_apart_opens_wider_than_the_run_it_follows() {
+        for (w, h) in PANELS {
+            let theme = Theme::for_screen(w, h);
+            let each = widths(&theme, &[("Show", Script::Unknown); 3]);
+            let room = each.iter().sum::<i32>() + chip_break(&theme) * 3;
+
+            let run = place(&theme, &each, None, room);
+            let apart = place(&theme, &each, Some(2), room);
+            // The two values stand where they stood; the button alone moves,
+            // and it moves by more than the air between two chips.
+            assert_eq!(apart[..2], run[..2], "{w}x{h}");
+            assert_eq!(apart[2].y, run[2].y, "{w}x{h}: the button wrapped");
+            let moved = apart[2].x - run[2].x;
+            assert_eq!(moved, chip_break(&theme) - chip_gap(&theme), "{w}x{h}");
+            assert!(
+                moved > chip_gap(&theme),
+                "{w}x{h}: {moved} px reads as a gap"
+            );
+
+            // A break at the head of a run is no break: nothing precedes it.
+            assert_eq!(place(&theme, &each, Some(0), room), run, "{w}x{h}");
+        }
+    }
+
+    #[test]
+    fn a_chip_set_apart_takes_the_head_of_its_line_where_it_wraps() {
+        let theme = Theme::for_screen(PANELS[0].0, PANELS[0].1);
+        let each = widths(&theme, &[("Show", Script::Unknown); 3]);
+        // Room for the three tiled, and none for the break.
+        let tight = each.iter().sum::<i32>() + chip_gap(&theme) * 2;
+        let apart = place(&theme, &each, Some(2), tight);
+        assert_eq!(apart[2].x, 0, "a wrapped button keeps its break");
+        assert!(apart[2].y > apart[1].y, "the button did not wrap");
+        assert!(apart[2].right() <= tight, "the button runs past the row");
+    }
+
+    #[test]
+    fn a_run_is_measured_with_the_break_it_will_be_drawn_with() {
+        let theme = Theme::for_screen(PANELS[0].0, PANELS[0].1);
+        let extra = chip_break(&theme) - chip_gap(&theme);
+        assert_eq!(broken(&theme, 3, Some(2)), extra);
+        // A break at neither end of the run stands for nothing.
+        assert_eq!(broken(&theme, 3, None), 0);
+        assert_eq!(broken(&theme, 3, Some(0)), 0);
+        assert_eq!(broken(&theme, 3, Some(3)), 0);
     }
 
     #[test]
