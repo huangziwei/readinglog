@@ -411,12 +411,12 @@ fn month_grid(cx: &mut Ctx, area: Rect, day: i64) {
     // one bar across them.
     for row in cells.chunk_by(|a, b| a.1.y == b.1.y) {
         let days: Vec<Vec<usize>> = row.iter().map(|(day, _)| books_on(cx, *day)).collect();
-        let depth = lane_count(theme, row[0].1.inset(theme.gap / 2));
+        let depth = lane_count(theme, cell_inner(theme, row[0].1));
         let lanes = charts::lanes(&days, depth);
         for (day, cell) in row.iter() {
             let (_, _, dom) = date::civil_from_days(*day);
             head_line(cx, *cell, *day, &dom.to_string(), peak);
-            let inner = cell.inset(theme.gap / 2);
+            let inner = cell_inner(theme, *cell);
             let hours = cx.stats.hours_over(*day..=*day);
             charts::hour_shape(
                 cx.fb,
@@ -430,7 +430,7 @@ fn month_grid(cx: &mut Ctx, area: Rect, day: i64) {
         // A run reaches past its own cell; every bar of the week is drawn over
         // the cells the whole week laid down.
         for (column, (_, cell)) in row.iter().enumerate() {
-            let inner = cell.inset(theme.gap / 2);
+            let inner = cell_inner(theme, *cell);
             let step = cell.w + theme.gap;
             for (lane, run) in lanes[column].iter().enumerate() {
                 let Some(run) = run else { continue };
@@ -521,9 +521,37 @@ fn year_heatmap(cx: &mut Ctx, area: Rect, day: i64, picked: bool) {
     }
 }
 
+/// The band of the day's own level laid across the head of its cell, in design
+/// pixels. A month of them is read across the whole page at once, so it is
+/// sized to be told apart at arm's length and not up close.
+const HEAD_BAND: i32 = 12;
+
+/// [`HEAD_BAND`] on this panel.
+fn head_band(theme: &Theme) -> i32 {
+    theme.px(HEAD_BAND)
+}
+
+/// The box a day's cell draws into: inside its own outline, and under the
+/// band across its head. The band is spent out of the height the lanes stand
+/// in, so [`HEAD_BAND`] is bounded by how many books a cell must still stack.
+fn cell_inner(theme: &Theme, cell: Rect) -> Rect {
+    let air = theme.gap / 2;
+    // The band runs to the cell's own edges, so the air below it is measured
+    // from the band and not from the cell. Every cell takes the same offset,
+    // band or none: a day with no reading lines its date up with the rest.
+    let (_, under) = cell.split_top(head_band(theme) + air);
+    Rect::new(
+        cell.x + air,
+        under.y,
+        (cell.w - air * 2).max(0),
+        (under.h - air).max(0),
+    )
+}
+
 /// The date across the head of a day's cell, with the total against it.
 ///
-/// A `peak` above zero draws a rule along the top edge at the day's own level.
+/// A `peak` above zero lays [`head_band`] along the top edge at the day's own
+/// level.
 fn head_line(cx: &mut Ctx, cell: Rect, day: i64, date: &str, peak: i64) {
     let theme: &Theme = cx.theme;
     let secs = cx.stats.day_seconds(day);
@@ -531,11 +559,11 @@ fn head_line(cx: &mut Ctx, cell: Rect, day: i64, date: &str, peak: i64) {
     paint::stroke(cx.fb, cell, if day == cx.today { INK } else { PALE }, 1);
     // A mark beside the date crowds a duration set in Japanese.
     if let Some(rgb) = cx.palette.level(charts::level(secs, peak)) {
-        let rule = (theme.gap / 3).max(2);
-        paint::fill_rgb(cx.fb, Rect::new(cell.x, cell.y, cell.w, rule), rgb);
+        let band = Rect::new(cell.x, cell.y, cell.w, head_band(theme));
+        paint::fill_rgb(cx.fb, band, rgb);
     }
 
-    let inner = cell.inset(theme.gap / 2);
+    let inner = cell_inner(theme, cell);
     let script = cx.ui_script();
     cx.text.set_px(theme.small_px);
     let baseline = inner.y + cx.text.cap_height() as i32;
@@ -1151,6 +1179,37 @@ mod tests {
         }
     }
 
+    /// The band stands at the head of the cell and the lanes under it, out of
+    /// one height: [`HEAD_BAND`] may not be widened past the point where a
+    /// cell stops holding the books its own panel has the room for.
+    #[test]
+    fn the_head_band_costs_the_cell_no_book() {
+        for (w, h) in PANELS {
+            let (theme, area) = page(w, h);
+            let [_, _, _, grid, _] = bands(area, &theme, figures(&theme), area.h, false);
+            let (_, cells) = grid.split_top(charts::weekday_head_height(&theme));
+            let laid = charts::month_cells(cells, 2026, 8, theme.gap, WeekStart::Monday);
+            let cell = laid[0].1;
+            // The band is a share of the cell, never the half of it a run of
+            // them would make the page into.
+            let band = head_band(&theme);
+            assert!(band >= 1, "{w}x{h}: the band rounded away");
+            assert!(
+                band * 8 <= cell.h,
+                "{w}x{h}: a {band} px band over a {} px cell",
+                cell.h
+            );
+            // Two books on a cell half an inch tall, one on any cell.
+            let inner = cell_inner(&theme, cell);
+            let want = 1 + (inner.h >= theme.px(150)) as usize;
+            assert!(
+                lane_count(&theme, inner) >= want,
+                "{w}x{h}: the band left room for {} books",
+                lane_count(&theme, inner)
+            );
+        }
+    }
+
     #[test]
     fn a_month_cell_stacks_its_date_its_lanes_and_its_hours() {
         for (w, h) in PANELS {
@@ -1158,7 +1217,7 @@ mod tests {
             let [_, _, _, grid, _] = bands(area, &theme, figures(&theme), area.h, false);
             let (_, cells) = grid.split_top(charts::weekday_head_height(&theme));
             let laid = charts::month_cells(cells, 2026, 8, theme.gap, WeekStart::Monday);
-            let inner = laid[0].1.inset(theme.gap / 2);
+            let inner = cell_inner(&theme, laid[0].1);
 
             // Half an inch of cell buys a second book; every cell holds one.
             let depth = lane_count(&theme, inner);
