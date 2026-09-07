@@ -3,7 +3,7 @@
 //! other; `Touch::next_event` answers `None` short of a boundary and re-polls.
 
 use std::os::fd::RawFd;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
@@ -11,8 +11,11 @@ use super::buttons::{Buttons, PageButton};
 use super::touch::{Touch, TouchEvent};
 use crate::orientation::Orientation;
 
-/// How long [`Input::next`] blocks before surfacing a `Tick`.
+/// How long [`Input::event`] blocks before surfacing a `Tick`.
 const TICK_MS: libc::c_int = 500;
+
+/// How long [`Input::follow_orientation`] leaves between `detect` reads.
+const ORIENT_POLL: Duration = Duration::from_millis(1000);
 
 /// A unified input event from either device.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,25 +28,70 @@ pub enum InputEvent {
 
 pub struct Input {
     touch: Touch,
-    /// `None` where no page-button device was found or openable.
+    /// `None` where `Buttons::open` answers none.
     buttons: Option<Buttons>,
+    /// The orientation both devices are set to.
+    orientation: Orientation,
+    /// When `orientation` was read; `None` asks for a read at once.
+    checked: Option<Instant>,
+    /// [`Input::set_covered`]'s state.
+    covered: bool,
 }
 
 impl Input {
     pub fn new(touch: Touch, buttons: Option<Buttons>) -> Self {
-        Self { touch, buttons }
+        Self {
+            touch,
+            buttons,
+            orientation: Orientation::Up,
+            checked: None,
+            covered: false,
+        }
     }
 
     /// Sets `orientation` on `touch` and `buttons`.
     pub fn set_orientation(&mut self, orientation: Orientation) {
+        self.orientation = orientation;
         self.touch.set_orientation(orientation);
         if let Some(buttons) = self.buttons.as_mut() {
             buttons.set_orientation(orientation);
         }
     }
 
+    /// Re-reads [`Orientation::detect`] past `ORIENT_POLL` and applies a change
+    /// to both devices, answering whether one landed. A covered `Input` reads
+    /// nothing and takes the next read on the uncover.
+    pub fn follow_orientation(&mut self) -> bool {
+        if self.covered {
+            return false;
+        }
+        if let Some(at) = self.checked
+            && at.elapsed() < ORIENT_POLL
+        {
+            return false;
+        }
+        self.checked = Some(Instant::now());
+        let seen = Orientation::detect();
+        if seen == self.orientation {
+            return false;
+        }
+        eprintln!("orientation: {:?} -> {seen:?}", self.orientation);
+        self.set_orientation(seen);
+        true
+    }
+
+    /// [`Input::follow_orientation`] with the `ORIENT_POLL` throttle skipped.
+    pub fn follow_orientation_now(&mut self) -> bool {
+        self.checked = None;
+        self.follow_orientation()
+    }
+
     /// [`Touch::set_covered`] and `Buttons::set_covered` over both devices.
     pub fn set_covered(&mut self, covered: bool) {
+        self.covered = covered;
+        if !covered {
+            self.checked = None;
+        }
         self.touch.set_covered(covered);
         if let Some(buttons) = self.buttons.as_mut() {
             buttons.set_covered(covered);

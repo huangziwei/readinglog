@@ -32,7 +32,7 @@ const OUTCOME_LINGER: Duration = Duration::from_secs(12);
 
 pub struct App {
     theme: Theme,
-    /// The language drawn in: [`Settings::language`], else [`App::detected`].
+    /// The language drawn in, from [`Settings::language`].
     lang: Lang,
     settings: Settings,
     text: TextRenderer,
@@ -431,7 +431,14 @@ impl App {
         let mut down: Option<(u32, u32)> = None;
         loop {
             match input.event()? {
-                InputEvent::Touch(TouchEvent::Down { x, y }) => down = Some((x, y)),
+                // `follow_orientation_now` maps the `Up` this stroke ends on. A
+                // `Down` behind a change is dropped, leaving a tap at its `Up`.
+                InputEvent::Touch(TouchEvent::Down { x, y }) => {
+                    down = match input.follow_orientation_now() {
+                        true => None,
+                        false => Some((x, y)),
+                    };
+                }
                 InputEvent::Touch(TouchEvent::Up { x, y }) => {
                     let from = down.take();
                     let swipe = from.and_then(|(x0, y0)| {
@@ -476,6 +483,9 @@ impl App {
                         input.set_covered(covered);
                     }
                     input.retake();
+                    if input.follow_orientation() {
+                        down = None;
+                    }
                     match pump.covered {
                         // Covered: nothing is drawn.
                         Some(true) => {}
