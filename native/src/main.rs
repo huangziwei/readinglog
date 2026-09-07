@@ -13,7 +13,7 @@ use readinglog_native::eink::touch::Touch;
 use readinglog_native::orientation::Orientation;
 use readinglog_native::stats::Stats;
 use readinglog_native::store::Store;
-use readinglog_native::{app, catalog, date, font, lang, settings, store, ui};
+use readinglog_native::{app, catalog, date, font, lang, settings, sidecar, store, ui};
 
 fn main() {
     let mode = std::env::args().nth(1).unwrap_or_default();
@@ -51,7 +51,9 @@ fn collect() -> Result<Store> {
 fn collect_into(store: &mut Store, dir: &Path, on: &mut dyn FnMut(usize, usize)) {
     let pass = store.update(on);
     let books = catalog::read();
-    let refreshed = store.remember(&books) + store.keep_covers(dir);
+    let sidecars = sidecar::read(Path::new(sidecar::DOCUMENTS_DIR));
+    let named = store.recover(&sidecars);
+    let refreshed = store.remember(&books) + named + store.keep_covers(dir);
     eprintln!(
         "collect: {} lines (live {}, chunks {}, dumps {}, skipped {}) \
          -> {} added, {} extended, {} sittings held",
@@ -63,6 +65,11 @@ fn collect_into(store: &mut Store, dir: &Path, on: &mut dyn FnMut(usize, usize))
         pass.added,
         pass.extended,
         store.sessions.len(),
+    );
+    eprintln!(
+        "sidecars: {} read from {}; {named} books named that no catalog row reaches",
+        sidecars.len(),
+        sidecar::DOCUMENTS_DIR,
     );
     eprintln!(
         "catalog: {} rows from {}; {} book records refreshed, {} held",

@@ -10,8 +10,9 @@ use crate::covers;
 use crate::log::line::{line_stamp, log_stamp};
 use crate::log::session::{Measure, SESSION_GAP_SECS, Session};
 use crate::log::source;
+use crate::sidecar;
 
-/// Where the store lives on the device.
+/// The directory the store's file sits in.
 pub const STORE_DIR: &str = "/mnt/us/extensions/readinglog";
 
 /// The file inside it, holding the sittings, the book records and the mark.
@@ -130,6 +131,12 @@ pub struct Store {
     pub books: Vec<BookRecord>,
     /// `extent → cde_key`, every pairing any pass has seen, ascending.
     pub keys: Vec<(i64, String)>,
+    /// `(end position, TotalTime, TotalWords)`, the highest counter the log has
+    /// ever shown for each class, ascending. Measured, like [`Self::ends`].
+    pub counters: Vec<(i64, i64, i64)>,
+    /// `extent → the book's file`, inferred from a sidecar holding the same
+    /// counter, ascending. Accumulated, never replaced.
+    pub pairs: Vec<(i64, String)>,
     /// The newest log line any pass has read, as `YYMMDD:HHMMSS`.
     pub mark: String,
     /// Where the record was last emptied, as `YYMMDD:HHMMSS`. No ordinary pass
@@ -216,6 +223,22 @@ impl Store {
                         out.ends.push((k, v));
                     }
                 }
+                Some("t") => {
+                    if let (Some(Ok(ep)), Some(Ok(ms)), Some(Ok(w))) = (
+                        f.next().map(str::parse::<i64>),
+                        f.next().map(str::parse::<i64>),
+                        f.next().map(str::parse::<i64>),
+                    ) {
+                        out.counters.push((ep, ms, w));
+                    }
+                }
+                Some("ep") => {
+                    if let (Some(Ok(k)), Some(v)) = (f.next().map(str::parse::<i64>), f.next())
+                        && !v.is_empty()
+                    {
+                        out.pairs.push((k, v.to_string()));
+                    }
+                }
                 Some("k") => {
                     if let (Some(Ok(k)), Some(v)) = (f.next().map(str::parse::<i64>), f.next())
                         && !v.is_empty()
@@ -272,6 +295,12 @@ impl Store {
         }
         for (extent, key) in &self.keys {
             out.push_str(&format!("k\t{extent}\t{}\n", flat(key)));
+        }
+        for (ep, ms, words) in &self.counters {
+            out.push_str(&format!("t\t{ep}\t{ms}\t{words}\n"));
+        }
+        for (extent, file) in &self.pairs {
+            out.push_str(&format!("ep\t{extent}\t{}\n", flat(file)));
         }
         for b in &self.books {
             out.push_str(&write_book(b));
@@ -333,6 +362,9 @@ impl Store {
             }
         }
         self.sort_ends();
+        for (ep, ms, words) in crate::log::line::counter_map(refs.iter().copied()) {
+            self.learn_counter(ep, ms, words);
+        }
         let parsed: Vec<Session> = parsed.into_iter().filter(|s| !self.barred(s)).collect();
 
         let before = self.sessions.len();
@@ -384,8 +416,7 @@ impl Store {
             .map(|c| c.at.as_str())
     }
 
-    /// Read the device's log and fold it in, reporting files opened and
-    /// files to open.
+    /// Read the log and fold it in, reporting files opened and files to open.
     pub fn update(&mut self, on: &mut dyn FnMut(usize, usize)) -> Pass {
         let from = self.read_from();
         let got = source::collect_from(
@@ -427,6 +458,7 @@ impl Store {
         let got = source::collect_from(live, chunks, dumps, "", on);
         let mut whole = Store {
             ends: self.ends.clone(),
+            counters: self.counters.clone(),
             cleared: self.cleared.clone(),
             ..Store::default()
         };
@@ -468,6 +500,67 @@ impl Store {
         self.note_progress(&stated);
         self.sort_books();
         self.books.iter().filter(|r| !before.contains(r)).count()
+    }
+
+    /// Name reading the catalog cannot, from `sidecars`: each one's
+    /// `timer.model` counter against the one [`Self::counters`] holds for exactly
+    /// one class. Answers how many books were named.
+    pub fn recover(&mut self, sidecars: &[sidecar::Counter]) -> usize {
+        // Drop a pairing whose extent a record carries under another key.
+        let books = self.books.clone();
+        self.pairs.retain(|(extent, file)| {
+            !books
+                .iter()
+                .any(|b| b.extent == *extent && b.cde_key != *file)
+        });
+        let mut claims: Vec<(i64, &str)> = Vec::new();
+        for card in sidecars {
+            if card.total_ms == 0 {
+                continue;
+            }
+            let mut found = self
+                .counters
+                .iter()
+                .filter(|(_, ms, words)| *ms == card.total_ms && *words == card.words);
+            let Some(&(end_position, _, _)) = found.next() else {
+                continue;
+            };
+            if found.next().is_some() {
+                continue;
+            }
+            claims.push((self.extent_of(end_position), &card.file));
+        }
+        let mut named = 0;
+        for (i, &(extent, file)) in claims.iter().enumerate() {
+            let contested = claims
+                .iter()
+                .enumerate()
+                .any(|(j, &(e, f))| j != i && (e == extent || f == file));
+            if contested || self.slot_for(extent, None).is_some() {
+                continue;
+            }
+            self.learn_pair(extent, file);
+            self.books.push(from_sidecar(extent, file));
+            self.stand_where_read(self.books.len() - 1);
+            named += 1;
+        }
+        self.sort_books();
+        named
+    }
+
+    /// Give the record at `slot` the percentage its newest sitting states.
+    /// `sessions` ascends by `started_at`.
+    fn stand_where_read(&mut self, slot: usize) {
+        let extent = self.books[slot].extent;
+        for i in 0..self.sessions.len() {
+            let Some(progress) = self.sessions[i].progress else {
+                continue;
+            };
+            if self.extent_of(self.sessions[i].end_position) != extent {
+                continue;
+            }
+            self.books[slot].stand_at((progress * 100.0).clamp(0.0, 100.0));
+        }
     }
 
     /// Give each record outside `stated` the percentage its newest sitting
@@ -541,8 +634,7 @@ impl Store {
     }
 
     /// Where `book` sits in [`Self::books`]: under its `extent`, else its key.
-    /// A cloud row states no extent, and the record it belongs to may carry one
-    /// from a pass that ran while the book was on the device.
+    /// A `book` stating no extent reaches a record carrying one.
     fn slot_of(&self, book: &Book) -> Option<usize> {
         if book.extent != 0
             && let Some(i) = self
@@ -574,8 +666,22 @@ impl Store {
         {
             return Some(i);
         }
-        self.key_at(extent)
+        if let Some(i) = self
+            .key_at(extent)
             .and_then(|k| self.books.iter().position(|b| b.cde_key == k))
+        {
+            return Some(i);
+        }
+        self.file_at(extent)
+            .and_then(|f| self.books.iter().position(|b| b.cde_key == f))
+    }
+
+    /// The book file a sidecar paired `extent` with, where exactly one did.
+    /// Two files claiming one extent name neither.
+    fn file_at(&self, extent: i64) -> Option<&str> {
+        let mut found = self.pairs.iter().filter(|(e, _)| *e == extent);
+        let (_, only) = found.next()?;
+        found.next().is_none().then_some(only.as_str())
     }
 
     /// The `cde_key` some pass paired `extent` with, where exactly one did.
@@ -658,6 +764,12 @@ impl Store {
         for (extent, key) in &other.keys {
             self.learn_key(*extent, key);
         }
+        for &(ep, ms, words) in &other.counters {
+            self.learn_counter(ep, ms, words);
+        }
+        for (extent, file) in &other.pairs {
+            self.learn_pair(*extent, file);
+        }
         self.sort();
         self.sessions.len() - before
     }
@@ -684,13 +796,26 @@ impl Store {
             .copied()
             .collect();
         let key = self.books[slot].cde_key.clone();
+        let counters = self
+            .counters
+            .iter()
+            .filter(|(ep, _, _)| sessions.iter().any(|s| s.end_position == *ep))
+            .copied()
+            .collect();
         Store {
             sessions,
             ends,
+            counters,
             keys: self
                 .keys
                 .iter()
                 .filter(|(_, k)| *k == key)
+                .cloned()
+                .collect(),
+            pairs: self
+                .pairs
+                .iter()
+                .filter(|(_, f)| *f == key)
                 .cloned()
                 .collect(),
             books: vec![self.books[slot].clone()],
@@ -721,6 +846,7 @@ impl Store {
         if let Some(slot) = self.slot_for(extent, Some(key)) {
             self.books.remove(slot);
         }
+        self.pairs.retain(|(_, f)| f != key);
         went
     }
 
@@ -776,6 +902,10 @@ impl Store {
         self.sort_ends();
         self.keys.sort();
         self.keys.dedup();
+        self.counters.sort();
+        self.counters.dedup();
+        self.pairs.sort();
+        self.pairs.dedup();
         self.sort_books();
         self.sort_cleared();
     }
@@ -787,6 +917,23 @@ impl Store {
         let at = (extent, key.to_string());
         if let Err(i) = self.keys.binary_search(&at) {
             self.keys.insert(i, at);
+        }
+    }
+
+    /// Hold the counter `ep` was logged with, where it is the highest yet seen.
+    fn learn_counter(&mut self, ep: i64, total_ms: i64, words: i64) {
+        match self.counters.iter_mut().find(|(k, _, _)| *k == ep) {
+            Some(held) if held.1 < total_ms => *held = (ep, total_ms, words),
+            Some(_) => {}
+            None => self.counters.push((ep, total_ms, words)),
+        }
+    }
+
+    /// Hold `file` against `extent`, in order. A pairing held stands.
+    fn learn_pair(&mut self, extent: i64, file: &str) {
+        let at = (extent, file.to_string());
+        if let Err(i) = self.pairs.binary_search(&at) {
+            self.pairs.insert(i, at);
         }
     }
 
@@ -821,6 +968,28 @@ impl Store {
 /// A field with nothing in it that could be read as a separator.
 fn flat(text: &str) -> String {
     text.replace(['\t', '\n', '\r'], " ")
+}
+
+/// The record for a book named by its sidecar alone. `file` is the `.sdr`
+/// directory's name without the suffix, standing as both `cde_key` and `title`.
+fn from_sidecar(extent: i64, file: &str) -> BookRecord {
+    BookRecord {
+        extent,
+        cde_key: flat(file),
+        cde_type: String::new(),
+        title: flat(file),
+        author: String::new(),
+        thumbnail: String::new(),
+        language: String::new(),
+        percent: -1.0,
+        on_device: false,
+        cover: String::new(),
+        location: String::new(),
+        finished: false,
+        restart: None,
+        read_state: -1,
+        kept: false,
+    }
 }
 
 /// A `BookRecord` holding everything `book` states.
@@ -1121,6 +1290,8 @@ mod tests {
             ],
             ends: vec![(938_016, 938_018)],
             keys: Vec::new(),
+            counters: Vec::new(),
+            pairs: Vec::new(),
             books: Vec::new(),
             mark: "260808:213000".into(),
             floor: String::new(),
@@ -1151,6 +1322,8 @@ mod tests {
             )],
             ends: vec![(938_016, 938_018)],
             keys: Vec::new(),
+            counters: Vec::new(),
+            pairs: Vec::new(),
             books: vec![BookRecord {
                 extent: 148_207,
                 title: "A Book".into(),
@@ -1534,8 +1707,8 @@ mod tests {
         assert_eq!(store.remember(&[]), 0);
     }
 
-    /// A record read on the device to 88%, then to `progress`, then left with
-    /// the row `p_percentFinished` sits on deleted.
+    /// A record read to 88%, then to `progress`, then with its catalog row
+    /// deleted.
     fn read_on_to(progress: Option<f64>) -> Store {
         let mut store = Store {
             sessions: vec![session(
@@ -1546,6 +1719,8 @@ mod tests {
             )],
             ends: Vec::new(),
             keys: Vec::new(),
+            counters: Vec::new(),
+            pairs: Vec::new(),
             books: Vec::new(),
             mark: String::new(),
             floor: String::new(),
@@ -1589,7 +1764,7 @@ mod tests {
             "The Jewish Study Bible",
             76.0,
         )]);
-        // The same book off the device: no extent, no percentage, a title.
+        // The same book with no extent and no percentage, a title only.
         let mut cloud = shelved(0, "B00OKPCRLG", "The Jewish Study Bible", -1.0);
         cloud.on_device = false;
         store.remember(&[cloud]);
@@ -1634,6 +1809,8 @@ mod tests {
             )],
             ends: Vec::new(),
             keys: Vec::new(),
+            counters: Vec::new(),
+            pairs: Vec::new(),
             books: Vec::new(),
             mark: mark.into(),
             floor: String::new(),
@@ -1683,6 +1860,129 @@ mod tests {
              CurrentPos:YJPosition: AfQJAAAAAAAA:54205,EndPos:YJPosition: AbcVAAAPAAAA:148207,\
              PosLeft:94002,%Left:0.645;"
         )
+    }
+
+    /// A page turn of the book whose `EndPos` is `at`, carrying `total_ms` and
+    /// `words`.
+    fn turn(stamp: &str, at: i64, total_ms: i64, words: i64) -> String {
+        format!(
+            "{stamp} cvm[6144]: I ReadingTimerController:Information::NextPage,Verdict:Processed,\
+             IntervalTime:39890,TotalTime:{total_ms},TotalWords:{words},\
+             CurrentPos:YJPosition: AfQJAAAAAAAA:54205,EndPos:YJPosition: AbcVAAAPAAAA:{at},\
+             PosLeft:94002,%Left:0.645;"
+        )
+    }
+
+    fn card(file: &str, total_ms: i64, words: i64) -> sidecar::Counter {
+        sidecar::Counter {
+            file: file.into(),
+            total_ms,
+            words,
+        }
+    }
+
+    /// A store holding one book's reading, and nothing that names it: the
+    /// state a first parse is in when the book was deleted before it ran.
+    fn read_but_unnamed() -> Store {
+        let mut store = Store::default();
+        store.absorb(
+            &[
+                turn("260807:101501", 148_207, 7_390_020, 49_583),
+                turn("260807:101543", 148_207, 7_431_463, 49_712),
+            ],
+            "",
+        );
+        assert!(store.book_for(148_207, None).is_none());
+        store
+    }
+
+    #[test]
+    fn a_sidecar_names_the_reading_of_a_book_the_catalog_has_forgotten() {
+        let mut store = read_but_unnamed();
+        // `timer.model` holds the highest counter the log showed.
+        assert_eq!(
+            store.recover(&[card("a deleted book", 7_431_463, 49_712)]),
+            1
+        );
+        let book = store.book_for(148_207, None).expect("the book named");
+        assert_eq!(book.title, "a deleted book");
+        assert_eq!(book.extent, 148_207);
+        assert!(!book.on_device);
+        assert!(book.is_book(), "it draws a row");
+        // The place comes off the sitting, the catalog having none to state.
+        assert!((book.percent - 35.5).abs() < 0.1, "{}", book.percent);
+        assert_eq!(store.pairs, vec![(148_207, "a deleted book".to_string())]);
+    }
+
+    #[test]
+    fn a_counter_short_of_the_last_one_logged_names_nothing() {
+        let mut store = read_but_unnamed();
+        // A counter below the class's highest.
+        assert_eq!(store.recover(&[card("some book", 7_390_020, 49_583)]), 0);
+        assert!(store.book_for(148_207, None).is_none());
+        assert!(store.pairs.is_empty());
+    }
+
+    #[test]
+    fn a_book_opened_and_never_read_names_nothing() {
+        let mut store = read_but_unnamed();
+        // Every untimed class shares a counter of zero; none of them is named.
+        assert_eq!(store.recover(&[card("never read", 0, 0)]), 0);
+        assert!(store.pairs.is_empty());
+    }
+
+    #[test]
+    fn a_class_two_sidecars_both_claim_is_left_alone() {
+        let mut store = read_but_unnamed();
+        let named = store.recover(&[
+            card("one book", 7_431_463, 49_712),
+            card("another book", 7_431_463, 49_712),
+        ]);
+        assert_eq!(named, 0, "one candidate or nothing, both ways");
+        assert!(store.pairs.is_empty());
+    }
+
+    #[test]
+    fn a_book_the_catalog_still_names_is_never_inferred_over() {
+        let mut store = read_but_unnamed();
+        store.remember(&[shelved(148_207, "B01", "The Catalog's Own Title", 40.0)]);
+        assert_eq!(
+            store.recover(&[card("a deleted book", 7_431_463, 49_712)]),
+            0
+        );
+        let book = store.book_for(148_207, None).expect("the catalog's record");
+        assert_eq!(book.title, "The Catalog's Own Title");
+        assert!(store.pairs.is_empty());
+    }
+
+    #[test]
+    fn a_catalog_row_arriving_later_takes_the_book_back() {
+        let mut store = read_but_unnamed();
+        assert_eq!(
+            store.recover(&[card("a deleted book", 7_431_463, 49_712)]),
+            1
+        );
+        // The book is copied back on, and the catalog states it again.
+        store.remember(&[shelved(148_207, "B01", "The Catalog's Own Title", 40.0)]);
+        store.recover(&[card("a deleted book", 7_431_463, 49_712)]);
+        assert!(store.pairs.is_empty(), "the inference stands down");
+        assert_eq!(
+            store.book_for(148_207, None).expect("a record").title,
+            "The Catalog's Own Title"
+        );
+    }
+
+    #[test]
+    fn the_counter_and_the_pairing_both_survive_the_file() {
+        let dir = scratch("sidecar-rows");
+        let mut store = read_but_unnamed();
+        store.recover(&[card("a deleted book", 7_431_463, 49_712)]);
+        store.save(&dir).expect("a written store");
+        let back = Store::load(&dir);
+        assert_eq!(back, store);
+        assert_eq!(back.counters, vec![(148_207, 7_431_463, 49_712)]);
+        assert_eq!(back.pairs, vec![(148_207, "a deleted book".to_string())]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -2220,6 +2520,8 @@ mod tests {
         let store = Store {
             ends: vec![(938_016, 938_018)],
             keys: Vec::new(),
+            counters: Vec::new(),
+            pairs: Vec::new(),
             ..Store::default()
         };
         assert_eq!(store.extent_of(938_016), 938_018);

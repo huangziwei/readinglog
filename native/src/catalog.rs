@@ -30,11 +30,7 @@ const COLUMNS: &str = "coalesce(p_contentSize, 0), p_cdeKey, p_cdeType, \
 /// `p_readState`, last of the columns. [`parse_row`] reads a row without it.
 const MARK_COLUMN: &str = ", coalesce(p_readState, -1)";
 
-/// The `p_cdeType` values naming something other than reading. Every other
-/// value is taken, an unknown one and a NULL included: the type a sideload
-/// carries is the book file's own metadata, and a row dropped here is a book
-/// no sitting can ever be named by. [`is_reading`] answers for what is left,
-/// from `p_location`.
+/// The `p_cdeType` values [`FROM`] excludes. Every other value is taken.
 const SKIP_TYPES: &str = "'AUDI'";
 
 const FROM: &str = " from Entries \
@@ -70,8 +66,8 @@ pub fn read_state_says(value: i64) -> Option<bool> {
     }
 }
 
-/// The value `mark::set` leaves in `p_readState`, which `MarkAsReadHandler`
-/// files as `READ_MANUAL` or `UNREAD_MANUAL`.
+/// [`READ_MANUAL`] or [`UNREAD_MANUAL`], the value `mark::set` writes to
+/// `p_readState`.
 pub fn read_state_for(read: bool) -> i64 {
     match read {
         true => READ_MANUAL,
@@ -114,9 +110,7 @@ pub fn read() -> Vec<Book> {
     }
 }
 
-/// [`read`] against a named file. Opened plain: on a WAL database `mode=ro`
-/// and `-readonly` fail for want of a `-shm` file, and `immutable=1` reads
-/// pre-WAL state.
+/// [`read`] against a named file.
 pub fn read_from(db: &Path) -> Vec<Book> {
     // `Entries` stating no `p_readState` refuses the whole query, every book
     // with it. The second run drops that column.

@@ -1,6 +1,5 @@
 //! Reading Log: the log parser, the device catalog, the session store, the
-//! statistics over them, and the screens drawn from those. Every module the
-//! device binary runs is here.
+//! statistics over them, and the screens drawn from those.
 
 // Docs name the private helpers beside them: this crate is read with
 // `--document-private-items`.
@@ -20,6 +19,7 @@ pub mod net;
 pub mod open;
 pub mod orientation;
 pub mod settings;
+pub mod sidecar;
 pub mod stats;
 pub mod store;
 pub mod ui;

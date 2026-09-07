@@ -342,7 +342,7 @@ impl App {
         self.doing(fb, doing, true)?;
         let mut painted = Instant::now();
         let mut stale = false;
-        // Once the screen says it is stopping, nothing draws over that.
+        // While `stopping`, a later `doing` leaves `stale` false.
         let mut stopping = false;
 
         loop {
@@ -780,7 +780,7 @@ impl App {
         self.dir = dir;
     }
 
-    /// Write the record, saying so where it will not go down.
+    /// Write the record, printing `what` and the error on a failed write.
     fn store_it(&self, what: &str) {
         if let Err(err) = self.store.save(self.dir()) {
             eprintln!("{what}: the record did not reach the store: {err:#}");
@@ -860,7 +860,9 @@ impl App {
     fn relearn(&mut self) {
         let books = crate::catalog::read();
         let dir = self.dir.clone();
-        let refreshed = self.store.remember(&books) + self.store.keep_covers(&dir);
+        let sidecars = crate::sidecar::read(std::path::Path::new(crate::sidecar::DOCUMENTS_DIR));
+        let named = self.store.recover(&sidecars);
+        let refreshed = self.store.remember(&books) + named + self.store.keep_covers(&dir);
         eprintln!(
             "reset: {} catalog rows, {refreshed} book records refreshed, {} held",
             books.len(),
@@ -1003,9 +1005,7 @@ impl App {
             return Action::Redraw;
         }
         match self.state.tab {
-            // A page of settings past the first only exists where they will
-            // not all fit; `config::draw` holds the number inside its own
-            // count, so a step past the last lands on it.
+            // `config::draw` clamps `config_page` to the pages it has.
             Tab::Config => {
                 let at = self.state.config_page as i64;
                 self.state.config_page = (at + by).max(0) as usize;

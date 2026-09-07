@@ -305,6 +305,26 @@ pub fn frombook_map<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<(i64, 
     map
 }
 
+/// The highest reading counter each `EndPos` was logged with:
+/// `(end position, TotalTime, TotalWords)`. `timer.model` holds the same pair.
+pub fn counter_map<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<(i64, i64, i64)> {
+    let mut map: Vec<(i64, i64, i64)> = Vec::new();
+    for line in events {
+        let Some(obs) = observation(line) else {
+            continue;
+        };
+        let (Some(total_ms), Some(words)) = (obs.total_ms, obs.words) else {
+            continue;
+        };
+        match map.iter_mut().find(|(ep, _, _)| *ep == obs.position) {
+            Some(held) if held.1 < total_ms => *held = (obs.position, total_ms, words),
+            Some(_) => {}
+            None => map.push((obs.position, total_ms, words)),
+        }
+    }
+    map
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

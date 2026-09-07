@@ -25,7 +25,7 @@ pub struct BookStat {
     pub thumbnail: String,
     /// The catalog's own progress figure, 0 through 100, or negative.
     pub percent: f64,
-    /// Whether the catalog names this book as one the device holds.
+    /// Whether the catalog names a file for this book.
     pub on_device: bool,
     /// The file holding this book, which `open::uri` names.
     pub location: String,
@@ -1153,6 +1153,8 @@ mod tests {
             // same book 148209.
             ends: vec![(148_207, 148_209)],
             keys: Vec::new(),
+            counters: Vec::new(),
+            pairs: Vec::new(),
             books: Vec::new(),
             mark: "260807:091000".into(),
             floor: String::new(),
