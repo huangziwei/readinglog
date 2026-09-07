@@ -102,7 +102,7 @@ impl App {
         self.theme = Theme::sized(self.theme.screen.w as u32, self.theme.screen.h as u32, size);
     }
 
-    /// Draw in `lang`, whatever the device says.
+    /// Draw in `lang`, past `Lang::detect`.
     pub fn set_language(&mut self, lang: Lang) {
         self.lang = lang;
         self.settings.language = lang;
@@ -129,7 +129,7 @@ impl App {
         self.colour = colour;
     }
 
-    /// Draw as though the device's clock read `now` seconds into `today`.
+    /// Draw against a clock at `now` seconds into `today`.
     pub fn set_clock(&mut self, today: i64, now: i64) {
         self.today = today;
         self.now = now;
@@ -385,7 +385,7 @@ impl App {
 
     /// One frame of an update banner, over the whole screen. `headline` and
     /// `note` are what [`Doing::banner`] and [`Outcome::banner`] answer; `step`
-    /// is the way out while there is one. Public for the preview.
+    /// is the way out while there is one.
     pub fn banner(
         &mut self,
         fb: &mut Framebuffer,
@@ -469,9 +469,22 @@ impl App {
                         self.draw(fb)?;
                     }
                 }
-                // `pump_events` reports a repaint request.
-                InputEvent::Tick if fb.pump_events() => self.draw(fb)?,
-                _ => {}
+                InputEvent::Tick => {
+                    let pump = fb.pump_events();
+                    if let Some(covered) = pump.covered {
+                        down = None;
+                        input.set_covered(covered);
+                    }
+                    input.retake();
+                    match pump.covered {
+                        // Covered: nothing is drawn.
+                        Some(true) => {}
+                        // Uncovered: drawn without an `Expose`.
+                        Some(false) => self.draw(fb)?,
+                        None if pump.repaint => self.draw(fb)?,
+                        None => {}
+                    }
+                }
             }
         }
     }
@@ -734,9 +747,7 @@ impl App {
         &self.dir
     }
 
-    /// Draw and act against a record somewhere other than [`store::STORE_DIR`].
-    /// The preview reads a real record from wherever it was copied to; nothing
-    /// on the device calls this.
+    /// Draw and act against a record outside [`store::STORE_DIR`].
     pub fn set_dir(&mut self, dir: std::path::PathBuf) {
         self.dir = dir;
     }

@@ -12,19 +12,17 @@ use anyhow::{Context, Result, bail};
 
 use crate::orientation::Orientation;
 
-// evdev type/code constants (linux/input-event-codes.h). Stable.
+// evdev type/code constants.
 const EV_SYN: u16 = 0x00;
 const SYN_REPORT: u16 = 0x00;
 const EV_ABS: u16 = 0x03;
 const ABS_MT_POSITION_X: u16 = 0x35;
 const ABS_MT_POSITION_Y: u16 = 0x36;
 const ABS_MT_TRACKING_ID: u16 = 0x39;
-// Protocol-B contact selector: subsequent ABS_MT_* events address this slot.
-// Sticky — the kernel only emits it when the active contact changes.
+// Protocol-B contact selector: subsequent `ABS_MT_*` address this slot.
 const ABS_MT_SLOT: u16 = 0x2f;
-// Capability bits identifying a touchscreen in /proc/bus/input/devices.
-// EV_ABS in the `B: EV=` bitmap → reports absolute axes; INPUT_PROP_DIRECT in
-// `B: PROP=` → finger maps 1:1 to a screen point (touchscreen, not touchpad).
+// Touchscreen capability bits in `/proc/bus/input/devices`: `EV_ABS` in
+// `B: EV=`, `INPUT_PROP_DIRECT` in `B: PROP=`.
 const EV_ABS_BIT: u32 = 3;
 const INPUT_PROP_DIRECT: u32 = 1;
 
@@ -33,7 +31,7 @@ const EVENT_BYTES: usize = 16;
 /// Side of the screenshot gesture's corner zones, in user-visible pixels.
 const SCREENSHOT_CORNER_PX: u32 = 180;
 
-/// Boundary touch events reaching the main loop: `Down` on a landing contact,
+/// Boundary events out of [`Touch::next_event`]: `Down` on a landing contact,
 /// `Up` on the lift. A move between the two updates `cur_x/cur_y` silently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TouchEvent {
@@ -45,9 +43,7 @@ pub enum TouchEvent {
         x: u32,
         y: u32,
     },
-    /// Two contacts in opposite screen corners, either diagonal: the Kindle
-    /// screenshot gesture, recognized here past an `EVIOCGRAB`ped framework.
-    /// Carries no coords.
+    /// Two contacts in opposite screen corners, either diagonal. No coords.
     Screenshot,
 }
 
@@ -61,9 +57,7 @@ pub enum SwipeDir {
     Prev,
 }
 
-// _IOW('E', 0x90, int) = 0x40044590. Call sites cast with `as _`:
-// `libc::ioctl`'s request arg is `c_int` on armv7 Linux and `c_ulong` on the
-// host, and the value fits both.
+// _IOW('E', 0x90, int). Call sites cast with `as _` for `libc::ioctl`.
 const EVIOCGRAB: libc::c_int = 0x40044590;
 
 pub struct Touch {
@@ -83,9 +77,13 @@ pub struct Touch {
     screenshot_latched: bool,
     /// After a screenshot fires, swallow the trailing slot-0 `Up`.
     suppress_next_up: bool,
-    /// Once grabbed, no other reader sees events from this device.
+    /// Whether `EVIOCGRAB` is held. A held grab is `file`'s only reader.
     grabbed: bool,
-    /// The orientation the framebuffer was opened with.
+    /// Whether [`Touch::open`]'s `EVIOCGRAB` took. Read by [`Touch::retake`].
+    exclusive: bool,
+    /// [`Touch::set_covered`]'s state: no grab, no [`Touch::next_event`].
+    covered: bool,
+    /// Applied by [`Touch::transform_xy`].
     orientation: Orientation,
     fb_xres: u32,
     fb_yres: u32,
@@ -95,18 +93,14 @@ impl Touch {
     pub fn open(orientation: Orientation, fb_xres: u32, fb_yres: u32) -> Result<Self> {
         let path = find_touch_device()?;
         // `O_NONBLOCK` for the `poll(2)` multiplexer in `crate::eink::input`.
-        // A blocking read on an fd readable mid-stroke starves the
-        // bezel-button fd.
         let file = OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NONBLOCK)
             .open(&path)
             .with_context(|| format!("open {}", path.display()))?;
-        // The kernel treats the arg as a "non-NULL = grab, NULL = ungrab"
-        // boolean (see drivers/input/evdev.c). Pass 1.
+        // `EVIOCGRAB` takes non-NULL to grab and NULL to ungrab.
         let grab_res = unsafe { libc::ioctl(file.as_raw_fd(), EVIOCGRAB as _, 1) };
         let grabbed = grab_res == 0;
-        // A failed grab leaves the device readable and non-exclusive.
         if grabbed {
             eprintln!("touch: EVIOCGRAB ok — exclusive");
         } else {
@@ -131,6 +125,8 @@ impl Touch {
             screenshot_latched: false,
             suppress_next_up: false,
             grabbed,
+            exclusive: grabbed,
+            covered: false,
             orientation,
             fb_xres,
             fb_yres,
@@ -144,10 +140,48 @@ impl Touch {
         self.file.as_raw_fd()
     }
 
-    /// Sets the orientation transforming raw coords. The X server rotates the
-    /// display and raw evdev coords stay panel-fixed.
+    /// Sets the `orientation` [`Touch::transform_xy`] applies to raw coords.
     pub fn set_orientation(&mut self, orientation: Orientation) {
         self.orientation = orientation;
+    }
+
+    /// Drops `EVIOCGRAB` and sets `covered` while another window covers this
+    /// app's; takes the grab back when that window goes.
+    pub fn set_covered(&mut self, covered: bool) {
+        if covered == self.covered {
+            return;
+        }
+        self.covered = covered;
+        let want = i32::from(!covered);
+        let ok = unsafe { libc::ioctl(self.file.as_raw_fd(), EVIOCGRAB as _, want) } == 0;
+        self.grabbed = ok && !covered;
+        eprintln!(
+            "touch: covered={covered} grabbed={} ioctl={ok}",
+            self.grabbed
+        );
+        self.forget_stroke();
+    }
+
+    /// Retakes `EVIOCGRAB` where `exclusive` holds and `grabbed` does not.
+    pub fn retake(&mut self) {
+        if self.grabbed || self.covered || !self.exclusive {
+            return;
+        }
+        self.grabbed = unsafe { libc::ioctl(self.file.as_raw_fd(), EVIOCGRAB as _, 1) } == 0;
+        if self.grabbed {
+            eprintln!("touch: EVIOCGRAB retaken — exclusive");
+        }
+    }
+
+    /// Clears the pending `Down`/`Up` boundary and both slots.
+    fn forget_stroke(&mut self) {
+        self.down_pending = false;
+        self.up_pending = false;
+        self.cur_slot = 0;
+        self.slot0_active = false;
+        self.slot1_active = false;
+        self.screenshot_latched = false;
+        self.suppress_next_up = false;
     }
 
     /// The available events drained. `Some` on a completed `Down`/`Up` boundary
@@ -157,6 +191,8 @@ impl Touch {
         let mut buf = [0u8; EVENT_BYTES];
         loop {
             match self.file.read(&mut buf) {
+                // Covered: the record is read and dropped.
+                Ok(EVENT_BYTES) if self.covered => continue,
                 Ok(EVENT_BYTES) => {}
                 // evdev hands back whole 16-byte records: a short read is an
                 // empty buffer.
@@ -350,8 +386,7 @@ fn find_touch_device_by_scan() -> Result<PathBuf> {
 /// The scan's decision, split out from the I/O. Returns the winning
 /// `eventN`.
 fn pick_from_devices(raw: &str) -> Option<String> {
-    // Word width of the kernel's bitmap longs, needed to index `B: ABS=`.
-    // Derived once from the whole file (see `bitmap_word_bits`).
+    // `word_bits` indexes every `B: ABS=` bitmap read below.
     let word_bits = bitmap_word_bits(raw);
 
     let mut best: Option<(i32, String, String)> = None; // (score, event node, name)
@@ -412,9 +447,9 @@ fn pick_from_devices(raw: &str) -> Option<String> {
     Some(node)
 }
 
-/// Bit width of the kernel's `unsigned long`, from the longest hex word in
-/// `/proc/bus/input/devices`. The kernel prints each word `%lx` and elides
-/// leading empty ones; a word past 8 hex digits came from a 64-bit long.
+/// Bit width of the bitmap words in `/proc/bus/input/devices`, from its longest
+/// hex word: each prints `%lx` with leading empty words elided, and a word past
+/// 8 hex digits is 64-bit.
 fn bitmap_word_bits(raw: &str) -> u32 {
     let widest = raw
         .lines()
@@ -460,9 +495,9 @@ fn first_hex_word(block: &str, prefix: &str) -> u64 {
 mod tests {
     use super::*;
 
-    /// Verbatim `/proc/bus/input/devices` from a Kindle Scribe on 5.19.4.0.1.
-    /// The pen digitizer enumerates ahead of the finger panel, as `EV_ABS` +
-    /// `INPUT_PROP_DIRECT` as it is.
+    /// Verbatim `/proc/bus/input/devices` from a Kindle Scribe on 5.19.4.0.1:
+    /// `WacomDigitizer` precedes `pt_mt`, carrying `EV_ABS` and
+    /// `INPUT_PROP_DIRECT`.
     const SCRIBE_DEVICES: &str = "\
 I: Bus=0019 Vendor=0001 Product=0001 Version=0100
 N: Name=\"bd71828-pwrkey\"
@@ -532,9 +567,9 @@ B: ABS=f000003
         );
     }
 
-    /// The Scribe kernel is 32-bit: `B: ABS=ee18000 0` is two words,
-    /// most-significant first. `ABS_MT_POSITION_X` (0x35, bit 53) sits in the
-    /// high word, and the Wacom node's single word carries no bit 53.
+    /// `B: ABS=ee18000 0` is two 32-bit words, most-significant first.
+    /// `ABS_MT_POSITION_X` (0x35, bit 53) sits in the high word, and the Wacom
+    /// node's single word carries no bit 53.
     #[test]
     fn abs_mt_bit_is_read_from_the_right_word() {
         let word_bits = bitmap_word_bits(SCRIBE_DEVICES);

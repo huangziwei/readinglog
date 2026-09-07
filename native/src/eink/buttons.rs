@@ -16,9 +16,7 @@ const KEY_PAGEUP: u16 = 104;
 const KEY_PAGEDOWN: u16 = 109;
 const EVENT_BYTES: usize = 16;
 
-// _IOW('E', 0x90, int). Call sites cast with `as _`: `libc::ioctl`'s request
-// arg is `c_int` on armv7 Linux and `c_ulong` on the host, and the value fits
-// both.
+// _IOW('E', 0x90, int). Call sites cast with `as _` for `libc::ioctl`.
 const EVIOCGRAB: libc::c_int = 0x40044590;
 
 /// Which bezel button fired. The KOA2 maps `KEY_PAGEUP` (top) → `Next` and
@@ -31,8 +29,12 @@ pub enum PageButton {
 
 pub struct Buttons {
     file: File,
-    /// Whether `EVIOCGRAB` succeeded.
+    /// Whether `EVIOCGRAB` is held.
     grabbed: bool,
+    /// Whether [`Buttons::open`]'s `EVIOCGRAB` took.
+    exclusive: bool,
+    /// [`Buttons::set_covered`]'s state: no grab, no [`Buttons::read_one`].
+    covered: bool,
     /// Orientation. `Down` swaps `Prev` and `Next`.
     orientation: Orientation,
 }
@@ -42,6 +44,7 @@ impl Buttons {
     /// device exists, leaving touch as the whole of the input.
     pub fn open() -> Result<Option<Self>> {
         let Some(path) = find_button_device()? else {
+            eprintln!("buttons: no gpio-keys device — running touch-only");
             return Ok(None);
         };
         let file = OpenOptions::new()
@@ -49,9 +52,12 @@ impl Buttons {
             .open(&path)
             .with_context(|| format!("open {}", path.display()))?;
         let grabbed = unsafe { libc::ioctl(file.as_raw_fd(), EVIOCGRAB as _, 1) } == 0;
+        eprintln!("buttons: using {} (grabbed {grabbed})", path.display());
         Ok(Some(Self {
             file,
             grabbed,
+            exclusive: grabbed,
+            covered: false,
             orientation: Orientation::Up,
         }))
     }
@@ -67,6 +73,30 @@ impl Buttons {
         self.orientation = orientation;
     }
 
+    /// Drops `EVIOCGRAB` and sets `covered` while another window covers this
+    /// app's; takes the grab back when that window goes.
+    pub fn set_covered(&mut self, covered: bool) {
+        if covered == self.covered {
+            return;
+        }
+        self.covered = covered;
+        let want = i32::from(!covered);
+        let ok = unsafe { libc::ioctl(self.file.as_raw_fd(), EVIOCGRAB as _, want) } == 0;
+        self.grabbed = ok && !covered;
+        eprintln!("buttons: covered={covered} grabbed={}", self.grabbed);
+    }
+
+    /// Retakes `EVIOCGRAB` where `exclusive` holds and `grabbed` does not.
+    pub fn retake(&mut self) {
+        if self.grabbed || self.covered || !self.exclusive {
+            return;
+        }
+        self.grabbed = unsafe { libc::ioctl(self.file.as_raw_fd(), EVIOCGRAB as _, 1) } == 0;
+        if self.grabbed {
+            eprintln!("buttons: EVIOCGRAB retaken");
+        }
+    }
+
     /// One event record, the caller having polled first. `Some` on a mapped
     /// page key's press (`value==1`) alone; a release, autorepeat, `SYN` or
     /// unmapped key answers `None`.
@@ -78,17 +108,18 @@ impl Buttons {
         let type_ = u16::from_ne_bytes([buf[8], buf[9]]);
         let code = u16::from_ne_bytes([buf[10], buf[11]]);
         let value = i32::from_ne_bytes([buf[12], buf[13], buf[14], buf[15]]);
+        // Covered: the record is read and dropped.
+        if self.covered {
+            return Ok(None);
+        }
         if type_ == EV_KEY && value == 1 {
             let btn = match code {
-                // KOA2, hardware-confirmed: the top button emits KEY_PAGEUP
-                // and the bottom KEY_PAGEDOWN. Top pages forward, inverting
-                // the keycodes' literal names.
+                // KOA2: `KEY_PAGEUP` is the top button, `KEY_PAGEDOWN` the bottom.
                 KEY_PAGEUP => Some(PageButton::Next),
                 KEY_PAGEDOWN => Some(PageButton::Prev),
                 _ => None,
             };
-            // On a 180° flip the physical buttons swap sides: prev/next swap
-            // with them.
+            // `Orientation::Down` swaps the sides `Prev` and `Next` sit on.
             return Ok(match (btn, self.orientation) {
                 (Some(PageButton::Next), Orientation::Down) => Some(PageButton::Prev),
                 (Some(PageButton::Prev), Orientation::Down) => Some(PageButton::Next),

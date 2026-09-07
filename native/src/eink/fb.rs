@@ -9,8 +9,8 @@ use x11rb::connection::Connection;
 use x11rb::connection::RequestConnection as _;
 use x11rb::protocol::Event;
 use x11rb::protocol::xproto::{
-    AtomEnum, ConnectionExt, CreateGCAux, CreateWindowAux, EventMask, Gcontext, ImageFormat,
-    ImageOrder, PropMode, Screen, Window, WindowClass,
+    Atom, AtomEnum, ConnectionExt, CreateGCAux, CreateWindowAux, EventMask, Gcontext, ImageFormat,
+    ImageOrder, PropMode, Screen, Visibility, Window, WindowClass,
 };
 use x11rb::rust_connection::RustConnection;
 // `change_property8` lives in the wrapper `ConnectionExt`.
@@ -59,6 +59,35 @@ fn wire_channels(conn: &RustConnection, screen: &Screen, bpp: usize) -> Option<[
         offset(visual.green_mask),
         offset(visual.blue_mask),
     ])
+}
+
+/// `events` folded into a [`Pump`] against `covered`. The last event wins, and
+/// an unchanged state answers `Pump::covered` of `None`. `VisibilityNotify`
+/// sets it either way; a [`SCREENSAVER_MESSAGE`] sets it true alone.
+fn fold(events: &[Event], screensaver: Atom, covered: bool) -> Pump {
+    let mut pump = Pump::default();
+    let mut folded = covered;
+    for event in events {
+        match event {
+            Event::Expose(_) => pump.repaint = true,
+            // `FULLY_OBSCURED` is the whole panel; anything less is a share of it.
+            Event::VisibilityNotify(ev) => folded = ev.state == Visibility::FULLY_OBSCURED,
+            // `data8[0]` of 1 covers; a 0 leaves `folded` alone.
+            Event::ClientMessage(ev) if screensaver != 0 && ev.type_ == screensaver => {
+                folded |= ev.data.as_data8()[0] != 0;
+            }
+            Event::Error(e) => {
+                // A `put_image` the server rejects arrives here.
+                eprintln!("x11: WARNING request failed: {e:?}");
+                pump.repaint = true;
+            }
+            _ => {}
+        }
+    }
+    if folded != covered {
+        pump.covered = Some(folded);
+    }
+    pump
 }
 
 /// `pixel_bytes` rounded up to a multiple of `pad`, the bytes `put_image` takes
@@ -147,14 +176,29 @@ struct Surface {
     depth: u8,
     /// Wire bytes per pixel for `depth`, from `pixmap_formats`.
     bytes_per_pixel: usize,
-    /// Wire bytes per scanline: [`wire_stride`] over `xres` and the format's
-    /// `scanline_pad`.
+    /// Wire bytes per scanline, from [`wire_stride`] and `scanline_pad`.
     wire_stride: usize,
     /// R, G, B offsets within a `bytes_per_pixel`-wide wire pixel.
     chan: [usize; 3],
     /// Per-`PutImage` byte budget (server max request length minus header slack).
     max_req_bytes: usize,
+    /// The interned [`SCREENSAVER_MESSAGE`] atom, or 0.
+    screensaver: Atom,
+    /// Whether another window covers this one. [`fold`] reports its changes.
+    covered: bool,
 }
+
+/// What [`Framebuffer::pump_events`] answers.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Pump {
+    /// Set by `Expose` and by `Event::Error`.
+    pub repaint: bool,
+    /// `Some(true)` covered, `Some(false)` uncovered, `None` unchanged.
+    pub covered: Option<bool>,
+}
+
+/// Atom naming the message a `CMS~E:ss` `WM_NAME` subscribes to.
+const SCREENSAVER_MESSAGE: &[u8] = b"lab126_screen_saver";
 
 pub struct Framebuffer {
     /// Where a frame is presented. `None` under [`Framebuffer::offscreen`].
@@ -221,12 +265,14 @@ impl Framebuffer {
             // `CreateWindowAux` sets no `backing_store`.
             &CreateWindowAux::new()
                 .background_pixel(screen.white_pixel)
-                .event_mask(EventMask::EXPOSURE),
+                // `VISIBILITY_CHANGE` reports a window put over this one.
+                .event_mask(EventMask::EXPOSURE | EventMask::VISIBILITY_CHANGE),
         )
         .context("create_window")?;
 
-        // `WM_NAME` carries the lab126 WM's layout spec.
-        let name = b"L:A_N:application_ID:com.readinglog.stats_PC:N_O:U";
+        // `WM_NAME` carries the lab126 WM's layout spec. `CMS~E:ss` subscribes
+        // to [`SCREENSAVER_MESSAGE`].
+        let name = b"L:A_N:application_ID:com.readinglog.stats_PC:N_O:U_CMS~E:ss";
         conn.change_property8(
             PropMode::REPLACE,
             win,
@@ -275,6 +321,18 @@ impl Framebuffer {
             bytes_per_pixel
         );
 
+        // `only_if_exists` false creates the atom. [`fold`] matches no
+        // `ClientMessage` against the 0 an unanswered reply leaves.
+        let screensaver = conn
+            .intern_atom(false, SCREENSAVER_MESSAGE)
+            .map_err(|e| e.to_string())
+            .and_then(|c| c.reply().map_err(|e| e.to_string()))
+            .map(|r| r.atom)
+            .unwrap_or_else(|e| {
+                eprintln!("fb: could not intern lab126_screen_saver: {e}");
+                0
+            });
+
         let backing = vec![0xFFu8; xres as usize * yres as usize * CH];
 
         Ok(Self {
@@ -287,6 +345,8 @@ impl Framebuffer {
                 wire_stride,
                 chan,
                 max_req_bytes,
+                screensaver,
+                covered: false,
             }),
             var: Var { xres, yres },
             backing,
@@ -387,25 +447,20 @@ impl Framebuffer {
         }
     }
 
-    /// Drains the X event queue, returning whether the server asked for a redraw.
-    /// `EXPOSURE` events and `put_image` errors both arrive here.
-    pub fn pump_events(&mut self) -> bool {
+    /// Drains the X event queue through [`fold`], keeping `Surface::covered`.
+    pub fn pump_events(&mut self) -> Pump {
         let Some(surface) = self.surface.as_mut() else {
-            return false;
+            return Pump::default();
         };
-        let mut needs_repaint = false;
+        let mut events = Vec::new();
         while let Ok(Some(event)) = surface.conn.poll_for_event() {
-            match event {
-                Event::Expose(_) => needs_repaint = true,
-                Event::Error(e) => {
-                    // `Event::Error` sets `needs_repaint`.
-                    eprintln!("x11: WARNING request failed: {e:?}");
-                    needs_repaint = true;
-                }
-                _ => {}
-            }
+            events.push(event);
         }
-        needs_repaint
+        let pump = fold(&events, surface.screensaver, surface.covered);
+        if let Some(covered) = pump.covered {
+            surface.covered = covered;
+        }
+        pump
     }
 
     /// Presents the rows of `rect`, converting the backing to the wire pixel
@@ -504,7 +559,119 @@ impl Drop for Framebuffer {
 
 #[cfg(test)]
 mod tests {
-    use super::{pack_band, wire_stride};
+    use super::{Pump, fold, pack_band, wire_stride};
+    use x11rb::protocol::Event;
+    use x11rb::protocol::xproto::{
+        ClientMessageData, ClientMessageEvent, ExposeEvent, Visibility, VisibilityNotifyEvent,
+    };
+
+    /// The atom under test. Any non-zero value stands for `lab126_screen_saver`.
+    const SS: u32 = 42;
+
+    fn expose() -> Event {
+        Event::Expose(ExposeEvent {
+            response_type: 12,
+            sequence: 0,
+            window: 1,
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            count: 0,
+        })
+    }
+
+    fn visibility(state: Visibility) -> Event {
+        Event::VisibilityNotify(VisibilityNotifyEvent {
+            response_type: 15,
+            sequence: 0,
+            window: 1,
+            state,
+        })
+    }
+
+    /// A `ClientMessage` under `type_`, carrying `up` in `data8[0]`.
+    fn message(type_: u32, up: u8) -> Event {
+        let mut data = [0u8; 20];
+        data[0] = up;
+        Event::ClientMessage(ClientMessageEvent {
+            response_type: 33,
+            format: 8,
+            sequence: 0,
+            window: 1,
+            type_,
+            data: ClientMessageData::from(data),
+        })
+    }
+
+    /// An empty queue, and an `Expose` alone, leave `Pump::covered` at `None`.
+    #[test]
+    fn nothing_drained_changes_nothing() {
+        assert_eq!(fold(&[], SS, false), Pump::default());
+        assert_eq!(fold(&[expose()], SS, false).covered, None);
+    }
+
+    /// `visibility` and `message` each set `Pump::covered` on their own.
+    #[test]
+    fn either_signal_covers_the_window() {
+        for events in [
+            vec![visibility(Visibility::FULLY_OBSCURED)],
+            vec![message(SS, 1)],
+        ] {
+            assert_eq!(fold(&events, SS, false).covered, Some(true));
+        }
+    }
+
+    /// `UNOBSCURED` and `PARTIALLY_OBSCURED` both fold to a `covered` of false.
+    #[test]
+    fn a_partly_covered_window_keeps_the_screen() {
+        for state in [Visibility::UNOBSCURED, Visibility::PARTIALLY_OBSCURED] {
+            assert_eq!(fold(&[visibility(state)], SS, true).covered, Some(false));
+            assert_eq!(fold(&[visibility(state)], SS, false).covered, None);
+        }
+    }
+
+    /// An event repeating the `covered` passed in folds to `None`.
+    #[test]
+    fn an_unchanged_state_is_not_reported() {
+        let covered = [visibility(Visibility::FULLY_OBSCURED), message(SS, 1)];
+        assert_eq!(fold(&covered, SS, true).covered, None);
+        assert_eq!(fold(&[message(SS, 0)], SS, false).covered, None);
+    }
+
+    /// The last event of `events` sets `Pump::covered`.
+    #[test]
+    fn the_last_event_of_a_drain_wins() {
+        let events = [
+            visibility(Visibility::FULLY_OBSCURED),
+            expose(),
+            visibility(Visibility::UNOBSCURED),
+        ];
+        let pump = fold(&events, SS, false);
+        assert_eq!(pump.covered, None, "it ended where it started");
+        assert!(pump.repaint);
+
+        let events = [message(SS, 1), message(SS, 0), message(SS, 1)];
+        assert_eq!(fold(&events, SS, false).covered, Some(true));
+    }
+
+    /// A `type_` other than `screensaver`, and a `screensaver` of 0, fold to `None`.
+    #[test]
+    fn a_message_under_another_atom_is_ignored() {
+        assert_eq!(fold(&[message(SS + 1, 1)], SS, false).covered, None);
+        assert_eq!(fold(&[message(0, 1)], 0, false).covered, None);
+    }
+
+    /// A `data8[0]` of 0 leaves a covered window covered: `UNOBSCURED` alone
+    /// uncovers it.
+    #[test]
+    fn only_visibility_uncovers() {
+        assert_eq!(fold(&[message(SS, 0)], SS, true).covered, None);
+        let events = [message(SS, 1), message(SS, 0)];
+        assert_eq!(fold(&events, SS, false).covered, Some(true));
+        let events = [message(SS, 0), visibility(Visibility::UNOBSCURED)];
+        assert_eq!(fold(&events, SS, true).covered, Some(false));
+    }
 
     /// `wire_stride` over the shipped panel widths at both `bytes_per_pixel` a
     /// Kindle X server offers, under a 4-byte pad.

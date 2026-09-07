@@ -19,8 +19,7 @@ const TICK_MS: libc::c_int = 500;
 pub enum InputEvent {
     Touch(TouchEvent),
     Page(PageButton),
-    /// `poll` timed out with no input. The main loop re-checks orientation
-    /// here: the X server rotates the display, raw evdev coords stay fixed.
+    /// `poll` timed out with no input.
     Tick,
 }
 
@@ -35,12 +34,27 @@ impl Input {
         Self { touch, buttons }
     }
 
-    /// Re-orient both devices after a detected rotation (the display is rotated
-    /// by the X server; raw evdev coords/buttons are panel-fixed and need this).
+    /// Sets `orientation` on `touch` and `buttons`.
     pub fn set_orientation(&mut self, orientation: Orientation) {
         self.touch.set_orientation(orientation);
         if let Some(buttons) = self.buttons.as_mut() {
             buttons.set_orientation(orientation);
+        }
+    }
+
+    /// [`Touch::set_covered`] and `Buttons::set_covered` over both devices.
+    pub fn set_covered(&mut self, covered: bool) {
+        self.touch.set_covered(covered);
+        if let Some(buttons) = self.buttons.as_mut() {
+            buttons.set_covered(covered);
+        }
+    }
+
+    /// [`Touch::retake`] and `Buttons::retake` over both devices.
+    pub fn retake(&mut self) {
+        self.touch.retake();
+        if let Some(buttons) = self.buttons.as_mut() {
+            buttons.retake();
         }
     }
 
