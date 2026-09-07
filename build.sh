@@ -36,8 +36,7 @@ chmod +x "$OUT" 2>/dev/null || true
 echo "==> staged $(ls -lh "$OUT" | awk '{print $5}') -> device/extensions/readinglog/bin/readinglog"
 file "$OUT" 2>/dev/null || true
 
-# $DUMP is scripts/dumplogs.sh under the name kterm runs it by. The scriptlet
-# in device/documents/ and this copy are the same file.
+# $DUMP is a copy of $ROOT/scripts/dumplogs.sh.
 DUMP="$ROOT/device/extensions/readinglog/bin/dump.sh"
 cp "$ROOT/scripts/dumplogs.sh" "$DUMP"
 chmod +x "$DUMP" 2>/dev/null || true
