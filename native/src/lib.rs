@@ -2,6 +2,10 @@
 //! statistics over them, and the screens drawn from those. Every module the
 //! device binary runs is here.
 
+// Docs name the private helpers beside them: this crate is read with
+// `--document-private-items`.
+#![allow(rustdoc::private_intra_doc_links)]
+
 pub mod app;
 pub mod backup;
 pub mod catalog;

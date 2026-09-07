@@ -355,7 +355,7 @@ fn bytes(count: u64) -> String {
     }
 }
 
-/// A question drawn over the config page, through [`ui::dialog`].
+/// A question drawn over the config page, through [`crate::ui::dialog`].
 pub fn asking(cx: &mut Ctx, area: Rect, confirm: &Confirm) {
     let s = cx.s();
     let (heading, note, answer) = question(confirm, s);

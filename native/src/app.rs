@@ -775,7 +775,7 @@ impl App {
         &self.dir
     }
 
-    /// Draw and act against a record outside [`store::STORE_DIR`].
+    /// Draw and act against a record outside [`crate::store::STORE_DIR`].
     pub fn set_dir(&mut self, dir: std::path::PathBuf) {
         self.dir = dir;
     }

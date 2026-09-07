@@ -363,7 +363,7 @@ pub fn clearing_note(stats: &crate::stats::Stats, index: usize, s: &Strings) -> 
     out
 }
 
-/// A question drawn over the book's own screen, through [`ui::dialog`].
+/// A question drawn over the book's own screen, through [`crate::ui::dialog`].
 pub fn asking(cx: &mut Ctx, area: Rect, ask: Ask, index: usize) {
     let s = cx.s();
     if ask == Ask::Clear {
