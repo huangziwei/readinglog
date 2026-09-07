@@ -131,11 +131,11 @@ pub struct Store {
     pub books: Vec<BookRecord>,
     /// `extent → cde_key`, every pairing any pass has seen, ascending.
     pub keys: Vec<(i64, String)>,
-    /// `(end position, TotalTime, TotalWords)`, the highest counter the log has
-    /// ever shown for each class, ascending. Measured, like [`Self::ends`].
+    /// `(end position, TotalTime, TotalWords)`, the highest counter each class
+    /// was logged with, ascending.
     pub counters: Vec<(i64, i64, i64)>,
-    /// `extent → the book's file`, inferred from a sidecar holding the same
-    /// counter, ascending. Accumulated, never replaced.
+    /// `extent → the book's file`, from a sidecar holding the same counter,
+    /// ascending.
     pub pairs: Vec<(i64, String)>,
     /// The newest log line any pass has read, as `YYMMDD:HHMMSS`.
     pub mark: String,
@@ -540,12 +540,31 @@ impl Store {
                 continue;
             }
             self.learn_pair(extent, file);
-            self.books.push(from_sidecar(extent, file));
-            self.stand_where_read(self.books.len() - 1);
+            let slot = match self.keyed_by_name(file) {
+                Some(i) => {
+                    self.books[i].extent = extent;
+                    i
+                }
+                None => {
+                    self.books.push(from_sidecar(extent, file));
+                    self.books.len() - 1
+                }
+            };
+            self.stand_where_read(slot);
             named += 1;
         }
         self.sort_books();
         named
+    }
+
+    /// The record whose `cde_key` `file` contains, where exactly one does and it
+    /// states no extent.
+    fn keyed_by_name(&self, file: &str) -> Option<usize> {
+        let mut found = self.books.iter().enumerate().filter(|(_, b)| {
+            b.extent == 0 && b.cde_key.len() >= KEY_IN_NAME && file.contains(&b.cde_key)
+        });
+        let (slot, _) = found.next()?;
+        found.next().is_none().then_some(slot)
     }
 
     /// Give the record at `slot` the percentage its newest sitting states.
@@ -910,8 +929,6 @@ impl Store {
         self.sort_cleared();
     }
 
-    /// Orders and de-duplicates `ends` on their key, which is what
-    /// [`Self::extent_of`] searches.
     /// Hold `extent` against `key`, in order. A pairing held stands.
     fn learn_key(&mut self, extent: i64, key: &str) {
         let at = (extent, key.to_string());
@@ -937,6 +954,8 @@ impl Store {
         }
     }
 
+    /// Orders and de-duplicates `ends` on their key, which is what
+    /// [`Self::extent_of`] searches.
     fn sort_ends(&mut self) {
         self.ends.sort_unstable();
         self.ends.dedup_by_key(|(k, _)| *k);
@@ -964,6 +983,9 @@ impl Store {
             .dedup_by(|a, b| a.extent == b.extent && a.key == b.key);
     }
 }
+
+/// The shortest `cde_key` [`Store::keyed_by_name`] matches inside a name.
+const KEY_IN_NAME: usize = 10;
 
 /// A field with nothing in it that could be read as a separator.
 fn flat(text: &str) -> String {
@@ -1962,7 +1984,7 @@ mod tests {
             store.recover(&[card("a deleted book", 7_431_463, 49_712)]),
             1
         );
-        // The book is copied back on, and the catalog states it again.
+        // `remember` states the book again.
         store.remember(&[shelved(148_207, "B01", "The Catalog's Own Title", 40.0)]);
         store.recover(&[card("a deleted book", 7_431_463, 49_712)]);
         assert!(store.pairs.is_empty(), "the inference stands down");
@@ -1983,6 +2005,91 @@ mod tests {
         assert_eq!(back.counters, vec![(148_207, 7_431_463, 49_712)]);
         assert_eq!(back.pairs, vec![(148_207, "a deleted book".to_string())]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A page turn of a mobi8 book, whose positions are `HTMLPosition` and
+    /// whose `EndPos` is one under `p_contentSize`.
+    fn mobi8_turn(stamp: &str, at: i64, total_ms: i64, words: i64) -> String {
+        format!(
+            "{stamp} cvm[6144]: I ReadingTimerController:Information::NextPage,Verdict:Processed,\
+             IntervalTime:785,TotalTime:{total_ms},TotalWords:{words},\
+             CurrentPos:HTMLPosition:7731097,EndPos:HTMLPosition:{at},PosLeft:12155392,\
+             %Left:0.6112;"
+        )
+    }
+
+    #[test]
+    fn a_mobi8_sidecar_names_a_mobi8_class() {
+        let mut store = Store::default();
+        store.absorb(
+            &[
+                "260906:192400 cvm[6144]: I ReadingTimerController:Information::OpenBook,\
+                 BookEndPosition.FromBook:HTMLPosition:1543288;"
+                    .to_string(),
+                mobi8_turn("260906:192404", 1_543_288, 329_785, 1_905),
+                mobi8_turn("260906:192504", 1_543_288, 1_003_773, 1_834),
+            ],
+            "",
+        );
+        // `from_book` puts the mobi8 book end back at `p_contentSize`.
+        assert_eq!(store.extent_of(1_543_288), 1_543_289);
+        assert!(store.book_for(1_543_289, None).is_none());
+        // The counters an `.azw3f` states, in `timer.model`'s own order.
+        assert_eq!(store.recover(&[card("lovecraft", 1_003_773, 1_834)]), 1);
+        let book = store.book_for(1_543_289, None).expect("the book named");
+        assert_eq!(book.title, "lovecraft");
+        assert_eq!(book.extent, 1_543_289);
+    }
+
+    #[test]
+    fn a_sidecar_named_for_a_key_reaches_the_row_holding_that_key() {
+        let mut store = read_but_unnamed();
+        // The row a deletion leaves: a key and a title, no location, no extent.
+        let mut archived = shelved(0, "B00OKPCRLG", "The Jewish Study Bible", -1.0);
+        archived.location = String::new();
+        archived.on_device = false;
+        store.remember(&[archived]);
+        let named = store.recover(&[card("The Jewish Study Bible_B00OKPCRLG", 7_431_463, 49_712)]);
+        assert_eq!(named, 1);
+        let book = store.book_for(148_207, None).expect("the book named");
+        assert_eq!(book.title, "The Jewish Study Bible");
+        assert_eq!(book.author, "Adele Berlin");
+        assert!(
+            book.thumbnail.ends_with("t.jpg"),
+            "the jacket comes with it"
+        );
+        assert_eq!(store.books.len(), 1, "one record, not two");
+    }
+
+    #[test]
+    fn a_name_carrying_no_key_is_titled_by_the_file() {
+        let mut store = read_but_unnamed();
+        let mut archived = shelved(0, "B00OKPCRLG", "The Jewish Study Bible", -1.0);
+        archived.location = String::new();
+        store.remember(&[archived]);
+        store.recover(&[card("some sideload", 7_431_463, 49_712)]);
+        let book = store.book_for(148_207, None).expect("the book named");
+        assert_eq!(book.title, "some sideload");
+    }
+
+    #[test]
+    fn a_record_already_holding_an_extent_is_never_taken_by_a_name() {
+        let mut store = read_but_unnamed();
+        store.remember(&[shelved(999_999, "B00OKPCRLG", "Another Book", 10.0)]);
+        store.recover(&[card("Another Book_B00OKPCRLG", 7_431_463, 49_712)]);
+        let other = store
+            .books
+            .iter()
+            .find(|b| b.cde_key == "B00OKPCRLG")
+            .expect("the live book");
+        assert_eq!(other.extent, 999_999, "its own extent stands");
+        assert_eq!(
+            store
+                .book_for(148_207, None)
+                .expect("the recovered book")
+                .title,
+            "Another Book_B00OKPCRLG"
+        );
     }
 
     #[test]
