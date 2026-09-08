@@ -63,7 +63,7 @@ fn utc_offset(now: &crate::log::line::Moment, line: &str) -> Option<i64> {
     let epoch_ms = crate::log::line::field_num(line, "close_timestamp")
         .or_else(|| crate::log::line::field_num(line, "action_start_time"))?;
     let raw = now.abs - epoch_ms.div_euclid(1000);
-    // A device whose clock is simply wrong states no zone worth recording.
+    // `raw` past a day is a wrong clock, not a zone.
     (raw.abs() < 24 * 3600).then(|| (raw as f64 / OFFSET_STEP as f64).round() as i64 * OFFSET_STEP)
 }
 
@@ -133,19 +133,51 @@ struct Start {
     at: Moment,
 }
 
+/// The highest `(EndPos, TotalTime, TotalWords)` each book was logged at.
+struct Counters(Vec<(i64, i64, i64)>);
+
+impl Counters {
+    /// The rows [`parse_sessions`] was handed, as its own copy.
+    fn held(rows: &[(i64, i64, i64)]) -> Self {
+        Self(rows.to_vec())
+    }
+
+    /// The `TotalWords` standing beside `counter_ms` for the book at
+    /// `position`. `StoredBookData` states whole seconds; the match is on the
+    /// second.
+    fn words_at(&self, position: i64, counter_ms: i64) -> Option<i64> {
+        self.0
+            .iter()
+            .find(|(ep, ms, _)| *ep == position && *ms / 1000 == counter_ms / 1000)
+            .map(|(_, _, words)| *words)
+    }
+
+    /// Hold what an observation states, where its counter outruns the one held.
+    fn learn(&mut self, obs: &Observation) {
+        let (Some(total_ms), Some(words)) = (obs.total_ms, obs.words) else {
+            return;
+        };
+        match self.0.iter_mut().find(|(ep, _, _)| *ep == obs.position) {
+            Some(held) if held.1 < total_ms => *held = (obs.position, total_ms, words),
+            Some(_) => {}
+            None => self.0.push((obs.position, total_ms, words)),
+        }
+    }
+}
+
 impl Opened {
     /// This open as a session start, or `None` when it cannot be vouched for:
     /// `counter_ms` must sit at or under the first observation's, and the
     /// reading it adds inside the wall clock since the open.
-    fn vouch(self, now: &Moment, first_total: Option<i64>) -> Option<Start> {
-        let total = first_total?;
+    fn vouch(self, now: &Moment, obs: &Observation, counters: &Counters) -> Option<Start> {
+        let total = obs.total_ms?;
         let elapsed = now.abs.checked_sub(self.at.abs).filter(|e| *e >= 0)?;
         (self.at.day == now.day
             && self.counter_ms <= total
             && total - self.counter_ms <= (elapsed + SEED_SLACK_SECS) * 1000)
-            .then_some(Start {
+            .then(|| Start {
                 counter_ms: Some(self.counter_ms),
-                words: None,
+                words: counters.words_at(obs.position, self.counter_ms),
                 at: self.at,
             })
     }
@@ -491,8 +523,13 @@ fn hours_in_seconds(hours_ms: &[i64; 24], seconds: i64) -> Vec<(u8, i64)> {
     out
 }
 
-/// Turn an ordered, de-duplicated event stream into sessions.
-pub fn parse_sessions<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<Session> {
+/// Turn an ordered, de-duplicated event stream into sessions. `counters` seeds
+/// [`Counters`], where `Open::words_lo` reads the `TotalWords` an `OpenBook`
+/// leaves unstated.
+pub fn parse_sessions<'a>(
+    events: impl IntoIterator<Item = &'a str>,
+    counters: &[(i64, i64, i64)],
+) -> Vec<Session> {
     // [`Awake`] reads the whole stream before the first sitting closes.
     let lines: Vec<&str> = events.into_iter().collect();
     // `toc` holds the positions only ever stated as a chapter's start.
@@ -524,6 +561,7 @@ pub fn parse_sessions<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<Sess
     let mut open: Option<Open> = None;
     let mut prev_abs: Option<i64> = None;
     let mut opened: Option<Opened> = None;
+    let mut counters = Counters::held(counters);
     // `gapped` holds a break until an observation acts on it.
     let mut gapped = false;
     // The catalog key most recently named, and when, for the run it belongs to.
@@ -587,7 +625,7 @@ pub fn parse_sessions<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<Sess
         // `opened` is read at the first observation after it, whether or not
         // that observation carries the counter to vouch for it.
         let mut seed = match obs.total_ms {
-            Some(_) => opened.take().and_then(|o| o.vouch(&now, obs.total_ms)),
+            Some(_) => opened.take().and_then(|o| o.vouch(&now, &obs, &counters)),
             None => {
                 let start = opened.as_ref().and_then(|o| o.opened_run(&now));
                 // `opened` is spent on a run it starts, and held where `start`
@@ -630,19 +668,29 @@ pub fn parse_sessions<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<Sess
                 }
             }
         }
-        // `cur.time_lo` takes the counter an open vouched for, where the run
-        // opened without one.
-        if let Some(counter) = seed.take().and_then(|s| s.counter_ms)
-            && cur.time_lo.is_none()
-        {
-            cur.time_lo = Some(counter);
-            cur.time_hi = counter;
-            cur.last_time = Some(counter);
+        // `cur.time_lo` and `cur.words_lo` take the counters an open vouched
+        // for, where the run opened without them.
+        if let Some(start) = seed.take() {
+            if let Some(counter) = start.counter_ms
+                && cur.time_lo.is_none()
+            {
+                cur.time_lo = Some(counter);
+                cur.time_hi = counter;
+                cur.last_time = Some(counter);
+            }
+            if let Some(words) = start.words
+                && cur.words_lo.is_none()
+            {
+                cur.words_lo = Some(words);
+                cur.words_hi = words;
+                cur.last_words = Some(words);
+            }
         }
         if let Some(left) = percent_left(line, cur.end_position) {
             cur.progress = Some(1.0 - left);
         }
         cur.observe(&now, &obs);
+        counters.learn(&obs);
         if obs.closes {
             out.push(open.take().expect("a run to close").finish(&awake));
         }
@@ -681,7 +729,7 @@ mod tests {
 
     #[test]
     fn two_page_events_measure_the_span_of_the_counter_between_them() {
-        let out = parse_sessions(CVM);
+        let out = parse_sessions(CVM, &[]);
         assert_eq!(out.len(), 1);
         // 7431463 - 7390020 = 41443 ms.
         assert_eq!(out[0].seconds, 41);
@@ -702,7 +750,7 @@ mod tests {
 
     #[test]
     fn a_mobi8_run_is_measured_the_way_a_kfx_one_is() {
-        let out = parse_sessions(MOBI8);
+        let out = parse_sessions(MOBI8, &[]);
         assert_eq!(out.len(), 1);
         // `vouch` seeds 329000 ms; 351002 stands at the last turn.
         assert_eq!(out[0].seconds, 22);
@@ -713,6 +761,74 @@ mod tests {
         assert_eq!(out[0].started_at, "2026-09-06T19:24:01");
         assert_eq!(out[0].ended_at, "2026-09-06T19:24:25");
         assert_eq!(out[0].progress, Some(1.0 - 0.6111));
+    }
+
+    /// A `CloseBook` stating `TotalTime` and `TotalWords` together, the one
+    /// counted line a KPP stack writes for a whole sitting.
+    fn kpp_close(hhmmss: &str, total_ms: i64, words: i64) -> String {
+        format!(
+            "260906:{hhmmss} java[5878]: I ReadingTimerController:Information::\
+             CloseBook,Title:<private>,Asin:<private>,\
+             PageStartPos:YJPosition: AeUAAAAwAAAA:10671,IntervalTime:91293,IntervalWords:187,\
+             TotalTime:{total_ms},TotalWords:{words},TotalWPM:217.248,\
+             CurrentPos:YJPosition: AeUAAAAwAAAA:10671,\
+             EndPos:YJPosition: AbIWAADQAAAA:289095,PosLeft:278424,%Left:0.9622;"
+        )
+    }
+
+    /// An `OpenBook` restating the counter. `time_read` is whole seconds,
+    /// thousands-separated, and no word count stands beside it.
+    fn kpp_open(hhmmss: &str, time_read: &str) -> String {
+        format!(
+            "260906:{hhmmss} java[5878]: I ReadingTimerController:Information::\
+             OpenBook,CurrentVersionUsed:0,StoredBookData:TimeRead:{time_read} sec. \
+             WPM:217.248. Version:0,Title:<private>,Asin:<private>;"
+        )
+    }
+
+    #[test]
+    fn a_resumed_run_takes_the_words_that_stood_beside_the_counter_it_opened_at() {
+        let lines = [
+            kpp_close("024945", 1_592_301, 5_548),
+            kpp_open("024957", "1,592"),
+            kpp_close("140506", 10_194_302, 33_906),
+        ];
+        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        assert_eq!(out.len(), 1, "the first close spans nothing of its own");
+        // 10194302 ms against the 1592000 the open vouched for.
+        assert_eq!(out[0].seconds, 8_602);
+        assert_eq!(out[0].words, 33_906 - 5_548);
+        assert_eq!(out[0].start_words, Some(5_548));
+        assert_eq!(out[0].end_words, Some(33_906));
+    }
+
+    #[test]
+    fn a_pass_that_never_read_the_close_takes_its_words_off_the_record() {
+        let lines = [
+            kpp_open("024957", "1,592"),
+            kpp_close("140506", 10_194_302, 33_906),
+        ];
+        let held = [(289_095, 1_592_301, 5_548)];
+        let out = parse_sessions(lines.iter().map(String::as_str), &held);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].words, 33_906 - 5_548);
+    }
+
+    #[test]
+    fn an_open_no_counter_answers_for_leaves_the_words_unstated() {
+        let lines = [
+            kpp_open("024957", "1,592"),
+            kpp_close("140506", 10_194_302, 33_906),
+        ];
+        // `held` names another book's pairing, and this book's at a counter
+        // `kpp_open` does not restate.
+        let held = [
+            (19_886_489, 1_592_301, 5_548),
+            (289_095, 10_194_302, 33_906),
+        ];
+        let out = parse_sessions(lines.iter().map(String::as_str), &held);
+        assert_eq!(out[0].seconds, 8_602, "the seconds still came off the open");
+        assert_eq!(out[0].words, 0, "a word count was invented");
     }
 
     /// A `cde_key` record at `hhmmss`.
@@ -742,7 +858,7 @@ mod tests {
         lines.push(MOBI8[1].replace("260906:192404", "260906:121004"));
         lines.push(MOBI8[2].replace("260906:192425", "260906:121025"));
 
-        let out = parse_sessions(lines.iter().map(String::as_str));
+        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].end_position, 148_207);
         assert_eq!(out[0].asin, None, "the first run took a later book's key");
@@ -765,14 +881,14 @@ mod tests {
             MOBI8[2].to_string(),
             lone("192500", 28_828),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str));
+        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 1, "a chapter opened a sitting of its own");
         assert_eq!(out[0].end_position, 19_886_489);
     }
 
     #[test]
     fn the_hours_of_a_session_add_back_up_to_the_session() {
-        let out = parse_sessions(CVM);
+        let out = parse_sessions(CVM, &[]);
         let summed: i64 = out[0].hours.iter().map(|(_, s)| s).sum();
         assert_eq!(summed, out[0].seconds);
         assert_eq!(out[0].hours, vec![(10, 41)]);
@@ -805,7 +921,7 @@ mod tests {
         lines.push(page("115000", 7_431_020));
         lines.push(page("115040", 7_471_020));
 
-        let out = parse_sessions(lines.iter().map(String::as_str));
+        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
         assert_eq!(
             out.len(),
             2,
@@ -874,7 +990,7 @@ mod tests {
             worded_page("105210", 300),
             page("105220", 7_390_020),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str));
+        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 1);
         // Two pages close an interval; the third closes none.
         assert_eq!(out[0].words, 600, "the pages' own counts went unread");
@@ -892,7 +1008,7 @@ mod tests {
             wordless_page("105210"),
             page("105220", 7_390_020),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str));
+        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].words, 0, "an image-only book was credited words");
     }
@@ -909,7 +1025,7 @@ mod tests {
             worded_page("105151", 300),
             page("105220", 7_390_020),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str));
+        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].words, 300, "a flipped page was counted as read");
     }
@@ -941,7 +1057,7 @@ mod tests {
             page("111510", 7_390_020),
             power("111600", "goingToScreenSaver"),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str));
+        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].measure, Measure::Dwell);
         // `ACTIVE` over 10:50:00-10:52:00 and 11:10:00-11:15:00. `hours`
@@ -987,7 +1103,7 @@ mod tests {
         lines.push(position("113818"));
         lines.push(power("114500", "goingToScreenSaver"));
 
-        let out = parse_sessions(lines.iter().map(String::as_str));
+        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 1, "the night held one sitting, at its head");
         assert_eq!(out[0].started_at, "2026-08-07T02:45:52");
         assert_eq!(out[0].ended_at, "2026-08-07T02:45:53");
@@ -1012,7 +1128,7 @@ mod tests {
             position("120010"),
             power("120100", "goingToScreenSaver"),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str));
+        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 2);
         // `open_book` stands a second before the run it starts.
         assert_eq!(out[0].started_at, "2026-08-07T10:00:00");
@@ -1022,7 +1138,7 @@ mod tests {
 
     #[test]
     fn a_sitting_that_measured_nothing_is_not_a_sitting() {
-        assert!(parse_sessions([CVM[0]]).is_empty());
+        assert!(parse_sessions([CVM[0]], &[]).is_empty());
     }
 
     #[test]

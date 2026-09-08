@@ -109,7 +109,7 @@ impl BookRecord {
 }
 
 /// A book whose reading was put back to zero, and when. Outlives the sittings
-/// it holds back: [`Store::load`] keeps these rows where it clears `sessions`.
+/// it holds back.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Cleared {
     /// The record's `p_contentSize`, 0 where the catalog never stated one.
@@ -162,8 +162,8 @@ impl Store {
     }
 
     /// Read the store, or an empty one where there is none to read. A file
-    /// that will not parse reads as empty; one stamped with an older `HEADER`
-    /// keeps `books`, `ends` and `cleared` and gives up `sessions` and `mark`.
+    /// that will not parse reads as empty; one under any other `HEADER` is
+    /// read whole.
     pub fn load(dir: &Path) -> Self {
         let Ok(text) = std::fs::read_to_string(Self::file(dir)) else {
             return Self::default();
@@ -179,8 +179,7 @@ impl Store {
         Self::from_text(&text)
     }
 
-    /// Every row `text` holds, whatever stamp it carries. A load surrenders
-    /// nothing: reading older than the device's logs is in no other place.
+    /// Every row `text` holds, whatever stamp it carries.
     pub fn from_text(text: &str) -> Self {
         Self::parse(text)
     }
@@ -190,8 +189,7 @@ impl Store {
         Self::parse(text)
     }
 
-    /// The rows of `text`. Under `gated` a stamp this build does not know
-    /// gives up `sessions` and `mark`.
+    /// The rows of `text`, one arm per row type.
     fn parse(text: &str) -> Self {
         let mut out = Self::default();
         for line in text.lines() {
@@ -330,7 +328,7 @@ impl Store {
     /// answers for is dropped.
     pub fn absorb(&mut self, lines: &[String], from: &str) -> (usize, usize) {
         let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
-        let parsed = crate::log::parse_sessions(refs.iter().copied());
+        let parsed = crate::log::parse_sessions(refs.iter().copied(), &self.counters);
         let cut = match from.is_empty() {
             true => String::new(),
             false => iso_stamp(from),
