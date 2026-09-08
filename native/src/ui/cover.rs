@@ -1,12 +1,19 @@
 //! Book covers, decoded from the file a `BookRecord` names.
 //!
 //! [`Covers`] holds each decode, keyed by path and by the height asked for.
+//! A box no jacket could be drawn in says what it stands for: [`titled`]
+//! where nothing else names the book, [`note`] where the title is set beside
+//! it already.
 
 use std::collections::HashMap;
 
 use crate::eink::fb::Framebuffer;
+use crate::font::Script;
+use crate::ui::text::TextRenderer;
+use crate::view::Ctx;
 
 use super::paint::{self, LIGHT, PALE, Rect};
+use super::theme::Theme;
 
 /// The width a cover box takes at `height`: two thirds of it.
 ///
@@ -50,10 +57,11 @@ impl Covers {
         Rect::new(area.x + (area.w - w) / 2, area.y + (area.h - h) / 2, w, h)
     }
 
-    /// Draw the cover for `path` inside `area`, centred, keeping its aspect. A
-    /// `path` naming nothing, or a file that will not decode, gets a plain
-    /// outlined block.
-    pub fn draw(&mut self, fb: &mut Framebuffer, area: Rect, path: &str) {
+    /// Draw the cover for `path` inside `area`, centred, keeping its aspect,
+    /// and answer whether one was drawn. A `path` naming nothing, or a file
+    /// that will not decode, gets a plain outlined block for [`note`] or
+    /// [`titled`] to write into.
+    pub fn draw(&mut self, fb: &mut Framebuffer, area: Rect, path: &str) -> bool {
         let key = (path.to_string(), area.h);
         let thumb = self
             .cache
@@ -62,7 +70,7 @@ impl Covers {
         let Some(thumb) = thumb else {
             paint::fill(fb, area, PALE);
             paint::stroke(fb, area, LIGHT, 1);
-            return;
+            return false;
         };
         let x0 = area.x + (area.w - thumb.w as i32) / 2;
         let y0 = area.y + (area.h - thumb.h as i32) / 2;
@@ -82,6 +90,97 @@ impl Covers {
             LIGHT,
             1,
         );
+        true
+    }
+}
+
+/// The share of [`Theme::small_px`] a title standing in for a jacket is set
+/// at: enough of a long title has to show for one box to be told from the
+/// next, and only a smaller size holds that much.
+const TITLE_SHARE: f32 = 0.72;
+
+/// The size [`titled`] sets a title at.
+pub fn title_px(theme: &Theme) -> f32 {
+    (theme.small_px * TITLE_SHARE).round().max(1.0)
+}
+
+/// What an empty cover box says on a screen that names the book beside it:
+/// that there is no jacket, and nothing else.
+pub fn note(cx: &mut Ctx, area: Rect) {
+    let said = cx.s().no_cover;
+    let script = cx.ui_script();
+    words(cx, area, said, script, cx.theme.small_px);
+}
+
+/// What an empty cover box says on a screen naming its books by their jackets
+/// alone: the title, at [`title_px`], ellipsized where the box will not hold
+/// it whole.
+pub fn titled(cx: &mut Ctx, area: Rect, title: &str, script: Script) {
+    words(cx, area, title, script, title_px(cx.theme));
+}
+
+/// How far [`words`] sets under the size it is given to keep a word whole.
+const KEEP_WHOLE: f32 = 0.7;
+
+/// The largest size at or under `px` that holds every word of `said` inside
+/// `room`, and no smaller than [`KEEP_WHOLE`] of it. A word is a run between
+/// spaces: Han and kana hold none, breaking between characters instead, and a
+/// title set in them keeps `px`.
+fn fitting_px(text: &mut TextRenderer, script: Script, said: &str, room: i32, px: f32) -> f32 {
+    let run = Script::resolve(script, said);
+    let floor = px * KEEP_WHOLE;
+    let mut at = px;
+    while at > floor {
+        text.set_px(at);
+        let widest = said
+            .split_whitespace()
+            .filter(|word| {
+                !word
+                    .chars()
+                    .any(|ch| crate::font::band_of(ch, run).is_cjk())
+            })
+            .map(|word| text.measure_width_in(script, word) as i32)
+            .max()
+            .unwrap_or(0);
+        if widest <= room {
+            break;
+        }
+        at = (at - 1.0).max(floor);
+    }
+    at
+}
+
+/// `said` centred in `area`, at [`fitting_px`] of `px`, wrapped to what the
+/// box holds and ellipsized past it. A box too small for one line is left
+/// plain.
+fn words(cx: &mut Ctx, area: Rect, said: &str, script: Script, px: f32) {
+    let theme: &Theme = cx.theme;
+    let inner = area.inset(theme.gap);
+    if inner.w <= 0 {
+        return;
+    }
+    let px = fitting_px(cx.text, script, said, inner.w, px);
+    cx.text.set_px(px);
+    let line = cx.text.line_height() as i32;
+    if inner.h < line {
+        return;
+    }
+    let lines = cx
+        .text
+        .wrap_and_clamp_in(script, said, inner.w as u32, (inner.h / line) as usize);
+    let block = lines.len() as i32 * line;
+    let mut baseline = inner.y + (inner.h - block).max(0) / 2 + cx.text.cap_height() as i32;
+    for line_said in &lines {
+        let w = cx.text.measure_width_in(script, line_said) as i32;
+        cx.text.draw_in(
+            script,
+            cx.fb,
+            inner.x + (inner.w - w) / 2,
+            baseline,
+            line_said,
+            false,
+        );
+        baseline += line;
     }
 }
 
@@ -150,6 +249,17 @@ mod tests {
         let thumb = decode(path.to_str().unwrap(), 200, 300).expect("a decoded cover");
         assert_eq!((thumb.w, thumb.h), (80, 120), "drawn at its own size");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_title_standing_in_for_a_jacket_is_set_under_the_figures_beside_it() {
+        for (w, h) in crate::ui::theme::tests::PANELS {
+            let theme = Theme::for_screen(w, h);
+            let px = title_px(&theme);
+            assert!(px < theme.small_px, "{w}x{h}: {px} px is no smaller");
+            // Small, and still a size a face renders at.
+            assert!(px >= 8.0, "{w}x{h}: {px} px is a smudge");
+        }
     }
 
     #[test]

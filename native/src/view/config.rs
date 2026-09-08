@@ -248,8 +248,8 @@ fn sections<'a>(
     let unnamed = Row {
         label: s.unnamed_row,
         options: vec![
-            (s.unnamed_show.to_string(), plain),
-            (s.unnamed_hide.to_string(), plain),
+            (s.chip_show.to_string(), plain),
+            (s.chip_hide.to_string(), plain),
             (s.unnamed_retry.to_string(), plain),
         ],
         on: !settings.show_unnamed as usize,
@@ -259,6 +259,20 @@ fn sections<'a>(
         }),
         one_row: false,
         apart: Some(RETRY_CHIP),
+    };
+
+    // Nothing is dropped from a total by this: the books it hides are read
+    // and counted, and only their rows and their empty boxes go.
+    let uncovered = Row {
+        label: s.uncovered_row,
+        options: vec![
+            (s.chip_show.to_string(), plain),
+            (s.chip_hide.to_string(), plain),
+        ],
+        on: !settings.show_uncovered as usize,
+        hit: Box::new(|i| Hit::ShowUncovered(i == 0)),
+        one_row: false,
+        apart: None,
     };
 
     // Never filled: one chip, a button.
@@ -327,7 +341,7 @@ fn sections<'a>(
         },
         Section {
             heading: s.the_record,
-            lines: [Line::Set(figures), Line::Set(unnamed)]
+            lines: [Line::Set(figures), Line::Set(unnamed), Line::Set(uncovered)]
                 .into_iter()
                 .chain(recorded)
                 .chain(reset.map(Line::Set))
@@ -772,7 +786,8 @@ mod tests {
             the_record(&Record::default()),
             [
                 Lang::English.strings().figures_row,
-                Lang::English.strings().unnamed_row
+                Lang::English.strings().unnamed_row,
+                Lang::English.strings().uncovered_row
             ]
         );
     }
@@ -787,7 +802,13 @@ mod tests {
         };
         assert_eq!(
             the_record(&record),
-            [s.figures_row, s.unnamed_row, s.recorded_row, s.reset_row]
+            [
+                s.figures_row,
+                s.unnamed_row,
+                s.uncovered_row,
+                s.recorded_row,
+                s.reset_row
+            ]
         );
     }
 
@@ -805,6 +826,7 @@ mod tests {
             [
                 s.figures_row,
                 s.unnamed_row,
+                s.uncovered_row,
                 s.recorded_row,
                 s.reset_row,
                 s.restore_row
@@ -820,6 +842,7 @@ mod tests {
             [
                 s.figures_row,
                 s.unnamed_row,
+                s.uncovered_row,
                 s.recorded_row,
                 s.reset_row,
                 s.restore_row
@@ -838,7 +861,7 @@ mod tests {
         };
         let page = sections(Lang::English, &settings, true, &record);
         let at = page.len() - 2;
-        let archives = row(&page, at, 4);
+        let archives = row(&page, at, 5);
         assert_eq!(archives.options[0].0, Lang::English.strings().restore_logs);
         assert_eq!((archives.hit)(0), Hit::Rebuild);
         assert_eq!((archives.hit)(1), Hit::Restore(0));
@@ -883,6 +906,36 @@ mod tests {
     }
 
     #[test]
+    fn the_covers_row_offers_the_two_values_and_no_button() {
+        let mut settings = Settings::new(Lang::English);
+        let empty = Record::default();
+        for show in [true, false] {
+            settings.show_uncovered = show;
+            let page = sections(Lang::English, &settings, true, &empty);
+            let at = page
+                .iter()
+                .position(|section| section.heading == Lang::English.strings().the_record)
+                .expect("the record section");
+            let uncovered = row(&page, at, 2);
+            assert_eq!(uncovered.options.len(), 2, "a button crept in");
+            assert_eq!((uncovered.hit)(0), Hit::ShowUncovered(true));
+            assert_eq!((uncovered.hit)(1), Hit::ShowUncovered(false));
+            assert_eq!(uncovered.on, !show as usize);
+            assert_eq!(uncovered.apart, None);
+        }
+    }
+
+    #[test]
+    fn every_language_names_the_two_rows_apart() {
+        for lang in Lang::ALL {
+            let s = lang.strings();
+            assert!(!s.uncovered_row.is_empty(), "{lang:?}");
+            assert_ne!(s.uncovered_row, s.unnamed_row, "{lang:?}");
+            assert!(!s.no_cover.is_empty(), "{lang:?}");
+        }
+    }
+
+    #[test]
     fn every_language_names_the_retry_and_keeps_it_off_the_two_values() {
         for lang in Lang::ALL {
             let s = lang.strings();
@@ -893,8 +946,8 @@ mod tests {
             let retry = unnamed.options[RETRY_CHIP].0.as_str();
             assert!(!retry.is_empty(), "{lang:?}");
             assert_eq!(retry, s.unnamed_retry, "{lang:?}");
-            assert_ne!(retry, s.unnamed_show, "{lang:?}");
-            assert_ne!(retry, s.unnamed_hide, "{lang:?}");
+            assert_ne!(retry, s.chip_show, "{lang:?}");
+            assert_ne!(retry, s.chip_hide, "{lang:?}");
         }
     }
 

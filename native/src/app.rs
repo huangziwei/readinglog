@@ -125,6 +125,11 @@ impl App {
         self.rebuild();
     }
 
+    /// List the books no jacket can be drawn for, or leave them off the lists.
+    pub fn set_uncovered(&mut self, show: bool) {
+        self.settings.show_uncovered = show;
+    }
+
     /// Open the week on `start`, whatever is stored.
     pub fn set_week_start(&mut self, start: crate::settings::WeekStart) {
         self.settings.week_start = start;
@@ -305,6 +310,7 @@ impl App {
             lang: self.lang,
             week: self.settings.week_start,
             figures: self.settings.figures,
+            uncovered: self.settings.show_uncovered,
             palette: crate::ui::paint::Palette::for_panel(self.settings.color_scheme, self.colour),
             stats: &self.stats,
             today: self.today,
@@ -707,6 +713,17 @@ impl App {
                 self.state.list_from = 0;
                 self.settings.save();
             }
+            Hit::ShowUncovered(pick) => {
+                if self.settings.show_uncovered == pick {
+                    return Action::Nothing;
+                }
+                self.settings.show_uncovered = pick;
+                // The lists are shorter or longer for it, and a page held
+                // part way down one of them names other books now.
+                self.state.books_from = 0;
+                self.state.list_from = 0;
+                self.settings.save();
+            }
             Hit::Book(index) => self.state.book = Some(index),
             // A second tap on the day picked drops it again.
             Hit::Day(day) => {
@@ -1075,14 +1092,23 @@ impl App {
     /// One step forward or back: a span on Rhythm, a page of the list, the
     /// next book.
     fn paged(&mut self, by: i64) -> Action {
-        if self.state.book.is_some() {
-            let count = self.stats.books.len() as i64;
-            if count == 0 {
+        if let Some(at) = self.state.book {
+            // The step walks the shelf as the Books list holds it, so a book
+            // that list hides is not stepped onto either.
+            let shelf = view::books::listed(
+                &self.stats,
+                view::Shelf::All,
+                view::Sort::Recent,
+                None,
+                self.settings.show_uncovered,
+            );
+            if shelf.is_empty() {
                 return Action::Nothing;
             }
-            let at = self.state.book.unwrap_or(0) as i64;
-            let next = (at + by).rem_euclid(count);
-            self.state.book = Some(next as usize);
+            // A book open when the setting changed may be one of the hidden.
+            let here = shelf.iter().position(|b| *b == at).unwrap_or(0) as i64;
+            let next = (here + by).rem_euclid(shelf.len() as i64) as usize;
+            self.state.book = Some(shelf[next]);
             return Action::Redraw;
         }
         match self.state.tab {
@@ -1110,8 +1136,14 @@ impl App {
                     .state
                     .window
                     .map(|window| window.days(self.settings.week_start));
-                let count =
-                    view::books::listed(&self.stats, self.state.shelf, self.state.sort, over).len();
+                let count = view::books::listed(
+                    &self.stats,
+                    self.state.shelf,
+                    self.state.sort,
+                    over,
+                    self.settings.show_uncovered,
+                )
+                .len();
                 let step = view::books::rows_per_page(&self.theme, area) as i64;
                 let last = view::books::last_page_at(&self.theme, area, count);
                 let from = self.state.books_from as i64 + by * step;

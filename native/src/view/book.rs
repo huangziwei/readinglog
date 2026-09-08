@@ -272,7 +272,10 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat, index: usize) {
     // The words stand against the jacket's own edges: its title tops with the
     // cover and its figures stand on the same foot.
     let jacket = cx.covers.box_in(art, &book.thumbnail);
-    cx.covers.draw(cx.fb, art, &book.thumbnail);
+    // The title stands beside the box, so an empty one says only that.
+    if !cx.covers.draw(cx.fb, art, &book.thumbnail) {
+        cover::note(cx, art);
+    }
 
     let words = Rect::new(
         jacket.right() + theme.gap * 2,

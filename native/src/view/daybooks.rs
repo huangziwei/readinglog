@@ -90,7 +90,8 @@ pub fn paged(cx: &mut Ctx, area: Rect, day: i64, from: usize) {
         chrome::section_height(cx.text, theme),
     );
     let inner = chrome::section(cx.fb, cx.text, theme, area, cx.s().what_was_read);
-    let read = cx.stats.book_totals(day..=day);
+    let mut read = cx.stats.book_totals(day..=day);
+    super::covered(cx.stats, cx.uncovered, &mut read);
     let box_ = rows_box(cx, inner, day);
     let deep = fits(row_floor(cx.text, theme), box_.h, read.len());
     let from = from.min(super::last_page_at(read.len(), deep));
@@ -260,7 +261,10 @@ fn row(cx: &mut Ctx, area: Rect, day: i64, index: usize, secs: i64) {
     let (spans, over) = area.split_bottom(theme.gap * 3);
     let inner = over.inset(theme.gap);
     let (art, rest) = inner.split_left(cover::width_for(inner.h));
-    cx.covers.draw(cx.fb, art, &book.thumbnail);
+    // The title stands beside the box, so an empty one says only that.
+    if !cx.covers.draw(cx.fb, art, &book.thumbnail) {
+        cover::note(cx, art);
+    }
 
     let body = Rect::new(
         art.right() + theme.gap * 2,

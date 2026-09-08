@@ -186,6 +186,8 @@ pub struct Settings {
     pub figures: Figures,
     /// Whether a total counts reading on books the catalog names none of.
     pub show_unnamed: bool,
+    /// Whether a book no jacket can be drawn for is listed at all.
+    pub show_uncovered: bool,
     /// Lines this build does not know, kept verbatim.
     unknown: Vec<String>,
 }
@@ -201,6 +203,7 @@ impl Settings {
             color_scheme: ColorScheme::default(),
             figures: Figures::default(),
             show_unnamed: true,
+            show_uncovered: true,
             unknown: Vec::new(),
         }
     }
@@ -259,6 +262,7 @@ impl Settings {
                     }
                 }
                 "show_unnamed" => out.show_unnamed = value != "no",
+                "show_uncovered" => out.show_uncovered = value != "no",
                 _ => out.unknown.push(line.to_string()),
             }
         }
@@ -273,11 +277,12 @@ impl Settings {
         out.push_str(&format!("text_size={}\n", self.text_size.token()));
         out.push_str(&format!("color_scheme={}\n", self.color_scheme.token()));
         out.push_str(&format!("figures={}\n", self.figures.token()));
-        let unnamed = match self.show_unnamed {
+        let yes_no = |set: bool| match set {
             true => "yes",
             false => "no",
         };
-        out.push_str(&format!("show_unnamed={unnamed}\n"));
+        out.push_str(&format!("show_unnamed={}\n", yes_no(self.show_unnamed)));
+        out.push_str(&format!("show_uncovered={}\n", yes_no(self.show_uncovered)));
         for line in &self.unknown {
             out.push_str(line);
             out.push('\n');
@@ -326,6 +331,7 @@ mod tests {
         s.color_scheme = ColorScheme::TobiKogane;
         s.figures = Figures::App;
         s.show_unnamed = false;
+        s.show_uncovered = false;
         let back = Settings::parse(&s.to_text(), Lang::English);
         assert_eq!(back.language, Lang::TraditionalChinese);
         assert_eq!(back.week_start, WeekStart::Sunday);
@@ -333,6 +339,7 @@ mod tests {
         assert_eq!(back.color_scheme, ColorScheme::TobiKogane);
         assert_eq!(back.figures, Figures::App);
         assert!(!back.show_unnamed);
+        assert!(!back.show_uncovered);
     }
 
     #[test]
@@ -367,6 +374,17 @@ mod tests {
         assert!(Settings::parse("language=e\n", Lang::English).show_unnamed);
         assert!(!Settings::parse("show_unnamed=no\n", Lang::English).show_unnamed);
         assert!(Settings::parse("show_unnamed=yes\n", Lang::English).show_unnamed);
+    }
+
+    #[test]
+    fn a_book_with_no_jacket_is_listed_until_the_page_says_otherwise() {
+        assert!(Settings::new(Lang::English).show_uncovered);
+        // A file written before this build carries no line for it.
+        assert!(Settings::parse("language=e\n", Lang::English).show_uncovered);
+        assert!(!Settings::parse("show_uncovered=no\n", Lang::English).show_uncovered);
+        // And the two rows are set apart from one another.
+        let hidden = Settings::parse("show_uncovered=no\n", Lang::English);
+        assert!(hidden.show_unnamed, "hiding one hid the other");
     }
 
     #[test]

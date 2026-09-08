@@ -158,6 +158,8 @@ struct Opts {
     colour: bool,
     /// Whether a total counts the sittings no record names.
     unnamed: bool,
+    /// Whether a list holds the books no jacket can be drawn for.
+    uncovered: bool,
 }
 
 impl Default for Opts {
@@ -179,6 +181,7 @@ impl Default for Opts {
             crop: None,
             hits: false,
             unnamed: true,
+            uncovered: true,
         }
     }
 }
@@ -316,6 +319,7 @@ fn open(store: &Store, opts: &Opts, w: u32, h: u32, lang: Lang, size: TextSize) 
     app.set_colour(opts.colour);
     app.set_color_scheme(opts.scheme);
     app.set_unnamed(opts.unnamed);
+    app.set_uncovered(opts.uncovered);
     Ok(app)
 }
 
@@ -727,6 +731,7 @@ fn read_args(args: impl Iterator<Item = String>) -> Result<Opts> {
             "--no-colour" => opts.colour = false,
             "--day" => opts.day = day(&value()?)?,
             "--hide-unnamed" => opts.unnamed = false,
+            "--hide-uncovered" => opts.uncovered = false,
             "--hits" => opts.hits = true,
             "--out" => opts.out = PathBuf::from(value()?),
             "--art" => opts.art = PathBuf::from(value()?),

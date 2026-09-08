@@ -629,7 +629,8 @@ fn cover_grid(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeIncl
     );
     let whole = chrome::section(cx.fb, cx.text, theme, area, &title);
     // Most recently put down first, which is the order a shelf is read in.
-    let read = cx.stats.book_totals_recent(over.clone());
+    let mut read = cx.stats.book_totals_recent(over.clone());
+    super::covered(cx.stats, cx.uncovered, &mut read);
     if picked.is_some() {
         open_day_chip(cx, head);
     }
@@ -835,8 +836,13 @@ fn jacket(cx: &mut Ctx, box_: Rect, book: usize, secs: i64, percent: Option<i64>
     // A cell cut wide by `figure_floor` keeps the art at a cover's own shape.
     let w = cover::width_for(art.h).min(art.w);
     let art = Rect::new(art.x + (art.w - w) / 2, art.y, w, art.h);
-    cx.covers
-        .draw(cx.fb, art, &cx.stats.books[book].thumbnail.clone());
+    let stat = &cx.stats.books[book];
+    // The grid names its books by their jackets and by nothing else, so an
+    // empty box carries the title itself.
+    if !cx.covers.draw(cx.fb, art, &stat.thumbnail) {
+        let script = crate::font::Script::of_language(&stat.language);
+        cover::titled(cx, art, &stat.title, script);
+    }
 
     let read = date::duration_tight(secs, s);
     let percent = percent.map_or(String::new(), |p| {

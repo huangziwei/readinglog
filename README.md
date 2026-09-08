@@ -18,6 +18,14 @@ Download and unzip the latest `readinglog-v<x.y.z>-kindle.zip` from the [release
 | `extensions/readinglog/` | `/mnt/us/extensions/readinglog/` | it has to be here |
 | `documents/ReadingLog.sh` | `/mnt/us/documents/ReadingLog.sh` | or any subfolders within `documents`  |
 
+## How It Works
+
+On your Kindle, live log is kept in `/var/log/messages`. Every 15 mins, the live log will be rotated out and be kept in `/var/local/log`, and then a daily backup is kept in `/mnt/us/system/logbackup`. Daily backup has size limit, so for a busy day, it won't be complete. These are the source of your reading statistics. 
+
+Book identity is redacted in the logs, but can be found by looking up `/var/local/metatdata/cc.db`, given the books are still on the device. Books already removed from the device before the first use of this app can only be rescued to an extend via correlating the logs with indirect sources, such as `/mnt/us/system/vocabulary/vocab.db` (if you ever look up a word in that book), `/mnt/us/documents/clippings.txt` (if you ever highlighted a sentence in that book) and the `.sdr` of each books (if you didn't remove them from the device after removing the book).
+
+Backlogs can only go back 30 days, and removed sideloaded books have no covers [^1]. Don't expect too much from the backlogs, you might be happier if you just reset the history and start tracking from today. 
+
 ## Screenshots
 
 <p align="center">

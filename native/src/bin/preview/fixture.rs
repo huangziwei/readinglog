@@ -14,6 +14,11 @@ pub const DAYS: i64 = 1150;
 /// The [`SHELF`] slot `BookRecord::finished` is set on.
 const MARKED: usize = 7;
 
+/// The [`SHELF`] slots the device holds no jacket for: a Latin title, a Han
+/// one, and a title too long for the box it stands in, so what a cover box
+/// says without a cover is drawn in every shape it takes.
+const UNJACKETED: [usize; 3] = [3, 6, 7];
+
 /// A book on the shelf, and the stretch of days it was read over.
 struct Shelved {
     title: &'static str,
@@ -278,7 +283,10 @@ pub fn library(last: i64, art: &Path) -> Store {
             cde_type: "EBOK".into(),
             title: book.title.into(),
             author: book.author.into(),
-            thumbnail: jacket(art, slot),
+            thumbnail: match UNJACKETED.contains(&slot) {
+                true => String::new(),
+                false => jacket(art, slot),
+            },
             language: book.language.into(),
             percent: book.percent,
             on_device: slot % 5 != 4,

@@ -291,10 +291,13 @@ pub struct Strings {
     /// The record section, and the row counting unnamed books.
     pub the_record: &'static str,
     pub unnamed_row: &'static str,
-    pub unnamed_show: &'static str,
-    pub unnamed_hide: &'static str,
-    /// The button on that row, standing apart from the two values: read the
-    /// logs, the catalog and the sidecars again, and name what they name.
+    /// Show and Hide, the two answers a row that hides something takes: the
+    /// unidentified row and the covers row below it are both set with them.
+    pub chip_show: &'static str,
+    pub chip_hide: &'static str,
+    /// The button on the unidentified row, standing apart from its two values:
+    /// read the logs, the catalog and the sidecars again, and name what they
+    /// name.
     pub unnamed_retry: &'static str,
     /// Its banner: the headline over the pass, the two lines under a pass that
     /// reads the logs, the one under a pass that reads the books' own files
@@ -305,6 +308,9 @@ pub struct Strings {
     pub retry_files: &'static str,
     pub retry_named: &'static str,
     pub retry_none: &'static str,
+    /// The row hiding every book no jacket can be drawn for, set with the same
+    /// two chips.
+    pub uncovered_row: &'static str,
     /// The row stating what the record holds, above the reset controls.
     pub recorded_row: &'static str,
     /// `{d} sitting[s]` and `{d} book[s]`, which that row and the dialogs
@@ -361,6 +367,9 @@ pub struct Strings {
     pub unidentified: &'static str,
     /// `{n} books in the record`, under the last page of the Books list.
     pub in_the_record: &'static str,
+    /// What a cover box says where no jacket can be drawn in it and the title
+    /// already stands beside it.
+    pub no_cover: &'static str,
     pub text_size: &'static str,
     /// The colours the charts draw in.
     pub color_scheme: &'static str,
@@ -511,8 +520,8 @@ const ENGLISH: Strings = Strings {
     figures_app: "App",
     the_record: "THE RECORD",
     unnamed_row: "Unidentified books",
-    unnamed_show: "Show",
-    unnamed_hide: "Hide",
+    chip_show: "Show",
+    chip_hide: "Hide",
     unnamed_retry: "Retry",
     retry_head: "Identify the books",
     retry_logs: "Reading the logs, then the books' own files.",
@@ -520,6 +529,7 @@ const ENGLISH: Strings = Strings {
     retry_files: "Reading the books' own files.",
     retry_named: "{d} book[s] identified.",
     retry_none: "Nothing new could be identified.",
+    uncovered_row: "Books without a cover",
     recorded_row: "Recorded",
     n_sittings: "{d} sitting[s]",
     n_books: "{d} book[s]",
@@ -571,6 +581,7 @@ const ENGLISH: Strings = Strings {
                    listed once the device has said what it is.",
     unidentified: "unidentified",
     in_the_record: "books in the record",
+    no_cover: "No cover",
     interface: "INTERFACE",
     the_calendar: "THE CALENDAR",
     language_row: "Language",
@@ -784,8 +795,8 @@ const GERMAN: Strings = Strings {
     unnamed_only: "{t} gelesen, auf Büchern, die der Katalog nicht benennt. Ein \
                    Buch wird gelistet, sobald das Gerät sagt, welches es ist.",
     unnamed_row: "Unbekannte Bücher",
-    unnamed_show: "Zeigen",
-    unnamed_hide: "Verbergen",
+    chip_show: "Zeigen",
+    chip_hide: "Verbergen",
     unnamed_retry: "Wiederholen",
     retry_head: "Bücher erkennen",
     retry_logs: "Liest die Protokolle, dann die Dateien der Bücher.",
@@ -793,8 +804,10 @@ const GERMAN: Strings = Strings {
     retry_files: "Liest die Dateien der Bücher.",
     retry_named: "{d} Titel erkannt.",
     retry_none: "Nichts Neues erkannt.",
+    uncovered_row: "Bücher ohne Cover",
     unidentified: "unbekannt",
     in_the_record: "Bücher aufgezeichnet",
+    no_cover: "Kein Cover",
     interface: "OBERFLÄCHE",
     the_calendar: "DER KALENDER",
     language_row: "Sprache",
@@ -995,8 +1008,8 @@ const JAPANESE: Strings = Strings {
     unnamed_only: "{t}の読書がありますが、カタログが本を特定していません。\
                    端末が本を認識すると一覧に並びます。",
     unnamed_row: "不明な本",
-    unnamed_show: "表示",
-    unnamed_hide: "非表示",
+    chip_show: "表示",
+    chip_hide: "非表示",
     unnamed_retry: "再試行",
     retry_head: "本を特定する",
     retry_logs: "ログと本のファイルを読んでいます。",
@@ -1004,8 +1017,10 @@ const JAPANESE: Strings = Strings {
     retry_files: "本のファイルを読んでいます。",
     retry_named: "{d}冊を特定しました。",
     retry_none: "新たに特定できた本はありません。",
+    uncovered_row: "表紙のない本",
     unidentified: "冊が不明",
     in_the_record: "冊を記録",
+    no_cover: "表紙なし",
     interface: "表示",
     the_calendar: "カレンダー",
     language_row: "言語",
@@ -1192,8 +1207,8 @@ const SIMPLIFIED: Strings = Strings {
     nothing_since_reset: "重置后还没有阅读。打开一本书，就从这里重新开始。",
     unnamed_only: "已读 {t}，但目录未能指明是哪些书。设备识别出书名后就会列出。",
     unnamed_row: "未识别的书",
-    unnamed_show: "显示",
-    unnamed_hide: "隐藏",
+    chip_show: "显示",
+    chip_hide: "隐藏",
     unnamed_retry: "重试",
     retry_head: "识别书籍",
     retry_logs: "正在读取日志和书籍文件。",
@@ -1201,8 +1216,10 @@ const SIMPLIFIED: Strings = Strings {
     retry_files: "正在读取书籍文件。",
     retry_named: "已识别 {d}本。",
     retry_none: "没有新识别出的书。",
+    uncovered_row: "没有封面的书",
     unidentified: "本未识别",
     in_the_record: "本已记录",
+    no_cover: "无封面",
     interface: "界面",
     the_calendar: "日历",
     language_row: "语言",
@@ -1400,8 +1417,8 @@ const TRADITIONAL: Strings = Strings {
     nothing_since_reset: "重設後還沒有閱讀。打開一本書，就從這裡重新開始。",
     unnamed_only: "已讀 {t}，但目錄未能指明是哪些書。裝置辨識出書名後就會列出。",
     unnamed_row: "未識別的書",
-    unnamed_show: "顯示",
-    unnamed_hide: "隱藏",
+    chip_show: "顯示",
+    chip_hide: "隱藏",
     unnamed_retry: "重試",
     retry_head: "識別書籍",
     retry_logs: "正在讀取日誌和書籍檔案。",
@@ -1409,8 +1426,10 @@ const TRADITIONAL: Strings = Strings {
     retry_files: "正在讀取書籍檔案。",
     retry_named: "已識別 {d}本。",
     retry_none: "沒有新識別出的書。",
+    uncovered_row: "沒有封面的書",
     unidentified: "本未識別",
     in_the_record: "本已記錄",
+    no_cover: "無封面",
     interface: "介面",
     the_calendar: "日曆",
     language_row: "語言",

@@ -21,6 +21,7 @@ pub struct BookStat {
     pub cde_type: String,
     pub title: String,
     pub author: String,
+    /// The jacket to draw, empty where none will — see [`jacket`].
     pub thumbnail: String,
     /// The catalog's own progress figure, 0 through 100, or negative.
     pub percent: f64,
@@ -60,6 +61,12 @@ pub struct BookStat {
 }
 
 impl BookStat {
+    /// Whether a jacket can be drawn for this book. The config page hides
+    /// the books this is false on.
+    pub fn has_cover(&self) -> bool {
+        !self.thumbnail.is_empty()
+    }
+
     /// Whether the catalog states a progress figure for this book.
     pub fn has_percent(&self) -> bool {
         self.percent >= 0.0
@@ -688,6 +695,22 @@ impl Stats {
     }
 }
 
+/// The jacket `found` names, where it names one that will draw, and nothing
+/// where it does not.
+///
+/// A stated path is the catalog's own and outlives what it names: the device
+/// deletes the file, writes a retry count in place of the path, or leaves the
+/// store's "no artwork" answer standing under the `.jpg` name a jacket would
+/// have had. None of the three is a picture, and each would draw as a bare box
+/// however it is asked for.
+fn jacket(found: &BookRecord) -> String {
+    let art = found.art();
+    match crate::covers::drawable(std::path::Path::new(art)) {
+        true => art.to_string(),
+        false => String::new(),
+    }
+}
+
 /// A `BookStat` with no sitting credited to it.
 fn fresh(extent: i64, found: &BookRecord, day: i64) -> BookStat {
     BookStat {
@@ -697,7 +720,7 @@ fn fresh(extent: i64, found: &BookRecord, day: i64) -> BookStat {
         finished: found.finished,
         title: found.title.clone(),
         author: found.author.clone(),
-        thumbnail: found.art().to_string(),
+        thumbnail: jacket(found),
         percent: found.percent,
         on_device: found.on_device,
         location: found.location.clone(),
@@ -818,6 +841,9 @@ fn streaks(days: &[(i64, i64)], today: i64) -> (i64, i64) {
 mod tests {
     use super::*;
     use crate::catalog::Book;
+
+    /// The opening of a JPEG, which is all [`jacket`] reads of one.
+    const JPEG: &[u8] = b"\xff\xd8\xff\xe0\x00\x10JFIF\0";
 
     fn day(y: i64, m: i64, d: i64) -> i64 {
         date::days_from_civil(y, m, d)
@@ -1425,8 +1451,14 @@ mod tests {
 
     #[test]
     fn a_book_taken_off_the_device_keeps_its_title_and_its_cover() {
+        let dir = std::env::temp_dir().join("readinglog-stats-jacket");
+        let _ = std::fs::create_dir_all(&dir);
+        let art = dir.join("t.jpg");
+        std::fs::write(&art, JPEG).expect("a written jacket");
+
         // A record remembered, and a catalog without it.
         let mut s = store();
+        s.books[0].thumbnail = art.to_string_lossy().into_owned();
         s.remember(&[]);
         assert_eq!(s.books.len(), 1, "an empty catalog removes nothing");
 
@@ -1438,9 +1470,36 @@ mod tests {
             .expect("the removed book");
         assert_eq!(bible.title, "The Jewish Study Bible");
         assert_eq!(bible.author, "Adele Berlin");
-        assert_eq!(bible.thumbnail, "/mnt/us/system/thumbnails/t.jpg");
+        assert_eq!(bible.thumbnail, art.to_string_lossy());
+        assert!(bible.has_cover());
         assert_eq!(bible.percent, 25.0);
         assert_eq!(bible.seconds, 1_800 + 1_200 + 600);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_stated_jacket_that_is_no_picture_leaves_the_book_naming_none() {
+        let dir = std::env::temp_dir().join("readinglog-stats-nojacket");
+        let _ = std::fs::create_dir_all(&dir);
+        // What the store answers for a key it holds no artwork for: a GIF
+        // under the `.jpg` name a jacket would have had.
+        let placeholder = dir.join("none.jpg");
+        std::fs::write(&placeholder, b"GIF89a\x3c\x00\x28\x00\x80\x00\x00").expect("written");
+
+        for stated in [
+            placeholder.to_string_lossy().into_owned(),
+            dir.join("deleted.jpg").to_string_lossy().into_owned(),
+            // `p_thumbnail` holding a count of extraction attempts.
+            "0".to_string(),
+        ] {
+            let mut s = store();
+            s.books[0].thumbnail = stated.clone();
+            let stats = Stats::build(&s, day(2026, 8, 7), true, Figures::Device);
+            let bible = stats.books.first().expect("the book");
+            assert!(bible.thumbnail.is_empty(), "{stated} was taken for art");
+            assert!(!bible.has_cover(), "{stated}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

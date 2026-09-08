@@ -52,6 +52,8 @@ pub enum Hit {
     TextSize(crate::settings::TextSize),
     /// Whether a total counts reading on books the catalog names none of.
     ShowUnnamed(bool),
+    /// Whether a book no jacket can be drawn for is listed at all.
+    ShowUncovered(bool),
     /// Read the logs, the catalog and the sidecars again, to name the books
     /// nothing on the record names yet.
     Retry,
@@ -462,6 +464,15 @@ impl State {
     }
 }
 
+/// `read` with every book no jacket can be drawn for left out, where the
+/// config page hides them. Nothing is taken off a total: the reading stands,
+/// and only the row naming it goes.
+pub fn covered(stats: &Stats, uncovered: bool, read: &mut Vec<(usize, i64)>) {
+    if !uncovered {
+        read.retain(|(book, _)| stats.books[*book].has_cover());
+    }
+}
+
 /// The index the last page of `count` rows opens at, `deep` rows to a page.
 /// The pages tile the list, and the last one is the short one.
 pub fn last_page_at(count: usize, deep: usize) -> usize {
@@ -479,6 +490,8 @@ pub struct Ctx<'a> {
     pub week: WeekStart,
     /// Where a book's own figures come from.
     pub figures: crate::settings::Figures,
+    /// Whether a book no jacket can be drawn for is listed at all.
+    pub uncovered: bool,
     /// What the charts draw in, from `crate::ui::paint::Palette::for_panel`.
     pub palette: crate::ui::paint::Palette,
     pub stats: &'a Stats,

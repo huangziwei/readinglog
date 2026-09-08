@@ -47,6 +47,7 @@ pub fn listed(
     shelf: Shelf,
     order: Sort,
     days: Option<std::ops::RangeInclusive<i64>>,
+    uncovered: bool,
 ) -> Vec<usize> {
     let mut out: Vec<usize> = (0..stats.books.len())
         .filter(|at| match shelf {
@@ -58,6 +59,7 @@ pub fn listed(
             days.as_ref()
                 .is_none_or(|days| days.contains(&stats.books[*at].last_day))
         })
+        .filter(|at| uncovered || stats.books[*at].has_cover())
         .collect();
     match order {
         Sort::Recent => {}
@@ -69,17 +71,27 @@ pub fn listed(
 }
 
 /// Whether a shelf holds anything read through, which is what the `Finished`
-/// chip narrows to.
-pub fn shelved(stats: &Stats) -> bool {
-    stats.books.iter().any(|b| b.is_finished())
+/// chip narrows to. A book the list hides answers for nothing here: a chip
+/// that opens an empty shelf is worse than no chip.
+pub fn shelved(stats: &Stats, uncovered: bool) -> bool {
+    on_show(stats, uncovered).any(|b| b.is_finished())
+}
+
+/// The books a list holds, which is every one of them until the config page
+/// hides those with no jacket.
+fn on_show(stats: &Stats, uncovered: bool) -> impl Iterator<Item = &BookStat> {
+    stats
+        .books
+        .iter()
+        .filter(move |b| uncovered || b.has_cover())
 }
 
 /// The shelves the row draws a chip apiece for. A record read through end to
 /// end offers no `Unfinished` chip, that shelf holding nothing — unless it is
 /// the shelf showing, which the row names wherever the list stands.
-pub fn shelves(stats: &Stats, on: Shelf) -> &'static [Shelf] {
+pub fn shelves(stats: &Stats, on: Shelf, uncovered: bool) -> &'static [Shelf] {
     const EVERY: [Shelf; 3] = [Shelf::All, Shelf::Finished, Shelf::Unfinished];
-    let read_through = stats.books.iter().all(BookStat::is_finished);
+    let read_through = on_show(stats, uncovered).all(BookStat::is_finished);
     match read_through && on != Shelf::Unfinished {
         true => &EVERY[..2],
         false => &EVERY,
@@ -121,7 +133,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
     // through offers no `Finished` chip, but every shelf can be reordered.
     let (head, _) = area.split_top(chrome::chip_height(theme) + theme.gap * 2);
     let sort = sort_chip(cx, head, state.sort);
-    let opens = match shelved(cx.stats) {
+    let opens = match shelved(cx.stats, cx.uncovered) {
         true => shelf_chips(cx, head, state.shelf, state.window) + theme.gap * 2,
         false => head.x,
     };
@@ -130,7 +142,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
     }
     let area = list_box(theme, area, true);
     let over = state.window.map(|window| window.days(cx.week));
-    let shelf = listed(cx.stats, state.shelf, state.sort, over);
+    let shelf = listed(cx.stats, state.shelf, state.sort, over, cx.uncovered);
     if shelf.is_empty() {
         let said = cx.s().nothing_on_the_shelf;
         bare(cx, area, said);
@@ -293,7 +305,7 @@ fn centred(cx: &mut Ctx, foot: Rect, baseline: i32, said: &str) {
 fn shelf_chips(cx: &mut Ctx, area: Rect, on: Shelf, window: Option<Window>) -> i32 {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
-    let shelves = shelves(cx.stats, on);
+    let shelves = shelves(cx.stats, on, cx.uncovered);
     let options: Vec<(&str, crate::font::Script)> = shelves
         .iter()
         .map(|shelf| (shelf.label(cx.lang), script))
@@ -352,7 +364,10 @@ fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
     let book = &cx.stats.books[index];
     let inner = row.inset(theme.gap);
     let (art, rest) = inner.split_left(cover::width_for(inner.h));
-    cx.covers.draw(cx.fb, art, &book.thumbnail);
+    // The title stands beside the box, so an empty one says only that.
+    if !cx.covers.draw(cx.fb, art, &book.thumbnail) {
+        cover::note(cx, art);
+    }
 
     let body = Rect::new(
         art.right() + theme.gap * 2,
@@ -499,7 +514,7 @@ mod tests {
     fn every_shelf_holding_something_gets_its_own_chip() {
         let mixed = shelf_of(&[100.0, 40.0]);
         assert_eq!(
-            shelves(&mixed, Shelf::All),
+            shelves(&mixed, Shelf::All, true),
             [Shelf::All, Shelf::Finished, Shelf::Unfinished]
         );
     }
@@ -508,12 +523,12 @@ mod tests {
     fn a_record_read_through_end_to_end_offers_no_unfinished_chip() {
         let all_done = shelf_of(&[100.0, 100.0]);
         assert_eq!(
-            shelves(&all_done, Shelf::All),
+            shelves(&all_done, Shelf::All, true),
             [Shelf::All, Shelf::Finished]
         );
         // The shelf showing is named wherever the list stands.
         assert_eq!(
-            shelves(&all_done, Shelf::Unfinished),
+            shelves(&all_done, Shelf::Unfinished, true),
             [Shelf::All, Shelf::Finished, Shelf::Unfinished]
         );
     }
@@ -522,12 +537,79 @@ mod tests {
     fn a_shelf_holding_the_finished_holds_none_of_them_on_the_next_tap() {
         // 100 and 99.9 are read through; 98 and a book with no figure are not.
         let stats = shelf_of(&[100.0, 98.0, -1.0, 99.9]);
-        assert_eq!(listed(&stats, Shelf::All, Sort::Recent, None), [0, 1, 2, 3]);
-        assert_eq!(listed(&stats, Shelf::Finished, Sort::Recent, None), [0, 3]);
         assert_eq!(
-            listed(&stats, Shelf::Unfinished, Sort::Recent, None),
+            listed(&stats, Shelf::All, Sort::Recent, None, true),
+            [0, 1, 2, 3]
+        );
+        assert_eq!(
+            listed(&stats, Shelf::Finished, Sort::Recent, None, true),
+            [0, 3]
+        );
+        assert_eq!(
+            listed(&stats, Shelf::Unfinished, Sort::Recent, None, true),
             [1, 2]
         );
+    }
+
+    #[test]
+    fn a_chip_never_opens_a_shelf_hiding_holds_nothing_of() {
+        // The one book read through is also the one with no jacket.
+        let mut stats = shelf_of(&[100.0, 40.0]);
+        stats.books[1].thumbnail = "/covers/1.jpg".into();
+        assert!(shelved(&stats, true), "the Finished chip stands");
+        assert!(!shelved(&stats, false), "it opens an empty shelf");
+
+        // And the other way about: hiding leaves nothing unfinished.
+        let mut done = shelf_of(&[100.0, 40.0]);
+        done.books[0].thumbnail = "/covers/0.jpg".into();
+        assert_eq!(
+            shelves(&done, Shelf::All, true),
+            [Shelf::All, Shelf::Finished, Shelf::Unfinished]
+        );
+        assert_eq!(
+            shelves(&done, Shelf::All, false),
+            [Shelf::All, Shelf::Finished]
+        );
+    }
+
+    #[test]
+    fn a_shelf_hiding_the_uncovered_keeps_only_the_books_with_a_jacket() {
+        let mut stats = shelf_of(&[100.0, 40.0, 60.0, 100.0]);
+        for at in [1, 3] {
+            stats.books[at].thumbnail = format!("/covers/{at}.jpg");
+        }
+        assert_eq!(
+            listed(&stats, Shelf::All, Sort::Recent, None, true),
+            [0, 1, 2, 3]
+        );
+        assert_eq!(
+            listed(&stats, Shelf::All, Sort::Recent, None, false),
+            [1, 3]
+        );
+        // A shelf narrows what is left and never brings one back.
+        assert_eq!(
+            listed(&stats, Shelf::Finished, Sort::Recent, None, false),
+            [3]
+        );
+    }
+
+    #[test]
+    fn hiding_the_uncovered_takes_their_rows_and_leaves_the_seconds_alone() {
+        let mut stats = shelf_of(&[100.0, 40.0, 60.0]);
+        for at in [0, 2] {
+            stats.books[at].thumbnail = format!("/covers/{at}.jpg");
+        }
+        let read = vec![(0usize, 600i64), (1, 300), (2, 900)];
+
+        let mut every = read.clone();
+        crate::view::covered(&stats, true, &mut every);
+        assert_eq!(every, read, "a row went while they were shown");
+
+        let mut some = read.clone();
+        crate::view::covered(&stats, false, &mut some);
+        assert_eq!(some, [(0, 600), (2, 900)]);
+        // What the hidden book was read for is still the record's own.
+        assert_eq!(stats.books[1].seconds, 600);
     }
 
     #[test]
@@ -536,11 +618,11 @@ mod tests {
         // Every book read through leads on `Furthest`, and the shelf without
         // them opens where reading is left.
         assert_eq!(
-            listed(&stats, Shelf::All, Sort::Progress, None),
+            listed(&stats, Shelf::All, Sort::Progress, None, true),
             [0, 3, 4, 1, 2]
         );
         assert_eq!(
-            listed(&stats, Shelf::Unfinished, Sort::Progress, None),
+            listed(&stats, Shelf::Unfinished, Sort::Progress, None, true),
             [4, 1, 2]
         );
     }
@@ -643,7 +725,7 @@ mod tests {
             day: inside,
         }
         .days(WeekStart::Monday);
-        let over = |shelf| listed(&stats, shelf, Sort::Recent, Some(year.clone()));
+        let over = |shelf| listed(&stats, shelf, Sort::Recent, Some(year.clone()), true);
         assert_eq!(over(Shelf::All), [0, 1]);
         assert_eq!(over(Shelf::Finished), [0]);
         assert_eq!(over(Shelf::Unfinished), [1]);
@@ -654,6 +736,9 @@ mod tests {
             2
         );
         // With no window, the book of the year before stands with them.
-        assert_eq!(listed(&stats, Shelf::All, Sort::Recent, None), [0, 1, 2]);
+        assert_eq!(
+            listed(&stats, Shelf::All, Sort::Recent, None, true),
+            [0, 1, 2]
+        );
     }
 }
