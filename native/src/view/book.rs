@@ -140,6 +140,24 @@ fn open_box(theme: &Theme, band: Rect) -> Rect {
     band.split_bottom((band.h - theme.gap * 2).max(1)).0
 }
 
+/// The box the jacket is drawn in and the column of words beside it, from the
+/// heading's top band and the box [`crate::ui::cover::Covers::box_in`]
+/// measured the jacket into.
+///
+/// The jacket keeps the left edge every other element on the page starts at:
+/// the box is cut to the jacket's own width, so a cover narrower than its slot
+/// hands that width to the words instead of standing it in the margin. The
+/// words then run from the jacket's right edge to the band's, and take the
+/// jacket's own top and foot.
+fn cover_and_words(theme: &Theme, top: Rect, placed: Rect) -> (Rect, Rect) {
+    let art = Rect::new(top.x, top.y, placed.w, top.h);
+    let x = art.right() + theme.gap * 2;
+    (
+        art,
+        Rect::new(x, placed.y, (top.right() - x).max(1), placed.h),
+    )
+}
+
 /// The height the heading draws into: the cover, the progress under it, and
 /// the controls under that.
 fn heading_height(
@@ -268,21 +286,12 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat, index: usize) {
     let (foot, top) = area.split_bottom(band::height(cx.text, theme));
     // `top` stops `theme.gap * 2` above `foot`.
     let top = Rect::new(top.x, top.y, top.w, (top.h - theme.gap * 2).max(1));
-    let (art, rest) = top.split_left(cover::width_for(top.h));
-    // The words stand against the jacket's own edges: its title tops with the
-    // cover and its figures stand on the same foot.
-    let jacket = cx.covers.box_in(art, &book.thumbnail);
+    let slot = top.split_left(cover::width_for(top.h)).0;
+    let (art, words) = cover_and_words(theme, top, cx.covers.box_in(slot, &book.thumbnail));
     // The title stands beside the box, so an empty one says only that.
     if !cx.covers.draw(cx.fb, art, &book.thumbnail) {
         cover::note(cx, art);
     }
-
-    let words = Rect::new(
-        jacket.right() + theme.gap * 2,
-        jacket.y,
-        (rest.w + art.right() - jacket.right() - theme.gap * 2).max(1),
-        jacket.h,
-    );
 
     let deep = title_lines(cx.text, theme, words.h, !book.author.is_empty());
     cx.text.set_px(theme.head_px);
@@ -694,6 +703,48 @@ mod tests {
                 "{w}x{h}: the cover took the measure the title needs"
             );
         }
+    }
+
+    #[test]
+    fn a_jacket_narrower_than_its_slot_stands_on_the_left_edge() {
+        for (w, h) in PANELS {
+            let theme = Theme::for_screen(w, h);
+            let box_ = chrome::content_box(&theme);
+            let top = Rect::new(box_.x, box_.y, box_.w, cover_height(&theme));
+            let slot = top.split_left(cover::width_for(top.h)).0;
+            // A jacket a third narrower than its slot and short of its height:
+            // the shape `Covers::box_in` centres, having no leave to sample a
+            // small cover up.
+            let narrow = slot.w * 2 / 3;
+            let placed = Rect::new(
+                slot.x + (slot.w - narrow) / 2,
+                slot.y + 20,
+                narrow,
+                slot.h - 40,
+            );
+            let (art, words) = cover_and_words(&theme, top, placed);
+
+            assert_eq!(art.x, top.x, "{w}x{h}: the jacket sits off the edge");
+            assert_eq!(art.w, placed.w, "{w}x{h}: the box is wider than the cover");
+            assert_eq!(words.x, art.right() + theme.gap * 2);
+            assert_eq!(words.right(), top.right(), "{w}x{h}: the words fall short");
+            assert_eq!((words.y, words.h), (placed.y, placed.h));
+            // Every pixel the jacket is narrower than its slot by is the
+            // words'.
+            assert_eq!(words.w, top.w - narrow - theme.gap * 2);
+        }
+    }
+
+    #[test]
+    fn a_cover_that_will_not_draw_keeps_the_whole_slot() {
+        let theme = Theme::for_screen(PANELS[0].0, PANELS[0].1);
+        let box_ = chrome::content_box(&theme);
+        let top = Rect::new(box_.x, box_.y, box_.w, cover_height(&theme));
+        // What `Covers::box_in` answers for a path naming no jacket.
+        let slot = top.split_left(cover::width_for(top.h)).0;
+        let (art, words) = cover_and_words(&theme, top, slot);
+        assert_eq!((art.x, art.w, art.h), (slot.x, slot.w, slot.h));
+        assert_eq!(words.x, slot.right() + theme.gap * 2);
     }
 
     #[test]
