@@ -351,7 +351,10 @@ mod tests {
              s\t2026-08-07T10:15:01\t2026-08-07T10:55:43\t148207\t2400\t40\t0\ttimed\t\t\t\n"
         ));
         std::fs::create_dir_all(dir.join(covers::COVERS_DIR)).unwrap();
-        std::fs::write(covers::path(dir, "B00OKPCRLG"), vec![0xFFu8; 64]).unwrap();
+        // 64 bytes opening as a JPEG, which is what `covers::held` asks.
+        let mut jacket = b"\xff\xd8\xff\xe0\x00\x10JFIF\0".to_vec();
+        jacket.resize(64, 0);
+        std::fs::write(covers::path(dir, "B00OKPCRLG"), &jacket).unwrap();
         store.save(dir).unwrap();
         store
     }
@@ -505,12 +508,16 @@ mod tests {
         let dir = scratch("held-jacket");
         let mut store = read_one(&dir);
         let at = reset(&dir, &mut store, Keep::Archive).unwrap().unwrap();
-        std::fs::write(covers::path(&dir, "B00OKPCRLG"), b"the newer copy").unwrap();
+        std::fs::write(
+            covers::path(&dir, "B00OKPCRLG"),
+            b"\xff\xd8\xffthe newer copy",
+        )
+        .unwrap();
 
         take(&dir, &at, &mut store, &mut |_, _| {}).expect("a merge");
         assert_eq!(
             std::fs::read(covers::path(&dir, "B00OKPCRLG")).unwrap(),
-            b"the newer copy"
+            b"\xff\xd8\xffthe newer copy"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

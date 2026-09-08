@@ -924,16 +924,19 @@ impl Store {
     /// the catalog states no path at all, and a row the catalog has since
     /// dropped states one the device has since deleted. It is read once, and
     /// only where a record wants a jacket.
+    ///
+    /// A record neither can answer for keeps no copy and names none, so what
+    /// the device writes later is taken instead of being shadowed.
     pub fn keep_covers_from(&mut self, dir: &Path, thumbnails: &Path) -> usize {
         let mut cached: Option<std::collections::HashMap<String, PathBuf>> = None;
         let mut kept = 0;
+        let mut placeholders = 0;
         for record in self.books.iter_mut() {
             if !record.is_book() {
                 kept += usize::from(!std::mem::take(&mut record.cover).is_empty());
                 continue;
             }
             let at = covers::path(dir, &record.cde_key);
-            let at = at.to_string_lossy();
             if !covers::held(dir, &record.cde_key) {
                 let stated = Path::new(record.thumbnail.as_str());
                 let art = match stated.is_file() {
@@ -943,24 +946,47 @@ impl Store {
                         .get(&record.cde_key)
                         .cloned(),
                 };
-                let Some(art) = art else {
-                    if !record.thumbnail.is_empty() {
-                        eprintln!(
-                            "covers: {} — nothing at {}, and the cache holds none under {}",
-                            record.title, record.thumbnail, record.cde_key
-                        );
+                let taken = match art {
+                    Some(art) => match covers::keep(dir, &record.cde_key, &art) {
+                        Ok(_) => true,
+                        // What the store answers for a key it holds no artwork
+                        // for. Permanent, and one line says it for all of them.
+                        Err(err) if err.kind() == std::io::ErrorKind::InvalidData => {
+                            placeholders += 1;
+                            false
+                        }
+                        Err(err) => {
+                            eprintln!("covers: {} — {err}", record.title);
+                            false
+                        }
+                    },
+                    None => {
+                        if !record.thumbnail.is_empty() {
+                            eprintln!(
+                                "covers: {} — nothing at {}, and the cache holds none under {}",
+                                record.title, record.thumbnail, record.cde_key
+                            );
+                        }
+                        false
                     }
-                    continue;
                 };
-                if let Err(err) = covers::keep(dir, &record.cde_key, &art) {
-                    eprintln!("covers: {} — {err}", record.title);
+                if !taken {
+                    // The copy goes with the record's claim to one, so a jacket
+                    // the device writes later is taken rather than shadowed by
+                    // what stands here now.
+                    let _ = std::fs::remove_file(&at);
+                    kept += usize::from(!std::mem::take(&mut record.cover).is_empty());
                     continue;
                 }
             }
+            let at = at.to_string_lossy();
             if record.cover != at {
                 record.cover = at.into_owned();
                 kept += 1;
             }
+        }
+        if placeholders > 0 {
+            eprintln!("covers: {placeholders} books the store holds no artwork for");
         }
         // An empty `books` leaves every file under `dir` standing.
         if self.books.is_empty() {
@@ -1675,14 +1701,17 @@ mod tests {
             std::fs::write(at, bytes).expect("a written thumbnail");
             at.to_path_buf()
         };
-        let stated = write(&dir.join("thumbnail_XH01Es.jpg"), b"the stated one");
+        let stated = write(
+            &dir.join("thumbnail_XH01Es.jpg"),
+            b"\xff\xd8\xffthe stated one",
+        );
         write(
             &cache.join("thumbnail_B00OKPCRLG_EBOK_portrait.jpg"),
-            b"the cached one",
+            b"\xff\xd8\xffthe cached one",
         );
         write(
             &cache.join("thumbnail_B00RESCUED_EBOK_portrait.jpg"),
-            b"the rescued one",
+            b"\xff\xd8\xffthe rescued one",
         );
         let named = |key: &str, thumbnail: &str| BookRecord {
             extent: 148_207,
@@ -1710,11 +1739,56 @@ mod tests {
         let held = |key: &str| std::fs::read(covers::path(&dir, key)).expect("a copied cover");
         assert_eq!(
             held("B00OKPCRLG"),
-            b"the stated one",
+            b"\xff\xd8\xffthe stated one",
             "the cache outranked it"
         );
-        assert_eq!(held("B00RESCUED"), b"the rescued one", "no path was stated");
+        assert_eq!(
+            held("B00RESCUED"),
+            b"\xff\xd8\xffthe rescued one",
+            "no path was stated"
+        );
         assert!(!covers::held(&dir, "B00SIDELOAD"), "nothing names one");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_placeholder_already_copied_is_dropped_and_named_by_nothing() {
+        let dir = scratch("placeholder-covers");
+        let cache = dir.join("thumbnails");
+        std::fs::create_dir_all(&cache).expect("a thumbnail cache");
+        // The store's answer for a key it holds no artwork for: a 60x40 GIF,
+        // under the `.jpg` name a jacket would have had.
+        let art = cache.join("thumbnail_B0053VMNY2_EBOK_portrait.jpg");
+        std::fs::write(&art, b"GIF89a\x3c\x00\x28\x00\x80\x00\x00").expect("a written thumbnail");
+        // One of them already standing under `covers::COVERS_DIR`.
+        std::fs::create_dir_all(dir.join(covers::COVERS_DIR)).expect("the covers directory");
+        std::fs::write(
+            covers::path(&dir, "B0053VMNY2"),
+            b"GIF89a\x3c\x00\x28\x00\x80\x00\x00",
+        )
+        .expect("a copied placeholder");
+        let mut store = Store {
+            books: vec![BookRecord {
+                extent: 148_207,
+                cde_key: "B0053VMNY2".into(),
+                title: "The New Oxford American Dictionary".into(),
+                thumbnail: art.to_string_lossy().into_owned(),
+                cover: covers::path(&dir, "B0053VMNY2")
+                    .to_string_lossy()
+                    .into_owned(),
+                ..BookRecord::default()
+            }],
+            ..Store::default()
+        };
+
+        assert_eq!(
+            store.keep_covers_from(&dir, &cache),
+            1,
+            "the record changed"
+        );
+        assert!(store.books[0].cover.is_empty(), "and names no jacket");
+        assert!(!covers::path(&dir, "B0053VMNY2").exists(), "the copy went");
+        assert!(art.is_file(), "the device's own cache is left alone");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1722,7 +1796,7 @@ mod tests {
     fn a_cover_stands_as_long_as_the_book_record_naming_it_does() {
         let dir = scratch("covers");
         let art = dir.join("thumbnail.jpg");
-        std::fs::write(&art, b"jpegbytes").expect("a written thumbnail");
+        std::fs::write(&art, b"\xff\xd8\xff\xe0\x00\x10JFIF\0").expect("a written thumbnail");
         let named = |extent: i64, key: &str| BookRecord {
             extent,
             cde_key: key.into(),
