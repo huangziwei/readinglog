@@ -289,11 +289,10 @@ impl Store {
         out
     }
 
-    /// Mark the records a `.sdr` directory named in a store written before
-    /// [`BookRecord::named_by`] existed, so a stronger source can still take
-    /// them. [`Self::recover`] writes an `ep` row pairing the class with the
-    /// book's file name and then keys the record by that same name, and no
-    /// other record is ever keyed by its own pairing.
+    /// Set [`Named::Sidecar`] on each [`Named::Catalog`] record whose
+    /// `(extent, cde_key)` sits in [`Self::pairs`]. [`Self::recover`] writes
+    /// that `ep` row and keys the record by the book's file name; no other
+    /// record is keyed by its own pairing.
     fn migrate(&mut self) {
         for i in 0..self.books.len() {
             if self.books[i].named_by != Named::Catalog {
@@ -676,10 +675,9 @@ impl Store {
         named
     }
 
-    /// Every `EndPos` class with sittings that a source ranked `by` could
-    /// still speak for: one no record names, and one a source `by` outranks
-    /// named. An empty answer means that source has nothing to do, and
-    /// [`crate::identify::rescue`] does not read it at all.
+    /// Every `EndPos` class with sittings that [`Self::wants`] answers `by`
+    /// for: one no record names, and one whose `named_by` ranks under `by`.
+    /// [`crate::identify::rescue`] reads no source an empty answer names.
     pub fn classes_wanting(&self, by: Named) -> Vec<i64> {
         let mut out: Vec<i64> = self
             .sessions
@@ -693,8 +691,8 @@ impl Store {
         out
     }
 
-    /// Whether any class is still on offer to a source ranked `by`, which is
-    /// what says whether to read that source at all.
+    /// Whether [`Self::wants`] answers `by` for any class in
+    /// [`Self::sessions`].
     pub fn wants_naming(&self, by: Named) -> bool {
         self.sessions
             .iter()
@@ -712,17 +710,13 @@ impl Store {
     /// Name reading the catalog cannot, from what one source witnessed.
     ///
     /// Every witness goes to the sittings that **bracket** its instant, and
-    /// nothing else: a witness lying near a sitting rather than inside one
-    /// says nothing, because the run it would reach is as likely to be the
-    /// wrong book as the right one. A witness two classes bracket says nothing
-    /// either. A claim counts only when the sitting carrying it ran at least
-    /// [`crate::stats::SITTING_FLOOR_SECS`], and a class every claim does not
-    /// agree on the title of is left alone.
+    /// nothing else. A witness outside every sitting names nothing, and one
+    /// two classes bracket names nothing. A claim counts where the sitting
+    /// carrying it ran at least [`crate::stats::SITTING_FLOOR_SECS`], and a
+    /// class whose claims disagree on the title is left alone.
     ///
-    /// `contested` carries the classes a source already asked has found two
-    /// titles for. Such a class holds two books, which no later source can
-    /// undo by having seen only one of them, so it is skipped and every fresh
-    /// contest is added to it.
+    /// `contested` carries the classes two titles have been found for. Such a
+    /// class is skipped, and every fresh contest is added to it.
     ///
     /// Answers how many classes were named.
     pub fn name_from(
@@ -783,9 +777,8 @@ impl Store {
             self.give_up(extent, by);
             match self.titled(&said[0].name, key) {
                 Some(slot) => {
-                    // A cloud row the catalog never sized takes the class's
-                    // own extent; a record already carrying one keeps it, and
-                    // the `k` row is what reaches it.
+                    // A record whose `extent` reads 0 takes `extent`; one
+                    // carrying its own keeps it, and the `k` row reaches it.
                     if self.books[slot].extent == 0 {
                         self.books[slot].extent = extent;
                     }
@@ -812,8 +805,7 @@ impl Store {
     }
 
     /// The record a claim names: the one `key` names, else the only one
-    /// carrying `name`. `None` where two records share the title, which leaves
-    /// the class alone rather than merging two books.
+    /// carrying `name`. `None` where two records share `name`.
     fn titled(&self, name: &str, key: &str) -> Option<usize> {
         if !key.is_empty()
             && let Some(slot) = self.books.iter().position(|b| b.cde_key == key)
@@ -910,29 +902,50 @@ impl Store {
         }
     }
 
-    /// Copy the jacket of every book in [`Self::books`] into `dir`, point its
-    /// `cover` at the copy, and delete every file there no record names.
+    /// The slots in [`Self::books`] `Stats::build` lists: the slot a sitting
+    /// is credited to, and one [`Self::clear_book`] marked `kept`. A slot
+    /// [`BookRecord::is_book`] refuses is left out.
+    fn shown_slots(&self) -> std::collections::HashSet<usize> {
+        let mut out: std::collections::HashSet<usize> = self
+            .sessions
+            .iter()
+            .filter_map(|s| self.slot_for(self.extent_of(s.end_position), s.asin.as_deref()))
+            .collect();
+        out.extend((0..self.books.len()).filter(|&slot| self.books[slot].kept));
+        out.retain(|&slot| self.books[slot].is_book());
+        out
+    }
+
+    /// Copy the jacket of each slot [`Self::shown_slots`] answers into `dir`,
+    /// point its `cover` at the copy, and delete every other file there.
     /// Answers how many records changed.
+    ///
+    /// A slot it leaves out keeps no copy and names none;
+    /// [`BookRecord::art`] hands back that record's `thumbnail`.
     pub fn keep_covers(&mut self, dir: &Path) -> usize {
         self.keep_covers_from(dir, Path::new(covers::THUMBNAILS_DIR))
     }
 
-    /// [`Self::keep_covers`] against a named thumbnail cache.
+    /// [`Self::keep_covers`] against a `thumbnails` directory.
     ///
-    /// A record's own `thumbnail` is the catalog's answer and is taken first.
-    /// The cache answers for the rest: a book named by something other than
-    /// the catalog states no path at all, and a row the catalog has since
-    /// dropped states one the device has since deleted. It is read once, and
-    /// only where a record wants a jacket.
+    /// A record's `thumbnail` is taken where it names a file. `covers::cached`
+    /// over `thumbnails` answers the rest under `cde_key`: a record stating an
+    /// empty `thumbnail`, and one stating a path that opens nothing. It is
+    /// read once, and only under a `cde_key` no copy is held for.
     ///
-    /// A record neither can answer for keeps no copy and names none, so what
-    /// the device writes later is taken instead of being shadowed.
+    /// A record neither answers for holds an empty `cover`.
     pub fn keep_covers_from(&mut self, dir: &Path, thumbnails: &Path) -> usize {
+        let shown = self.shown_slots();
+        // A non-empty `books` under an empty `shown`: no record changes and
+        // no file under `dir` is dropped.
+        if shown.is_empty() && !self.books.is_empty() {
+            return 0;
+        }
         let mut cached: Option<std::collections::HashMap<String, PathBuf>> = None;
         let mut kept = 0;
         let mut placeholders = 0;
-        for record in self.books.iter_mut() {
-            if !record.is_book() {
+        for (slot, record) in self.books.iter_mut().enumerate() {
+            if !shown.contains(&slot) {
                 kept += usize::from(!std::mem::take(&mut record.cover).is_empty());
                 continue;
             }
@@ -949,8 +962,8 @@ impl Store {
                 let taken = match art {
                     Some(art) => match covers::keep(dir, &record.cde_key, &art) {
                         Ok(_) => true,
-                        // What the store answers for a key it holds no artwork
-                        // for. Permanent, and one line says it for all of them.
+                        // `covers::drawable` refused `art`. `placeholders`
+                        // counts these, and one line states the count.
                         Err(err) if err.kind() == std::io::ErrorKind::InvalidData => {
                             placeholders += 1;
                             false
@@ -971,9 +984,8 @@ impl Store {
                     }
                 };
                 if !taken {
-                    // The copy goes with the record's claim to one, so a jacket
-                    // the device writes later is taken rather than shadowed by
-                    // what stands here now.
+                    // `at` and `cover` go together: an empty `cover` leaves
+                    // `BookRecord::art` on `thumbnail`.
                     let _ = std::fs::remove_file(&at);
                     kept += usize::from(!std::mem::take(&mut record.cover).is_empty());
                     continue;
@@ -988,17 +1000,9 @@ impl Store {
         if placeholders > 0 {
             eprintln!("covers: {placeholders} books the store holds no artwork for");
         }
-        // An empty `books` leaves every file under `dir` standing.
-        if self.books.is_empty() {
-            return kept;
-        }
-        // A jacket stands as long as the record naming it does, whether or not
-        // a sitting reaches that record.
-        let held: Vec<&str> = self
-            .books
+        let held: Vec<&str> = shown
             .iter()
-            .filter(|b| b.is_book())
-            .map(|b| b.cde_key.as_str())
+            .map(|&slot| self.books[slot].cde_key.as_str())
             .collect();
         let swept = covers::sweep(dir, &held);
         if swept > 0 {
@@ -1505,8 +1509,7 @@ fn merge(record: &mut BookRecord, book: &Book) {
         record.stand_at(book.percent);
     }
     record.on_device |= book.on_device;
-    // A book another source named and the catalog has now found is the
-    // catalog's: it states more, and nothing may take it back.
+    // `book` comes from the catalog, which outranks every other `Named`.
     record.named_by = Named::Catalog;
 }
 
@@ -1713,21 +1716,25 @@ mod tests {
             &cache.join("thumbnail_B00RESCUED_EBOK_portrait.jpg"),
             b"\xff\xd8\xffthe rescued one",
         );
-        let named = |key: &str, thumbnail: &str| BookRecord {
-            extent: 148_207,
+        let named = |extent: i64, key: &str, thumbnail: &str| BookRecord {
+            extent,
             cde_key: key.into(),
             title: key.into(),
             thumbnail: thumbnail.into(),
             ..BookRecord::default()
         };
+        let read =
+            |extent: i64| session("2026-08-07T10:15:01", "2026-08-07T10:55:43", extent, 2_400);
         let mut store = Store {
+            sessions: vec![read(148_207), read(148_301), read(148_402)],
             books: vec![
-                // The catalog's own path, which is taken over the cache.
-                named("B00OKPCRLG", &stated.to_string_lossy()),
-                // A book named by something other than the catalog.
-                named("B00RESCUED", ""),
-                // A row the catalog dropped, naming a file since deleted.
+                // `thumbnail` names `stated`, and `cache` holds the key too.
+                named(148_207, "B00OKPCRLG", &stated.to_string_lossy()),
+                // An empty `thumbnail`, under a key `cache` holds.
+                named(148_301, "B00RESCUED", ""),
+                // A `thumbnail` naming no file, under a key `cache` lacks.
                 named(
+                    148_402,
                     "B00SIDELOAD",
                     &dir.join("thumbnail_gone.jpg").to_string_lossy(),
                 ),
@@ -1756,11 +1763,10 @@ mod tests {
         let dir = scratch("placeholder-covers");
         let cache = dir.join("thumbnails");
         std::fs::create_dir_all(&cache).expect("a thumbnail cache");
-        // The store's answer for a key it holds no artwork for: a 60x40 GIF,
-        // under the `.jpg` name a jacket would have had.
+        // A 60x40 GIF under a `.jpg` name, which `covers::drawable` refuses.
         let art = cache.join("thumbnail_B0053VMNY2_EBOK_portrait.jpg");
         std::fs::write(&art, b"GIF89a\x3c\x00\x28\x00\x80\x00\x00").expect("a written thumbnail");
-        // One of them already standing under `covers::COVERS_DIR`.
+        // The same bytes under `covers::COVERS_DIR`.
         std::fs::create_dir_all(dir.join(covers::COVERS_DIR)).expect("the covers directory");
         std::fs::write(
             covers::path(&dir, "B0053VMNY2"),
@@ -1768,6 +1774,12 @@ mod tests {
         )
         .expect("a copied placeholder");
         let mut store = Store {
+            sessions: vec![session(
+                "2026-08-07T10:15:01",
+                "2026-08-07T10:55:43",
+                148_207,
+                2_400,
+            )],
             books: vec![BookRecord {
                 extent: 148_207,
                 cde_key: "B0053VMNY2".into(),
@@ -1793,7 +1805,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cover_stands_as_long_as_the_book_record_naming_it_does() {
+    fn a_cover_is_kept_only_for_a_book_shown_slots_answers() {
         let dir = scratch("covers");
         let art = dir.join("thumbnail.jpg");
         std::fs::write(&art, b"\xff\xd8\xff\xe0\x00\x10JFIF\0").expect("a written thumbnail");
@@ -1811,36 +1823,65 @@ mod tests {
                 148_207,
                 2_400,
             )],
-            books: vec![named(148_207, "B00OKPCRLG"), named(938_016, "B00NEVERRD")],
+            books: vec![
+                named(148_207, "B00OKPCRLG"),
+                named(938_016, "B00NEVERRD"),
+                // `kept`, which `shown_slots` answers with no sitting.
+                BookRecord {
+                    kept: true,
+                    ..named(511_402, "B00CLEARED")
+                },
+            ],
             ..Store::default()
         };
-        // A cover for the book with no reading, and a `.partial` beside it.
+        // `B00NEVERRD` holds a jacket, and `B01.partial` sits beside it.
         covers::keep(&dir, "B00NEVERRD", &art).expect("a copied cover");
         store.books[1].cover = covers::path(&dir, "B00NEVERRD")
             .to_string_lossy()
             .into_owned();
         std::fs::write(dir.join(covers::COVERS_DIR).join("B01.partial"), b"x").unwrap();
 
-        assert_eq!(store.keep_covers(&dir), 1, "the read book's cover taken");
-        assert!(covers::held(&dir, "B00OKPCRLG"), "the book that was read");
-        assert!(covers::held(&dir, "B00NEVERRD"), "a book with no reading");
-        assert!(!store.books[1].cover.is_empty(), "a jacket on disk unnamed");
-        // The `.partial` goes; both books' jackets stand.
+        assert_eq!(store.keep_covers(&dir), 3, "two taken, one given up");
+        assert!(covers::held(&dir, "B00OKPCRLG"), "the book a sitting names");
+        assert!(covers::held(&dir, "B00CLEARED"), "the book `kept` marks");
+        assert!(!covers::held(&dir, "B00NEVERRD"), "the book neither names");
+        assert!(store.books[1].cover.is_empty(), "a cover no file backs");
+        // `B01.partial` is not among them.
         let left = std::fs::read_dir(dir.join(covers::COVERS_DIR))
             .expect("the covers directory")
             .count();
-        assert_eq!(left, 2, "a book record lost its jacket");
+        assert_eq!(left, 2, "one jacket per slot `shown_slots` answers");
 
         // `keep_covers` over the same store takes nothing and drops nothing.
         assert_eq!(store.keep_covers(&dir), 0);
         assert!(covers::held(&dir, "B00OKPCRLG"));
+    }
 
-        // Sittings the parser gave up leave every jacket standing.
-        store.sessions.clear();
-        store.keep_covers(&dir);
-        assert!(covers::held(&dir, "B00OKPCRLG"), "the cache is not emptied");
-        assert!(covers::held(&dir, "B00NEVERRD"), "the cache is not emptied");
-        let _ = std::fs::remove_dir_all(&dir);
+    /// `books` holds a record and `sessions` is empty: `keep_covers` answers
+    /// 0 and leaves `covers::COVERS_DIR` standing.
+    #[test]
+    fn a_record_holding_books_and_no_sittings_keeps_every_jacket() {
+        let dir = scratch("short-covers");
+        let art = dir.join("thumbnail.jpg");
+        std::fs::write(&art, b"\xff\xd8\xff\xe0\x00\x10JFIF\0").expect("a written thumbnail");
+        covers::keep(&dir, "B00OKPCRLG", &art).expect("a copied cover");
+        let mut store = Store {
+            books: vec![BookRecord {
+                extent: 148_207,
+                cde_key: "B00OKPCRLG".into(),
+                title: "B00OKPCRLG".into(),
+                thumbnail: art.to_string_lossy().into_owned(),
+                cover: covers::path(&dir, "B00OKPCRLG")
+                    .to_string_lossy()
+                    .into_owned(),
+                ..BookRecord::default()
+            }],
+            ..Store::default()
+        };
+
+        assert_eq!(store.keep_covers(&dir), 0, "no record changed");
+        assert!(covers::held(&dir, "B00OKPCRLG"), "the jacket stands");
+        assert!(!store.books[0].cover.is_empty(), "and the record names it");
     }
 
     #[test]
@@ -3501,8 +3542,8 @@ mod tests {
     #[test]
     fn a_witness_bracketed_by_a_sitting_names_that_sittings_class() {
         let mut store = orphaned();
-        // Every sitting is keyed by `asin` in `session`, so the record the
-        // second and third would reach has to be the one the claim makes.
+        // `session` sets `asin` on every sitting; an empty one leaves
+        // `book_for` to reach the record through `end_position` alone.
         for s in &mut store.sessions {
             s.asin = None;
         }
@@ -3541,7 +3582,7 @@ mod tests {
         let found = store.book_for(500_100, None).expect("the class was named");
         assert_eq!(found.cde_key, "B00OKPCRLG");
         assert_eq!(found.named_by, Named::Catalog, "the catalog still holds it");
-        // Through the `k` row `slot_for`'s third arm already consults.
+        // Through the `k` row `slot_for`'s third arm consults.
         assert_eq!(store.key_at(500_100), Some("B00OKPCRLG"));
     }
 
@@ -3676,7 +3717,7 @@ mod tests {
             "the file-name record was left standing beside the real one",
         );
         assert!(store.pairs.is_empty(), "the pairing still reaches it");
-        // And the class is no longer on offer to anything weaker.
+        // `classes_wanting` leaves the class out for anything weaker.
         assert!(!store.classes_wanting(Named::Clippings).contains(&500_100));
         assert!(store.classes_wanting(Named::Vocab).contains(&700_200));
     }
@@ -3728,7 +3769,7 @@ mod tests {
         // Nothing weaker has anything left to say, and the walk never happens.
         assert!(store.classes_wanting(Named::Clippings).is_empty());
         assert!(store.classes_wanting(Named::Sidecar).is_empty());
-        // The strongest source still could: the catalog outranks them all.
+        // `Named::Catalog` outranks them all.
         assert_eq!(store.classes_wanting(Named::Catalog).len(), 2);
     }
 }
