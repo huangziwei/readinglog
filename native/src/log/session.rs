@@ -2,6 +2,7 @@
 //! events on one book, ended by a close, a change of book, a gap over
 //! [`SESSION_GAP_SECS`], or midnight. Its duration is the counter's span.
 
+use super::line;
 use super::line::{
     Moment, Observation, end_position, observation, opened_at_counter, payloads, stamp,
     toc_and_book,
@@ -87,6 +88,15 @@ pub struct Session {
     pub asin: Option<String>,
     /// How far into the book the sitting ended, as a fraction, off `%Left`.
     pub progress: Option<f64>,
+    /// The seconds the device stated were left in the book as it closed, off
+    /// `NewTimeLeft`.
+    pub time_left: Option<i64>,
+    /// The rate the device stated for this book as the sitting closed, off
+    /// `TotalWPM`, in whole words a minute.
+    pub stated_wpm: Option<i64>,
+    /// Seconds the device was `ACTIVE` across this run with the book open, off
+    /// [`Awake`] alone. Zero where no power event brackets the run.
+    pub awake_seconds: i64,
     /// The book's own reading counter where this run began and where it was
     /// last seen. Both or neither: a run the device never counted has none.
     pub start_counter_ms: Option<i64>,
@@ -225,6 +235,10 @@ struct Open {
     asin: Option<String>,
     /// The last `%Left` a line stated for this book.
     progress: Option<f64>,
+    /// The last `NewTimeLeft` a line stated for this book.
+    time_left: Option<i64>,
+    /// The last `TotalWPM` a line stated for this book.
+    stated_wpm: Option<i64>,
     /// The offset the newest record stated while this run was open.
     tz_offset_s: Option<i64>,
 }
@@ -261,6 +275,8 @@ impl Open {
             open_page: None,
             asin: None,
             progress: None,
+            time_left: None,
+            stated_wpm: None,
             tz_offset_s: None,
         }
     }
@@ -418,11 +434,12 @@ impl Open {
     fn finish(self, awake: &Awake) -> Session {
         let counted = (self.time_hi - self.time_lo.unwrap_or(self.time_hi)) / 1000;
         let dwell = self.dwell_total_ms / 1000;
+        let witnessed = awake.between(self.began.abs, self.last.abs);
         let (seconds, measure) = match (counted, dwell) {
             (c, _) if c > 0 => (c, Measure::Counted),
             (_, d) if d > 0 => (d, Measure::Dwell),
             _ if awake.is_empty() => (0, Measure::Counted),
-            _ => (awake.between(self.began.abs, self.last.abs), Measure::Awake),
+            _ => (witnessed, Measure::Awake),
         };
         Session {
             hours: match measure {
@@ -449,6 +466,9 @@ impl Open {
             measure,
             asin: self.asin,
             progress: self.progress,
+            time_left: self.time_left,
+            stated_wpm: self.stated_wpm,
+            awake_seconds: witnessed,
             start_counter_ms: self.time_lo,
             end_counter_ms: self.time_lo.map(|_| self.time_hi),
             start_words: self.words_lo,
@@ -689,6 +709,12 @@ pub fn parse_sessions<'a>(
         if let Some(left) = percent_left(line, cur.end_position) {
             cur.progress = Some(1.0 - left);
         }
+        if let Some(secs) = time_left(line, cur.end_position) {
+            cur.time_left = Some(secs);
+        }
+        if let Some(rate) = stated_wpm(line, cur.end_position) {
+            cur.stated_wpm = Some(rate);
+        }
         cur.observe(&now, &obs);
         counters.learn(&obs);
         if obs.closes {
@@ -714,6 +740,24 @@ fn percent_left(line: &str, book: i64) -> Option<f64> {
             .unwrap_or(rest.len());
         let left: f64 = rest[..end].parse().ok()?;
         (0.0..=1.0).contains(&left).then_some(left)
+    })
+}
+
+/// The seconds the device states are left in `book`, off the payload naming it.
+/// [`line::time_left`] reads the book's own figure past the chapter's.
+fn time_left(line: &str, book: i64) -> Option<i64> {
+    payloads(line).find_map(|p| match end_position(p) {
+        Some(at) if at == book => line::time_left(p),
+        _ => None,
+    })
+}
+
+/// `TotalWPM` for `book`, off the payload naming it. It carries a fraction, and
+/// [`line::field`] reads the whole words a minute ahead of the point.
+fn stated_wpm(line: &str, book: i64) -> Option<i64> {
+    payloads(line).find_map(|p| match end_position(p) {
+        Some(at) if at == book => line::field(p, "TotalWPM").filter(|rate| *rate > 0),
+        _ => None,
     })
 }
 
@@ -761,6 +805,32 @@ mod tests {
         assert_eq!(out[0].started_at, "2026-09-06T19:24:01");
         assert_eq!(out[0].ended_at, "2026-09-06T19:24:25");
         assert_eq!(out[0].progress, Some(1.0 - 0.6111));
+    }
+
+    /// A turn at `hhmmss` with the counter at `total_ms`, stating `book`
+    /// seconds left in the book and `chapter` seconds left in the chapter.
+    fn turn_left(hhmmss: &str, total_ms: i64, book: i64, chapter: i64) -> String {
+        format!(
+            "260906:{hhmmss} cvm[1]: I ReadingTimerController:Information::NextPage,\
+             Verdict:Processed,TotalTime:{total_ms},TotalWords:1905,\
+             CurrentPos:HTMLPosition:7731097,EndPos:HTMLPosition:19886489,PosLeft:12155392,\
+             %Left:0.6112,NewTimeLeft:{book},OldTimeLeft:9999,\
+             NextTOCEntryPosition:HTMLPosition:7800000,NextTOCEntryLength:10,\
+             CurrentPos:HTMLPosition:7731097,EndPos:HTMLPosition:7800000,PosLeft:68903,\
+             NewTimeLeft:{chapter};"
+        )
+    }
+
+    #[test]
+    fn a_run_holds_the_time_left_the_last_line_stated_for_its_book() {
+        let lines = [
+            turn_left("192404", 329_785, 4_200, 300),
+            turn_left("192425", 351_002, 3_900, 240),
+        ];
+        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].end_position, 19_886_489);
+        assert_eq!(out[0].time_left, Some(3_900), "the chapter's figure stood");
     }
 
     /// A `CloseBook` stating `TotalTime` and `TotalWords` together, the one

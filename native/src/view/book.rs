@@ -172,15 +172,20 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
     let inner = chrome::section(cx.fb, cx.text, theme, facts, s.the_reading);
 
     // [`figures`] states the other three.
+    let from = cx.figures;
     let lines: [(&str, String); LINES] = [
         (s.sittings, book.sittings.to_string()),
         (s.days, days_note(&book, s)),
-        (s.average_a_day, date::duration(book.per_day(), s)),
-        (s.average_a_sitting, date::duration(book.per_sitting(), s)),
-        (s.words, date::words(book.words)),
+        (s.average_a_day, date::duration(book.per_day(from), s)),
+        (
+            s.average_a_sitting,
+            date::duration(book.per_sitting(from), s),
+        ),
+        (s.words, date::words(book.words_read(from))),
         (
             s.reading_speed,
-            book.wpm().map_or("—".into(), |w| format!("{w} {}", s.wpm)),
+            book.wpm(from)
+                .map_or(DASH.into(), |w| format!("{w} {}", s.wpm)),
         ),
         (s.started, day_note(book.first_day, &book, s)),
         (s.last_read, day_note(book.last_day, &book, s)),
@@ -328,8 +333,8 @@ fn onto(band: Rect, box_: Rect) -> Rect {
 }
 
 /// What `ask` puts up: the headline, what it states, and the label on the
-/// answer. [`Ask::Clear`] states figures and has two answers, so it is drawn
-/// by [`asking`] itself.
+/// answer. [`Ask::Clear`] states figures and has two answers; [`asking`]
+/// draws that one itself.
 fn question(ask: Ask, s: &Strings) -> (&'static str, &'static str, &'static str) {
     match ask {
         Ask::Restart => (s.restart_ask, s.restart_note, s.restart),
@@ -413,13 +418,14 @@ fn title_lines(text: &mut TextRenderer, theme: &Theme, high: i32, author: bool) 
 /// The book's three headline figures, along the foot of the words column.
 fn figures(cx: &mut Ctx, words: Rect, book: &BookStat) {
     let theme: &Theme = cx.theme;
+    let from = cx.figures;
     let s = cx.s();
     let stated = [
-        (date::duration(book.seconds, s), s.read),
+        (date::duration(book.read_seconds(from), s), s.read),
         (book.page_turns.to_string(), s.pages_turned),
         (
-            book.time_left()
-                .map_or("—".into(), |t| date::duration(t, s)),
+            book.time_left(from)
+                .map_or(DASH.into(), |t| date::duration(t, s)),
             s.left,
         ),
     ];
@@ -499,6 +505,10 @@ mod tests {
             first_day: 0,
             last_day: 0,
             last_secs: 0,
+            stated_time_left: None,
+            stated_wpm: None,
+            device_seconds: 0,
+            device_words: 0,
         }
     }
 

@@ -57,6 +57,8 @@ pub enum Hit {
     Retry,
     /// The colours the charts are drawn in.
     ColorScheme(crate::settings::ColorScheme),
+    /// Where a book's own figures come from.
+    Figures(crate::settings::Figures),
     /// Go looking for a newer release.
     Update,
     Prev,
@@ -475,6 +477,8 @@ pub struct Ctx<'a> {
     pub theme: &'a Theme,
     pub lang: Lang,
     pub week: WeekStart,
+    /// Where a book's own figures come from.
+    pub figures: crate::settings::Figures,
     /// What the charts draw in, from `crate::ui::paint::Palette::for_panel`.
     pub palette: crate::ui::paint::Palette,
     pub stats: &'a Stats,

@@ -4,7 +4,7 @@
 
 use crate::date;
 use crate::log::session::{Measure, Session};
-use crate::settings::WeekStart;
+use crate::settings::{Figures, WeekStart};
 use crate::store::{BookRecord, FINISHED_PERCENT, Store};
 
 /// The day a book with no reading stands on, absent from `days`.
@@ -45,6 +45,15 @@ pub struct BookStat {
     pub last_day: i64,
     /// Seconds into `last_day` at which the last sitting ended.
     pub last_secs: i64,
+    /// The seconds the device stated were left in the book as the newest
+    /// sitting closed, off `Session::time_left`.
+    pub stated_time_left: Option<i64>,
+    /// The rate it stated at the same moment, off `Session::stated_wpm`.
+    pub stated_wpm: Option<i64>,
+    /// `Store::counters` for this book, cumulative over its whole life. Zero
+    /// where no `t` row names it.
+    pub device_seconds: i64,
+    pub device_words: i64,
 }
 
 impl BookStat {
@@ -97,36 +106,62 @@ impl BookStat {
     }
 
     /// Over `days`, the days with reading on them.
-    pub fn per_day(&self) -> i64 {
+    pub fn per_day(&self, from: Figures) -> i64 {
         match self.days {
             0 => 0,
-            d => self.seconds / d,
+            d => self.read_seconds(from) / d,
         }
     }
 
-    pub fn per_sitting(&self) -> i64 {
+    pub fn per_sitting(&self, from: Figures) -> i64 {
         match self.sittings {
             0 => 0,
-            s => self.seconds / s,
+            s => self.read_seconds(from) / s,
         }
     }
 
-    /// Seconds left to read, at this book's own rate. `Some(0)` under
-    /// [`Self::is_finished`], `None` where `percent` or `seconds` carries too
-    /// little to divide.
-    pub fn time_left(&self) -> Option<i64> {
+    /// This book's reading, `from` the source named. `device_seconds` at zero
+    /// falls back to `seconds`.
+    pub fn read_seconds(&self, from: Figures) -> i64 {
+        match from {
+            Figures::Device if self.device_seconds > 0 => self.device_seconds,
+            _ => self.seconds,
+        }
+    }
+
+    /// [`Self::read_seconds`] for the word counter.
+    pub fn words_read(&self, from: Figures) -> i64 {
+        match from {
+            Figures::Device if self.device_words > 0 => self.device_words,
+            _ => self.words,
+        }
+    }
+
+    /// Seconds left to read: `stated_time_left`, else `percent` and the reading
+    /// projected. `Some(0)` under [`Self::is_finished`], `None` where either
+    /// carries too little to divide.
+    pub fn time_left(&self, from: Figures) -> Option<i64> {
         if self.is_finished() {
             return Some(0);
         }
-        if self.percent < 0.5 || self.percent >= FINISHED_PERCENT || self.seconds <= 0 {
+        if let (Figures::Device, Some(stated)) = (from, self.stated_time_left) {
+            return Some(stated);
+        }
+        let read = self.read_seconds(from);
+        if self.percent < 0.5 || self.percent >= FINISHED_PERCENT || read <= 0 {
             return None;
         }
-        Some((self.seconds as f64 * (100.0 - self.percent) / self.percent) as i64)
+        Some((read as f64 * (100.0 - self.percent) / self.percent) as i64)
     }
 
-    /// Words a minute over everything counted in this book.
-    pub fn wpm(&self) -> Option<i64> {
-        (self.words > 0 && self.seconds > 0).then(|| self.words * 60 / self.seconds)
+    /// Words a minute over this book: `TotalWPM` as the device stated it, or
+    /// the words and the reading divided.
+    pub fn wpm(&self, from: Figures) -> Option<i64> {
+        if let (Figures::Device, Some(stated)) = (from, self.stated_wpm) {
+            return Some(stated);
+        }
+        let (words, read) = (self.words_read(from), self.read_seconds(from));
+        (words > 0 && read > 0).then(|| words * 60 / read)
     }
 }
 
@@ -204,10 +239,10 @@ pub struct Stats {
 }
 
 impl Stats {
-    /// Total up everything the store holds. `store.books` names each book and
-    /// `catalog` is not read here; `today` places the current streak. A false
-    /// `unnamed` leaves every total over `books` alone.
-    pub fn build(store: &Store, today: i64, unnamed: bool) -> Self {
+    /// Total up everything the store holds; `catalog` is not read here. `today`
+    /// places the current streak, a false `unnamed` leaves every total over
+    /// `books` alone, and `from` picks the seconds, per [`sitting_seconds`].
+    pub fn build(store: &Store, today: i64, unnamed: bool, from: Figures) -> Self {
         let mut out = Self::default();
         // One slot per book, in first-seen order; the sort comes last.
         let mut index: Vec<(i64, usize)> = Vec::new();
@@ -215,12 +250,13 @@ impl Stats {
             let Some(day) = date::parse_day(date::day_of(&s.started_at)) else {
                 continue;
             };
+            let secs = sitting_seconds(s, from);
             // `found.extent` where the store has a record, else `raw`.
             let raw = store.extent_of(s.end_position);
             let found = store.book_for(raw, s.asin.as_deref());
             // `is_book` is false on a scriptlet and on `My Clippings.txt`.
             if found.is_some_and(|b| !b.is_book()) {
-                out.skipped_seconds += s.seconds;
+                out.skipped_seconds += secs;
                 continue;
             }
             // A record reached by its key alone states an extent of zero.
@@ -240,28 +276,31 @@ impl Stats {
                 }
             });
             match at {
-                Some(slot) => credit(&mut out.books[slot], s, day),
+                Some(slot) => {
+                    credit(&mut out.books[slot], s, day, secs);
+                    hold_counter(&mut out.books[slot], store, s.end_position);
+                }
                 None if !unnamed => continue,
-                None => out.unnamed_seconds += s.seconds,
+                None => out.unnamed_seconds += secs,
             }
             out.sittings.push(Sitting {
                 day,
                 from_secs: date::secs_of(&s.started_at),
                 to_secs: date::secs_of(&s.ended_at),
-                seconds: s.seconds,
+                seconds: secs,
                 book: at,
                 key: raw,
                 measure: s.measure,
                 page_turns: s.page_turns,
-                hours: s.hours.clone(),
+                hours: hours_at(&s.hours, s.seconds, secs),
                 progress: s.progress,
             });
-            out.total_seconds += s.seconds;
+            out.total_seconds += secs;
             out.total_turns += s.page_turns;
             out.total_words += s.words;
             match out.days.binary_search_by_key(&day, |(d, _)| *d) {
-                Ok(i) => out.days[i].1 += s.seconds,
-                Err(i) => out.days.insert(i, (day, s.seconds)),
+                Ok(i) => out.days[i].1 += secs,
+                Err(i) => out.days.insert(i, (day, secs)),
             }
         }
 
@@ -664,15 +703,48 @@ fn fresh(extent: i64, found: &BookRecord, day: i64) -> BookStat {
         first_day: day,
         last_day: day,
         last_secs: 0,
+        stated_time_left: None,
+        stated_wpm: None,
+        device_seconds: 0,
+        device_words: 0,
     }
 }
 
-fn credit(book: &mut BookStat, s: &Session, day: i64) {
-    book.seconds += s.seconds;
+/// The seconds one sitting states, `from` the source named: the device's own
+/// accounting in `seconds`, or the wall clock [`Awake`] witnessed the run over.
+/// A run no power event brackets keeps the accounting.
+fn sitting_seconds(s: &Session, from: Figures) -> i64 {
+    match from {
+        Figures::App if s.awake_seconds > 0 => s.awake_seconds,
+        _ => s.seconds,
+    }
+}
+
+/// `hours` summing to `now` in place of `was`, each entry in proportion and the
+/// division's remainder to the busiest.
+fn hours_at(hours: &[(u8, i64)], was: i64, now: i64) -> Vec<(u8, i64)> {
+    if was <= 0 || now == was || hours.is_empty() {
+        return hours.to_vec();
+    }
+    let mut out: Vec<(u8, i64)> = hours
+        .iter()
+        .map(|(h, secs)| (*h, secs * now / was))
+        .filter(|(_, secs)| *secs > 0)
+        .collect();
+    let placed: i64 = out.iter().map(|(_, secs)| secs).sum();
+    match out.iter_mut().max_by_key(|(_, secs)| *secs) {
+        Some(busiest) => busiest.1 += now - placed,
+        None => out.push((hours[0].0, now)),
+    }
+    out
+}
+
+fn credit(book: &mut BookStat, s: &Session, day: i64, secs: i64) {
+    book.seconds += secs;
     match s.measure {
         Measure::Counted => {}
-        Measure::Dwell => book.dwell_seconds += s.seconds,
-        Measure::Awake => book.awake_seconds += s.seconds,
+        Measure::Dwell => book.dwell_seconds += secs,
+        Measure::Awake => book.awake_seconds += secs,
     }
     book.sittings += 1;
     book.page_turns += s.page_turns;
@@ -682,7 +754,20 @@ fn credit(book: &mut BookStat, s: &Session, day: i64) {
     if (day, ended) >= (book.last_day, book.last_secs) {
         book.last_day = day;
         book.last_secs = ended;
+        book.stated_time_left = s.time_left.or(book.stated_time_left);
+        book.stated_wpm = s.stated_wpm.or(book.stated_wpm);
     }
+}
+
+/// Take the `t` row for the class `end_position` names. A book re-copied
+/// stands at several classes, and the highest counter of them is its newest.
+fn hold_counter(book: &mut BookStat, store: &Store, end_position: i64) {
+    let Some((_, total_ms, words)) = store.counters.iter().find(|(ep, _, _)| *ep == end_position)
+    else {
+        return;
+    };
+    book.device_seconds = book.device_seconds.max(total_ms / 1000);
+    book.device_words = book.device_words.max(*words);
 }
 
 fn distinct_days(sittings: &[Sitting], book: usize) -> i64 {
@@ -851,7 +936,7 @@ mod tests {
         // reading, whatever share of that month the record holds.
         let days: Vec<i64> = (at(2026, 7, 27)..=at(2026, 9, 4)).collect();
         let today = at(2026, 9, 5);
-        let stats = Stats::build(&on_days(&days, 3600), today, true);
+        let stats = Stats::build(&on_days(&days, 3600), today, true, Figures::Device);
 
         let fold = stats.by_month(today);
         assert_eq!(fold.values[6], 5 * 3600, "five days of July");
@@ -870,7 +955,7 @@ mod tests {
             .map(|i| at(2026, 3, 1) + i)
             .collect();
         let today = at(2026, 3, 11);
-        let stats = Stats::build(&on_days(&days, 3600), today, true);
+        let stats = Stats::build(&on_days(&days, 3600), today, true, Figures::Device);
 
         let whole = stats.tally(stats.opened(today)..=today);
         let march = stats.tally(at(2026, 3, 1)..=at(2026, 3, 31));
@@ -912,7 +997,7 @@ mod tests {
                 ..Session::default()
             });
         }
-        let stats = Stats::build(&store, day(2026, 8, 8), true);
+        let stats = Stats::build(&store, day(2026, 8, 8), true, Figures::Device);
         let (first, last) = (day(2026, 8, 7), day(2026, 8, 8));
         assert_eq!(stats.percent_over(0, first..=first), Some(31));
         assert_eq!(stats.percent_over(0, last..=last), Some(62));
@@ -922,7 +1007,7 @@ mod tests {
 
         // A sitting stating no place leaves the one before it standing.
         store.sessions[3].progress = None;
-        let stats = Stats::build(&store, day(2026, 8, 8), true);
+        let stats = Stats::build(&store, day(2026, 8, 8), true, Figures::Device);
         assert_eq!(stats.percent_over(0, last..=last), Some(44));
     }
 
@@ -953,11 +1038,11 @@ mod tests {
             });
         }
         let ended = day(2026, 9, 5);
-        let stats = Stats::build(&store, ended, true);
+        let stats = Stats::build(&store, ended, true, Figures::Device);
         assert_eq!(stats.books[0].percent_shown(), 100);
         assert_eq!(stats.percent_over(0, ended..=ended), Some(100));
         // A day before the last one takes the sample it holds.
-        let stats = Stats::build(&store, ended + 1, true);
+        let stats = Stats::build(&store, ended + 1, true, Figures::Device);
         assert_eq!(stats.percent_over(0, ended..=ended), Some(100));
     }
 
@@ -1008,7 +1093,7 @@ mod tests {
             });
         }
         let today = at(2026, 3, 6);
-        let stats = Stats::build(&store, today, true);
+        let stats = Stats::build(&store, today, true, Figures::Device);
         let over = long..=today;
 
         let longest = stats.book_totals(over.clone());
@@ -1027,7 +1112,7 @@ mod tests {
         let mut store = on_days(&[day], SITTING_FLOOR_SECS - 1);
         let long = on_days(&[day], SITTING_FLOOR_SECS + 60);
         store.sessions.extend(long.sessions);
-        let stats = Stats::build(&store, today, true);
+        let stats = Stats::build(&store, today, true, Figures::Device);
 
         let bands = stats.sitting_bands();
         assert_eq!(
@@ -1050,7 +1135,7 @@ mod tests {
             .map(|i| at(2026, 3, 1) + i)
             .collect();
         let today = at(2026, 3, 10);
-        let stats = Stats::build(&on_days(&days, 3600), today, true);
+        let stats = Stats::build(&on_days(&days, 3600), today, true, Figures::Device);
 
         let board = stats.tally(stats.opened(today)..=today);
         let fold = stats.average_day(today);
@@ -1074,7 +1159,7 @@ mod tests {
             at(2023, 10, 10),
         ];
         let today = at(2024, 9, 1);
-        let stats = Stats::build(&on_days(&days, 3600), today, true);
+        let stats = Stats::build(&on_days(&days, 3600), today, true, Figures::Device);
         let fold = stats.by_month(today);
         assert_eq!(fold.values[7], 7200, "two Augusts");
         assert_eq!(fold.values[9], 3600, "one October");
@@ -1086,7 +1171,7 @@ mod tests {
         // holds that hour and nothing else.
         let days: Vec<i64> = (0..10).map(|i| at(2026, 3, 1) + i).collect();
         let today = at(2026, 3, 10);
-        let stats = Stats::build(&on_days(&days, 3600), today, true);
+        let stats = Stats::build(&on_days(&days, 3600), today, true, Figures::Device);
         let fold = stats.average_day(today);
         assert_eq!(fold.values[9], 3600, "an hour a day in the ninth hour");
         assert_eq!(fold.values.iter().sum::<i64>(), 3600);
@@ -1098,7 +1183,12 @@ mod tests {
     fn a_sitting_past_the_top_of_the_scale_lands_in_the_last_band() {
         let today = at(2026, 3, 2);
         let long = SITTING_STEP_SECS * SITTING_BANDS as i64 * 3;
-        let stats = Stats::build(&on_days(&[at(2026, 3, 1)], long), today, true);
+        let stats = Stats::build(
+            &on_days(&[at(2026, 3, 1)], long),
+            today,
+            true,
+            Figures::Device,
+        );
         let bands = stats.sitting_bands();
         assert_eq!(bands.len(), SITTING_BANDS);
         assert_eq!(bands[SITTING_BANDS - 1], 1, "the overflow band holds it");
@@ -1108,7 +1198,7 @@ mod tests {
     #[test]
     fn a_fold_over_an_empty_record_names_no_fullest_bucket() {
         let today = at(2026, 3, 2);
-        let stats = Stats::build(&Store::default(), today, true);
+        let stats = Stats::build(&Store::default(), today, true, Figures::Device);
         for fold in [
             stats.average_day(today),
             stats.average_week(today, WeekStart::Monday),
@@ -1169,11 +1259,11 @@ mod tests {
     #[test]
     fn a_book_cleared_and_kept_is_listed_at_zero() {
         let mut store = store();
-        let before = Stats::build(&store, day(2026, 8, 7), true);
+        let before = Stats::build(&store, day(2026, 8, 7), true, Figures::Device);
         assert_eq!(before.books[0].sittings, 3);
 
         store.clear_book(148_209, "B00OKPCRLG");
-        let after = Stats::build(&store, day(2026, 8, 7), true);
+        let after = Stats::build(&store, day(2026, 8, 7), true, Figures::Device);
         let book = after
             .books
             .iter()
@@ -1196,7 +1286,7 @@ mod tests {
     fn a_book_forgotten_is_listed_no_longer() {
         let mut store = store();
         store.forget_book(148_209, "B00OKPCRLG");
-        let after = Stats::build(&store, day(2026, 8, 7), true);
+        let after = Stats::build(&store, day(2026, 8, 7), true, Figures::Device);
         assert!(after.books.is_empty(), "the record went with the reading");
     }
 
@@ -1210,7 +1300,7 @@ mod tests {
             kept: true,
             ..BookRecord::default()
         });
-        let stats = Stats::build(&store, day(2026, 8, 7), true);
+        let stats = Stats::build(&store, day(2026, 8, 7), true, Figures::Device);
         assert_eq!(stats.books.len(), 2);
         assert_eq!(stats.books[0].extent, 148_209, "the one with reading first");
         assert_eq!(stats.books[1].title, "Kept");
@@ -1218,7 +1308,7 @@ mod tests {
 
     #[test]
     fn a_sitting_is_joined_to_the_book_the_catalog_names() {
-        let stats = Stats::build(&store(), day(2026, 8, 7), true);
+        let stats = Stats::build(&store(), day(2026, 8, 7), true, Figures::Device);
         // The second book of the two the sittings name has no record.
         assert_eq!(stats.books.len(), 1);
         let bible = stats
@@ -1235,7 +1325,7 @@ mod tests {
 
     #[test]
     fn the_books_nothing_names_are_counted_and_timed() {
-        let stats = Stats::build(&store(), day(2026, 8, 7), true);
+        let stats = Stats::build(&store(), day(2026, 8, 7), true, Figures::Device);
         let sixth = day(2026, 8, 6);
         // 555 is the one key no record names, read once on the sixth.
         assert_eq!(stats.unnamed_over(sixth..=sixth), (1, 1_800));
@@ -1262,7 +1352,7 @@ mod tests {
             progress: None,
             ..Session::default()
         });
-        let stats = Stats::build(&s, day(2026, 8, 7), true);
+        let stats = Stats::build(&s, day(2026, 8, 7), true, Figures::Device);
         assert_eq!(stats.unnamed_books(), 1);
         assert_eq!(stats.unnamed_seconds, 1_800 + 900);
     }
@@ -1270,8 +1360,8 @@ mod tests {
     #[test]
     fn dropping_the_unnamed_leaves_every_total_over_the_books_listed() {
         let sixth = day(2026, 8, 6);
-        let kept = Stats::build(&store(), day(2026, 8, 7), true);
-        let dropped = Stats::build(&store(), day(2026, 8, 7), false);
+        let kept = Stats::build(&store(), day(2026, 8, 7), true, Figures::Device);
+        let dropped = Stats::build(&store(), day(2026, 8, 7), false, Figures::Device);
 
         assert_eq!(dropped.unnamed_seconds, 0);
         assert_eq!(dropped.unnamed_books(), 0);
@@ -1288,7 +1378,7 @@ mod tests {
 
     #[test]
     fn a_book_nothing_names_gets_no_row_and_keeps_its_time() {
-        let stats = Stats::build(&store(), day(2026, 8, 7), true);
+        let stats = Stats::build(&store(), day(2026, 8, 7), true, Figures::Device);
         assert!(!stats.books.iter().any(|b| b.extent == 555));
         assert!(!stats.books.iter().any(|b| b.title.starts_with("Book at")));
         assert_eq!(stats.unnamed_seconds, 1_800);
@@ -1308,13 +1398,13 @@ mod tests {
         // 2026-08-06 holds one sitting on the named book and one on neither.
         let sixth = day(2026, 8, 6);
         assert_eq!(
-            Stats::build(&store(), day(2026, 8, 7), true)
+            Stats::build(&store(), day(2026, 8, 7), true, Figures::Device)
                 .book_totals(sixth..=sixth)
                 .len(),
             1
         );
         assert_eq!(
-            Stats::build(&store_both_named(), day(2026, 8, 7), true)
+            Stats::build(&store_both_named(), day(2026, 8, 7), true, Figures::Device)
                 .book_totals(sixth..=sixth)
                 .len(),
             2
@@ -1328,7 +1418,7 @@ mod tests {
         s.remember(&[]);
         assert_eq!(s.books.len(), 1, "an empty catalog removes nothing");
 
-        let stats = Stats::build(&s, day(2026, 8, 7), true);
+        let stats = Stats::build(&s, day(2026, 8, 7), true, Figures::Device);
         let bible = stats
             .books
             .iter()
@@ -1343,14 +1433,14 @@ mod tests {
 
     #[test]
     fn a_store_that_has_never_seen_the_catalog_draws_no_books_at_all() {
-        let bare = Stats::build(&bare_store(), day(2026, 8, 7), true);
+        let bare = Stats::build(&bare_store(), day(2026, 8, 7), true, Figures::Device);
         assert!(bare.books.is_empty());
         // Every second is held, and every sitting is on the calendar.
         assert_eq!(bare.total_seconds, 1_800 + 1_200 + 1_800 + 600);
         assert_eq!(bare.unnamed_seconds, bare.total_seconds);
         assert_eq!(bare.sittings.len(), 4);
         // The same store, with the catalog remembered.
-        let after = Stats::build(&store(), day(2026, 8, 7), true);
+        let after = Stats::build(&store(), day(2026, 8, 7), true, Figures::Device);
         assert!(
             after
                 .books
@@ -1386,7 +1476,7 @@ mod tests {
             12,
         ));
 
-        let stats = Stats::build(&s, day(2026, 8, 7), true);
+        let stats = Stats::build(&s, day(2026, 8, 7), true, Figures::Device);
         assert!(!stats.books.iter().any(|b| b.title == "Reading Log"));
         assert_eq!(stats.skipped_seconds, 720);
         // The totals are the ones from `store()` alone.
@@ -1421,7 +1511,7 @@ mod tests {
             12,
         ));
 
-        let stats = Stats::build(&s, day(2026, 8, 7), true);
+        let stats = Stats::build(&s, day(2026, 8, 7), true, Figures::Device);
         let book = stats
             .books
             .iter()
@@ -1447,7 +1537,7 @@ mod tests {
         let mut s = store();
         s.sessions.push(unmapped);
 
-        let stats = Stats::build(&s, day(2026, 8, 8), true);
+        let stats = Stats::build(&s, day(2026, 8, 8), true, Figures::Device);
         let bible: Vec<&BookStat> = stats.books.iter().filter(|b| b.extent == 148_209).collect();
         assert_eq!(bible.len(), 1, "one row, not two: {:#?}", stats.books);
         assert_eq!(bible[0].seconds, 1_800 + 1_200 + 600 + 1_200);
@@ -1478,14 +1568,14 @@ mod tests {
 
     #[test]
     fn books_are_ordered_by_what_was_read_last() {
-        let stats = Stats::build(&store_both_named(), day(2026, 8, 7), true);
+        let stats = Stats::build(&store_both_named(), day(2026, 8, 7), true, Figures::Device);
         assert_eq!(stats.books[0].extent, 148_209, "read on the 7th");
         assert_eq!(stats.books[1].extent, 555, "last read on the 6th");
     }
 
     #[test]
     fn a_sitting_points_at_its_book_after_the_reorder() {
-        let stats = Stats::build(&store_both_named(), day(2026, 8, 7), true);
+        let stats = Stats::build(&store_both_named(), day(2026, 8, 7), true, Figures::Device);
         for s in &stats.sittings {
             let book = &stats.books[s.book.expect("every book named")];
             // The 22:00 sitting is the only one on the second book.
@@ -1515,7 +1605,7 @@ mod tests {
             progress: None,
             ..Session::default()
         });
-        let stats = Stats::build(&s, day(2026, 8, 7), true);
+        let stats = Stats::build(&s, day(2026, 8, 7), true, Figures::Device);
 
         let blocks = stats.day_blocks(day(2026, 8, 7));
         assert_eq!(
@@ -1538,7 +1628,7 @@ mod tests {
 
     #[test]
     fn a_block_never_leaves_the_hour_or_the_window_it_belongs_to() {
-        let stats = Stats::build(&store(), day(2026, 8, 7), true);
+        let stats = Stats::build(&store(), day(2026, 8, 7), true, Figures::Device);
         for (from, to) in stats.day_blocks(day(2026, 8, 7)) {
             assert!(from <= to, "({from}, {to})");
             assert!(to - from <= 3600, "({from}, {to}) outgrew its hour");
@@ -1551,7 +1641,7 @@ mod tests {
 
     #[test]
     fn a_span_cuts_its_own_reading_by_the_hour_of_it() {
-        let stats = Stats::build(&store(), day(2026, 8, 7), true);
+        let stats = Stats::build(&store(), day(2026, 8, 7), true, Figures::Device);
         let all = stats.hours_over(i64::MIN..=i64::MAX);
         assert_eq!(all.iter().sum::<i64>(), stats.total_seconds);
         assert_eq!(all[9], 1_800 + 600);
@@ -1581,7 +1671,7 @@ mod tests {
 
     #[test]
     fn a_streak_runs_while_the_days_are_consecutive() {
-        let stats = Stats::build(&store(), day(2026, 8, 7), true);
+        let stats = Stats::build(&store(), day(2026, 8, 7), true, Figures::Device);
         assert_eq!(stats.days_read(), 3);
         assert_eq!(stats.longest_streak, 3);
         assert_eq!(stats.current_streak, 3);
@@ -1589,9 +1679,9 @@ mod tests {
 
     #[test]
     fn a_day_still_in_progress_keeps_the_streak() {
-        let stats = Stats::build(&store(), day(2026, 8, 8), true);
+        let stats = Stats::build(&store(), day(2026, 8, 8), true, Figures::Device);
         assert_eq!(stats.current_streak, 3, "yesterday still counts");
-        let stale = Stats::build(&store(), day(2026, 8, 9), true);
+        let stale = Stats::build(&store(), day(2026, 8, 9), true, Figures::Device);
         assert_eq!(stale.current_streak, 0);
         assert_eq!(stale.longest_streak, 3, "the record stands");
     }
@@ -1606,14 +1696,14 @@ mod tests {
             1_800,
             9,
         ));
-        let stats = Stats::build(&s, day(2026, 8, 20), true);
+        let stats = Stats::build(&s, day(2026, 8, 20), true, Figures::Device);
         assert_eq!(stats.longest_streak, 3);
         assert_eq!(stats.current_streak, 1);
     }
 
     #[test]
     fn a_span_totals_each_book_over_it_longest_first() {
-        let stats = Stats::build(&store_both_named(), day(2026, 8, 7), true);
+        let stats = Stats::build(&store_both_named(), day(2026, 8, 7), true, Figures::Device);
         let week = stats.book_totals(day(2026, 8, 1)..=day(2026, 8, 7));
         assert_eq!(week.len(), 2);
         assert!(week[0].1 >= week[1].1, "out of order: {week:?}",);
@@ -1626,7 +1716,7 @@ mod tests {
 
     #[test]
     fn a_day_gives_up_its_sittings_and_its_books() {
-        let stats = Stats::build(&store(), day(2026, 8, 7), true);
+        let stats = Stats::build(&store(), day(2026, 8, 7), true, Figures::Device);
         let sixth: Vec<&Sitting> = stats.sittings_on(day(2026, 8, 6)).collect();
         assert_eq!(sixth.len(), 2);
         assert_eq!(sixth[0].from_secs, 21 * 3600, "in the order they happened");
@@ -1640,7 +1730,7 @@ mod tests {
 
     #[test]
     fn a_books_own_days_are_its_own() {
-        let stats = Stats::build(&store(), day(2026, 8, 7), true);
+        let stats = Stats::build(&store(), day(2026, 8, 7), true, Figures::Device);
         let bible = stats
             .books
             .iter()
@@ -1658,21 +1748,105 @@ mod tests {
 
     #[test]
     fn what_is_left_is_projected_from_what_the_catalog_says_is_done() {
-        let stats = Stats::build(&store(), day(2026, 8, 7), true);
+        let stats = Stats::build(&store(), day(2026, 8, 7), true, Figures::Device);
         let bible = stats.books.iter().find(|b| b.extent == 148_209).unwrap();
         // 3600 s at 25%: 75% is three times that.
-        assert_eq!(bible.time_left(), Some(10_800));
-        assert_eq!(bible.per_day(), 1_200);
-        assert_eq!(bible.per_sitting(), 1_200);
+        assert_eq!(bible.time_left(Figures::Device), Some(10_800));
+        assert_eq!(bible.per_day(Figures::Device), 1_200);
+        assert_eq!(bible.per_sitting(Figures::Device), 1_200);
         // A book the catalog states no progress for is projected from nothing.
-        let other = Stats::build(&store_both_named(), day(2026, 8, 7), true);
+        let other = Stats::build(&store_both_named(), day(2026, 8, 7), true, Figures::Device);
         let gone = other.books.iter().find(|b| b.extent == 555).unwrap();
-        assert_eq!(gone.time_left(), None);
+        assert_eq!(gone.time_left(Figures::Device), None);
+    }
+
+    #[test]
+    fn a_book_states_the_device_s_own_counters_or_the_sittings_measured() {
+        let mut store = store();
+        // The counter the device holds for this book, past the 3600 s of
+        // sittings the log still reaches.
+        store.counters = vec![(148_207, 9_000_000, 30_000)];
+        for s in store.sessions.iter_mut() {
+            s.stated_wpm = Some(240);
+        }
+        let stats = Stats::build(&store, day(2026, 8, 7), true, Figures::Device);
+        let bible = stats.books.iter().find(|b| b.extent == 148_209).unwrap();
+
+        assert_eq!(bible.read_seconds(Figures::Device), 9_000);
+        assert_eq!(bible.words_read(Figures::Device), 30_000);
+        assert_eq!(bible.wpm(Figures::Device), Some(240));
+        // 3600 s over three sittings of 600 words each.
+        assert_eq!(bible.read_seconds(Figures::App), 3_600);
+        assert_eq!(bible.words_read(Figures::App), 1_800);
+        assert_eq!(bible.per_sitting(Figures::App), 1_200);
+        assert_eq!(bible.per_sitting(Figures::Device), 3_000);
+        assert_eq!(bible.wpm(Figures::App), Some(30));
+    }
+
+    #[test]
+    fn under_app_a_sitting_states_the_wall_clock_the_power_events_witnessed() {
+        let mut store = store();
+        // 1800 s counted over a run the device was awake for 2700 s of.
+        for s in store.sessions.iter_mut() {
+            s.awake_seconds = s.seconds * 3 / 2;
+        }
+        let device = Stats::build(&store, day(2026, 8, 7), true, Figures::Device);
+        let app = Stats::build(&store, day(2026, 8, 7), true, Figures::App);
+        assert_eq!(app.total_seconds, device.total_seconds * 3 / 2);
+
+        let at = |s: &Stats| {
+            s.books
+                .iter()
+                .find(|b| b.extent == 148_209)
+                .unwrap()
+                .seconds
+        };
+        assert_eq!(at(&app), at(&device) * 3 / 2);
+        // The hours keep the shape of the run and sum to the new figure.
+        for sitting in &app.sittings {
+            let summed: i64 = sitting.hours.iter().map(|(_, s)| s).sum();
+            assert_eq!(summed, sitting.seconds);
+        }
+        // A run no power event brackets keeps the device's own accounting.
+        for s in store.sessions.iter_mut() {
+            s.awake_seconds = 0;
+        }
+        let bare = Stats::build(&store, day(2026, 8, 7), true, Figures::App);
+        assert_eq!(bare.total_seconds, device.total_seconds);
+    }
+
+    #[test]
+    fn a_book_the_device_states_no_counter_for_falls_back_to_the_sittings() {
+        let stats = Stats::build(&store(), day(2026, 8, 7), true, Figures::Device);
+        let bible = stats.books.iter().find(|b| b.extent == 148_209).unwrap();
+        assert_eq!(bible.device_seconds, 0);
+        assert_eq!(bible.read_seconds(Figures::Device), bible.seconds);
+    }
+
+    #[test]
+    fn the_time_left_the_device_stated_stands_over_the_projection() {
+        let mut store = store();
+        // The figure the book's own footer carries, on the newest sitting.
+        let newest = store
+            .sessions
+            .iter_mut()
+            .filter(|s| s.end_position == 148_207)
+            .max_by(|a, b| a.ended_at.cmp(&b.ended_at))
+            .expect("a sitting on the bible");
+        newest.time_left = Some(41_400);
+        let stats = Stats::build(&store, day(2026, 8, 7), true, Figures::Device);
+        let bible = stats.books.iter().find(|b| b.extent == 148_209).unwrap();
+        assert_eq!(bible.stated_time_left, Some(41_400));
+        assert_eq!(
+            bible.time_left(Figures::Device),
+            Some(41_400),
+            "the projection stood"
+        );
     }
 
     #[test]
     fn an_empty_store_is_an_empty_picture() {
-        let stats = Stats::build(&Store::default(), day(2026, 8, 7), true);
+        let stats = Stats::build(&Store::default(), day(2026, 8, 7), true, Figures::Device);
         assert_eq!(stats.total_seconds, 0);
         assert_eq!(stats.days_read(), 0);
         assert_eq!(stats.current_streak, 0);

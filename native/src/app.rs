@@ -55,7 +55,7 @@ impl App {
     pub fn new(store: crate::store::Store, theme: Theme, text: TextRenderer) -> Self {
         let (today, now) = date::now();
         let settings = Settings::load(Lang::detect());
-        let stats = Stats::build(&store, today, settings.show_unnamed);
+        let stats = Stats::build(&store, today, settings.show_unnamed, settings.figures);
         let colour = crate::eink::fb::has_cfa();
         eprintln!(
             "panel: {}",
@@ -94,7 +94,12 @@ impl App {
 
     /// Total the store again, at the day and the settings held.
     fn rebuild(&mut self) {
-        self.stats = Stats::build(&self.store, self.today, self.settings.show_unnamed);
+        self.stats = Stats::build(
+            &self.store,
+            self.today,
+            self.settings.show_unnamed,
+            self.settings.figures,
+        );
     }
 
     /// Draw at `size`, whatever is stored.
@@ -299,6 +304,7 @@ impl App {
             theme: &self.theme,
             lang: self.lang,
             week: self.settings.week_start,
+            figures: self.settings.figures,
             palette: crate::ui::paint::Palette::for_panel(self.settings.color_scheme, self.colour),
             stats: &self.stats,
             today: self.today,
@@ -681,6 +687,15 @@ impl App {
                 self.settings.color_scheme = pick;
                 self.settings.save();
             }
+            Hit::Figures(pick) => {
+                if self.settings.figures == pick {
+                    return Action::Nothing;
+                }
+                self.settings.figures = pick;
+                // Every total on every screen comes off `stats`.
+                self.rebuild();
+                self.settings.save();
+            }
             Hit::ShowUnnamed(pick) => {
                 if self.settings.show_unnamed == pick {
                     return Action::Nothing;
@@ -816,7 +831,8 @@ impl App {
                 // `peek` once: the figures the question states. `inside` is
                 // totalled whole, whatever `show_unnamed` stands at.
                 let inside = crate::backup::peek(&backup.path).unwrap_or_default();
-                let held = crate::stats::Stats::build(&inside, self.today, true);
+                let held =
+                    crate::stats::Stats::build(&inside, self.today, true, self.settings.figures);
                 view::Confirm {
                     about,
                     sittings: held.sittings.len(),
@@ -860,8 +876,8 @@ impl App {
     }
 
     /// Read every source of identity again and state how many books that
-    /// named, over a banner. No sitting is folded in: only the rows placing
-    /// one on a book are read again, so what the reader emptied stays gone.
+    /// named, over a banner. No sitting is folded in; only the rows placing
+    /// one on a book are read again.
     fn retry(&mut self, fb: &mut Framebuffer, input: &mut Input) -> Result<()> {
         // The class rows are read again only where one is missing under a
         // class no record names: a sitting the record holds no counter for
@@ -892,7 +908,8 @@ impl App {
 
     /// Books read that no record names, whatever the page is set to show.
     fn unnamed_books(&self) -> usize {
-        crate::stats::Stats::build(&self.store, self.today, true).unnamed_books()
+        crate::stats::Stats::build(&self.store, self.today, true, self.settings.figures)
+            .unnamed_books()
     }
 
     /// `catalog::read` through `Store::remember` and `Store::keep_covers`,
@@ -977,8 +994,8 @@ impl App {
     }
 
     /// One pass over the device's logs, counting the files it opens onto the
-    /// banner. The pass holds `self.store`, `App::banner` holds `self`, so the
-    /// record is held out for the length of it.
+    /// banner. The pass holds `self.store` and `App::banner` holds `self`, and
+    /// the record stands out of both for the length of it.
     fn over_the_logs(
         &mut self,
         fb: &mut Framebuffer,

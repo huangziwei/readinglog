@@ -280,6 +280,10 @@ pub struct Strings {
     pub the_calendar: &'static str,
     pub language_row: &'static str,
     pub week_starts_on: &'static str,
+    /// The row naming where a book's figures come from, and its two chips.
+    pub figures_row: &'static str,
+    pub figures_device: &'static str,
+    pub figures_app: &'static str,
     /// The record section, and the row counting unnamed books.
     pub the_record: &'static str,
     pub unnamed_row: &'static str,
@@ -496,6 +500,9 @@ const ENGLISH: Strings = Strings {
     step_logs: "log {d} of {n}",
     step_files: "file {d} of {n}",
 
+    figures_row: "Use stats from",
+    figures_device: "Device",
+    figures_app: "App",
     the_record: "THE RECORD",
     unnamed_row: "Unidentified books",
     unnamed_show: "Show",
@@ -713,6 +720,9 @@ const GERMAN: Strings = Strings {
     step_logs: "Protokoll {d} von {n}",
     step_files: "Datei {d} von {n}",
 
+    figures_row: "Werte von",
+    figures_device: "Gerät",
+    figures_app: "App",
     the_record: "DIE AUFZEICHNUNG",
     recorded_row: "Aufgezeichnet",
     n_sittings: "{d} Sitzung[en]",
@@ -928,6 +938,9 @@ const JAPANESE: Strings = Strings {
     step_logs: "ログ {d}/{n}",
     step_files: "ファイル {d}/{n}",
 
+    figures_row: "数値の取得元",
+    figures_device: "端末",
+    figures_app: "アプリ",
     the_record: "記録",
     recorded_row: "記録の中身",
     n_sittings: "{d}回",
@@ -1123,6 +1136,9 @@ const SIMPLIFIED: Strings = Strings {
     step_logs: "日志 {d}/{n}",
     step_files: "文件 {d}/{n}",
 
+    figures_row: "数据来源",
+    figures_device: "设备",
+    figures_app: "应用",
     the_record: "记录",
     recorded_row: "已记录",
     n_sittings: "{d}次",
@@ -1326,6 +1342,9 @@ const TRADITIONAL: Strings = Strings {
     step_logs: "日誌 {d}/{n}",
     step_files: "檔案 {d}/{n}",
 
+    figures_row: "數據來源",
+    figures_device: "裝置",
+    figures_app: "應用",
     the_record: "記錄",
     recorded_row: "已記錄",
     n_sittings: "{d}次",
@@ -1553,7 +1572,10 @@ mod tests {
         // A field filled in with nothing.
         for lang in Lang::ALL {
             let s = lang.strings();
-            let named: [(&str, &str); 10] = [
+            let named: [(&str, &str); 13] = [
+                ("figures_row", s.figures_row),
+                ("figures_device", s.figures_device),
+                ("figures_app", s.figures_app),
                 ("exit", s.exit),
                 ("config", s.config),
                 ("today", s.today),
@@ -1601,7 +1623,7 @@ mod tests {
 
         for lang in Lang::ALL {
             let s = lang.strings();
-            // Every field at its widest, so the budget holds for any record.
+            // Every field at its widest: the budget holds for any record.
             let filled = |note: &str| {
                 note.replace(
                     "{what}",

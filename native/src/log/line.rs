@@ -153,6 +153,16 @@ pub fn end_position(payload: &str) -> Option<i64> {
     stated(ahead, at).map(|(_, position)| position)
 }
 
+/// The book's own `NewTimeLeft`, in seconds: the one ahead of the
+/// `NextTOCEntry` group. The `NewTimeLeft` inside that group is the chapter's.
+pub fn time_left(payload: &str) -> Option<i64> {
+    let ahead = match payload.find("NextTOCEntry") {
+        Some(toc) => &payload[..toc],
+        None => payload,
+    };
+    field(ahead, "NewTimeLeft")
+}
+
 /// The book a whole line is about, from whichever of its payloads names one.
 pub fn book_position(line: &str) -> Option<i64> {
     payloads(line).find_map(end_position)
@@ -373,6 +383,38 @@ mod tests {
     fn the_book_position_is_the_one_ahead_of_the_toc_group() {
         // 148207 leads the NextTOCEntry group; 56499 is the chapter's.
         assert_eq!(book_position(PAGE), Some(148_207));
+    }
+
+    /// A page line stating both figures the timer prints: 19320 s left in the
+    /// book, 1080 s left in the chapter.
+    const LEFT: &str = "260822:141523 cvm[4024]: I ReadingTimerController:Information::NextPage,\
+        Verdict:Processed,TotalTime:2494257,TotalWords:19034,\
+        CurrentPos:YJPosition: AdsGAAAAAAAA:25217,EndPos:YJPosition: ASgWAAAaAAAA:139053,\
+        PosLeft:113836,%Left:0.8178780284043442,FinalWPM:404.86806177583196,\
+        NewTimeLeft:19320,OldTimeLeft:17110,\
+        NextTOCEntryPosition:YJPosition: Ab0HAAAAAAAA:33565,NextTOCEntryLength:22,\
+        CurrentPos:YJPosition: AdsGAAAAAAAA:25217,EndPos:YJPosition: Ab0HAAAAAAAA:33565,\
+        PosLeft:8348,%Left:0.04720133667502088,FinalWPM:404.86806177583196,\
+        NewTimeLeft:1080,OldTimeLeft:987,TimeLeftInBookString:5 hrs 22 mins left in book,\
+        TimeLeftInSectionString:18 mins left in chapter;";
+
+    #[test]
+    fn the_time_left_is_the_books_own_and_not_the_chapters() {
+        let payload = payloads(LEFT).next().expect("one payload");
+        // 5 hrs 22 mins, as the same line spells it out.
+        assert_eq!(time_left(payload), Some(19_320));
+        assert_eq!(end_position(payload), Some(139_053));
+    }
+
+    #[test]
+    fn a_payload_with_no_chapter_states_the_books_time_left_alone() {
+        let payload = "CloseBook,TotalTime:100,NewTimeLeft:600,\
+             CurrentPos:HTMLPosition:5,EndPos:HTMLPosition:900,PosLeft:895;";
+        assert_eq!(time_left(payload), Some(600));
+        assert_eq!(
+            time_left("CloseBook,TotalTime:100,EndPos:HTMLPosition:900;"),
+            None
+        );
     }
 
     #[test]

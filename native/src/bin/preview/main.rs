@@ -294,7 +294,16 @@ const FONTS: &str = "no font — point READINGLOG_FONTS at the device's font dir
 fn open(store: &Store, opts: &Opts, w: u32, h: u32, lang: Lang, size: TextSize) -> Result<App> {
     // Only of the fixture: a real record given by `--store` can be empty, and
     // an emptied one is a screen worth drawing.
-    if opts.store.is_none() && Stats::build(store, opts.day, true).books.is_empty() {
+    if opts.store.is_none()
+        && Stats::build(
+            store,
+            opts.day,
+            true,
+            readinglog_native::settings::Figures::Device,
+        )
+        .books
+        .is_empty()
+    {
         bail!("the fixture named no book");
     }
     let theme = Theme::sized(w, h, size);
@@ -326,7 +335,15 @@ fn thinned_for(shot: &Shot, opts: &Opts, art: &Path) -> Option<Store> {
         // way; every other index stands.
         ("book" | "books", Some(of)) if of.ends_with("cleared") => {
             let mut store = fixture::library(opts.day, art);
-            let last = Stats::build(&store, opts.day, true).books.last()?.clone();
+            let last = Stats::build(
+                &store,
+                opts.day,
+                true,
+                readinglog_native::settings::Figures::Device,
+            )
+            .books
+            .last()?
+            .clone();
             let (extent, key) = (last.extent, last.cde_key);
             store.mark = "260916:200000".into();
             store.clear_book(extent, &key);

@@ -362,7 +362,7 @@ fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
     let script = crate::font::Script::of_language(&book.language);
 
     // Two columns: the words on the left, the figures on the right.
-    let figure = date::duration(book.seconds, cx.s());
+    let figure = date::duration(book.read_seconds(cx.figures), cx.s());
     cx.text.set_px(theme.body_px);
     let column_w = figures_width(cx, &figure) + theme.gap * 2;
     let (words, figures) = body.split_left((body.w - column_w).max(theme.gap));
@@ -481,6 +481,10 @@ mod tests {
                 first_day: 0,
                 last_day: 0,
                 last_secs: 0,
+                stated_time_left: None,
+                stated_wpm: None,
+                device_seconds: 0,
+                device_words: 0,
             })
             .collect();
         Stats {

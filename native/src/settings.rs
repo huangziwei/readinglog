@@ -102,6 +102,31 @@ impl ColorScheme {
     }
 }
 
+/// Which of a book's two sets of figures its page states.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Figures {
+    /// `timer.model`'s counters, `TotalWPM` and `NewTimeLeft`.
+    #[default]
+    Device,
+    /// The sittings `BookStat` totalled.
+    App,
+}
+
+impl Figures {
+    pub const ALL: [Figures; 2] = [Figures::Device, Figures::App];
+
+    fn token(self) -> &'static str {
+        match self {
+            Figures::Device => "device",
+            Figures::App => "app",
+        }
+    }
+
+    fn of_token(token: &str) -> Option<Self> {
+        Figures::ALL.into_iter().find(|f| f.token() == token)
+    }
+}
+
 /// Which day a week is drawn from.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WeekStart {
@@ -157,6 +182,8 @@ pub struct Settings {
     pub text_size: TextSize,
     /// The colours a chart is drawn in.
     pub color_scheme: ColorScheme,
+    /// Where a book's own figures come from.
+    pub figures: Figures,
     /// Whether a total counts reading on books the catalog names none of.
     pub show_unnamed: bool,
     /// Lines this build does not know, kept verbatim.
@@ -172,6 +199,7 @@ impl Settings {
             week_start: WeekStart::default(),
             text_size: TextSize::default(),
             color_scheme: ColorScheme::default(),
+            figures: Figures::default(),
             show_unnamed: true,
             unknown: Vec::new(),
         }
@@ -225,6 +253,11 @@ impl Settings {
                         out.color_scheme = scheme;
                     }
                 }
+                "figures" => {
+                    if let Some(from) = Figures::of_token(value) {
+                        out.figures = from;
+                    }
+                }
                 "show_unnamed" => out.show_unnamed = value != "no",
                 _ => out.unknown.push(line.to_string()),
             }
@@ -239,6 +272,7 @@ impl Settings {
         out.push_str(&format!("week_start={}\n", self.week_start.token()));
         out.push_str(&format!("text_size={}\n", self.text_size.token()));
         out.push_str(&format!("color_scheme={}\n", self.color_scheme.token()));
+        out.push_str(&format!("figures={}\n", self.figures.token()));
         let unnamed = match self.show_unnamed {
             true => "yes",
             false => "no",
@@ -290,12 +324,14 @@ mod tests {
         s.week_start = WeekStart::Sunday;
         s.text_size = TextSize::Large;
         s.color_scheme = ColorScheme::TobiKogane;
+        s.figures = Figures::App;
         s.show_unnamed = false;
         let back = Settings::parse(&s.to_text(), Lang::English);
         assert_eq!(back.language, Lang::TraditionalChinese);
         assert_eq!(back.week_start, WeekStart::Sunday);
         assert_eq!(back.text_size, TextSize::Large);
         assert_eq!(back.color_scheme, ColorScheme::TobiKogane);
+        assert_eq!(back.figures, Figures::App);
         assert!(!back.show_unnamed);
     }
 

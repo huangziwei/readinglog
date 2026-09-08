@@ -634,9 +634,9 @@ impl Store {
         }
     }
 
-    /// Give each record outside `stated` the percentage its newest sitting
-    /// states. `p_percentFinished` sits on the row a deletion drops; `%Left`
-    /// states the same figure, and `sessions` ascends by `started_at`.
+    /// Give each record outside `stated` the furthest its sittings reached,
+    /// where that stands past the place it holds. `%Left` fills the gap a
+    /// deletion leaves and stops a page short of the end.
     fn note_progress(&mut self, stated: &[usize]) {
         for i in 0..self.sessions.len() {
             let Some(progress) = self.sessions[i].progress else {
@@ -647,8 +647,9 @@ impl Store {
             let Some(slot) = self.slot_for(extent, key.as_deref()) else {
                 continue;
             };
-            if !stated.contains(&slot) {
-                self.books[slot].stand_at((progress * 100.0).clamp(0.0, 100.0));
+            let at = (progress * 100.0).clamp(0.0, 100.0);
+            if !stated.contains(&slot) && at > self.books[slot].percent {
+                self.books[slot].stand_at(at);
             }
         }
     }
@@ -1216,7 +1217,7 @@ fn read_hours(text: &str) -> Vec<(u8, i64)> {
 fn write_session(s: &Session) -> String {
     let num = |n: Option<i64>| n.map(|n| n.to_string()).unwrap_or_default();
     format!(
-        "s\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "s\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         s.started_at,
         s.ended_at,
         s.end_position,
@@ -1232,6 +1233,9 @@ fn write_session(s: &Session) -> String {
         num(s.start_words),
         num(s.end_words),
         num(s.tz_offset_s),
+        num(s.time_left),
+        num(s.stated_wpm),
+        s.awake_seconds,
     )
 }
 
@@ -1259,6 +1263,9 @@ fn read_session<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Session> {
         start_words: next().parse().ok(),
         end_words: next().parse().ok(),
         tz_offset_s: next().parse().ok(),
+        time_left: next().parse().ok(),
+        stated_wpm: next().parse().ok(),
+        awake_seconds: next().parse().unwrap_or(0),
     })
 }
 
@@ -1361,6 +1368,7 @@ mod tests {
                 at: "260808:120000".into(),
             }],
         };
+        store.sessions[0].time_left = Some(41_400);
         store.sessions[1].asin = None;
         store.sessions[1].progress = None;
         store.sessions[1].measure = Measure::Dwell;
@@ -1798,10 +1806,54 @@ mod tests {
 
     #[test]
     fn a_record_takes_the_percentage_its_newest_sitting_states() {
-        // `%Left` of 0 on the last turn.
+        // `%Left` of 0 on the last turn, past the 88% the catalog stated.
         assert_eq!(read_on_to(Some(1.0)).books[0].percent, 100.0);
-        // `%Left` of 0.6 on the last turn: a book put down at 40% reads 40%.
-        assert_eq!(read_on_to(Some(0.4)).books[0].percent, 40.0);
+        // `%Left` of 0.6 on the last turn, short of it: the catalog's stands.
+        assert_eq!(read_on_to(Some(0.4)).books[0].percent, 88.0);
+    }
+
+    #[test]
+    fn a_deleted_book_keeps_the_place_the_catalog_stated_for_it() {
+        // The shape the two disagree in: `p_percentFinished` reads 100 and the
+        // last turn's `%Left` is a page short of it.
+        let mut store = Store {
+            sessions: vec![session(
+                "2026-08-27T10:34:40",
+                "2026-08-27T11:03:20",
+                938_018,
+                1_720,
+            )],
+            ..Store::default()
+        };
+        store.sessions[0].progress = Some(0.994_69);
+        store.remember(&[shelved(938_018, "B00OKPCRLG", "A Book", 100.0)]);
+        assert_eq!(store.books[0].percent, 100.0);
+        assert!(store.books[0].finished);
+
+        // Deleted: the downloaded row goes and with it `p_percentFinished`.
+        let mut archived = shelved(938_018, "B00OKPCRLG", "A Book", -1.0);
+        archived.on_device = false;
+        store.remember(&[archived.clone()]);
+        assert_eq!(store.books[0].percent, 100.0, "the place was walked back");
+        // And every later pass leaves it where it stands.
+        store.remember(&[archived]);
+        assert_eq!(store.books[0].percent, 100.0);
+    }
+
+    #[test]
+    fn a_record_the_catalog_never_placed_takes_the_place_its_sittings_state() {
+        let mut store = Store {
+            sessions: vec![session(
+                "2026-08-27T10:34:40",
+                "2026-08-27T11:03:20",
+                938_018,
+                1_720,
+            )],
+            ..Store::default()
+        };
+        store.sessions[0].progress = Some(0.4);
+        store.remember(&[shelved(938_018, "B00OKPCRLG", "A Book", -1.0)]);
+        assert_eq!(store.books[0].percent, 40.0);
     }
 
     #[test]

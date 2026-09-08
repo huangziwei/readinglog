@@ -93,7 +93,7 @@ fn dump() -> Result<()> {
     let store = collect()?;
     let (today, _) = date::now();
     let settings = settings::Settings::load(lang::Lang::detect());
-    let stats = Stats::build(&store, today, settings.show_unnamed);
+    let stats = Stats::build(&store, today, settings.show_unnamed, settings.figures);
     println!(
         "{} read over {} days, {} books, streak {} (longest {})",
         date::duration(stats.total_seconds, lang::Lang::English.strings()),

@@ -4,7 +4,7 @@
 
 use crate::font::Script;
 use crate::lang::Lang;
-use crate::settings::{ColorScheme, Settings, TextSize, WeekStart};
+use crate::settings::{ColorScheme, Figures, Settings, TextSize, WeekStart};
 use crate::ui::chrome;
 use crate::ui::paint::Rect;
 use crate::ui::theme::Theme;
@@ -228,6 +228,21 @@ fn sections<'a>(
         apart: None,
     });
 
+    let figures = Row {
+        label: s.figures_row,
+        options: vec![
+            (s.figures_device.to_string(), plain),
+            (s.figures_app.to_string(), plain),
+        ],
+        on: Figures::ALL
+            .iter()
+            .position(|f| *f == settings.figures)
+            .unwrap_or(0),
+        hit: Box::new(|i| Hit::Figures(Figures::ALL[i.min(Figures::ALL.len() - 1)])),
+        one_row: false,
+        apart: None,
+    };
+
     // The third chip is never filled, and stands apart: it sets nothing, it
     // reads every source of identity again to name what is unidentified.
     let unnamed = Row {
@@ -312,7 +327,7 @@ fn sections<'a>(
         },
         Section {
             heading: s.the_record,
-            lines: [Line::Set(unnamed)]
+            lines: [Line::Set(figures), Line::Set(unnamed)]
                 .into_iter()
                 .chain(recorded)
                 .chain(reset.map(Line::Set))
@@ -375,8 +390,7 @@ pub fn question(confirm: &Confirm, s: &crate::lang::Strings) -> (String, String,
     }
 }
 
-/// A size a reader can weigh a decision against: MB to one place, KB under
-/// that.
+/// `count` as MB to one place, KB under that.
 fn bytes(count: u64) -> String {
     match count {
         0..=999_999 => format!("{} KB", count.div_ceil(1024).max(1)),
@@ -756,7 +770,10 @@ mod tests {
     fn a_record_with_nothing_in_it_offers_no_reset() {
         assert_eq!(
             the_record(&Record::default()),
-            [Lang::English.strings().unnamed_row]
+            [
+                Lang::English.strings().figures_row,
+                Lang::English.strings().unnamed_row
+            ]
         );
     }
 
@@ -770,7 +787,7 @@ mod tests {
         };
         assert_eq!(
             the_record(&record),
-            [s.unnamed_row, s.recorded_row, s.reset_row]
+            [s.figures_row, s.unnamed_row, s.recorded_row, s.reset_row]
         );
     }
 
@@ -785,7 +802,13 @@ mod tests {
         };
         assert_eq!(
             the_record(&kept),
-            [s.unnamed_row, s.recorded_row, s.reset_row, s.restore_row]
+            [
+                s.figures_row,
+                s.unnamed_row,
+                s.recorded_row,
+                s.reset_row,
+                s.restore_row
+            ]
         );
         let floored = Record {
             backups: Vec::new(),
@@ -794,7 +817,13 @@ mod tests {
         };
         assert_eq!(
             the_record(&floored),
-            [s.unnamed_row, s.recorded_row, s.reset_row, s.restore_row]
+            [
+                s.figures_row,
+                s.unnamed_row,
+                s.recorded_row,
+                s.reset_row,
+                s.restore_row
+            ]
         );
     }
 
@@ -809,7 +838,7 @@ mod tests {
         };
         let page = sections(Lang::English, &settings, true, &record);
         let at = page.len() - 2;
-        let archives = row(&page, at, 3);
+        let archives = row(&page, at, 4);
         assert_eq!(archives.options[0].0, Lang::English.strings().restore_logs);
         assert_eq!((archives.hit)(0), Hit::Rebuild);
         assert_eq!((archives.hit)(1), Hit::Restore(0));
@@ -824,7 +853,7 @@ mod tests {
             .iter()
             .position(|section| section.heading == lang.strings().the_record)
             .expect("the record section");
-        row(page, at, 0)
+        row(page, at, 1)
     }
 
     #[test]
