@@ -19,7 +19,7 @@ const CHUNK_PREFIX: &str = "messages_";
 /// The directory holding the daily snapshots.
 pub const DUMP_DIR: &str = "/mnt/us/system/logbackup";
 
-/// What a daily snapshot's name begins with: `log_backup_260807101501.gz`.
+/// What a daily snapshot's name begins with: `log_backup_260807101501.txt.gz`.
 const DUMP_PREFIX: &str = "log_backup_";
 
 /// What one read takes off flash at a time.
