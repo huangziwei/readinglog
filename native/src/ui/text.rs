@@ -38,7 +38,7 @@ impl TextRenderer {
         })
     }
 
-    /// The fallback chain this device ended up with, primary first, for the
+    /// The fallback chain this device resolved to, primary first, for the
     /// startup log — see [`FontChain::paths`].
     pub fn chain_description(&self) -> String {
         self.chain

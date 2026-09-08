@@ -910,10 +910,22 @@ impl Store {
         }
     }
 
-    /// Copy the `thumbnail` of every book in [`Self::books`] into `dir`, point
-    /// its `cover` at the copy, and delete every file there no record names.
+    /// Copy the jacket of every book in [`Self::books`] into `dir`, point its
+    /// `cover` at the copy, and delete every file there no record names.
     /// Answers how many records changed.
     pub fn keep_covers(&mut self, dir: &Path) -> usize {
+        self.keep_covers_from(dir, Path::new(covers::THUMBNAILS_DIR))
+    }
+
+    /// [`Self::keep_covers`] against a named thumbnail cache.
+    ///
+    /// A record's own `thumbnail` is the catalog's answer and is taken first.
+    /// The cache answers for the rest: a book named by something other than
+    /// the catalog states no path at all, and a row the catalog has since
+    /// dropped states one the device has since deleted. It is read once, and
+    /// only where a record wants a jacket.
+    pub fn keep_covers_from(&mut self, dir: &Path, thumbnails: &Path) -> usize {
+        let mut cached: Option<std::collections::HashMap<String, PathBuf>> = None;
         let mut kept = 0;
         for record in self.books.iter_mut() {
             if !record.is_book() {
@@ -923,10 +935,24 @@ impl Store {
             let at = covers::path(dir, &record.cde_key);
             let at = at.to_string_lossy();
             if !covers::held(dir, &record.cde_key) {
-                if record.thumbnail.is_empty() {
+                let stated = Path::new(record.thumbnail.as_str());
+                let art = match stated.is_file() {
+                    true => Some(stated.to_path_buf()),
+                    false => cached
+                        .get_or_insert_with(|| covers::cached(thumbnails))
+                        .get(&record.cde_key)
+                        .cloned(),
+                };
+                let Some(art) = art else {
+                    if !record.thumbnail.is_empty() {
+                        eprintln!(
+                            "covers: {} — nothing at {}, and the cache holds none under {}",
+                            record.title, record.thumbnail, record.cde_key
+                        );
+                    }
                     continue;
-                }
-                if let Err(err) = covers::keep(dir, &record.cde_key, Path::new(&record.thumbnail)) {
+                };
+                if let Err(err) = covers::keep(dir, &record.cde_key, &art) {
                     eprintln!("covers: {} — {err}", record.title);
                     continue;
                 }
@@ -1638,6 +1664,58 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         dir
+    }
+
+    #[test]
+    fn a_book_the_catalog_states_no_thumbnail_for_is_given_the_cached_one() {
+        let dir = scratch("cached-covers");
+        let cache = dir.join("thumbnails");
+        std::fs::create_dir_all(&cache).expect("a thumbnail cache");
+        let write = |at: &Path, bytes: &[u8]| {
+            std::fs::write(at, bytes).expect("a written thumbnail");
+            at.to_path_buf()
+        };
+        let stated = write(&dir.join("thumbnail_XH01Es.jpg"), b"the stated one");
+        write(
+            &cache.join("thumbnail_B00OKPCRLG_EBOK_portrait.jpg"),
+            b"the cached one",
+        );
+        write(
+            &cache.join("thumbnail_B00RESCUED_EBOK_portrait.jpg"),
+            b"the rescued one",
+        );
+        let named = |key: &str, thumbnail: &str| BookRecord {
+            extent: 148_207,
+            cde_key: key.into(),
+            title: key.into(),
+            thumbnail: thumbnail.into(),
+            ..BookRecord::default()
+        };
+        let mut store = Store {
+            books: vec![
+                // The catalog's own path, which is taken over the cache.
+                named("B00OKPCRLG", &stated.to_string_lossy()),
+                // A book named by something other than the catalog.
+                named("B00RESCUED", ""),
+                // A row the catalog dropped, naming a file since deleted.
+                named(
+                    "B00SIDELOAD",
+                    &dir.join("thumbnail_gone.jpg").to_string_lossy(),
+                ),
+            ],
+            ..Store::default()
+        };
+
+        assert_eq!(store.keep_covers_from(&dir, &cache), 2);
+        let held = |key: &str| std::fs::read(covers::path(&dir, key)).expect("a copied cover");
+        assert_eq!(
+            held("B00OKPCRLG"),
+            b"the stated one",
+            "the cache outranked it"
+        );
+        assert_eq!(held("B00RESCUED"), b"the rescued one", "no path was stated");
+        assert!(!covers::held(&dir, "B00SIDELOAD"), "nothing names one");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

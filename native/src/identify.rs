@@ -19,12 +19,11 @@
 //! | `My Clippings.txt` | a title and an author, per annotation | one file, parsed |
 //! | the `.sdr` directories | the book's own file name | a walk of `/mnt/us/documents`, opening a sidecar per book |
 //!
-//! **The answer decides the order, not the read.** The first three cost
-//! milliseconds each and none of them grows with the library, so there is
-//! nothing to win by shuffling them; what separates them is that a source
-//! knows a book well exactly when the reader wrote it *with* the book's
-//! metadata in hand. Cost speaks only at the bottom, where it agrees: the walk
-//! is the one read that grows with the shelf, and its answer is a file name.
+//! The order is what each source knows a book by, not what its read costs: a
+//! source knows a book well exactly when the reader wrote it *with* the book's
+//! metadata in hand. The first three are milliseconds each and none of them
+//! grows with the library. The walk is last on both counts — it is the one
+//! read that grows with the shelf, and its answer is a file name.
 //!
 //! Each source is asked only while [`crate::store::Store::wants_naming`]
 //! answers for it, so a device whose catalog names everything reads none of

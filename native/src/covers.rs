@@ -1,10 +1,15 @@
 //! Copies of book covers under [`COVERS_DIR`], made by [`keep`] from the
 //! `source` it is given and named by `file_name`.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// The directory holding the copies, under the `dir` [`path`] takes.
 pub const COVERS_DIR: &str = "covers";
+
+/// The device's own cache of book covers, which `catalog::Book::thumbnail`
+/// names a file in.
+pub const THUMBNAILS_DIR: &str = "/mnt/us/system/thumbnails";
 
 /// The largest file [`keep`] copies, in bytes.
 const MAX_BYTES: u64 = 2 * 1024 * 1024;
@@ -50,6 +55,41 @@ pub fn keep(dir: &Path, key: &str, source: &Path) -> std::io::Result<PathBuf> {
 /// Whether [`path`] exists with a non-zero length.
 pub fn held(dir: &Path, key: &str) -> bool {
     std::fs::metadata(path(dir, key)).is_ok_and(|m| m.len() > 0)
+}
+
+/// The files in [`THUMBNAILS_DIR`] under `dir`, by the content key each names.
+/// One `read_dir`, no file opened.
+///
+/// This reaches a book the catalog no longer states a thumbnail for: the
+/// cache holds a jacket after the row naming it is gone, so a key is enough to
+/// find one for a book the catalog cannot name at all.
+pub fn cached(dir: &Path) -> HashMap<String, PathBuf> {
+    let mut out = HashMap::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(key) = keyed(&name) else {
+            continue;
+        };
+        out.insert(key.to_string(), entry.path());
+    }
+    out
+}
+
+/// The content key `name` states, and `None` where it states none.
+///
+/// A jacket the store's cover-art service wrote is named
+/// `thumbnail_<key>_<cdeType>_portrait.jpg`. One taken out of a book on the
+/// device is named by `mkstemp` instead — six characters that reach neither
+/// the book nor its key — and those are what this passes over.
+fn keyed(name: &str) -> Option<&str> {
+    let rest = name
+        .strip_prefix("thumbnail_")?
+        .strip_suffix("_portrait.jpg")?;
+    let (key, _) = rest.rsplit_once('_')?;
+    (!key.is_empty()).then_some(key)
 }
 
 /// Delete every file under [`COVERS_DIR`] that no key in `keys` names,
@@ -111,6 +151,29 @@ mod tests {
         assert_eq!(file_name("*aa11bb22"), "_aa11bb22.jpg");
         assert_eq!(file_name("B00OKPCRLG"), "B00OKPCRLG.jpg");
         assert_eq!(file_name("CR!ABC 123"), "CR_ABC_123.jpg");
+    }
+
+    #[test]
+    fn the_device_cache_answers_for_a_key_and_not_for_a_name_with_none_in_it() {
+        let dir = scratch("cached");
+        for name in [
+            "thumbnail_B00OKPCRLG_EBOK_portrait.jpg",
+            "thumbnail_Entry:Item:ADC_Entry:Item:ADC_portrait.jpg",
+            // Six random characters: a jacket taken out of a book on the
+            // device, which nothing names.
+            "thumbnail_iS79xE.jpg",
+            "thumbnail__portrait.jpg",
+        ] {
+            thumbnail(&dir, name, b"jpegbytes");
+        }
+        std::fs::create_dir(dir.join("StoreSearchResults")).expect("a subdirectory");
+
+        let found = cached(&dir);
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(found["B00OKPCRLG"].ends_with("thumbnail_B00OKPCRLG_EBOK_portrait.jpg"));
+        assert!(found.contains_key("Entry:Item:ADC"), "a key carrying no _");
+        assert!(cached(&dir.join("nowhere")).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
