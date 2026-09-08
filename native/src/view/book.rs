@@ -508,6 +508,7 @@ mod tests {
             location: String::new(),
             language: String::new(),
             seconds,
+            counted_seconds: 0,
             dwell_seconds: dwell,
             awake_seconds: awake,
             sittings: 1,

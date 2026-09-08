@@ -33,6 +33,9 @@ pub struct BookStat {
     /// `BookRecord::finished`.
     pub finished: bool,
     pub seconds: i64,
+    /// The seconds the device's own counter credited, whatever [`Figures`]
+    /// names. `words` was counted across these and no others.
+    pub counted_seconds: i64,
     /// The parts of `seconds` carrying `Measure::Dwell` and `Measure::Awake`.
     pub dwell_seconds: i64,
     pub awake_seconds: i64,
@@ -154,13 +157,19 @@ impl BookStat {
         Some((read as f64 * (100.0 - self.percent) / self.percent) as i64)
     }
 
-    /// Words a minute over this book: `TotalWPM` as the device stated it, or
-    /// the words and the reading divided.
+    /// Words a minute over this book: `TotalWPM` as the device stated it, else
+    /// its words over the seconds it counted them across. Both sides of the
+    /// pair come off the same counter; `awake_seconds` never divides them.
     pub fn wpm(&self, from: Figures) -> Option<i64> {
         if let (Figures::Device, Some(stated)) = (from, self.stated_wpm) {
             return Some(stated);
         }
-        let (words, read) = (self.words_read(from), self.read_seconds(from));
+        let (words, read) = match from {
+            Figures::Device if self.device_words > 0 && self.device_seconds > 0 => {
+                (self.device_words, self.device_seconds)
+            }
+            _ => (self.words, self.counted_seconds),
+        };
         (words > 0 && read > 0).then(|| words * 60 / read)
     }
 }
@@ -694,6 +703,7 @@ fn fresh(extent: i64, found: &BookRecord, day: i64) -> BookStat {
         location: found.location.clone(),
         language: found.language.clone(),
         seconds: 0,
+        counted_seconds: 0,
         dwell_seconds: 0,
         awake_seconds: 0,
         sittings: 0,
@@ -720,27 +730,28 @@ fn sitting_seconds(s: &Session, from: Figures) -> i64 {
     }
 }
 
-/// `hours` summing to `now` in place of `was`, each entry in proportion and the
-/// division's remainder to the busiest.
-fn hours_at(hours: &[(u8, i64)], was: i64, now: i64) -> Vec<(u8, i64)> {
-    if was <= 0 || now == was || hours.is_empty() {
+/// `hours`, which sum to `sum`, rescaled to sum to `target`: each entry in
+/// proportion, and the division's remainder to the busiest.
+fn hours_at(hours: &[(u8, i64)], sum: i64, target: i64) -> Vec<(u8, i64)> {
+    if sum <= 0 || target == sum || hours.is_empty() {
         return hours.to_vec();
     }
     let mut out: Vec<(u8, i64)> = hours
         .iter()
-        .map(|(h, secs)| (*h, secs * now / was))
+        .map(|(h, secs)| (*h, secs * target / sum))
         .filter(|(_, secs)| *secs > 0)
         .collect();
     let placed: i64 = out.iter().map(|(_, secs)| secs).sum();
     match out.iter_mut().max_by_key(|(_, secs)| *secs) {
-        Some(busiest) => busiest.1 += now - placed,
-        None => out.push((hours[0].0, now)),
+        Some(busiest) => busiest.1 += target - placed,
+        None => out.push((hours[0].0, target)),
     }
     out
 }
 
 fn credit(book: &mut BookStat, s: &Session, day: i64, secs: i64) {
     book.seconds += secs;
+    book.counted_seconds += s.seconds;
     match s.measure {
         Measure::Counted => {}
         Measure::Dwell => book.dwell_seconds += secs,
@@ -1764,7 +1775,7 @@ mod tests {
     fn a_book_states_the_device_s_own_counters_or_the_sittings_measured() {
         let mut store = store();
         // The counter the device holds for this book, past the 3600 s of
-        // sittings the log still reaches.
+        // sittings the log reaches.
         store.counters = vec![(148_207, 9_000_000, 30_000)];
         for s in store.sessions.iter_mut() {
             s.stated_wpm = Some(240);
@@ -1802,6 +1813,17 @@ mod tests {
                 .seconds
         };
         assert_eq!(at(&app), at(&device) * 3 / 2);
+        // The rate divides the device's words by the device's own seconds under
+        // either setting: `awake_seconds` never reaches it.
+        let rate = |s: &Stats| {
+            s.books
+                .iter()
+                .find(|b| b.extent == 148_209)
+                .unwrap()
+                .wpm(Figures::App)
+        };
+        assert_eq!(rate(&app), rate(&device));
+        assert_eq!(rate(&app), Some(30));
         // The hours keep the shape of the run and sum to the new figure.
         for sitting in &app.sittings {
             let summed: i64 = sitting.hours.iter().map(|(_, s)| s).sum();
