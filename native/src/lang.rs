@@ -229,9 +229,13 @@ pub struct Strings {
     pub days: &'static str,
     pub average_a_day: &'static str,
     pub average_a_sitting: &'static str,
+    /// The count of a book whose script spaces its words, paired with `wpm`.
     pub words: &'static str,
+    /// The count of one set in Han or kana, a character at a time, with `cpm`.
+    pub characters: &'static str,
     pub reading_speed: &'static str,
     pub wpm: &'static str,
+    pub cpm: &'static str,
     pub started: &'static str,
     pub last_read: &'static str,
     /// The day a book read through was last put down.
@@ -290,7 +294,7 @@ pub struct Strings {
     pub unnamed_show: &'static str,
     pub unnamed_hide: &'static str,
     /// The button on that row, standing apart from the two values: read the
-    /// logs, the catalog and the sidecars again, and name what they now name.
+    /// logs, the catalog and the sidecars again, and name what they name.
     pub unnamed_retry: &'static str,
     /// Its banner: the headline over the pass, the two lines under a pass that
     /// reads the logs, the one under a pass that reads the books' own files
@@ -464,8 +468,10 @@ const ENGLISH: Strings = Strings {
     average_a_day: "Average a day",
     average_a_sitting: "Average a sitting",
     words: "Words",
+    characters: "Characters",
     reading_speed: "Reading speed",
     wpm: "wpm",
+    cpm: "cpm",
     started: "Started",
     last_read: "Last read",
     finished_on: "Finished on",
@@ -683,8 +689,10 @@ const GERMAN: Strings = Strings {
     average_a_day: "Schnitt pro Tag",
     average_a_sitting: "Schnitt pro Sitzung",
     words: "Wörter",
+    characters: "Zeichen",
     reading_speed: "Lesetempo",
     wpm: "W/Min",
+    cpm: "Z/Min",
     started: "Begonnen",
     last_read: "Zuletzt gelesen",
     finished_on: "Beendet am",
@@ -905,8 +913,10 @@ const JAPANESE: Strings = Strings {
     average_a_day: "一日あたり",
     average_a_sitting: "一回あたり",
     words: "語数",
+    characters: "文字数",
     reading_speed: "読書速度",
     wpm: "語/分",
+    cpm: "文字/分",
     started: "開始",
     last_read: "最終読書",
     finished_on: "読了日",
@@ -1102,9 +1112,11 @@ const SIMPLIFIED: Strings = Strings {
     days: "天数",
     average_a_day: "每天平均",
     average_a_sitting: "每次平均",
-    words: "字数",
+    words: "词数",
+    characters: "字数",
     reading_speed: "阅读速度",
-    wpm: "字/分",
+    wpm: "词/分",
+    cpm: "字/分",
     started: "开始",
     last_read: "最近阅读",
     finished_on: "读完于",
@@ -1308,9 +1320,11 @@ const TRADITIONAL: Strings = Strings {
     days: "天數",
     average_a_day: "每天平均",
     average_a_sitting: "每次平均",
-    words: "字數",
+    words: "詞數",
+    characters: "字數",
     reading_speed: "閱讀速度",
-    wpm: "字/分",
+    wpm: "詞/分",
+    cpm: "字/分",
     started: "開始",
     last_read: "最近閱讀",
     finished_on: "讀完於",
@@ -1572,7 +1586,9 @@ mod tests {
         // A field filled in with nothing.
         for lang in Lang::ALL {
             let s = lang.strings();
-            let named: [(&str, &str); 13] = [
+            let named: [(&str, &str); 15] = [
+                ("words", s.words),
+                ("characters", s.characters),
                 ("figures_row", s.figures_row),
                 ("figures_device", s.figures_device),
                 ("figures_app", s.figures_app),

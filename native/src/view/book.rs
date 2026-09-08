@@ -19,6 +19,17 @@ const SPAN_COLUMNS: i64 = 30;
 /// Lines a title takes before the rest of it is ellipsized.
 const TITLE_LINES: usize = 2;
 
+/// The [`Strings`] pair a book's count and rate are stated in: Han and kana
+/// are counted a character at a time, every other script a word at a time.
+fn unit(book: &BookStat, s: &Strings) -> (&'static str, &'static str) {
+    match Script::resolve(Script::of_language(&book.language), &book.title) {
+        Script::Japanese | Script::SimplifiedChinese | Script::TraditionalChinese => {
+            (s.characters, s.cpm)
+        }
+        Script::Korean | Script::Unknown => (s.words, s.wpm),
+    }
+}
+
 /// Rows of figures the reading section lists.
 const LINES: usize = 10;
 
@@ -89,8 +100,8 @@ fn controls_bottom(read: &[Rect]) -> i32 {
 }
 
 /// The band the controls take, the gap above them included, and 0 where this
-/// book offers none. The reset control alone is enough to open the band: a
-/// book off the device carries no reading control and still carries this one.
+/// book offers none. The reset control alone opens the band: a book off the
+/// device carries that one and no reading control.
 fn open_height(
     text: &mut TextRenderer,
     theme: &Theme,
@@ -105,7 +116,7 @@ fn open_height(
 }
 
 /// Where the reset control sits: against the right edge of the last row the
-/// reading controls took, which is the slot the finished mark left.
+/// reading controls took.
 fn reset_box(
     text: &mut TextRenderer,
     theme: &Theme,
@@ -173,6 +184,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
 
     // [`figures`] states the other three.
     let from = cx.figures;
+    let (count, rate) = unit(&book, s);
     let lines: [(&str, String); LINES] = [
         (s.sittings, book.sittings.to_string()),
         (s.days, days_note(&book, s)),
@@ -181,11 +193,11 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
             s.average_a_sitting,
             date::duration(book.per_sitting(from), s),
         ),
-        (s.words, date::words(book.words_read(from))),
+        (count, date::words(book.words_read(from))),
         (
             s.reading_speed,
             book.wpm(from)
-                .map_or(DASH.into(), |w| format!("{w} {}", s.wpm)),
+                .map_or(DASH.into(), |w| format!("{w} {rate}")),
         ),
         (s.started, day_note(book.first_day, &book, s)),
         (s.last_read, day_note(book.last_day, &book, s)),
@@ -510,6 +522,33 @@ mod tests {
             device_seconds: 0,
             device_words: 0,
         }
+    }
+
+    /// [`book`] under a language tag and a title.
+    fn set_in(language: &str, title: &str) -> BookStat {
+        BookStat {
+            language: language.into(),
+            title: title.into(),
+            ..book(600, 0, 0)
+        }
+    }
+
+    #[test]
+    fn a_book_in_han_or_kana_is_counted_by_the_character() {
+        let ja = Lang::Japanese.strings();
+        assert_eq!(unit(&set_in("ja", "点と線"), ja), ("文字数", "文字/分"));
+        assert_eq!(
+            unit(&set_in("zh-hant", "請把門鎖好"), ja),
+            ("文字数", "文字/分")
+        );
+        // A romanised title under the tag its catalog row states.
+        assert_eq!(unit(&set_in("ja", "Kokoro"), ja), ("文字数", "文字/分"));
+        // No tag: the title is all the book says.
+        assert_eq!(unit(&set_in("", "毛澤東選集"), ja), ("文字数", "文字/分"));
+        assert_eq!(unit(&set_in("", "Neuromancer"), ja), ("語数", "語/分"));
+        assert_eq!(unit(&set_in("en", "Post Office"), en()), ("Words", "wpm"));
+        // Hangul spaces its words.
+        assert_eq!(unit(&set_in("ko", "채식주의자"), en()), ("Words", "wpm"));
     }
 
     /// [`book`] with the catalog naming a file for it.
