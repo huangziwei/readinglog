@@ -164,6 +164,13 @@ impl Rect {
         self.y + self.h / 2
     }
 
+    /// The same box inset top and bottom, keeping the full width. What a row
+    /// of a list takes: the air between two rows is the row's own, the margin
+    /// either side of them is the page's.
+    pub fn inset_y(&self, by: i32) -> Self {
+        Self::new(self.x, self.y + by, self.w, (self.h - by * 2).max(0))
+    }
+
     /// The same box inset on every side.
     pub fn inset(&self, by: i32) -> Self {
         Self::new(
@@ -330,6 +337,18 @@ pub fn notch(fb: &mut Framebuffer, track: Rect, at: i64, gap: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_row_inset_keeps_the_edges_it_was_given() {
+        let row = Rect::new(39, 100, 1186, 270);
+        let inner = row.inset_y(14);
+        assert_eq!((inner.x, inner.w), (row.x, row.w), "the row lost its edges");
+        assert_eq!((inner.y, inner.h), (114, 242));
+        // A row shallower than the air it asks for keeps no height, and still
+        // no margin.
+        let thin = Rect::new(39, 100, 1186, 10).inset_y(14);
+        assert_eq!((thin.x, thin.w, thin.h), (39, 1186, 0));
+    }
 
     /// Rec. 601 luma, with the weights `eink::fb` collapses a pixel by.
     fn luma(rgb: [u8; 3]) -> i32 {

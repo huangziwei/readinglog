@@ -259,7 +259,7 @@ fn row(cx: &mut Ctx, area: Rect, day: i64, index: usize, secs: i64) {
 
     // `spans` takes the full width of `area`; `over` holds the book.
     let (spans, over) = area.split_bottom(theme.gap * 3);
-    let inner = over.inset(theme.gap);
+    let inner = over.inset_y(theme.gap);
     let (art, rest) = inner.split_left(cover::width_for(inner.h));
     // The title stands beside the box, so an empty one says only that.
     if !cx.covers.draw(cx.fb, art, &book.thumbnail) {

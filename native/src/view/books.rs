@@ -27,10 +27,26 @@ fn row_height(theme: &Theme) -> i32 {
     theme.row_h * 5 / 2
 }
 
-/// The strip under the rows that the page counter sits in, with a line under
-/// it for what the record holds beyond the list.
+/// The strip under the rows that the page counter sits in.
+///
+/// It stands as tall as the chips that head the page: the list opens and
+/// closes on a row of controls, and a page counter set in a band of its own
+/// height reads as a strip rather than as a caption adrift under the rows.
 fn foot_height(theme: &Theme) -> i32 {
-    theme.small_px as i32 * 7 / 2
+    chrome::chip_height(theme)
+}
+
+/// The strip [`foot_height`] reserved, and the air under the content box with
+/// it: the page counter reads against the tab strip's own edge, so the band it
+/// centres in runs to that edge and not to the box's foot.
+fn foot_box(theme: &Theme, area: Rect) -> Rect {
+    let high = foot_height(theme);
+    Rect::new(
+        area.x,
+        area.bottom() - high,
+        area.w,
+        high + chrome::floor_air(theme),
+    )
 }
 
 /// The width of the figures column, from `figure` alone: the band under it
@@ -160,18 +176,16 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
         cx.hit(Hit::Book(*index), row);
     }
 
-    let (foot, _) = area.split_bottom(foot_height(theme));
-    cx.text.set_px(theme.small_px);
-    let line = cx.text.line_height() as i32;
-    let counted = foot.bottom() - line;
     if from > 0 || to < shelf.len() {
         let last = last_page_at(theme, area, shelf.len());
         let label = format!("{}–{} {} {}", from + 1, to, cx.s().of, shelf.len());
-        pager(cx, foot, &label, [from > 0, to < shelf.len()], last);
-    }
-    // The record's own count closes the last page of the whole shelf.
-    if to == shelf.len() && state.shelf == Shelf::All && state.window.is_none() {
-        record_line(cx, foot, counted + line);
+        pager(
+            cx,
+            foot_box(theme, area),
+            &label,
+            [from > 0, to < shelf.len()],
+            last,
+        );
     }
 }
 
@@ -268,37 +282,6 @@ fn mark(cx: &mut Ctx, foot: Rect, x: i32, said: &str, hit: Option<Hit>) {
     cx.hit(hit, box_);
 }
 
-/// How many books the record holds, and how many of them no row can name.
-fn record_line(cx: &mut Ctx, foot: Rect, baseline: i32) {
-    let s = cx.s();
-    let unnamed = cx.stats.unnamed_books();
-    if unnamed == 0 {
-        return;
-    }
-    let said = format!(
-        "{} {} · {unnamed} {}",
-        cx.stats.book_count(),
-        s.in_the_record,
-        s.unidentified
-    );
-    centred(cx, foot, baseline, &said);
-}
-
-/// `said` centred in `foot`, on `baseline`.
-fn centred(cx: &mut Ctx, foot: Rect, baseline: i32, said: &str) {
-    let script = cx.ui_script();
-    cx.text.set_px(cx.theme.small_px);
-    let w = cx.text.measure_width_in(script, said) as i32;
-    cx.text.draw_in(
-        script,
-        cx.fb,
-        foot.x + (foot.w - w) / 2,
-        baseline,
-        said,
-        false,
-    );
-}
-
 /// The shelves as a chip apiece, the one showing filled, each its own hit box,
 /// answering the right edge of the last of them. A chip stands for the shelf
 /// it names and keeps the window the list is under.
@@ -362,7 +345,10 @@ fn bare(cx: &mut Ctx, area: Rect, said: &str) {
 fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
     let theme: &Theme = cx.theme;
     let book = &cx.stats.books[index];
-    let inner = row.inset(theme.gap);
+    // The row runs the full width of the page. The chips over the list stand
+    // on the page's own edges, and a jacket held in from them reads as a
+    // second margin.
+    let inner = row.inset_y(theme.gap);
     let (art, rest) = inner.split_left(cover::width_for(inner.h));
     // The title stands beside the box, so an empty one says only that.
     if !cx.covers.draw(cx.fb, art, &book.thumbnail) {
@@ -654,6 +640,31 @@ mod tests {
             assert!(
                 bottom <= foot,
                 "{w}x{h}: rows end at {bottom}, foot at {foot}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_page_counter_centres_on_the_white_it_is_read_against() {
+        for (w, h) in PANELS {
+            let theme = Theme::for_screen(w, h);
+            let box_ = chrome::content_box(&theme);
+            let area = list_box(&theme, box_, true);
+            let foot = foot_box(&theme, area);
+            // The band runs to the tab strip and not to the box's foot: the
+            // air `chrome::content` leaves under the list reads as part of the
+            // strip, and a counter centred short of it sits high.
+            assert_eq!(
+                foot.bottom(),
+                h as i32 - theme.tabs_h,
+                "{w}x{h}: the strip stops short of the tab strip"
+            );
+            // The rows meet it: nothing but the counter stands in the band.
+            let rows = rows_per_page(&theme, area) as i32;
+            let under = foot.y - (area.y + rows * row_span(&theme, area));
+            assert!(
+                (0..=rows).contains(&under),
+                "{w}x{h}: {under} px of nothing between the rows and the strip"
             );
         }
     }

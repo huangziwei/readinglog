@@ -365,8 +365,6 @@ pub struct Strings {
     pub unnamed_only: &'static str,
     /// `{n} unidentified · {duration}`, closing a list of books.
     pub unidentified: &'static str,
-    /// `{n} books in the record`, under the last page of the Books list.
-    pub in_the_record: &'static str,
     /// What a cover box says where no jacket can be drawn in it and the title
     /// already stands beside it.
     pub no_cover: &'static str,
@@ -580,7 +578,6 @@ const ENGLISH: Strings = Strings {
     unnamed_only: "{t} read, on books the catalog names none of. A book is \
                    listed once the device has said what it is.",
     unidentified: "unidentified",
-    in_the_record: "books in the record",
     no_cover: "No cover",
     interface: "INTERFACE",
     the_calendar: "THE CALENDAR",
@@ -806,7 +803,6 @@ const GERMAN: Strings = Strings {
     retry_none: "Nichts Neues erkannt.",
     uncovered_row: "Bücher ohne Cover",
     unidentified: "unbekannt",
-    in_the_record: "Bücher aufgezeichnet",
     no_cover: "Kein Cover",
     interface: "OBERFLÄCHE",
     the_calendar: "DER KALENDER",
@@ -1019,7 +1015,6 @@ const JAPANESE: Strings = Strings {
     retry_none: "新たに特定できた本はありません。",
     uncovered_row: "表紙のない本",
     unidentified: "冊が不明",
-    in_the_record: "冊を記録",
     no_cover: "表紙なし",
     interface: "表示",
     the_calendar: "カレンダー",
@@ -1218,7 +1213,6 @@ const SIMPLIFIED: Strings = Strings {
     retry_none: "没有新识别出的书。",
     uncovered_row: "没有封面的书",
     unidentified: "本未识别",
-    in_the_record: "本已记录",
     no_cover: "无封面",
     interface: "界面",
     the_calendar: "日历",
@@ -1428,7 +1422,6 @@ const TRADITIONAL: Strings = Strings {
     retry_none: "沒有新識別出的書。",
     uncovered_row: "沒有封面的書",
     unidentified: "本未識別",
-    in_the_record: "本已記錄",
     no_cover: "無封面",
     interface: "介面",
     the_calendar: "日曆",

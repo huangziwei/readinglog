@@ -88,17 +88,31 @@ pub fn tabs(
     (exit, out)
 }
 
+/// The air [`content`] leaves between its foot and the tab strip: half a gap
+/// under the `theme.gap * 2` it stands in, which [`content`] adds above the
+/// box in turn.
+///
+/// The page hangs half a gap below centre because the strip draws its own rule
+/// and its own labels: the floor of the page is already marked, and reads
+/// heavier than the bare top edge for the same air. Anything set against the
+/// box's foot centres on this band as well as its own.
+pub fn floor_air(theme: &Theme) -> i32 {
+    theme.gap * 2 - theme.gap / 2
+}
+
 /// The content box: the screen above the strip.
 ///
-/// Air on all four sides, `theme.gap * 2` top and bottom.
+/// `theme.pad` either side, [`floor_air`] under the box, and what that leaves
+/// of `theme.gap * 4` over it.
 pub fn content(theme: &Theme, area: Rect) -> Rect {
     let (_, rest) = area.split_bottom(theme.tabs_h);
-    let air = theme.gap * 2;
+    let under = floor_air(theme);
+    let over = theme.gap * 4 - under;
     Rect::new(
         theme.pad,
-        rest.y + air,
+        rest.y + over,
         theme.screen.w - theme.pad * 2,
-        (rest.h - air * 2).max(1),
+        (rest.h - over - under).max(1),
     )
 }
 
@@ -508,6 +522,28 @@ mod tests {
         (758, 1024),
         (600, 800),
     ];
+
+    #[test]
+    fn the_content_box_hangs_below_the_centre_of_the_page() {
+        for (w, h) in PANELS {
+            let theme = Theme::for_screen(w, h);
+            let box_ = content_box(&theme);
+            let floor = h as i32 - theme.tabs_h;
+            let (over, under) = (box_.y, floor - box_.bottom());
+            assert_eq!(under, floor_air(&theme), "{w}x{h}: the floor air differs");
+            assert!(
+                under < over,
+                "{w}x{h}: {under} px under the box against {over} px over it"
+            );
+            // Below centre, and only just: the block moves, it does not shrink.
+            assert!(
+                over - under <= theme.gap,
+                "{w}x{h}: {} px is more than a nudge",
+                over - under
+            );
+            assert_eq!(over + under, theme.gap * 4, "{w}x{h}: the box resized");
+        }
+    }
 
     #[test]
     fn every_chip_is_placed_however_narrow_the_row() {
