@@ -14,7 +14,7 @@ const CATALOG_PATHS: [&str; 3] = [
 ];
 
 /// Column and row separators for the `sqlite3` output.
-const COL: &str = "\u{1}";
+pub(crate) const COL: &str = "\u{1}";
 const ROW: &str = "\u{2}";
 
 /// The columns [`parse_row`] takes, in order. `p_location` is empty on a cloud
@@ -122,6 +122,18 @@ pub fn read_from(db: &Path) -> Vec<Book> {
 
 /// What `sql` answers over `db`, and `None` where `sqlite3` refused it.
 fn rows(db: &Path, sql: &str) -> Option<Vec<Book>> {
+    let rows = ask(db, sql, "catalog")?;
+    Some(rows.iter().filter_map(|row| parse_row(row)).collect())
+}
+
+/// What `sql` answers over `db`, one string a row with [`COL`] between the
+/// columns. `who` opens whatever is printed about it.
+///
+/// `None` where `sqlite3` refused the query, which is what lets a caller drop
+/// a column the device's schema does not carry and ask again. A `sqlite3` that
+/// will not run at all answers no rows rather than none, because there is
+/// nothing to ask differently.
+pub(crate) fn ask(db: &Path, sql: &str, who: &str) -> Option<Vec<String>> {
     let out = match Command::new("sqlite3")
         .arg("-separator")
         .arg(COL)
@@ -133,20 +145,20 @@ fn rows(db: &Path, sql: &str) -> Option<Vec<Book>> {
     {
         Ok(out) => out,
         Err(err) => {
-            eprintln!("catalog: sqlite3 would not run: {err}");
+            eprintln!("{who}: sqlite3 would not run: {err}");
             return Some(Vec::new());
         }
     };
     // `sqlite3` writes a refused query to stderr.
     let complaint = String::from_utf8_lossy(&out.stderr);
     if !complaint.trim().is_empty() {
-        eprintln!("catalog: sqlite3 {}: {}", db.display(), complaint.trim());
+        eprintln!("{who}: sqlite3 {}: {}", db.display(), complaint.trim());
         return None;
     }
     Some(
         String::from_utf8_lossy(&out.stdout)
             .split(ROW)
-            .filter_map(parse_row)
+            .map(str::to_string)
             .collect(),
     )
 }

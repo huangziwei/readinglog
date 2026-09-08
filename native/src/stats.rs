@@ -721,7 +721,8 @@ fn fresh(extent: i64, found: &BookRecord, day: i64) -> BookStat {
 }
 
 /// The seconds one sitting states, `from` the source named: the device's own
-/// accounting in `seconds`, or the wall clock [`Awake`] witnessed the run over.
+/// accounting in `seconds`, or the wall clock [`crate::log::power::Awake`]
+/// witnessed the run over.
 /// A run no power event brackets keeps the accounting.
 fn sitting_seconds(s: &Session, from: Figures) -> i64 {
     match from {

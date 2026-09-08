@@ -201,7 +201,8 @@ fn mark_reach(cx: &mut Ctx) -> i32 {
 }
 
 /// The baseline `said` takes for its own ink to centre on `foot`, through
-/// [`TextRenderer::ink_box`]. `foot.center_y()` where `said` inks nothing.
+/// [`crate::ui::text::TextRenderer::ink_box`]. `foot.center_y()` where `said`
+/// inks nothing.
 fn on_centre(cx: &mut Ctx, foot: Rect, said: &str) -> i32 {
     let Some((top, bottom)) = cx.text.ink_box(said) else {
         return foot.center_y();

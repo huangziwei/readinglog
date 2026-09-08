@@ -6,7 +6,7 @@ use std::path::Path;
 
 use readinglog_native::date;
 use readinglog_native::log::session::{Measure, Session};
-use readinglog_native::store::{BookRecord, FINISHED_PERCENT, Store};
+use readinglog_native::store::{BookRecord, FINISHED_PERCENT, Named, Store};
 
 /// Days of reading laid down behind the day being drawn.
 pub const DAYS: i64 = 1150;
@@ -294,6 +294,7 @@ pub fn library(last: i64, art: &Path) -> Store {
             restart: None,
             read_state: -1,
             kept: false,
+            named_by: Named::Catalog,
         });
     }
 

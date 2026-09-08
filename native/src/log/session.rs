@@ -1116,7 +1116,7 @@ mod tests {
     #[test]
     fn a_page_held_across_a_short_sleep_counts_only_where_the_device_was_awake() {
         // `TotalTime` never moves on a book the timer declines to count.
-        let lines = vec![
+        let lines = [
             power("105000", "outOfScreenSaver"),
             page("105005", 7_390_020),
             wordless_page("105010"),

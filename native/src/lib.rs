@@ -8,10 +8,12 @@
 pub mod app;
 pub mod backup;
 pub mod catalog;
+pub mod clippings;
 pub mod covers;
 pub mod date;
 pub mod eink;
 pub mod font;
+pub mod identify;
 pub mod lang;
 pub mod log;
 pub mod mark;
@@ -25,4 +27,5 @@ pub mod store;
 pub mod ui;
 pub mod update;
 pub mod view;
+pub mod vocab;
 pub mod wrap;

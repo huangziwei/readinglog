@@ -26,11 +26,11 @@ const ZIP64_MARK: u32 = 0xFFFF_FFFF;
 const STORED: u16 = 0;
 const DEFLATED: u16 = 8;
 
-/// What [`write`] states it needs and was made by: zip 2.0, which is stored
+/// What [`write()`] states it needs and was made by: zip 2.0, which is stored
 /// and deflated entries with no zip64.
 const VERSION: u16 = 20;
 
-/// The modification time [`write`] stamps every entry with: midnight on
+/// The modification time [`write()`] stamps every entry with: midnight on
 /// 1980-01-01, the zero of the DOS clock. The archive's own name carries the
 /// date that means anything.
 const DOS_TIME: u16 = 0;
@@ -247,7 +247,7 @@ pub fn write(at: &Path, entries: &[(String, Source<'_>)]) -> Result<()> {
     Ok(())
 }
 
-/// [`write`]'s body, before the rename that makes the archive the real one.
+/// [`write()`]'s body, before the rename that makes the archive the real one.
 fn fill(partial: &Path, entries: &[(String, Source<'_>)]) -> Result<()> {
     let mut out = io::BufWriter::new(File::create(partial)?);
     // Name, checksum, size and where its local header starts.

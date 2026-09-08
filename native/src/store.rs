@@ -24,6 +24,52 @@ pub(crate) const HEADER: &str = "#readinglog\t2";
 /// The percentage `BookRecord::stand_at` sets [`BookRecord::finished`] at.
 pub const FINISHED_PERCENT: f64 = 99.5;
 
+/// What named a book record, ranked strongest first. This is the order
+/// [`crate::identify::rescue`] asks the sources in, and why.
+///
+/// A source may take a class a weaker one named — that is how a book that
+/// arrived as a file name gets its real title — and nothing takes one the
+/// catalog named. Every record has to state one: the default is
+/// [`Named::Catalog`], which is right for a row written before the field
+/// existed and wrong for a record a source here synthesized.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Named {
+    /// `cc.db`: the title, the author, the jacket, the content key, the place.
+    /// Everything a screen draws comes from here.
+    #[default]
+    Catalog,
+    /// `vocab.db`: a title, an author and a content key, per word looked up.
+    Vocab,
+    /// `My Clippings.txt`: a title and an author, per annotation.
+    Clippings,
+    /// A `.sdr` directory: the book's own file name and nothing else.
+    Sidecar,
+}
+
+impl Named {
+    /// The letter a `b` row carries.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Catalog => "c",
+            Self::Vocab => "v",
+            Self::Clippings => "l",
+            Self::Sidecar => "s",
+        }
+    }
+
+    /// What a `b` row's letter names, and `None` for a row written before the
+    /// field existed.
+    fn from_stored(text: &str) -> Option<Self> {
+        match text.trim() {
+            "c" => Some(Self::Catalog),
+            "v" => Some(Self::Vocab),
+            "l" => Some(Self::Clippings),
+            "s" => Some(Self::Sidecar),
+            _ => None,
+        }
+    }
+}
+
 /// What `catalog` stated about one book, on the last pass that named it.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct BookRecord {
@@ -53,6 +99,9 @@ pub struct BookRecord {
     /// Whether [`Store::clear_book`] took this book's reading. `Stats::build`
     /// lists the book at zero while it stands.
     pub kept: bool,
+    /// What named this book, which is what says whether a stronger source may
+    /// take it.
+    pub named_by: Named,
 }
 
 impl BookRecord {
@@ -236,7 +285,25 @@ impl Store {
             }
         }
         out.sort();
+        out.migrate();
         out
+    }
+
+    /// Mark the records a `.sdr` directory named in a store written before
+    /// [`BookRecord::named_by`] existed, so a stronger source can still take
+    /// them. [`Self::recover`] writes an `ep` row pairing the class with the
+    /// book's file name and then keys the record by that same name, and no
+    /// other record is ever keyed by its own pairing.
+    fn migrate(&mut self) {
+        for i in 0..self.books.len() {
+            if self.books[i].named_by != Named::Catalog {
+                continue;
+            }
+            let paired = (self.books[i].extent, self.books[i].cde_key.clone());
+            if self.pairs.binary_search(&paired).is_ok() {
+                self.books[i].named_by = Named::Sidecar;
+            }
+        }
     }
 
     /// Write the store to `dir`, replacing what is there.
@@ -607,6 +674,195 @@ impl Store {
         }
         self.sort_books();
         named
+    }
+
+    /// Every `EndPos` class with sittings that a source ranked `by` could
+    /// still speak for: one no record names, and one a source `by` outranks
+    /// named. An empty answer means that source has nothing to do, and
+    /// [`crate::identify::rescue`] does not read it at all.
+    pub fn classes_wanting(&self, by: Named) -> Vec<i64> {
+        let mut out: Vec<i64> = self
+            .sessions
+            .iter()
+            .map(|s| (self.extent_of(s.end_position), s.asin.as_deref()))
+            .filter(|(extent, key)| self.wants(*extent, *key, by))
+            .map(|(extent, _)| extent)
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// Whether any class is still on offer to a source ranked `by`, which is
+    /// what says whether to read that source at all.
+    pub fn wants_naming(&self, by: Named) -> bool {
+        self.sessions
+            .iter()
+            .any(|s| self.wants(self.extent_of(s.end_position), s.asin.as_deref(), by))
+    }
+
+    /// Whether a source ranked `by` may speak for `extent`.
+    fn wants(&self, extent: i64, key: Option<&str>, by: Named) -> bool {
+        match self.book_for(extent, key) {
+            Some(record) => record.named_by > by,
+            None => true,
+        }
+    }
+
+    /// Name reading the catalog cannot, from what one source witnessed.
+    ///
+    /// Every witness goes to the sittings that **bracket** its instant, and
+    /// nothing else: a witness lying near a sitting rather than inside one
+    /// says nothing, because the run it would reach is as likely to be the
+    /// wrong book as the right one. A witness two classes bracket says nothing
+    /// either. A claim counts only when the sitting carrying it ran at least
+    /// [`crate::stats::SITTING_FLOOR_SECS`], and a class every claim does not
+    /// agree on the title of is left alone.
+    ///
+    /// `contested` carries the classes a source already asked has found two
+    /// titles for. Such a class holds two books, which no later source can
+    /// undo by having seen only one of them, so it is skipped and every fresh
+    /// contest is added to it.
+    ///
+    /// Answers how many classes were named.
+    pub fn name_from(
+        &mut self,
+        witnesses: &[crate::identify::Witness],
+        by: Named,
+        contested: &mut Vec<i64>,
+    ) -> usize {
+        let spans = self.spans();
+        let longest = spans.iter().map(|s| s.to - s.from).max().unwrap_or(0);
+        let mut claims: Vec<Claim> = Vec::new();
+        for witness in witnesses {
+            let Some(at) = instant(&witness.at) else {
+                continue;
+            };
+            let Some((extent, key, seconds)) = around(&spans, at, longest) else {
+                continue;
+            };
+            // A lookup past the class's own end was not made in that book.
+            if witness.pos >= 0 && extent > 0 && witness.pos > extent {
+                continue;
+            }
+            if seconds < crate::stats::SITTING_FLOOR_SECS
+                || contested.contains(&extent)
+                || !self.wants(extent, key, by)
+            {
+                continue;
+            }
+            claims.push(Claim {
+                extent,
+                name: crate::identify::normalise(&witness.title),
+                title: witness.title.clone(),
+                author: witness.author.clone(),
+                key: witness.key.clone(),
+            });
+        }
+        claims.sort_by(|a, b| (a.extent, &a.name).cmp(&(b.extent, &b.name)));
+
+        let mut named = 0;
+        let mut from = 0;
+        while from < claims.len() {
+            let extent = claims[from].extent;
+            let to = from + claims[from..].partition_point(|c| c.extent == extent);
+            let said = &claims[from..to];
+            from = to;
+            // Two titles for one class: the class holds two books and no
+            // source can say which reading was which. A weaker source that
+            // saw only one of them must not name it either.
+            if said.iter().any(|c| c.name != said[0].name) {
+                contested.push(extent);
+                continue;
+            }
+            let key = said
+                .iter()
+                .map(|c| c.key.as_str())
+                .find(|k| !k.is_empty())
+                .unwrap_or_default();
+            self.give_up(extent, by);
+            match self.titled(&said[0].name, key) {
+                Some(slot) => {
+                    // A cloud row the catalog never sized takes the class's
+                    // own extent; a record already carrying one keeps it, and
+                    // the `k` row is what reaches it.
+                    if self.books[slot].extent == 0 {
+                        self.books[slot].extent = extent;
+                    }
+                    self.books[slot].named_by = self.books[slot].named_by.min(by);
+                    let found = self.books[slot].cde_key.clone();
+                    self.learn_key(extent, &found);
+                }
+                None => {
+                    self.books.push(from_witness(
+                        extent,
+                        &said[0].title,
+                        &said[0].author,
+                        key,
+                        by,
+                    ));
+                    let slot = self.books.len() - 1;
+                    self.stand_where_read(slot);
+                }
+            }
+            named += 1;
+        }
+        self.sort_books();
+        named
+    }
+
+    /// The record a claim names: the one `key` names, else the only one
+    /// carrying `name`. `None` where two records share the title, which leaves
+    /// the class alone rather than merging two books.
+    fn titled(&self, name: &str, key: &str) -> Option<usize> {
+        if !key.is_empty()
+            && let Some(slot) = self.books.iter().position(|b| b.cde_key == key)
+        {
+            return Some(slot);
+        }
+        let mut found = self
+            .books
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| crate::identify::normalise(&b.title) == name);
+        let (slot, _) = found.next()?;
+        found.next().is_none().then_some(slot)
+    }
+
+    /// Drop the record a source weaker than `by` made for `extent`, and the
+    /// rows reaching it, so a stronger claim can stand in its place. This is
+    /// what gives a book that arrived as a file name its real title.
+    fn give_up(&mut self, extent: i64, by: Named) -> bool {
+        let Some(slot) = self
+            .books
+            .iter()
+            .position(|b| b.extent == extent && b.named_by > by)
+        else {
+            return false;
+        };
+        let gone = self.books.remove(slot);
+        self.pairs
+            .retain(|(e, file)| !(*e == extent && *file == gone.cde_key));
+        self.keys
+            .retain(|(e, key)| !(*e == extent && *key == gone.cde_key));
+        true
+    }
+
+    /// Every sitting placed on the clock, ascending by start, for bracketing
+    /// a witness.
+    fn spans(&self) -> Vec<Span> {
+        self.sessions
+            .iter()
+            .filter_map(|s| {
+                Some(Span {
+                    from: instant(&s.started_at)?,
+                    to: instant(&s.ended_at)?,
+                    extent: self.extent_of(s.end_position),
+                    key: s.asin.clone(),
+                    seconds: s.seconds,
+                })
+            })
+            .collect()
     }
 
     /// The record whose `cde_key` `file` contains, where exactly one does and it
@@ -1041,6 +1297,84 @@ impl Store {
 /// The shortest `cde_key` [`Store::keyed_by_name`] matches inside a name.
 const KEY_IN_NAME: usize = 10;
 
+/// One sitting placed on the clock, for bracketing a witness.
+struct Span {
+    from: i64,
+    to: i64,
+    /// The class's own end, which is what a record is keyed by.
+    extent: i64,
+    /// `Session::asin`, which reaches a book the catalog never sized.
+    key: Option<String>,
+    seconds: i64,
+}
+
+/// What one witness said about one class.
+struct Claim {
+    extent: i64,
+    /// [`crate::identify::normalise`] over `title`, which is what two claims
+    /// have to agree on.
+    name: String,
+    title: String,
+    author: String,
+    key: String,
+}
+
+/// The class every sitting spanning `at` belongs to, the key one of them
+/// carried, and the longest of them in seconds.
+///
+/// `None` where no sitting spans `at`, and where two classes do: a witness two
+/// books bracket names neither. `longest` is the longest span any sitting
+/// runs, which bounds how far back a sitting reaching `at` can have started.
+fn around(spans: &[Span], at: i64, longest: i64) -> Option<(i64, Option<&str>, i64)> {
+    let over = spans.partition_point(|s| s.from <= at);
+    let mut extent: Option<i64> = None;
+    let mut key = None;
+    let mut seconds = 0;
+    for span in spans[..over].iter().rev() {
+        if span.from < at - longest {
+            break;
+        }
+        if span.to < at {
+            continue;
+        }
+        match extent {
+            Some(held) if held != span.extent => return None,
+            Some(_) => {}
+            None => extent = Some(span.extent),
+        }
+        seconds = seconds.max(span.seconds);
+        key = key.or(span.key.as_deref());
+    }
+    extent.map(|extent| (extent, key, seconds))
+}
+
+/// The record for a book a witness named. A source stating a content key keys
+/// the record by it, the way the catalog does; one that states none keys it by
+/// the title, the way [`from_sidecar`] keys a record by the file name.
+fn from_witness(extent: i64, title: &str, author: &str, key: &str, by: Named) -> BookRecord {
+    BookRecord {
+        extent,
+        cde_key: match key.is_empty() {
+            true => flat(title),
+            false => flat(key),
+        },
+        cde_type: String::new(),
+        title: flat(title),
+        author: flat(author),
+        thumbnail: String::new(),
+        language: String::new(),
+        percent: -1.0,
+        on_device: false,
+        cover: String::new(),
+        location: String::new(),
+        finished: false,
+        restart: None,
+        read_state: -1,
+        kept: false,
+        named_by: by,
+    }
+}
+
 /// A field with nothing in it that could be read as a separator.
 fn flat(text: &str) -> String {
     text.replace(['\t', '\n', '\r'], " ")
@@ -1065,6 +1399,7 @@ fn from_sidecar(extent: i64, file: &str) -> BookRecord {
         restart: None,
         read_state: -1,
         kept: false,
+        named_by: Named::Sidecar,
     }
 }
 
@@ -1087,6 +1422,7 @@ fn taken(book: &Book) -> BookRecord {
         // What `take_mark` reads to answer whether `book` states a new mark.
         read_state: -1,
         kept: false,
+        named_by: Named::Catalog,
     };
     record.take_mark(book.read_state);
     record
@@ -1117,11 +1453,14 @@ fn merge(record: &mut BookRecord, book: &Book) {
         record.stand_at(book.percent);
     }
     record.on_device |= book.on_device;
+    // A book another source named and the catalog has now found is the
+    // catalog's: it states more, and nothing may take it back.
+    record.named_by = Named::Catalog;
 }
 
 fn write_book(b: &BookRecord) -> String {
     format!(
-        "b\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "b\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         b.extent,
         flat(&b.cde_key),
         flat(&b.title),
@@ -1137,6 +1476,7 @@ fn write_book(b: &BookRecord) -> String {
         b.read_state,
         flat(&b.cde_type),
         u8::from(b.kept),
+        b.named_by.as_str(),
     )
 }
 
@@ -1162,6 +1502,10 @@ fn read_book<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<BookRecord> {
         read_state: next().trim().parse().unwrap_or(-1),
         cde_type: next().to_string(),
         kept: next().trim() == "1",
+        // A row written before the field carried one reads as the catalog's,
+        // which is what no source may take. `Store::migrate` picks out the
+        // records a sidecar made.
+        named_by: Named::from_stored(next()).unwrap_or_default(),
     })
     // `read_through` marks a record the row left unmarked.
     .map(|mut record: BookRecord| {
@@ -2964,5 +3308,275 @@ mod tests {
         assert!(store.book_for(999, None).is_some());
         store.learn_key(999, "TWO");
         assert!(store.book_for(999, None).is_none());
+    }
+
+    // ---- naming a class no record reaches -----------------------------
+
+    /// A store of three days' reading: one book the catalog names and two
+    /// classes it does not.
+    fn orphaned() -> Store {
+        Store {
+            sessions: vec![
+                session("2026-08-07T10:00:00", "2026-08-07T11:00:00", 148_207, 3_600),
+                session("2026-08-08T10:00:00", "2026-08-08T11:00:00", 500_100, 3_600),
+                session("2026-08-09T10:00:00", "2026-08-09T11:00:00", 700_200, 3_600),
+            ],
+            books: vec![BookRecord {
+                extent: 148_207,
+                cde_key: "B00OKPCRLG".into(),
+                title: "A Named Book".into(),
+                ..BookRecord::default()
+            }],
+            ..Store::default()
+        }
+    }
+
+    fn witness(at: &str, title: &str, key: &str) -> crate::identify::Witness {
+        crate::identify::Witness {
+            at: at.into(),
+            title: title.into(),
+            author: "An Author".into(),
+            key: key.into(),
+            pos: -1,
+        }
+    }
+
+    /// [`Store::name_from`] with no class held back.
+    fn name_from(store: &mut Store, said: &[crate::identify::Witness], by: Named) -> usize {
+        store.name_from(said, by, &mut Vec::new())
+    }
+
+    #[test]
+    fn a_witness_bracketed_by_a_sitting_names_that_sittings_class() {
+        let mut store = orphaned();
+        // Every sitting is keyed by `asin` in `session`, so the record the
+        // second and third would reach has to be the one the claim makes.
+        for s in &mut store.sessions {
+            s.asin = None;
+        }
+        let named = name_from(
+            &mut store,
+            &[witness("2026-08-08T10:30:00", "The Orphan", "B00ORPHANED")],
+            Named::Vocab,
+        );
+        assert_eq!(named, 1);
+        let found = store.book_for(500_100, None).expect("the class was named");
+        assert_eq!(found.title, "The Orphan");
+        assert_eq!(found.cde_key, "B00ORPHANED", "the source stated a key");
+        assert_eq!(found.named_by, Named::Vocab);
+        assert!(
+            store.book_for(700_200, None).is_none(),
+            "an unclaimed class"
+        );
+    }
+
+    #[test]
+    fn a_class_whose_book_the_record_already_holds_is_linked_and_not_copied() {
+        // One book under two `EndPos` classes, its record under the older:
+        // the device logs a new class when the file changes under the book.
+        let mut store = orphaned();
+        for s in &mut store.sessions {
+            s.asin = None;
+        }
+        let before = store.books.len();
+        let named = name_from(
+            &mut store,
+            &[witness("2026-08-08T10:30:00", "a named   BOOK", "")],
+            Named::Clippings,
+        );
+        assert_eq!(named, 1);
+        assert_eq!(store.books.len(), before, "a second record for one book");
+        let found = store.book_for(500_100, None).expect("the class was named");
+        assert_eq!(found.cde_key, "B00OKPCRLG");
+        assert_eq!(found.named_by, Named::Catalog, "the catalog still holds it");
+        // Through the `k` row `slot_for`'s third arm already consults.
+        assert_eq!(store.key_at(500_100), Some("B00OKPCRLG"));
+    }
+
+    #[test]
+    fn a_class_two_titles_claim_is_left_alone_by_every_later_source() {
+        let mut store = orphaned();
+        for s in &mut store.sessions {
+            s.asin = None;
+        }
+        let mut contested = Vec::new();
+        let named = store.name_from(
+            &[
+                witness("2026-08-08T10:10:00", "One Book", ""),
+                witness("2026-08-08T10:20:00", "Another Book", ""),
+            ],
+            Named::Vocab,
+            &mut contested,
+        );
+        assert_eq!(named, 0, "a class holding two books was named");
+        assert_eq!(contested, vec![500_100]);
+        // A weaker source seeing only one of the two does not settle it.
+        let named = store.name_from(
+            &[witness("2026-08-08T10:30:00", "One Book", "")],
+            Named::Clippings,
+            &mut contested,
+        );
+        assert_eq!(named, 0, "a contested class was named by a weaker source");
+        assert!(store.book_for(500_100, None).is_none());
+    }
+
+    #[test]
+    fn a_witness_two_classes_bracket_names_neither() {
+        let mut store = orphaned();
+        for s in &mut store.sessions {
+            s.asin = None;
+        }
+        // A second run of another class over the same hour.
+        store.sessions.push(session(
+            "2026-08-08T10:00:00",
+            "2026-08-08T11:00:00",
+            700_200,
+            3_600,
+        ));
+        store.sessions.last_mut().unwrap().asin = None;
+        store.sort();
+        let named = name_from(
+            &mut store,
+            &[witness("2026-08-08T10:30:00", "The Orphan", "")],
+            Named::Vocab,
+        );
+        assert_eq!(named, 0);
+        assert!(store.book_for(500_100, None).is_none());
+        assert!(store.book_for(700_200, None).is_none());
+    }
+
+    #[test]
+    fn a_run_too_short_to_count_as_a_sitting_carries_no_claim() {
+        let mut store = orphaned();
+        for s in &mut store.sessions {
+            s.asin = None;
+        }
+        let floor = crate::stats::SITTING_FLOOR_SECS;
+        store.sessions[1].ended_at = "2026-08-08T10:00:59".into();
+        store.sessions[1].seconds = floor - 1;
+        assert_eq!(
+            name_from(
+                &mut store,
+                &[witness("2026-08-08T10:00:30", "The Orphan", "")],
+                Named::Vocab,
+            ),
+            0,
+        );
+        store.sessions[1].seconds = floor;
+        assert_eq!(
+            name_from(
+                &mut store,
+                &[witness("2026-08-08T10:00:30", "The Orphan", "")],
+                Named::Vocab,
+            ),
+            1,
+        );
+    }
+
+    #[test]
+    fn a_lookup_past_the_classs_own_end_names_nothing() {
+        let mut store = orphaned();
+        for s in &mut store.sessions {
+            s.asin = None;
+        }
+        let mut past = witness("2026-08-08T10:30:00", "The Orphan", "");
+        past.pos = 500_101;
+        assert_eq!(name_from(&mut store, &[past], Named::Vocab), 0);
+        let mut inside = witness("2026-08-08T10:30:00", "The Orphan", "");
+        inside.pos = 400_000;
+        assert_eq!(name_from(&mut store, &[inside], Named::Vocab), 1);
+    }
+
+    #[test]
+    fn a_book_that_arrived_as_a_file_name_gets_its_real_title() {
+        // What an existing record looks like: the sidecar arm named the class
+        // from the `.sdr` directory and nothing better had spoken.
+        let mut store = orphaned();
+        for s in &mut store.sessions {
+            s.asin = None;
+        }
+        store.learn_pair(500_100, "Some_Book_File");
+        store.books.push(from_sidecar(500_100, "Some_Book_File"));
+        store.sort_books();
+        assert_eq!(
+            store.book_for(500_100, None).map(|b| b.title.as_str()),
+            Some("Some_Book_File")
+        );
+
+        let named = name_from(
+            &mut store,
+            &[witness(
+                "2026-08-08T10:30:00",
+                "The Real Title",
+                "B00REALKEY",
+            )],
+            Named::Vocab,
+        );
+        assert_eq!(named, 1);
+        let found = store
+            .book_for(500_100, None)
+            .expect("the class is still named");
+        assert_eq!(found.title, "The Real Title");
+        assert_eq!(found.named_by, Named::Vocab);
+        assert_eq!(
+            store.books.iter().filter(|b| b.extent == 500_100).count(),
+            1,
+            "the file-name record was left standing beside the real one",
+        );
+        assert!(store.pairs.is_empty(), "the pairing still reaches it");
+        // And the class is no longer on offer to anything weaker.
+        assert!(!store.classes_wanting(Named::Clippings).contains(&500_100));
+        assert!(store.classes_wanting(Named::Vocab).contains(&700_200));
+    }
+
+    #[test]
+    fn a_record_states_what_named_it_and_a_row_written_before_that_reads_back() {
+        let dir = scratch("named-by");
+        let mut store = orphaned();
+        store.learn_pair(500_100, "Some_Book_File");
+        store.books.push(from_sidecar(500_100, "Some_Book_File"));
+        store.sort_books();
+        store.save(&dir).expect("a written store");
+        let read = Store::load(&dir);
+        assert_eq!(read.books, store.books, "a `b` row lost what named it");
+
+        // The same file as a build before the field wrote it: every `b` row
+        // one column short. The pairing is what picks the stem out.
+        let older: String = std::fs::read_to_string(Store::file(&dir))
+            .expect("a store to shorten")
+            .lines()
+            .map(|line| match line.starts_with("b\t") {
+                true => line.rsplit_once('\t').expect("a `b` row's last field").0,
+                false => line,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let read = Store::from_text(&older);
+        let named: Vec<Named> = read.books.iter().map(|b| b.named_by).collect();
+        assert_eq!(named, [Named::Catalog, Named::Sidecar]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_source_is_asked_only_while_a_class_still_wants_what_it_says() {
+        let mut store = orphaned();
+        for s in &mut store.sessions {
+            s.asin = None;
+        }
+        assert_eq!(store.classes_wanting(Named::Vocab), [500_100, 700_200]);
+        assert_eq!(store.classes_wanting(Named::Sidecar), [500_100, 700_200]);
+        name_from(
+            &mut store,
+            &[
+                witness("2026-08-08T10:30:00", "One", ""),
+                witness("2026-08-09T10:30:00", "Two", ""),
+            ],
+            Named::Vocab,
+        );
+        // Nothing weaker has anything left to say, and the walk never happens.
+        assert!(store.classes_wanting(Named::Clippings).is_empty());
+        assert!(store.classes_wanting(Named::Sidecar).is_empty());
+        // The strongest source still could: the catalog outranks them all.
+        assert_eq!(store.classes_wanting(Named::Catalog).len(), 2);
     }
 }

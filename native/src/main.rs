@@ -13,7 +13,7 @@ use readinglog_native::eink::touch::Touch;
 use readinglog_native::orientation::Orientation;
 use readinglog_native::stats::Stats;
 use readinglog_native::store::Store;
-use readinglog_native::{app, catalog, date, font, lang, settings, sidecar, store, ui};
+use readinglog_native::{app, catalog, date, font, identify, lang, settings, store, ui};
 
 fn main() {
     let mode = std::env::args().nth(1).unwrap_or_default();
@@ -50,10 +50,13 @@ fn collect() -> Result<Store> {
 /// to open.
 fn collect_into(store: &mut Store, dir: &Path, on: &mut dyn FnMut(usize, usize)) {
     let pass = store.update(on);
+    // The catalog speaks first: it is the cheapest to read and states the most
+    // about every book it names. `identify::rescue` then asks the three
+    // sources that can name what it left unnamed.
     let books = catalog::read();
-    let sidecars = sidecar::read(Path::new(sidecar::DOCUMENTS_DIR));
-    let named = store.recover(&sidecars);
-    let refreshed = store.remember(&books) + named + store.keep_covers(dir);
+    let stated = store.remember(&books);
+    let rescue = identify::rescue(store);
+    let refreshed = stated + rescue.named() + store.keep_covers(dir);
     eprintln!(
         "collect: {} lines (live {}, chunks {}, dumps {}, skipped {}) \
          -> {} added, {} extended, {} sittings held",
@@ -67,17 +70,12 @@ fn collect_into(store: &mut Store, dir: &Path, on: &mut dyn FnMut(usize, usize))
         store.sessions.len(),
     );
     eprintln!(
-        "sidecars: {} read from {}; {named} books named that no catalog row reaches",
-        sidecars.len(),
-        sidecar::DOCUMENTS_DIR,
-    );
-    eprintln!(
-        "catalog: {} rows from {}; {} book records refreshed, {} held",
+        "catalog: {} rows from {}; {stated} book records refreshed, {} held",
         books.len(),
         catalog::path().map_or("nowhere".into(), |p| p.display().to_string()),
-        refreshed,
         store.books.len(),
     );
+    report(&rescue);
     // An unchanged store is left on disk unwritten.
     if pass.added + pass.extended + refreshed == 0 {
         return;
@@ -86,6 +84,26 @@ fn collect_into(store: &mut Store, dir: &Path, on: &mut dyn FnMut(usize, usize))
     if let Err(err) = store.save(dir) {
         eprintln!("collect: could not write the store: {err}");
     }
+}
+
+/// What the sources that name a book the catalog cannot came to, one line, and
+/// nothing at all where the catalog left them nothing to do.
+fn report(rescue: &identify::Rescue) {
+    if rescue.lookups + rescue.clippings + rescue.sidecars == 0 {
+        return;
+    }
+    eprintln!(
+        "identify: {} lookups -> {}, {} clippings -> {}, {} sidecars -> {}; \
+         {} classes still name no book, {} of them holding two",
+        rescue.lookups,
+        rescue.by_vocab,
+        rescue.clippings,
+        rescue.by_clippings,
+        rescue.sidecars,
+        rescue.by_sidecars,
+        rescue.unnamed,
+        rescue.contested,
+    );
 }
 
 /// The store as text, one sitting a line.

@@ -878,28 +878,33 @@ impl App {
     /// Read every source of identity again and state how many books that
     /// named, over a banner. No sitting is folded in; only the rows placing
     /// one on a book are read again.
+    ///
+    /// The sources come in `identify::rescue`'s own order, and the logs are
+    /// last of all: only the sidecar arm needs them, and it is the only source
+    /// the three ahead of it can leave with nothing to do.
     fn retry(&mut self, fb: &mut Framebuffer, input: &mut Input) -> Result<()> {
-        // The class rows are read again only where one is missing under a
-        // class no record names: a sitting the record holds no counter for
-        // reaches no sidecar, and the logs state nothing else this needs.
-        let wants = self.store.wants_the_logs();
-        let doing = match wants {
-            true => view::Retrying::Logs,
-            false => view::Retrying::Files,
-        };
-        let (headline, doing) = doing.banner(self.lang.strings());
-        self.banner(fb, headline, &doing, "", true)?;
         let before = self.unnamed_books();
-        if wants {
+        let (headline, doing) = view::Retrying::Files.banner(self.lang.strings());
+        self.banner(fb, headline, &doing, "", true)?;
+        // A book that arrives with its real title in place of a file name was
+        // named before and after, so the count the sources report is the only
+        // one that sees it.
+        let mut rescued = self.relearn();
+        // A sidecar is reached through the counter its class was logged with,
+        // so the logs are read again only for a class that still names no book
+        // and holds no counter. Nothing else this needs is in them.
+        if self.store.wants_the_logs() {
+            let (headline, doing) = view::Retrying::Logs.banner(self.lang.strings());
+            self.banner(fb, headline, &doing, "", true)?;
             let learned =
                 self.over_the_logs(fb, headline, &doing, |store, on| store.relearn_classes(on));
             eprintln!("retry: {learned} classes the record held no counter for");
             if learned > 0 {
                 self.store_it("retry");
+                rescued += self.relearn();
             }
         }
-        self.relearn();
-        let named = before.saturating_sub(self.unnamed_books());
+        let named = before.saturating_sub(self.unnamed_books()).max(rescued);
         eprintln!("retry: {before} books no record named, {named} named");
         let (headline, said) = view::Retrying::Named(named).banner(self.lang.strings());
         self.banner(fb, headline, &said, "", true)?;
@@ -912,15 +917,19 @@ impl App {
             .unnamed_books()
     }
 
-    /// `catalog::read` through `Store::remember` and `Store::keep_covers`,
-    /// then `Stats::build`. `Store::absorb` writes `sessions` and `ends`;
-    /// every title, author and jacket in `Store::books` arrives here.
-    fn relearn(&mut self) {
+    /// `catalog::read` through `Store::remember`, then every source that names
+    /// a book the catalog cannot, then `Store::keep_covers` and
+    /// `Stats::build`. `Store::absorb` writes `sessions` and `ends`; every
+    /// title, author and jacket in `Store::books` arrives here.
+    ///
+    /// Answers the classes the sources past the catalog named, which is what
+    /// a retry counts on top of the books the catalog itself found.
+    fn relearn(&mut self) -> usize {
         let books = crate::catalog::read();
         let dir = self.dir.clone();
-        let sidecars = crate::sidecar::read(std::path::Path::new(crate::sidecar::DOCUMENTS_DIR));
-        let named = self.store.recover(&sidecars);
-        let refreshed = self.store.remember(&books) + named + self.store.keep_covers(&dir);
+        let stated = self.store.remember(&books);
+        let rescue = crate::identify::rescue(&mut self.store);
+        let refreshed = stated + rescue.named() + self.store.keep_covers(&dir);
         eprintln!(
             "reset: {} catalog rows, {refreshed} book records refreshed, {} held",
             books.len(),
@@ -931,6 +940,7 @@ impl App {
         }
         self.covers.forget();
         self.rebuild();
+        rescue.named()
     }
 
     /// Empty the record, keeping an archive of it first under `keep`.

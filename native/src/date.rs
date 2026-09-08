@@ -83,25 +83,56 @@ pub fn secs_of(at: &str) -> i64 {
 /// The local clock, as `(day count, seconds into the day)`. Every stamp in
 /// the log is local wall clock with no zone on it.
 pub fn now() -> (i64, i64) {
+    // SAFETY: `time` takes a null pointer and answers the clock.
+    let clock = unsafe { libc::time(std::ptr::null_mut()) };
+    local_of(clock as i64).unwrap_or((0, 0))
+}
+
+/// An epoch second as `(day count, seconds into the day)` on the device's own
+/// clock, the way [`now`] reads the present one. `None` where the clock will
+/// not break the value down.
+///
+/// `vocab::Lookup` arrives as epoch milliseconds and every other instant the
+/// crate holds is local wall clock, so this is where the two meet.
+pub fn local_of(epoch: i64) -> Option<(i64, i64)> {
     // SAFETY: `localtime_r` fills a caller-owned `tm` and takes the zone from
     // the process environment. No pointer outlives the call.
     unsafe {
-        let clock = libc::time(std::ptr::null_mut());
+        // `time_t` is 32 bits on the device's target and 64 on the host, so
+        // its width is left to the call to fix. An instant too wide for it
+        // names no day rather than a wrapped one — a round trip that only
+        // narrows on one of the two targets.
+        let clock = epoch as _;
+        #[allow(clippy::unnecessary_cast)]
+        if clock as i64 != epoch {
+            return None;
+        }
         let mut tm: libc::tm = std::mem::zeroed();
         if libc::localtime_r(&clock, &mut tm).is_null() {
-            // A clock `localtime_r` will not break down takes the epoch's
-            // own day.
-            return (0, 0);
+            return None;
         }
-        (
+        Some((
             days_from_civil(
                 tm.tm_year as i64 + 1900,
                 tm.tm_mon as i64 + 1,
                 tm.tm_mday as i64,
             ),
             tm.tm_hour as i64 * 3600 + tm.tm_min as i64 * 60 + tm.tm_sec as i64,
-        )
+        ))
     }
+}
+
+/// `(day count, seconds into the day)` as the `YYYY-MM-DDTHH:MM:SS` a sitting
+/// is stored under, which is what [`day_of`] and [`secs_of`] read back.
+pub fn stamp(days: i64, secs: i64) -> String {
+    let (y, m, d) = civil_from_days(days);
+    let secs = secs.rem_euclid(86_400);
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}",
+        secs / 3600,
+        secs / 60 % 60,
+        secs % 60,
+    )
 }
 
 /// "Aug 9" — enough to place a day at a glance. `9月9日` where the language
@@ -233,6 +264,37 @@ pub fn words(n: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_epoch_second_reads_as_the_local_clock_and_back() {
+        // The zone is the machine's, so only what holds in every zone is
+        // asserted here.
+        let (day, secs) = local_of(1_757_000_000).expect("a breakable instant");
+        let (later, then) = local_of(1_757_000_600).expect("a breakable instant");
+        assert_eq!((later - day) * 86_400 + then - secs, 600);
+        let at = stamp(day, secs);
+        assert_eq!(at.len(), 19);
+        assert_eq!(parse_day(day_of(&at)), Some(day));
+        assert_eq!(secs_of(&at), secs);
+    }
+
+    #[test]
+    fn an_instant_the_clock_cannot_hold_names_no_day() {
+        // `time_t` is 32 bits on the device, so a stamp past 2038 has no day
+        // there. It has one on a 64-bit host, and either answer is right.
+        assert!(local_of(i64::MAX).is_none());
+        assert!(local_of(i64::MIN).is_none());
+    }
+
+    #[test]
+    fn a_stamp_is_the_form_a_sitting_is_stored_under() {
+        let day = days_from_civil(2026, 6, 8);
+        assert_eq!(stamp(day, 19 * 3600 + 3 * 60 + 7), "2026-06-08T19:03:07");
+        assert_eq!(stamp(day, 0), "2026-06-08T00:00:00");
+        // Seconds outside the day are wrapped into it rather than rendered.
+        assert_eq!(stamp(day, 86_400), "2026-06-08T00:00:00");
+    }
+
     use crate::lang::Lang;
 
     /// English, which the assertions below are written in.
