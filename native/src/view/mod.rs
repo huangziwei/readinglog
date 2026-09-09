@@ -66,7 +66,7 @@ pub enum Hit {
     Retry,
     /// The answer to that question.
     Retried,
-    /// Ask before reading every log the device still holds and measuring each
+    /// Ask before reading every log the device holds and measuring each
     /// sitting in them again.
     Heal,
     /// The answer to that question.
@@ -145,7 +145,7 @@ pub struct Confirm {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum About {
     Reset(Reset),
-    /// Measure every sitting the logs still reach again.
+    /// Measure every sitting the logs reach again.
     Heal,
     /// Read every source of identity again.
     Retry,
@@ -242,7 +242,7 @@ pub enum BookTab {
     /// What the reading came to: the figures and the journey.
     #[default]
     Statistics,
-    /// What the reader marked in the book, most recent first.
+    /// The book's marked passages, most recent first.
     Marks,
 }
 
@@ -300,15 +300,14 @@ impl Search {
         self.from = 0;
     }
 
-    /// What one of the keyboard's own properties says. `keyboardCommit`
-    /// carries the text; `keyboardSetPreeditString` `str:position`;
-    /// `keyboardDelete` `before:after`; `keyboardReplace`
+    /// `keyboardCommit` carries the text; `keyboardSetPreeditString`
+    /// `position:str`; `keyboardDelete` `before:after`; `keyboardReplace`
     /// `before:after:str`.
     pub fn set(&mut self, property: &str, value: &str) -> bool {
         match property {
             "keyboardCommit" => self.commit(value),
             "keyboardSetPreeditString" => {
-                let (said, _) = value.rsplit_once(':').unwrap_or((value, ""));
+                let (_, said) = value.split_once(':').unwrap_or(("", value));
                 said.clone_into(&mut self.preedit);
             }
             "keyboardDelete" => {
@@ -657,11 +656,8 @@ pub fn covered(stats: &Stats, uncovered: bool, read: &mut Vec<(usize, i64)>) {
     }
 }
 
-/// What a list row says a book carries: the passages marked and the notes
-/// written on them, joined where it carries both.
-///
-/// Empty for a book carrying neither, which is most of a shelf — a row states
-/// nothing rather than a pair of zeroes.
+/// `s.n_highlights` and `s.n_notes` counted and joined by ` · `, each dropped
+/// where its count is zero. Empty where both are.
 pub fn marks_said(s: &Strings, (marked, notes): (usize, usize)) -> String {
     let said = [(marked, s.n_highlights), (notes, s.n_notes)];
     said.iter()
@@ -671,14 +667,8 @@ pub fn marks_said(s: &Strings, (marked, notes): (usize, usize)) -> String {
         .join(" · ")
 }
 
-/// The line under a row's title: the author at the left of `area` and what the
-/// book is marked with at its right, so the counts fall under the row's own
-/// time figure.
-///
-/// The author is cut to what the counts leave, which is what keeps a long one
-/// from running into them. Drawn at [`Theme::small_px`], and the caller decides
-/// whether the line stands at all — `marked` empty and `author` empty together
-/// mean there is nothing to draw.
+/// `author` at the left of `area` and `marked` at its right, both set at
+/// [`Theme::small_px`]. `author` is cut to the width `marked` leaves.
 pub fn under_title(
     cx: &mut Ctx,
     area: Rect,
@@ -1035,24 +1025,23 @@ mod tests {
         assert!(!s.go(Tab::Books), "and the whole shelf stays put");
     }
 
-    /// A commit lands at the end of the query and takes any preedit with it.
     #[test]
     fn a_commit_takes_the_preedit_off_and_the_text_on() {
         let mut search = Search::default();
-        assert!(search.set("keyboardSetPreeditString", "youzheng:8"));
+        assert!(search.set("keyboardSetPreeditString", "8:youzheng"));
         assert_eq!(search.preedit, "youzheng");
         assert!(search.set("keyboardCommit", "夢遊"));
         assert_eq!(search.query, "夢遊");
         assert!(search.preedit.is_empty());
     }
 
-    /// A preedit's own value carries the cursor after its last colon, and the
-    /// text may hold colons of its own.
     #[test]
-    fn a_preedit_keeps_every_colon_but_the_last() {
+    fn a_preedit_carries_its_cursor_before_the_first_colon() {
         let mut search = Search::default();
-        search.set("keyboardSetPreeditString", "a:b:2");
+        search.set("keyboardSetPreeditString", "2:a:b");
         assert_eq!(search.preedit, "a:b");
+        search.set("keyboardSetPreeditString", "0:");
+        assert!(search.preedit.is_empty());
         search.set("keyboardSetPreeditString", "");
         assert!(search.preedit.is_empty());
     }
