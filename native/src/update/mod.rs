@@ -17,6 +17,9 @@ use crate::lang::Strings;
 /// The version this build is, as `Cargo.toml` states it.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// The instant this build was compiled and the commit it came from.
+pub const BUILD: &str = env!("READINGLOG_BUILD");
+
 /// The project, as GitHub names it.
 pub const REPO: &str = "huangziwei/readinglog";
 

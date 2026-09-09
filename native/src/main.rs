@@ -1,6 +1,6 @@
 //! Reading Log — reading statistics on a Kindle, from the Kindle's own logs.
 //! Four modes: no argument collects then draws, `--collect` collects alone,
-//! `--dump` prints the store, `--version` states which build this is.
+//! `--dump` prints the store, `--version` states its version.
 
 use std::path::Path;
 
@@ -17,6 +17,13 @@ use readinglog_native::{app, catalog, date, font, identify, lang, settings, stor
 
 fn main() {
     let mode = std::env::args().nth(1).unwrap_or_default();
+    if mode != "--version" {
+        eprintln!(
+            "build: {} {}",
+            readinglog_native::update::VERSION,
+            readinglog_native::update::BUILD
+        );
+    }
     let result = match mode.as_str() {
         "--collect" => collect().map(|_| ()),
         "--dump" => dump(),
@@ -29,8 +36,9 @@ fn main() {
     }
 }
 
-/// Which build this is, on one line. The one mode that opens nothing: no
-/// display, no log, no store.
+/// Which version this build is, on one line and nothing beside it —
+/// `states_version` reads it back off a staged copy. The one mode that opens
+/// nothing: no display, no log, no store.
 fn version() -> Result<()> {
     println!("{}", readinglog_native::update::VERSION);
     Ok(())

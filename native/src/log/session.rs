@@ -24,7 +24,7 @@ pub enum Measure {
     Counted,
     /// The dwell of each `ereader_book_consume_content` page.
     Dwell,
-    /// [`Awake`]'s bound: how long the device was `ACTIVE` with the book open.
+    /// The `ACTIVE` stretches [`Awake::between`] sums with the book open.
     Awake,
 }
 
@@ -48,7 +48,7 @@ impl Measure {
     }
 }
 
-/// Timezones are whole minutes from UTC.
+/// Seconds in the minute every zone offset is a whole multiple of.
 const OFFSET_STEP: i64 = 60;
 
 /// Seconds the device's local clock stands ahead of UTC, from a record stating
