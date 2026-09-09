@@ -9,6 +9,7 @@ pub mod books;
 pub mod config;
 pub mod daybooks;
 pub mod home;
+pub mod marks;
 pub mod pager;
 pub mod rhythm;
 
@@ -31,6 +32,10 @@ pub enum Hit {
     Day(i64),
     /// A book, by its index in [`Stats::books`].
     Book(usize),
+    /// One of the open book's own two tabs.
+    BookTab(BookTab),
+    /// Where the open book's list of marks opens, as an index into it.
+    MarksPage(usize),
     /// Hand a book on the device back to the Kindle's reader, by its index in
     /// [`Stats::books`]. Leaves the app, as [`Hit::Exit`] does.
     Open(usize),
@@ -219,6 +224,29 @@ pub enum Ask {
     /// Put this book's reading back to zero, keeping the record or not. Its
     /// two answers are their own hits, being two different acts.
     Clear,
+}
+
+/// The two pages a book's own screen holds, as its picker states them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BookTab {
+    /// What the reading came to: the figures and the journey.
+    #[default]
+    Statistics,
+    /// What the reader marked in the book, most recent first.
+    Marks,
+}
+
+impl BookTab {
+    pub const ALL: [BookTab; 2] = [BookTab::Statistics, BookTab::Marks];
+
+    /// What this page is called, in the interface's own language.
+    pub fn label(self, lang: Lang) -> &'static str {
+        let s = lang.strings();
+        match self {
+            BookTab::Statistics => s.statistics,
+            BookTab::Marks => s.marks_tab,
+        }
+    }
 }
 
 /// Which books the Books screen lists.
@@ -436,6 +464,10 @@ pub struct State {
     pub alltime_page: usize,
     /// How far down Rhythm's own book list has been paged.
     pub list_from: usize,
+    /// Which of the open book's two pages is showing.
+    pub book_tab: BookTab,
+    /// How far down that book's list of marks has been paged.
+    pub marks_from: usize,
 }
 
 impl State {
@@ -456,7 +488,26 @@ impl State {
             opened_day: false,
             alltime_page: 0,
             list_from: 0,
+            book_tab: BookTab::default(),
+            marks_from: 0,
         }
+    }
+
+    /// Open `book`'s own screen, at the page a book always opens on.
+    pub fn open_book(&mut self, book: usize) {
+        self.book = Some(book);
+        self.book_tab = BookTab::default();
+        self.marks_from = 0;
+    }
+
+    /// Show `tab` of the open book. Answers whether that moved anywhere.
+    pub fn go_in_book(&mut self, tab: BookTab) -> bool {
+        if self.book_tab == tab {
+            return false;
+        }
+        self.book_tab = tab;
+        self.marks_from = 0;
+        true
     }
 
     /// Go to `tab`, closing any book, day or shelf open over it. Answers
@@ -483,6 +534,8 @@ impl State {
         self.window = None;
         self.alltime_page = 0;
         self.list_from = 0;
+        self.book_tab = BookTab::default();
+        self.marks_from = 0;
         true
     }
 

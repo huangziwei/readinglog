@@ -15,9 +15,11 @@ pub const CLIPPINGS_FILE: &str = "/mnt/us/documents/My Clippings.txt";
 /// bundle the reader ships, and the format's one invariant.
 const SEPARATOR: &str = "==========";
 
-/// What a record marks. `AnnotationTypes` numbers these; `ClippingsManager.C`
-/// refuses handwriting, so no firmware writes ink here.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+/// What a mark is. The twelve `annotation.personal.*` records `ReaderSDK-impl`
+/// names on 5.19, which is what a `.sdr` sidecar writes; the seven above the
+/// line are the ones that also reach `My Clippings.txt`, and
+/// `ClippingsManager.C` refuses the rest.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Kind {
     Bookmark,
     #[default]
@@ -29,20 +31,94 @@ pub enum Kind {
     Underline,
     Circle,
     Asterisk,
+    /// A place marked on a page rather than in the text.
+    Pin,
+    /// A note kept beside the page, its body held under an id elsewhere.
+    StickyNote,
+    /// A region of a page rather than a run of text.
+    GraphicalHighlight,
+    /// Ink, in the margin. `ClippingsManager.C` refuses it, so it is in the
+    /// sidecar and nowhere else.
+    Handwriting,
+    /// Ink, over the page itself.
+    HandwritingOnContent,
 }
 
 impl Kind {
-    /// The number `AnnotationTypes` gives this kind.
-    pub fn code(self) -> u8 {
+    /// The number `AnnotationTypes` gives this kind, and `None` for the five
+    /// only a sidecar carries: `AnnotationTypes` names its constants under
+    /// obfuscated fields, and nothing here needs the number.
+    pub fn code(self) -> Option<u8> {
         match self {
-            Self::Bookmark => 0,
-            Self::Highlight => 1,
-            Self::Note => 2,
-            Self::Article => 3,
-            Self::Circle => 12,
-            Self::Underline => 13,
-            Self::Asterisk => 14,
+            Self::Bookmark => Some(0),
+            Self::Highlight => Some(1),
+            Self::Note => Some(2),
+            Self::Article => Some(3),
+            Self::Circle => Some(12),
+            Self::Underline => Some(13),
+            Self::Asterisk => Some(14),
+            _ => None,
         }
+    }
+
+    /// The word a stored row names this kind by, which is the record's own
+    /// name in the sidecar.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Bookmark => "bookmark",
+            Self::Highlight => "highlight",
+            Self::Note => "note",
+            Self::Article => "clip_article",
+            Self::Underline => "underline",
+            Self::Circle => "circle",
+            Self::Asterisk => "asterisk",
+            Self::Pin => "pin",
+            Self::StickyNote => "sticky_note",
+            Self::GraphicalHighlight => "graphical_highlight",
+            Self::Handwriting => "handwritten_note",
+            Self::HandwritingOnContent => "handwritten_on_content_note",
+        }
+    }
+
+    /// Every kind, in the order [`Self::as_str`] lists them.
+    pub const ALL: [Kind; 12] = [
+        Kind::Bookmark,
+        Kind::Highlight,
+        Kind::Note,
+        Kind::Article,
+        Kind::Underline,
+        Kind::Circle,
+        Kind::Asterisk,
+        Kind::Pin,
+        Kind::StickyNote,
+        Kind::GraphicalHighlight,
+        Kind::Handwriting,
+        Kind::HandwritingOnContent,
+    ];
+
+    /// What [`Self::as_str`] wrote, and `None` for any other word.
+    pub fn from_stored(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.as_str() == text)
+    }
+
+    /// Whether this kind's body is the user's own words rather than the
+    /// book's. A note's is; a highlight's is the passage it covers.
+    pub fn is_the_readers_own(self) -> bool {
+        matches!(self, Self::Note | Self::StickyNote)
+    }
+
+    /// Whether this kind marks a run of the book's own text.
+    ///
+    /// The five that do are the five with words to show. A bookmark and a pin
+    /// mark a place and carry none; an article is a whole piece saved rather
+    /// than a passage picked out of one; a graphical highlight is a region of
+    /// a page; and the three handwritten kinds keep their ink elsewhere and
+    /// leave only an id here.
+    pub fn marks_a_passage(self) -> bool {
+        matches!(
+            self,
+            Self::Highlight | Self::Note | Self::Underline | Self::Circle | Self::Asterisk
+        )
     }
 }
 
@@ -876,7 +952,28 @@ mod tests {
                 Kind::Underline.code(),
                 Kind::Asterisk.code(),
             ],
-            [0, 1, 2, 3, 12, 13, 14],
+            [0, 1, 2, 3, 12, 13, 14].map(Some),
         );
+        // The five only a `.sdr` carries claim no number here.
+        assert!(
+            [
+                Kind::Pin,
+                Kind::StickyNote,
+                Kind::GraphicalHighlight,
+                Kind::Handwriting,
+                Kind::HandwritingOnContent,
+            ]
+            .iter()
+            .all(|k| k.code().is_none())
+        );
+    }
+
+    #[test]
+    fn every_kind_goes_to_a_word_and_comes_back() {
+        for kind in Kind::ALL {
+            assert_eq!(Kind::from_stored(kind.as_str()), Some(kind), "{kind:?}");
+        }
+        assert_eq!(Kind::ALL.len(), 12, "the twelve records 5.19 names");
+        assert_eq!(Kind::from_stored("scribble"), None);
     }
 }

@@ -5,7 +5,9 @@
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
+use crate::annotate::{Gate, Mark, State};
 use crate::catalog::Book;
+use crate::clippings::Kind;
 use crate::covers;
 use crate::log::line::{line_stamp, log_stamp};
 use crate::log::session::{Measure, SESSION_GAP_SECS, Session};
@@ -191,6 +193,12 @@ pub struct Store {
     /// Books put back to zero, ascending by `extent` then `key`. No parse
     /// folds a sitting of one that starts below its stamp.
     pub cleared: Vec<Cleared>,
+    /// Every annotation the two sources between them state, ascending by
+    /// stamp. Written whole by [`crate::annotate::fold`], never appended to.
+    pub marks: Vec<Mark>,
+    /// What the pass that wrote [`Self::marks`] saw, and `None` where no pass
+    /// has. The next pass reads nothing while this still stands.
+    pub gate: Option<Gate>,
 }
 
 /// What one pass did.
@@ -287,6 +295,8 @@ impl Store {
                 Some("s") => out.sessions.extend(read_session(&mut f)),
                 Some("b") => out.books.extend(read_book(&mut f)),
                 Some("c") => out.cleared.extend(read_cleared(&mut f)),
+                Some("a") => out.marks.extend(read_mark(&mut f)),
+                Some("n") => out.gate = read_gate(&mut f),
                 _ => {}
             }
         }
@@ -363,7 +373,33 @@ impl Store {
             out.push_str(&write_session(s));
             out.push('\n');
         }
+        if let Some(gate) = self.gate {
+            out.push_str(&format!(
+                "n\t{}\t{}\t{}\n",
+                gate.len, gate.mtime, gate.marks
+            ));
+        }
+        for m in &self.marks {
+            out.push_str(&write_mark(m));
+            out.push('\n');
+        }
         out
+    }
+
+    /// Take `marks` as the whole of [`Self::marks`], with the gate the pass
+    /// that read them stood at. Answers whether anything moved: an unchanged
+    /// record is left on disk unwritten.
+    pub fn take_marks(&mut self, marks: Vec<Mark>, gate: Gate) -> bool {
+        let moved = self.marks != marks || self.gate != Some(gate);
+        self.marks = marks;
+        self.gate = Some(gate);
+        self.sort_marks();
+        moved
+    }
+
+    /// The marks one book carries, in the order they were made.
+    pub fn marks_of(&self, extent: i64) -> impl Iterator<Item = &Mark> {
+        self.marks.iter().filter(move |m| m.extent == extent)
     }
 
     /// Move [`Self::mark`] and [`Self::floor`] onto the clock `offset` names,
@@ -1228,6 +1264,16 @@ impl Store {
         for (extent, file) in &other.pairs {
             self.learn_pair(*extent, file);
         }
+        // A mark the record does not already hold. The gate goes: the sources
+        // on this device never stated these, so the next pass has to read them
+        // again rather than stand on a count that no longer describes the
+        // record.
+        for mark in &other.marks {
+            if !self.marks.contains(mark) {
+                self.marks.push(mark.clone());
+                self.gate = None;
+            }
+        }
         self.sort();
         self.sessions.len() - before
     }
@@ -1277,11 +1323,14 @@ impl Store {
                 .cloned()
                 .collect(),
             books: vec![self.books[slot].clone()],
-            // `mark`, `floor` and the `c` rows key the record, not one book.
+            marks: self.marks_of(self.books[slot].extent).cloned().collect(),
+            // `mark`, `floor`, the `c` rows and the gate key the record, not
+            // one book.
             mark: String::new(),
             mark_offset: None,
             floor: String::new(),
             cleared: Vec::new(),
+            gate: None,
         }
     }
 
@@ -1309,11 +1358,23 @@ impl Store {
         went
     }
 
+    /// The marks of one book, dropped. The gate goes with them: the sources
+    /// still hold what was taken, so the next pass must read them again rather
+    /// than stand on a count that no longer describes this record.
+    fn drop_marks(&mut self, extent: i64) {
+        let before = self.marks.len();
+        self.marks.retain(|m| m.extent != extent);
+        if self.marks.len() != before {
+            self.gate = None;
+        }
+    }
+
     /// The sittings of one book, dropped and held back. Answers how many went.
     fn drop_reading(&mut self, extent: i64, key: &str) -> usize {
         let Some(slot) = self.slot_for(extent, Some(key)) else {
             return 0;
         };
+        self.drop_marks(self.books[slot].extent);
         let kept: Vec<Session> = {
             // A sitting landing on this record, as `Stats::build` places one.
             let mine = |s: &Session| {
@@ -1367,6 +1428,16 @@ impl Store {
         self.pairs.dedup();
         self.sort_books();
         self.sort_cleared();
+        self.sort_marks();
+    }
+
+    /// Orders `marks` by when they were made, then by the book and the place,
+    /// so two passes over one device write the same file.
+    fn sort_marks(&mut self) {
+        self.marks.sort_by(|a, b| {
+            (&a.at, a.extent, &a.title, a.kind, a.start, a.location)
+                .cmp(&(&b.at, b.extent, &b.title, b.kind, b.start, b.location))
+        });
     }
 
     /// Hold `extent` against `key`, in order. A pairing held stands.
@@ -1646,6 +1717,61 @@ fn read_book<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<BookRecord> {
     .map(|mut record: BookRecord| {
         record.finished |= record.read_through();
         record
+    })
+}
+
+/// An `a` row: one annotation, as [`crate::annotate`] merged it.
+///
+/// `<at>` is the key, not the positions — see that module's own account of
+/// why. `<start>`/`<end>` are on the book's `p_contentSize` axis and
+/// `<location>` is the display location the clipping stated; **the two are
+/// different axes** and reusing one name for both is the easiest mistake here.
+fn write_mark(m: &Mark) -> String {
+    format!(
+        "a\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        m.extent,
+        flat(&m.title),
+        m.kind.as_str(),
+        m.at,
+        m.state.as_str(),
+        m.start,
+        m.end,
+        m.location,
+        flat(&m.page),
+        flat(&m.colour),
+        flat(&m.body),
+    )
+}
+
+/// An `a` row as a [`Mark`]. Two rows are dropped rather than read: one naming
+/// a kind this build does not know, which it could neither draw nor count, and
+/// one stating a mark the reader deleted, which would draw a ghost.
+/// [`crate::annotate::fold`] writes neither.
+fn read_mark<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Mark> {
+    let mut next = || f.next().unwrap_or_default();
+    let out = Mark {
+        extent: next().parse().unwrap_or(0),
+        title: next().to_string(),
+        kind: Kind::from_stored(next())?,
+        at: next().trim().to_string(),
+        state: State::from_stored(next()),
+        start: next().trim().parse().unwrap_or(-1),
+        end: next().trim().parse().unwrap_or(-1),
+        location: next().trim().parse().unwrap_or(-1),
+        page: next().to_string(),
+        colour: next().to_string(),
+        body: next().to_string(),
+    };
+    out.state.is_in_the_book().then_some(out)
+}
+
+/// An `n` row: what the pass that wrote the `a` rows above it had seen.
+fn read_gate<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Gate> {
+    let mut next = || f.next().unwrap_or_default();
+    Some(Gate {
+        len: next().trim().parse().ok()?,
+        mtime: next().trim().parse().ok()?,
+        marks: next().trim().parse().ok()?,
     })
 }
 
@@ -1951,6 +2077,89 @@ mod tests {
         assert!(covers::held(&dir, "B00OKPCRLG"));
     }
 
+    /// A mark of a known shape, for the `a` row below.
+    fn one_mark() -> Mark {
+        Mark {
+            extent: 148_207,
+            title: "The Big Sleep".into(),
+            kind: Kind::Highlight,
+            at: "2026-09-07T09:41:55".into(),
+            state: State::Live,
+            start: 11_521,
+            end: 11_601,
+            location: 111,
+            page: "xii".into(),
+            colour: "orange".into(),
+            body: "\u{201C}I was fired. For insubordination.\u{201D}".into(),
+        }
+    }
+
+    #[test]
+    fn an_a_row_states_a_mark_and_reads_back_as_the_same_one() {
+        let mut store = Store::default();
+        let gate = Gate {
+            len: 36_220,
+            mtime: 1_788_849_968,
+            marks: 16,
+        };
+        assert!(store.take_marks(vec![one_mark()], gate));
+        let back = Store::from_text(&store.text());
+        assert_eq!(back.marks, vec![one_mark()]);
+        assert_eq!(back.gate, Some(gate));
+        // The positions and the display location are different axes, and the
+        // row keeps them apart.
+        assert_eq!(back.marks[0].start, 11_521);
+        assert_eq!(back.marks[0].location, 111);
+        // A second pass finding the same sources writes nothing new.
+        assert!(!store.take_marks(vec![one_mark()], gate));
+    }
+
+    #[test]
+    fn an_a_row_stating_a_deleted_mark_is_dropped() {
+        // A record carrying one would draw a ghost.
+        let mut retired = one_mark();
+        retired.state = State::Retired;
+        let held = Store {
+            marks: vec![one_mark(), retired],
+            ..Store::default()
+        };
+        let back = Store::from_text(&held.text());
+        assert_eq!(back.marks, vec![one_mark()]);
+    }
+
+    #[test]
+    fn a_row_naming_a_kind_this_build_does_not_know_costs_only_itself() {
+        let text = format!(
+            "{HEADER}\na\t1\tA Book\tscribble\t2026-09-07T09:41:55\tlive\t1\t2\t3\t\t\t\n{}\n",
+            write_mark(&one_mark())
+        );
+        let back = Store::from_text(&text);
+        assert_eq!(back.marks, vec![one_mark()]);
+    }
+
+    #[test]
+    fn taking_a_books_reading_takes_its_marks_and_the_gate_with_them() {
+        let mut store = orphaned();
+        let extent = store.books[0].extent;
+        let key = store.books[0].cde_key.clone();
+        let mut mine = one_mark();
+        mine.extent = extent;
+        store.take_marks(
+            vec![mine],
+            Gate {
+                len: 1,
+                mtime: 2,
+                marks: 1,
+            },
+        );
+        store.clear_book(extent, &key);
+        assert!(store.marks.is_empty(), "the marks go with the reading");
+        assert!(
+            store.gate.is_none(),
+            "and the next pass reads the sources again rather than standing on a count"
+        );
+    }
+
     /// `books` holds a record and `sessions` is empty: `keep_covers` answers
     /// 0 and leaves `covers::COVERS_DIR` standing.
     #[test]
@@ -1994,6 +2203,8 @@ mod tests {
             mark: "260808:213000".into(),
             mark_offset: None,
             floor: String::new(),
+            marks: Vec::new(),
+            gate: None,
             cleared: vec![Cleared {
                 extent: 304_517,
                 key: "B00OKPCRLG".into(),
@@ -2044,6 +2255,8 @@ mod tests {
             mark: "260808:213000".into(),
             mark_offset: None,
             floor: String::new(),
+            marks: Vec::new(),
+            gate: None,
             cleared: vec![Cleared {
                 extent: 148_207,
                 key: "B00OKPCRLG".into(),
@@ -2428,6 +2641,8 @@ mod tests {
             mark_offset: None,
             floor: String::new(),
             cleared: Vec::new(),
+            marks: Vec::new(),
+            gate: None,
         };
         store.sessions[0].progress = progress;
         store.remember(&[shelved(938_018, "B00OKPCRLG", "A Book", 88.0)]);
@@ -2563,6 +2778,8 @@ mod tests {
             mark_offset: None,
             floor: String::new(),
             cleared: Vec::new(),
+            marks: Vec::new(),
+            gate: None,
         }
     }
 
@@ -3512,6 +3729,8 @@ mod tests {
     fn having_cleared(at: &str) -> Store {
         Store {
             floor: String::new(),
+            marks: Vec::new(),
+            gate: None,
             cleared: vec![Cleared {
                 extent: 148_207,
                 key: "B00OKPCRLG".into(),
@@ -3557,6 +3776,8 @@ mod tests {
         let mut store = Store {
             ends: vec![(148_207, 148_209)],
             floor: String::new(),
+            marks: Vec::new(),
+            gate: None,
             cleared: vec![Cleared {
                 extent: 148_209,
                 key: String::new(),
@@ -3593,6 +3814,8 @@ mod tests {
     fn the_newest_clear_of_one_book_is_the_one_kept() {
         let mut store = Store {
             floor: String::new(),
+            marks: Vec::new(),
+            gate: None,
             cleared: vec![
                 Cleared {
                     extent: 148_207,

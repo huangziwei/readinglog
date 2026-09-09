@@ -27,8 +27,8 @@
 //!
 //! Each source is asked only while [`crate::store::Store::wants_naming`]
 //! answers for it, so a device whose catalog names everything reads none of
-//! them — not even the walk. A source may take a class a weaker one named,
-//! which is how a book that arrived as a file name gets its real title.
+//! them. A source may take a class a weaker one named, which is how a book
+//! that arrived as a file name gets its real title.
 //!
 //! ## The join
 //!
@@ -38,6 +38,14 @@
 //! — the floor, the unanimity, the link or the new record — is
 //! `Store::name_from`, written once. A [`Witness`] is all either source has
 //! of its own.
+//!
+//! ## The walk, and its other half
+//!
+//! The sidecar walk answers two questions at once and is read once for both.
+//! Naming a book is this module's; what the rare sidecar holds is
+//! [`crate::annotate`]'s, and it wants the walk on every pass whether or not a
+//! class here is still unnamed. [`walk`] runs it and [`rescue_from`] takes the
+//! answer, so neither caller reads `documents` twice.
 
 use std::path::Path;
 
@@ -105,17 +113,23 @@ impl Rescue {
 /// The catalog has spoken by the time this runs: `Store::remember` is what
 /// writes the `b` rows, and only the classes it leaves unnamed are on offer
 /// here.
-pub fn rescue(store: &mut Store) -> Rescue {
+pub fn rescue(store: &mut Store, shelf: &sidecar::Shelf) -> Rescue {
     rescue_from(
         store,
         Path::new(vocab::VOCAB_DB),
         Path::new(clippings::CLIPPINGS_FILE),
-        Path::new(sidecar::DOCUMENTS_DIR),
+        shelf,
     )
 }
 
+/// Every sidecar under `documents`, which is the one read both this module and
+/// [`crate::annotate`] stand on.
+pub fn walk(documents: &Path) -> sidecar::Shelf {
+    sidecar::read(documents)
+}
+
 /// [`rescue`] over the three sources named.
-pub fn rescue_from(store: &mut Store, db: &Path, clips: &Path, documents: &Path) -> Rescue {
+pub fn rescue_from(store: &mut Store, db: &Path, clips: &Path, shelf: &sidecar::Shelf) -> Rescue {
     let mut out = Rescue::default();
     // A class a stronger source found two titles for holds two books, and the
     // next source down having seen only one of them does not settle it.
@@ -136,15 +150,15 @@ pub fn rescue_from(store: &mut Store, db: &Path, clips: &Path, documents: &Path)
     }
     out.contested = contested.len();
 
-    // The walk is the dear one, so it only happens for a class nothing else
-    // could name. `recover` still runs over an empty list: it is also what
-    // drops a pairing a record has since contradicted.
-    let sidecars = match store.wants_naming(Named::Sidecar) {
-        true => sidecar::read(documents),
-        false => Vec::new(),
+    // The counters name only a class nothing else could, and `recover` still
+    // runs over an empty list: it is also what drops a pairing a record has
+    // since contradicted.
+    let counters: &[sidecar::Counter] = match store.wants_naming(Named::Sidecar) {
+        true => &shelf.counters,
+        false => &[],
     };
-    out.sidecars = sidecars.len();
-    out.by_sidecars = store.recover(&sidecars);
+    out.sidecars = counters.len();
+    out.by_sidecars = store.recover(counters);
 
     out.unnamed = store.classes_wanting(Named::Sidecar).len();
     out

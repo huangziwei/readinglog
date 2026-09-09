@@ -392,6 +392,7 @@ mod tests {
                 stated_wpm: None,
                 device_seconds: 0,
                 device_words: 0,
+                marks: Vec::new(),
             })
             .collect();
         Stats {

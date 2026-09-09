@@ -2,6 +2,8 @@
 //! through `Store::extent_of`, is the catalog's `p_contentSize`, which a
 //! [`BookRecord`] is keyed by.
 
+use crate::annotate::Mark;
+use crate::clippings::Kind;
 use crate::date;
 use crate::log::session::{Measure, Session};
 use crate::settings::{Figures, WeekStart};
@@ -58,6 +60,9 @@ pub struct BookStat {
     /// where no `t` row names it.
     pub device_seconds: i64,
     pub device_words: i64,
+    /// Where this book's marks sit in [`Stats::marks`], in the order they were
+    /// made. [`Stats::marks_of`] is the way in.
+    pub marks: Vec<usize>,
 }
 
 impl BookStat {
@@ -252,6 +257,9 @@ pub struct Stats {
     pub skipped_seconds: i64,
     /// Seconds on a book no record names. In every total, drawn as no row.
     pub unnamed_seconds: i64,
+    /// Every mark the record holds, ascending by when it was made.
+    /// [`BookStat::marks`] indexes into this.
+    pub marks: Vec<Mark>,
 }
 
 impl Stats {
@@ -341,6 +349,103 @@ impl Stats {
         out.longest_streak = longest;
         out.current_streak = current;
         out.sort_books();
+        out.hold_marks(store);
+        out
+    }
+
+    /// Hand every `a` row to the book it names. `sort_books` has run, so the
+    /// indices this writes are the ones the screens address.
+    ///
+    /// A mark whose book nothing here lists — a clipping for a book the record
+    /// has no sitting of — is held all the same. It is what was read and
+    /// marked on a day, and the days are counted whether or not a book was
+    /// ever named.
+    fn hold_marks(&mut self, store: &Store) {
+        self.marks = store.marks.clone();
+        // The extent is the key; a record the catalog reached by its content
+        // key alone carries none, so its title stands in.
+        let by_title: Vec<(String, usize)> = self
+            .books
+            .iter()
+            .enumerate()
+            .map(|(at, b)| (crate::identify::normalise(&b.title), at))
+            .collect();
+        for (at, mark) in self.marks.iter().enumerate() {
+            let slot = self
+                .books
+                .iter()
+                .position(|b| mark.extent != 0 && b.extent == mark.extent)
+                .or_else(|| {
+                    let want = crate::identify::normalise(&mark.title);
+                    by_title
+                        .iter()
+                        .find(|(title, _)| *title == want)
+                        .map(|(_, at)| *at)
+                });
+            if let Some(slot) = slot {
+                self.books[slot].marks.push(at);
+            }
+        }
+    }
+
+    /// The marks one book carries, in the order they were made.
+    pub fn marks_of(&self, book: usize) -> impl Iterator<Item = &Mark> {
+        self.books
+            .get(book)
+            .into_iter()
+            .flat_map(|b| b.marks.iter().filter_map(|at| self.marks.get(*at)))
+    }
+
+    /// One book's marks as a screen lists them: the kinds that mark a passage
+    /// of the book's own text, most recently made first, each with the note
+    /// the reader wrote on it.
+    ///
+    /// A bookmark and a pin mark a place rather than a passage and carry no
+    /// words at all; neither is a highlight or a note, and neither is here.
+    pub fn marked(&self, book: usize) -> Vec<crate::annotate::Marked<'_>> {
+        let mut held: Vec<&Mark> = self
+            .marks_of(book)
+            .filter(|m| m.kind.marks_a_passage())
+            .collect();
+        held.reverse();
+        crate::annotate::paired(&held)
+    }
+
+    /// Marks made on one day, whatever book they belong to.
+    pub fn marks_on(&self, day: i64) -> impl Iterator<Item = &Mark> {
+        self.marks.iter().filter(move |m| m.day() == Some(day))
+    }
+
+    /// How many passages one book carries a mark on, which is what
+    /// [`Self::marked`] lists. Every stored row is one the book still holds:
+    /// `annotate::fold` writes none for a mark the reader deleted.
+    pub fn marks_held(&self, book: usize) -> usize {
+        self.marked(book).len()
+    }
+
+    /// One book's marks by kind, in [`Kind::ALL`]'s order, leaving out the
+    /// kinds it carries none of.
+    pub fn marks_by_kind(&self, book: usize) -> Vec<(Kind, usize)> {
+        Kind::ALL
+            .into_iter()
+            .filter_map(|kind| {
+                let n = self.marks_of(book).filter(|m| m.kind == kind).count();
+                (n > 0).then_some((kind, n))
+            })
+            .collect()
+    }
+
+    /// One book's marks by colour, most first. A mark the sidecar never
+    /// reached states none and is left out: no clipping carries a colour.
+    pub fn marks_by_colour(&self, book: usize) -> Vec<(String, usize)> {
+        let mut out: Vec<(String, usize)> = Vec::new();
+        for mark in self.marks_of(book).filter(|m| !m.colour.is_empty()) {
+            match out.iter_mut().find(|(name, _)| *name == mark.colour) {
+                Some(held) => held.1 += 1,
+                None => out.push((mark.colour.clone(), 1)),
+            }
+        }
+        out.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
         out
     }
 
@@ -740,6 +845,7 @@ fn fresh(extent: i64, found: &BookRecord, day: i64) -> BookStat {
         stated_wpm: None,
         device_seconds: 0,
         device_words: 0,
+        marks: Vec::new(),
     }
 }
 
@@ -1291,6 +1397,8 @@ mod tests {
             mark_offset: None,
             floor: String::new(),
             cleared: Vec::new(),
+            marks: Vec::new(),
+            gate: None,
         }
     }
 

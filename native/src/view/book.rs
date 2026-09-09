@@ -7,11 +7,11 @@ use crate::lang::Strings;
 use crate::stats::BookStat;
 use crate::ui::chrome;
 use crate::ui::cover;
-use crate::ui::paint::Rect;
+use crate::ui::paint::{self, INK, LIGHT, Rect};
 use crate::ui::text::TextRenderer;
 use crate::ui::{charts, theme::Theme};
 
-use super::{Ask, Ctx, Hit, band};
+use super::{Ask, BookTab, Ctx, Hit, band, marks};
 
 /// The most columns the strip along the bottom is cut into.
 const SPAN_COLUMNS: i64 = 30;
@@ -31,7 +31,7 @@ fn unit(book: &BookStat, s: &Strings) -> (&'static str, &'static str) {
 }
 
 /// Rows of figures the reading section lists.
-const LINES: usize = 10;
+const LINES: usize = 11;
 
 /// What a row states in place of a figure it has none of.
 const DASH: &str = "—";
@@ -173,7 +173,41 @@ fn heading_height(
         + open_height(text, theme, script, book, s)
 }
 
-pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
+/// The height of the strip the two pages are picked off, its air included.
+fn picker_height(theme: &Theme) -> i32 {
+    chrome::chip_height(theme) + theme.gap * 2
+}
+
+/// The book's two pages as a segmented control, each its own hit box — the
+/// shape `rhythm::picker` gives the spans, so the two screens are picked
+/// from alike.
+fn picker(cx: &mut Ctx, area: Rect, on: BookTab) {
+    let theme: &Theme = cx.theme;
+    let cells = area.columns(BookTab::ALL.len() as i32, 0);
+    cx.text.set_px(theme.body_px);
+    let baseline = area.center_y() + cx.text.cap_height() as i32 / 2;
+    let script = cx.ui_script();
+    for (tab, cell) in BookTab::ALL.iter().zip(cells) {
+        let lit = *tab == on;
+        match lit {
+            true => paint::fill(cx.fb, cell, INK),
+            false => paint::stroke(cx.fb, cell, LIGHT, 1),
+        }
+        let label = tab.label(cx.lang);
+        let w = cx.text.measure_width_in(script, label) as i32;
+        cx.text.draw_in(
+            script,
+            cx.fb,
+            cell.x + (cell.w - w) / 2,
+            baseline,
+            label,
+            lit,
+        );
+        cx.hit(Hit::BookTab(*tab), cell);
+    }
+}
+
+pub fn draw(cx: &mut Ctx, area: Rect, index: usize, tab: BookTab, marks_from: usize) {
     let Some(book) = cx.stats.books.get(index) else {
         return;
     };
@@ -184,6 +218,20 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
     // Each band takes what it draws into.
     let air = theme.gap * 2;
     let ui = cx.ui_script();
+    let (bar, area) = area.split_top(picker_height(theme));
+    picker(
+        cx,
+        Rect::new(bar.x, bar.y, bar.w, chrome::chip_height(theme)),
+        tab,
+    );
+    // The cover, the headline figures, the progress bar and the controls are
+    // the statistics page's own. What the reader marked gets the whole box:
+    // the words are what that page is for, and every band over them is one
+    // fewer passage on it.
+    if tab == BookTab::Marks {
+        marks::draw(cx, area, index, marks_from);
+        return;
+    }
     let (head, rest) = area.split_top(heading_height(cx.text, theme, ui, &book, s) + air);
     heading(
         cx,
@@ -206,6 +254,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
     let lines: [(&str, String); LINES] = [
         (s.sittings, book.sittings.to_string()),
         (s.days, days_note(&book, s)),
+        (s.marks_row, cx.stats.marks_held(index).to_string()),
         (s.average_a_day, date::duration(book.per_day(from), s)),
         (
             s.average_a_sitting,
@@ -534,6 +583,7 @@ mod tests {
             stated_wpm: None,
             device_seconds: 0,
             device_words: 0,
+            marks: Vec::new(),
         }
     }
 

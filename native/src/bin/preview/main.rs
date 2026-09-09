@@ -23,7 +23,9 @@ use readinglog_native::ui::splash;
 use readinglog_native::ui::text::TextRenderer;
 use readinglog_native::ui::theme::Theme;
 use readinglog_native::update::{Doing, Failure, Outcome};
-use readinglog_native::view::{About, Ask, Healing, Reset, Retrying, Shelf, Sort, Span, Window};
+use readinglog_native::view::{
+    About, Ask, BookTab, Healing, Reset, Retrying, Shelf, Sort, Span, Window,
+};
 
 /// The day the preview is set to, and the second of it.
 const DAY: (i64, i64, i64) = (2026, 9, 16);
@@ -413,20 +415,23 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
     let Some((_, tab)) = SCREENS.iter().find(|(name, _)| *name == shot.name) else {
         return Err(anyhow!("no screen or sketch called {}", shot.name));
     };
-    // `book:<index>`, and `book:<index>:<question>` with one up over it.
-    let (book, asking) = match shot.name.as_str() {
+    // `book:<index>`, `book:<index>:marks` for the book's other page, and
+    // `book:<index>:<question>` with one up over it.
+    let (book, asking, page) = match shot.name.as_str() {
         "book" => {
             let of = shot.of.as_deref().unwrap_or("0");
-            let (at, asking) = match of.split_once(':') {
-                Some((at, "cleared")) => (at, None),
-                Some((at, name)) => (at, Some(question(name)?)),
-                None => (of, None),
+            let (at, asking, page) = match of.split_once(':') {
+                Some((at, "cleared")) => (at, None, BookTab::Statistics),
+                Some((at, "marks")) => (at, None, BookTab::Marks),
+                Some((at, name)) => (at, Some(question(name)?), BookTab::Statistics),
+                None => (of, None, BookTab::Statistics),
             };
-            (Some(at.parse().unwrap_or(0)), asking)
+            (Some(at.parse().unwrap_or(0)), asking, page)
         }
-        _ => (None, None),
+        _ => (None, None, BookTab::Statistics),
     };
     app.show(*tab, book);
+    app.set_book_tab(page);
     app.ask(book.zip(asking));
     if shot.name == "config" {
         app.set_config_page(usize::from(shot.of.as_deref() == Some("many2")));
@@ -705,7 +710,7 @@ fn list() {
             }
             "today" => "  (:quiet :empty :busy)",
             "book" => {
-                "  (:<index> :<index>:restart :<index>:mark :<index>:unmark\n   :<index>:clear :<index>:cleared)"
+                "  (:<index> :<index>:marks :<index>:restart :<index>:mark\n   :<index>:unmark :<index>:clear :<index>:cleared)"
             }
             "config" => "  (:reset :nobackup :restore :logs :heal :retry :many :many2)",
             "books" => {
@@ -824,6 +829,9 @@ fn everything() -> Vec<Shot> {
         "books:windowprogress",
         "books:windowempty",
         "book",
+        "book:13:marks",
+        "book:12:marks",
+        "book:0:marks",
         "config",
         "update:downloading",
         "update:done",

@@ -109,6 +109,48 @@ impl Palette {
 }
 
 /// A box on the screen.
+/// The eleven colours `AnnotationColor` names on 5.19, and the neutral a mark
+/// stating none takes.
+///
+/// A `.sdr` states the colour verbatim and nothing here reads it, so a name
+/// this table does not hold — a colour a later firmware adds — takes the
+/// neutral rather than a wrong swatch.
+const MARK_COLOURS: [(&str, [u8; 3]); 11] = [
+    ("orange", [0xF5, 0xA6, 0x23]),
+    ("yellow", [0xF3, 0xCE, 0x2B]),
+    ("blue", [0x4A, 0x90, 0xD9]),
+    ("dark_blue", [0x2A, 0x4B, 0x8D]),
+    ("aqua", [0x3F, 0xB8, 0xAF]),
+    ("green", [0x5C, 0xB8, 0x5C]),
+    ("pink", [0xEE, 0x62, 0x92]),
+    ("purple", [0x9B, 0x59, 0xB6]),
+    ("red", [0xD9, 0x4F, 0x45]),
+    ("gray", [0x9E, 0x9E, 0x9E]),
+    ("default", [DARK; 3]),
+];
+
+/// What the bar beside a marked passage is drawn in: the colour the sidecar
+/// stated, and [`DARK`] on a panel drawing grey or for a mark stating none.
+///
+/// A clipping carries no colour at all, so a mark the sidecar never reached
+/// takes the neutral — which is the honest answer, not a guess at one.
+pub fn mark_colour(name: &str, coloured: bool) -> [u8; 3] {
+    if !coloured {
+        return [DARK; 3];
+    }
+    MARK_COLOURS
+        .iter()
+        .find(|(held, _)| *held == name)
+        .map_or([DARK; 3], |(_, rgb)| *rgb)
+}
+
+/// Whether `palette` can show a colour at all: a panel with no filter, and a
+/// reader who asked for grey, both draw the neutral.
+pub fn is_coloured(palette: &Palette) -> bool {
+    let [r, g, b] = palette.steps[3];
+    r != g || g != b
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Rect {
     pub x: i32,

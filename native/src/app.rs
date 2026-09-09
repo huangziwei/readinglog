@@ -180,6 +180,12 @@ impl App {
         self.state.config_page = page;
     }
 
+    /// Draw the open book at `tab`, whatever it was left on.
+    pub fn set_book_tab(&mut self, tab: view::BookTab) {
+        self.state.book_tab = tab;
+        self.state.marks_from = 0;
+    }
+
     /// Draw All Time at `page`, whatever it was left on.
     pub fn set_alltime_page(&mut self, page: usize) {
         self.state.alltime_page = page;
@@ -270,7 +276,7 @@ impl App {
         };
         self.frame(fb, &mut |cx, area| match state.book {
             Some(index) => {
-                view::book::draw(cx, area, index);
+                view::book::draw(cx, area, index, state.book_tab, state.marks_from);
                 if let Some((at, ask)) = state.asked
                     && at == index
                 {
@@ -728,7 +734,18 @@ impl App {
                 self.state.list_from = 0;
                 self.settings.save();
             }
-            Hit::Book(index) => self.state.book = Some(index),
+            Hit::Book(index) => self.state.open_book(index),
+            Hit::BookTab(tab) => {
+                if !self.state.go_in_book(tab) {
+                    return Action::Nothing;
+                }
+            }
+            Hit::MarksPage(from) => {
+                if self.state.marks_from == from {
+                    return Action::Nothing;
+                }
+                self.state.marks_from = from;
+            }
             // A second tap on the day picked drops it again.
             Hit::Day(day) => {
                 self.state.picked = !(self.state.picked && self.state.day == day);
@@ -979,14 +996,20 @@ impl App {
         let books = crate::catalog::read();
         let dir = self.dir.clone();
         let stated = self.store.remember(&books);
-        let rescue = crate::identify::rescue(&mut self.store);
+        let shelf = crate::identify::walk(std::path::Path::new(crate::sidecar::DOCUMENTS_DIR));
+        let rescue = crate::identify::rescue(&mut self.store, &shelf);
+        let merge = crate::annotate::fold(
+            &mut self.store,
+            std::path::Path::new(crate::clippings::CLIPPINGS_FILE),
+            &shelf,
+        );
         let refreshed = stated + rescue.named() + self.store.keep_covers(&dir);
         eprintln!(
             "reset: {} catalog rows, {refreshed} book records refreshed, {} held",
             books.len(),
             self.store.books.len(),
         );
-        if refreshed > 0 {
+        if refreshed > 0 || merge.read {
             self.store_it("reset");
         }
         self.covers.forget();
@@ -1142,7 +1165,7 @@ impl App {
             // A book open when the setting changed may be one of the hidden.
             let here = shelf.iter().position(|b| *b == at).unwrap_or(0) as i64;
             let next = (here + by).rem_euclid(shelf.len() as i64) as usize;
-            self.state.book = Some(shelf[next]);
+            self.state.open_book(shelf[next]);
             return Action::Redraw;
         }
         match self.state.tab {

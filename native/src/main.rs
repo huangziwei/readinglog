@@ -13,7 +13,10 @@ use readinglog_native::eink::touch::Touch;
 use readinglog_native::orientation::Orientation;
 use readinglog_native::stats::Stats;
 use readinglog_native::store::Store;
-use readinglog_native::{app, catalog, date, font, identify, lang, settings, store, ui, zone};
+use readinglog_native::{
+    annotate, app, catalog, clippings, date, font, identify, lang, settings, sidecar, store, ui,
+    zone,
+};
 
 fn main() {
     let mode = std::env::args().nth(1).unwrap_or_default();
@@ -69,10 +72,13 @@ fn collect_into(store: &mut Store, dir: &Path, on: &mut dyn FnMut(usize, usize))
     }
     // The catalog speaks first: it is the cheapest to read and states the most
     // about every book it names. `identify::rescue` then asks the three
-    // sources that can name what it left unnamed.
+    // sources that can name what it left unnamed, and `annotate::fold` joins
+    // the two the same walk reaches.
     let books = catalog::read();
     let stated = store.remember(&books);
-    let rescue = identify::rescue(store);
+    let shelf = identify::walk(Path::new(sidecar::DOCUMENTS_DIR));
+    let rescue = identify::rescue(store, &shelf);
+    let merge = annotate::fold(store, Path::new(clippings::CLIPPINGS_FILE), &shelf);
     let refreshed = stated + rescue.named() + store.keep_covers(dir);
     eprintln!(
         "collect: {} lines (live {}, chunks {}, dumps {}, skipped {}) \
@@ -93,8 +99,9 @@ fn collect_into(store: &mut Store, dir: &Path, on: &mut dyn FnMut(usize, usize))
         store.books.len(),
     );
     report(&rescue);
+    report_marks(&merge);
     // An unchanged store is left on disk unwritten.
-    if pass.added + pass.extended + refreshed == 0 {
+    if pass.added + pass.extended + refreshed == 0 && !merge.read {
         return;
     }
     // A failed `save` leaves `store` drawable and unsaved.
@@ -120,6 +127,24 @@ fn report(rescue: &identify::Rescue) {
         rescue.by_sidecars,
         rescue.unnamed,
         rescue.contested,
+    );
+}
+
+/// What the two annotation sources came to, one line, and nothing at all where
+/// the gate held and neither was read.
+fn report_marks(merge: &annotate::Merge) {
+    if !merge.read {
+        return;
+    }
+    eprintln!(
+        "annotate: {} clippings, {} sidecar records over {} books that could say; \
+         {} live, {} retired, {} unconfirmed",
+        merge.clippings,
+        merge.sidecars,
+        merge.trusted,
+        merge.live,
+        merge.retired,
+        merge.unconfirmed,
     );
 }
 

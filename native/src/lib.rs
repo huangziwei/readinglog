@@ -5,6 +5,7 @@
 // `--document-private-items`.
 #![allow(rustdoc::private_intra_doc_links)]
 
+pub mod annotate;
 pub mod app;
 pub mod backup;
 pub mod catalog;

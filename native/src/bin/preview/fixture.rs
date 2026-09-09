@@ -4,6 +4,8 @@
 
 use std::path::Path;
 
+use readinglog_native::annotate::{Mark, State};
+use readinglog_native::clippings::Kind;
 use readinglog_native::date;
 use readinglog_native::log::session::{Measure, Session};
 use readinglog_native::store::{BookRecord, FINISHED_PERCENT, Named, Store};
@@ -362,7 +364,154 @@ pub fn library(last: i64, art: &Path) -> Store {
         .sessions
         .sort_by(|a, b| a.started_at.cmp(&b.started_at));
     climb(&mut store);
+    marked(&mut store, last);
     store
+}
+
+/// What the reader marked, laid down after the seeded loop so every shot that
+/// does not draw a mark stays pixel-identical.
+///
+/// One row per case the screen has to hold: a highlight with a colour and a
+/// real position, a note in the reader's own words, one no sidecar could place
+/// so that only the display location stands, a bookmark carrying no words at
+/// all, and a passage long enough to be cut. Slot 1 and slot 2 are in Japanese
+/// and Han so the list is read in the script the book is set in, and most of
+/// the shelf carries nothing — a book with no marks is the ordinary case and
+/// its own picture.
+///
+/// Nothing here is [`State::Retired`]: `annotate::fold` stores no row for a
+/// mark the reader deleted, so a store holding one is a store no device
+/// writes.
+fn marked(store: &mut Store, last: i64) {
+    /// `(slot, kind, state, through the book, the day it was made, the words)`.
+    const MARKS: &[(usize, Kind, State, f64, i64, &str)] = &[
+        (
+            0,
+            Kind::Highlight,
+            State::Live,
+            0.080,
+            86,
+            "The road remembers every cart that ever crossed it, and forgives none of them.",
+        ),
+        // A note the reader wrote on the passage above: its own range sits
+        // inside that one, which is the only thing tying the two together.
+        (
+            0,
+            Kind::Note,
+            State::Live,
+            0.0801,
+            86,
+            "This is the line the whole first part turns on — come back to it.",
+        ),
+        (
+            0,
+            Kind::Highlight,
+            State::Live,
+            0.224,
+            61,
+            "Salt is the only cargo that pays for its own weight twice: once going out, once coming back, and the second time in stories.",
+        ),
+        (0, Kind::Bookmark, State::Live, 0.310, 60, ""),
+        (
+            0,
+            Kind::Highlight,
+            State::Live,
+            0.447,
+            44,
+            "She counted the wells the way other people count birthdays.",
+        ),
+        (
+            0,
+            Kind::Underline,
+            State::Live,
+            0.688,
+            21,
+            "Nobody crosses the same desert twice, and nobody who says otherwise has crossed it once.",
+        ),
+        (
+            0,
+            Kind::Highlight,
+            State::Unconfirmed,
+            0.912,
+            9,
+            "There is a kind of arithmetic that only works at night, and she had all of it by heart, and none of it written down anywhere that a customs officer could ever be shown.",
+        ),
+        (
+            1,
+            Kind::Highlight,
+            State::Live,
+            0.142,
+            140,
+            "海はいつも同じ顔をしているようで、測るたびに違う数字を返してくる。",
+        ),
+        (
+            1,
+            Kind::Note,
+            State::Live,
+            0.1421,
+            140,
+            "ここの言い回しがすごく好き。あとで引用する。",
+        ),
+        (
+            1,
+            Kind::Highlight,
+            State::Unconfirmed,
+            0.530,
+            96,
+            "静けさというのは音がないことではなく、聞くべき音が決まっていることなのだと父は言った。",
+        ),
+        (
+            2,
+            Kind::Highlight,
+            State::Live,
+            0.317,
+            210,
+            "橋を渡る者は、渡らなかった者のことを一度も考えない。",
+        ),
+        (
+            2,
+            Kind::Highlight,
+            State::Live,
+            0.402,
+            200,
+            "第二座橋建成那年，河水改道了。",
+        ),
+    ];
+    for (slot, kind, state, through, back, body) in MARKS {
+        let Some(book) = store.books.get(*slot) else {
+            continue;
+        };
+        let start = (book.extent as f64 * through) as i64;
+        // A mark no sidecar placed has no position at all — only the display
+        // location the clipping named, which is on another axis.
+        let placed = *state != State::Unconfirmed;
+        store.marks.push(Mark {
+            extent: book.extent,
+            title: book.title.clone(),
+            kind: *kind,
+            at: date::stamp(last - back, 9 * 3600 + (start % 3_600)),
+            state: *state,
+            start: match placed {
+                true => start,
+                false => -1,
+            },
+            // A note covers the few words it was written on; a passage covers
+            // a run of them.
+            end: match (placed, kind) {
+                (true, Kind::Note) => start + 8,
+                (true, _) => start + 400,
+                (false, _) => -1,
+            },
+            location: start / 150,
+            page: String::new(),
+            colour: match (placed, kind) {
+                (true, Kind::Highlight | Kind::Underline) => "orange".into(),
+                _ => String::new(),
+            },
+            body: (*body).into(),
+        });
+    }
+    store.marks.sort_by(|a, b| a.at.cmp(&b.at));
 }
 
 /// Give each sitting the place its book stood at as it ended: an even climb
