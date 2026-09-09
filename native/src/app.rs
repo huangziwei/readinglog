@@ -49,6 +49,9 @@ pub struct App {
     dir: std::path::PathBuf,
     /// Where every touchable thing was on the last frame.
     hits: Vec<(Hit, crate::ui::paint::Rect)>,
+    /// Whether the device's keyboard stands over the foot of the screen.
+    /// [`App::reconcile_keyboard`] holds it against what the state asks for.
+    keyboard: bool,
 }
 
 impl App {
@@ -78,6 +81,7 @@ impl App {
             today,
             now,
             hits: Vec::new(),
+            keyboard: false,
         }
     }
 
@@ -204,6 +208,75 @@ impl App {
         self.state.books_from = 0;
     }
 
+    /// Put a search up over the Books screen, or take one down.
+    pub fn set_search(&mut self, search: Option<view::Search>) {
+        self.state.search = search;
+    }
+
+    /// Take `keysyms` into the open search, answering whether the screen
+    /// moved. Nothing is typed anywhere else: the keyboard only stands over a
+    /// search.
+    fn typed(&mut self, keysyms: &[u32]) -> bool {
+        use crate::eink::keysym::{Typed, of_keysym};
+        if keysyms.is_empty() || self.state.search.is_none() {
+            return false;
+        }
+        let mut moved = false;
+        for keysym in keysyms {
+            let Some(said) = of_keysym(*keysym) else {
+                continue;
+            };
+            // A key that leaves the search takes the rest of the batch with it.
+            if said == Typed::Escape {
+                self.state.search = None;
+                return true;
+            }
+            let Some(search) = self.state.search.as_mut() else {
+                return moved;
+            };
+            match said {
+                Typed::Char(said) => {
+                    search.typed(said);
+                    moved = true;
+                }
+                Typed::Backspace => moved |= search.backspace(),
+                // The query is finished: the keyboard goes and the results
+                // take the whole page back.
+                Typed::Enter => {
+                    moved |= search.keyboard;
+                    search.keyboard = false;
+                }
+                Typed::Escape => unreachable!("answered above"),
+            }
+        }
+        moved
+    }
+
+    /// Whether a touch at `y` lands on the keyboard rather than on this app.
+    ///
+    /// Ungrabbed, the touchscreen still delivers to us everything the keyboard
+    /// is being typed on, and a row drawn under it would answer a tap meant
+    /// for a key.
+    fn under_keyboard(&self, y: i32) -> bool {
+        self.keyboard
+            && y >= self.theme.screen.bottom() - crate::keyboard::height(self.theme.screen.h)
+    }
+
+    /// Raise or dismiss the device's keyboard, to match what the state asks
+    /// for. It is another X client, so it is only ever spoken to from a frame
+    /// that has a server behind it.
+    fn reconcile_keyboard(&mut self, on_screen: bool) {
+        let want = on_screen && self.state.search.as_ref().is_some_and(|s| s.keyboard);
+        if want == self.keyboard {
+            return;
+        }
+        self.keyboard = want;
+        let _ = match want {
+            true => crate::keyboard::open(),
+            false => crate::keyboard::close(),
+        };
+    }
+
     /// List the books on `shelf`, whatever the Books screen was left on.
     pub fn set_shelf(&mut self, shelf: crate::view::Shelf) {
         self.state.shelf = shelf;
@@ -262,6 +335,7 @@ impl App {
 
     /// Draw the whole screen and present it.
     pub fn draw(&mut self, fb: &mut Framebuffer) -> Result<()> {
+        self.reconcile_keyboard(fb.on_screen());
         let settings = self.settings.clone();
         let colour = self.colour;
         let state = self.state.clone();
@@ -293,7 +367,10 @@ impl App {
                 }
                 Tab::Home => view::home::draw(cx, area, state.list_from),
                 Tab::Rhythm => view::rhythm::draw(cx, area, &state),
-                Tab::Books => view::books::draw(cx, area, &state),
+                Tab::Books => match &state.search {
+                    Some(search) => view::search::draw(cx, area, search),
+                    None => view::books::draw(cx, area, &state),
+                },
             },
         })
     }
@@ -454,19 +531,29 @@ impl App {
     pub fn run(&mut self, fb: &mut Framebuffer, input: &mut Input) -> Result<()> {
         fb.pump_events();
         self.took_size(fb);
+        // A key the on-screen keyboard sends arrives on the X connection, not
+        // on either input device.
+        input.watch(fb.raw_fd());
         self.draw(fb)?;
         let mut down: Option<(u32, u32)> = None;
         loop {
+            // An exclusive grab on the touchscreen blinds the X server, and
+            // with it the keyboard: it would draw and never feel a tap.
+            input.set_keyboard(self.keyboard);
             match input.event()? {
                 // `follow_orientation_now` maps the `Up` this stroke ends on. A
                 // `Down` behind a change is dropped, leaving a tap at its `Up`.
                 InputEvent::Touch(TouchEvent::Down { x, y }) => {
-                    down = match input.follow_orientation_now() {
+                    down = match input.follow_orientation_now() || self.under_keyboard(y as i32) {
                         true => None,
                         false => Some((x, y)),
                     };
                 }
                 InputEvent::Touch(TouchEvent::Up { x, y }) => {
+                    if self.under_keyboard(y as i32) {
+                        down = None;
+                        continue;
+                    }
                     let from = down.take();
                     let swipe = from.and_then(|(x0, y0)| {
                         classify_swipe(x0, y0, x, y, self.theme.screen.w as u32)
@@ -522,6 +609,7 @@ impl App {
                         input.set_covered(covered);
                     }
                     input.retake();
+                    let typed = self.typed(&pump.typed);
                     if input.follow_orientation() {
                         down = None;
                     }
@@ -536,7 +624,7 @@ impl App {
                         Some(true) => {}
                         // Uncovered: drawn without an `Expose`.
                         Some(false) => self.draw(fb)?,
-                        None if pump.repaint => self.draw(fb)?,
+                        None if pump.repaint || typed => self.draw(fb)?,
                         None => {}
                     }
                 }
@@ -810,6 +898,43 @@ impl App {
                     return Action::Nothing;
                 }
                 self.state.books_from = at;
+            }
+            Hit::Search => {
+                self.state.search = Some(view::Search {
+                    keyboard: true,
+                    ..view::Search::default()
+                });
+            }
+            Hit::SearchField => {
+                let Some(search) = self.state.search.as_mut() else {
+                    return Action::Nothing;
+                };
+                if search.keyboard {
+                    return Action::Nothing;
+                }
+                search.keyboard = true;
+            }
+            Hit::SearchClear => {
+                let Some(search) = self.state.search.as_mut() else {
+                    return Action::Nothing;
+                };
+                match search.query.is_empty() {
+                    // Nothing to take off, so the mark takes the search off.
+                    true => self.state.search = None,
+                    false => {
+                        search.query.clear();
+                        search.from = 0;
+                    }
+                }
+            }
+            Hit::SearchPage(at) => {
+                let Some(search) = self.state.search.as_mut() else {
+                    return Action::Nothing;
+                };
+                if at == search.from {
+                    return Action::Nothing;
+                }
+                search.from = at;
             }
             Hit::ConfigPage(at) => {
                 if at == self.state.config_page {
@@ -1210,6 +1335,27 @@ impl App {
                 self.state.list_from = 0;
                 Action::Redraw
             }
+            Tab::Books if self.state.search.is_some() => {
+                let Some(search) = self.state.search.clone() else {
+                    return Action::Nothing;
+                };
+                let area = chrome::content_box(&self.theme);
+                let count =
+                    view::search::listed(&self.stats, &search.query, self.settings.show_uncovered)
+                        .len();
+                let box_ = view::search::results_box(&self.theme, area, search.keyboard);
+                let step = view::books::rows_per_page(&self.theme, box_) as i64;
+                let last = view::books::last_page_at(&self.theme, box_, count);
+                let from = search.from as i64 + by * step;
+                let capped = from.clamp(0, last as i64) as usize;
+                if capped == search.from {
+                    return Action::Nothing;
+                }
+                if let Some(search) = self.state.search.as_mut() {
+                    search.from = capped;
+                }
+                Action::Redraw
+            }
             Tab::Books => {
                 // `rows_per_page` states the step.
                 let chips = !self.stats.books.is_empty();
@@ -1255,4 +1401,15 @@ enum Action {
     Heal,
     /// Carry out one of the config page's resets, over the whole screen.
     Resetting(view::Reset),
+}
+
+impl Drop for App {
+    /// A keyboard left up outlives the app: the reader is handed back to the
+    /// framework with a third of the screen taken by a keyboard nothing is
+    /// listening to.
+    fn drop(&mut self) {
+        if self.keyboard {
+            crate::keyboard::close();
+        }
+    }
 }

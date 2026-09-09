@@ -309,6 +309,112 @@ pub fn stroke(fb: &mut Framebuffer, r: Rect, value: u8, width: i32) {
     fill(fb, Rect::new(r.right() - width, r.y, width, r.h), value);
 }
 
+/// An outline `width` thick inside the box, `radius` at the corners.
+pub fn round_stroke(fb: &mut Framebuffer, r: Rect, radius: i32, value: u8, width: i32) {
+    if r.x < 0 || r.y < 0 || r.w <= 0 || r.h <= 0 || width <= 0 {
+        return;
+    }
+    let (x, y) = (r.x as u32, r.y as u32);
+    let (w, h) = (r.w as u32, r.h as u32);
+    let radius = (radius.max(0) as u32).min(w / 2).min(h / 2);
+    let t = (width as u32).min(w).min(h);
+    let (straight_w, straight_h) = (w.saturating_sub(radius * 2), h.saturating_sub(radius * 2));
+    if straight_w > 0 {
+        fb.fill_rect(y, x + radius, straight_w, t, value);
+        fb.fill_rect(y + h - t, x + radius, straight_w, t, value);
+    }
+    if straight_h > 0 {
+        fb.fill_rect(y + radius, x, t, straight_h, value);
+        fb.fill_rect(y + radius, x + w - t, t, straight_h, value);
+    }
+    let (left, right) = (r.x + radius as i32, r.right() - 1 - radius as i32);
+    let (top, bottom) = (r.y + radius as i32, r.bottom() - 1 - radius as i32);
+    for (cx, cy, sx, sy) in [
+        (left, top, -1, -1),
+        (right, top, 1, -1),
+        (left, bottom, -1, 1),
+        (right, bottom, 1, 1),
+    ] {
+        corner_arc(fb, (cx, cy), radius, t, value, (sx, sy));
+    }
+}
+
+/// One quarter-circle: the pixels of the `radius × radius` corner box lying
+/// `[radius - t, radius]` from `at`. `(sx, sy) ∈ {-1, 1}` picks the quadrant.
+fn corner_arc(fb: &mut Framebuffer, at: (i32, i32), radius: u32, t: u32, value: u8, s: (i32, i32)) {
+    let outer = radius as f32;
+    let inner = radius.saturating_sub(t) as f32;
+    for dy in 0..=radius as i32 {
+        for dx in 0..=radius as i32 {
+            let away = ((dx * dx + dy * dy) as f32).sqrt();
+            if away >= inner && away <= outer {
+                fb.put_pixel(at.0 + s.0 * dx, at.1 + s.1 * dy, value);
+            }
+        }
+    }
+}
+
+/// Two diagonals crossing at the centre of `r`, `size` from it to a stroke's
+/// end and `width` thick.
+pub fn cross(fb: &mut Framebuffer, r: Rect, size: i32, value: u8, width: i32) {
+    let (cx, cy) = (r.x + r.w / 2, r.center_y());
+    for step in -size..=size {
+        for k in 0..width.max(1) {
+            fb.put_pixel(cx + step, cy + step + k, value);
+            fb.put_pixel(cx + step, cy - step + k, value);
+        }
+    }
+}
+
+/// Where the magnifier's lens sits inside its box, as a share of the box's
+/// side, and how far down the diagonal the handle reaches.
+const LENS_AT: f32 = 0.38;
+const LENS_R: f32 = 0.29;
+const HANDLE_TO: f32 = 0.97;
+
+/// A magnifier filling `r`, `width` thick, in `value` over `paper`.
+///
+/// No face on the device carries one, so it is drawn. Coverage is worked out
+/// per pixel and mixed against `paper`: a lens this small reads as a polygon
+/// without it.
+pub fn magnifier(fb: &mut Framebuffer, r: Rect, value: u8, paper: u8, width: i32) {
+    let side = r.w.min(r.h) as f32;
+    let w = width.max(1) as f32;
+    let (cx, cy) = (r.x as f32 + side * LENS_AT, r.y as f32 + side * LENS_AT);
+    let radius = side * LENS_R;
+    // The handle opens where the lens's outer edge crosses the diagonal.
+    let out = (radius + w / 2.0) * std::f32::consts::FRAC_1_SQRT_2;
+    let from = (cx + out, cy + out);
+    let to = (r.x as f32 + side * HANDLE_TO, r.y as f32 + side * HANDLE_TO);
+    for y in r.y..r.bottom() {
+        for x in r.x..r.right() {
+            let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+            let lens = ((px - cx).hypot(py - cy) - radius).abs();
+            let ink = covered(lens, w).max(covered(to_segment((px, py), from, to), w));
+            if ink > 0.0 {
+                let (was, now) = (paper as f32, value as f32);
+                fb.put_pixel(x, y, (was + (now - was) * ink).round() as u8);
+            }
+        }
+    }
+}
+
+/// How much of a pixel a stroke `w` wide covers, `away` from its centre line.
+fn covered(away: f32, w: f32) -> f32 {
+    (0.5 - (away - w / 2.0)).clamp(0.0, 1.0)
+}
+
+/// How far a point lies from a segment.
+fn to_segment(p: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let len = dx * dx + dy * dy;
+    let along = match len {
+        0.0 => 0.0,
+        _ => (((p.0 - a.0) * dx + (p.1 - a.1) * dy) / len).clamp(0.0, 1.0),
+    };
+    (p.0 - (a.0 + dx * along)).hypot(p.1 - (a.1 + dy * along))
+}
+
 pub fn hline(fb: &mut Framebuffer, x: i32, y: i32, w: i32, value: u8, thickness: i32) {
     fill(fb, Rect::new(x, y, w, thickness.max(1)), value);
 }

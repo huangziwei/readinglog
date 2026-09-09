@@ -12,6 +12,7 @@ pub mod home;
 pub mod marks;
 pub mod pager;
 pub mod rhythm;
+pub mod search;
 
 use crate::date;
 use crate::eink::fb::Framebuffer;
@@ -95,6 +96,15 @@ pub enum Hit {
     ConfigPage(usize),
     /// The order the Books screen lists in.
     Sorted(Sort),
+    /// Open the search over the Books tab, with the keyboard up.
+    Search,
+    /// A tap on the search field, which raises the keyboard again.
+    SearchField,
+    /// The mark in the field's right end: it takes the query off, and closes
+    /// the search where there is none to take.
+    SearchClear,
+    /// Where the results open, as an index into them.
+    SearchPage(usize),
     /// Ask what should become of one book's reading, by its index in
     /// [`Stats::books`]. Answered by [`Hit::ClearBook`] or [`Hit::ForgetBook`].
     Clear(usize),
@@ -246,6 +256,33 @@ impl BookTab {
             BookTab::Statistics => s.statistics,
             BookTab::Marks => s.marks_tab,
         }
+    }
+}
+
+/// The search standing over the Books tab: what has been typed, how far the
+/// results have been paged, and whether the keyboard is up over them.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Search {
+    pub query: String,
+    pub from: usize,
+    /// Whether the on-screen keyboard stands over the foot of the screen.
+    /// Return puts it away; a tap on the field raises it again.
+    pub keyboard: bool,
+}
+
+impl Search {
+    /// Take `said` on, and open the results at their head: a longer query
+    /// names other books, and a page held part way down names none of them.
+    pub fn typed(&mut self, said: char) {
+        self.query.push(said);
+        self.from = 0;
+    }
+
+    /// Take the last character off, and open the results at their head.
+    /// Answers whether there was one.
+    pub fn backspace(&mut self) -> bool {
+        self.from = 0;
+        self.query.pop().is_some()
     }
 }
 
@@ -452,6 +489,8 @@ pub struct State {
     pub config_page: usize,
     /// How far down the book list has been paged.
     pub books_from: usize,
+    /// The search open over the Books tab, and what has been typed into it.
+    pub search: Option<Search>,
     /// Which books the Books screen lists.
     pub shelf: Shelf,
     /// The stretch that list is narrowed to.
@@ -482,6 +521,7 @@ impl State {
             confirm: None,
             config_page: 0,
             books_from: 0,
+            search: None,
             shelf: Shelf::default(),
             window: None,
             sort: Sort::default(),
@@ -493,11 +533,16 @@ impl State {
         }
     }
 
-    /// Open `book`'s own screen, at the page a book always opens on.
+    /// Open `book`'s own screen, at the page a book always opens on. Any
+    /// keyboard standing over the search that named it goes: the book's own
+    /// screen has nothing to type into.
     pub fn open_book(&mut self, book: usize) {
         self.book = Some(book);
         self.book_tab = BookTab::default();
         self.marks_from = 0;
+        if let Some(search) = self.search.as_mut() {
+            search.keyboard = false;
+        }
     }
 
     /// Show `tab` of the open book. Answers whether that moved anywhere.
@@ -519,6 +564,7 @@ impl State {
             && self.asked.is_none()
             && self.confirm.is_none()
             && !self.picked
+            && self.search.is_none()
             && self.shelf == Shelf::All
             && self.window.is_none()
         {
@@ -530,6 +576,7 @@ impl State {
         self.confirm = None;
         self.picked = false;
         self.opened_day = false;
+        self.search = None;
         self.shelf = Shelf::All;
         self.window = None;
         self.alltime_page = 0;

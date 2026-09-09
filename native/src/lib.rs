@@ -15,6 +15,7 @@ pub mod date;
 pub mod eink;
 pub mod font;
 pub mod identify;
+pub mod keyboard;
 pub mod lang;
 pub mod log;
 pub mod mark;

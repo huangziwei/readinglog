@@ -93,6 +93,9 @@ pub struct Touch {
     exclusive: bool,
     /// [`Touch::set_covered`]'s state: no grab, no [`Touch::next_event`].
     covered: bool,
+    /// Whether the on-screen keyboard stands over this app, which wants the
+    /// grab dropped for as long as it does.
+    keyboard: bool,
     /// Applied by [`Touch::transform_xy`].
     orientation: Orientation,
     fb_xres: u32,
@@ -137,6 +140,7 @@ impl Touch {
             grabbed,
             exclusive: grabbed,
             covered: false,
+            keyboard: false,
             orientation,
             fb_xres,
             fb_yres,
@@ -162,19 +166,45 @@ impl Touch {
             return;
         }
         self.covered = covered;
-        let want = i32::from(!covered);
-        let ok = unsafe { libc::ioctl(self.file.as_raw_fd(), EVIOCGRAB as _, want) } == 0;
-        self.grabbed = ok && !covered;
-        eprintln!(
-            "touch: covered={covered} grabbed={} ioctl={ok}",
-            self.grabbed
-        );
+        self.apply_grab();
         self.forget_stroke();
+    }
+
+    /// Drops `EVIOCGRAB` while the on-screen keyboard stands, and takes it
+    /// back when it goes.
+    ///
+    /// The grab is exclusive against the X server itself, so a keyboard raised
+    /// under one draws and never feels a tap. Ungrabbed, this app still reads
+    /// its own fd: the caller has to throw away whatever lands on the
+    /// keyboard's own rectangle.
+    pub fn set_keyboard(&mut self, up: bool) {
+        if up == self.keyboard {
+            return;
+        }
+        self.keyboard = up;
+        self.apply_grab();
+        self.forget_stroke();
+    }
+
+    /// Take `EVIOCGRAB` where this app is exclusive and nothing wants it
+    /// dropped, and drop it where something does.
+    fn apply_grab(&mut self) {
+        let want = self.exclusive && !self.covered && !self.keyboard;
+        if want == self.grabbed {
+            return;
+        }
+        let ok =
+            unsafe { libc::ioctl(self.file.as_raw_fd(), EVIOCGRAB as _, i32::from(want)) } == 0;
+        self.grabbed = ok && want;
+        eprintln!(
+            "touch: covered={} keyboard={} grabbed={} ioctl={ok}",
+            self.covered, self.keyboard, self.grabbed
+        );
     }
 
     /// Retakes `EVIOCGRAB` where `exclusive` holds and `grabbed` does not.
     pub fn retake(&mut self) {
-        if self.grabbed || self.covered || !self.exclusive {
+        if self.grabbed || self.covered || self.keyboard || !self.exclusive {
             return;
         }
         self.grabbed = unsafe { libc::ioctl(self.file.as_raw_fd(), EVIOCGRAB as _, 1) } == 0;

@@ -306,7 +306,7 @@ pub fn chip_pad(theme: &Theme) -> i32 {
 
 /// The air between one chip and the next, and between a run and the label
 /// beside it.
-fn chip_gap(theme: &Theme) -> i32 {
+pub fn chip_gap(theme: &Theme) -> i32 {
     theme.px(CHIP_GAP)
 }
 

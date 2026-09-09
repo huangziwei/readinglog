@@ -12,7 +12,7 @@ use x11rb::connection::RequestConnection as _;
 use x11rb::protocol::Event;
 use x11rb::protocol::xproto::{
     Atom, AtomEnum, ConnectionExt, CreateGCAux, CreateWindowAux, EventMask, Gcontext, ImageFormat,
-    ImageOrder, PropMode, Screen, Visibility, Window, WindowClass,
+    ImageOrder, KeyButMask, PropMode, Screen, Visibility, Window, WindowClass,
 };
 use x11rb::rust_connection::RustConnection;
 // `change_property8` lives in the wrapper `ConnectionExt`.
@@ -95,6 +95,26 @@ fn fold(events: &[Event], screensaver: Atom, covered: bool, size: (u32, u32)) ->
         pump.covered = Some(folded);
     }
     pump
+}
+
+/// The keysym one keycode stands for under `state`.
+///
+/// The mapping is asked for a keycode at a time rather than cached, because
+/// the on-screen keyboard writes a keysym the map does not carry into a
+/// scratch keycode of its own just before sending it. It rotates through
+/// thirty-five of them, so the answer is still the right one by the time the
+/// event is read.
+fn keysym_of(conn: &RustConnection, keycode: u8, state: u16) -> Option<u32> {
+    let reply = conn.get_keyboard_mapping(keycode, 1).ok()?.reply().ok()?;
+    // A scratch keycode carries one keysym and no shifted form, so the shifted
+    // column falls back to the plain one.
+    let shifted = usize::from(state & u16::from(KeyButMask::SHIFT) != 0);
+    let at = shifted.min(reply.keysyms.len().saturating_sub(1));
+    let keysym = match reply.keysyms.get(at).copied().unwrap_or(0) {
+        0 => reply.keysyms.first().copied().unwrap_or(0),
+        keysym => keysym,
+    };
+    (keysym != 0).then_some(keysym)
 }
 
 /// `pixel_bytes` rounded up to a multiple of `pad`, the bytes `put_image` takes
@@ -198,7 +218,7 @@ struct Surface {
 }
 
 /// What [`Framebuffer::pump_events`] answers.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Pump {
     /// Set by `Expose` and by `Event::Error`.
     pub repaint: bool,
@@ -206,6 +226,8 @@ pub struct Pump {
     pub covered: Option<bool>,
     /// A `ConfigureNotify` size differing from the one being drawn.
     pub resized: Option<(u32, u32)>,
+    /// What was typed into this window, in order, as keysyms.
+    pub typed: Vec<u32>,
 }
 
 /// How long [`Framebuffer::open`] waits for `MapNotify`.
@@ -281,10 +303,17 @@ impl Framebuffer {
                 .background_pixel(screen.white_pixel)
                 // `VISIBILITY_CHANGE` reports a window put over this one, and
                 // `STRUCTURE_NOTIFY` `MapNotify` and `ConfigureNotify`.
+                //
+                // `KEY_PRESS` is what the on-screen keyboard types into: it
+                // sends a synthetic `KeyPress` to whichever window holds the
+                // input focus, and a window selecting no key mask never gets
+                // one. `KEY_RELEASE` follows each press and is dropped.
                 .event_mask(
                     EventMask::EXPOSURE
                         | EventMask::VISIBILITY_CHANGE
-                        | EventMask::STRUCTURE_NOTIFY,
+                        | EventMask::STRUCTURE_NOTIFY
+                        | EventMask::KEY_PRESS
+                        | EventMask::KEY_RELEASE,
                 ),
         )
         .context("create_window")?;
@@ -385,6 +414,23 @@ impl Framebuffer {
             var: Var { xres, yres },
             backing,
         })
+    }
+
+    /// Whether a server stands behind this framebuffer. `false` under
+    /// [`Framebuffer::offscreen`], where nothing is presented and no other X
+    /// client can be spoken to either.
+    pub fn on_screen(&self) -> bool {
+        self.surface.is_some()
+    }
+
+    /// The X connection's own descriptor, for a `poll(2)` beside the input
+    /// devices. Readable means an event is on the wire, which
+    /// [`Framebuffer::pump_events`] then drains.
+    pub fn raw_fd(&self) -> Option<std::os::fd::RawFd> {
+        use std::os::fd::AsRawFd;
+        self.surface
+            .as_ref()
+            .map(|surface| surface.conn.stream().as_raw_fd())
     }
 
     /// A white `xres` by `yres` surface with no server behind it.
@@ -492,7 +538,14 @@ impl Framebuffer {
         while let Ok(Some(event)) = surface.conn.poll_for_event() {
             events.push(event);
         }
-        let pump = fold(&events, surface.screensaver, surface.covered, size);
+        let mut pump = fold(&events, surface.screensaver, surface.covered, size);
+        for event in &events {
+            if let Event::KeyPress(ev) = event
+                && let Some(keysym) = keysym_of(&surface.conn, ev.detail, ev.state.into())
+            {
+                pump.typed.push(keysym);
+            }
+        }
         if let Some(covered) = pump.covered {
             surface.covered = covered;
         }

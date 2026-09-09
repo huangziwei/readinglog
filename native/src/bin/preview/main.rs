@@ -24,7 +24,7 @@ use readinglog_native::ui::text::TextRenderer;
 use readinglog_native::ui::theme::Theme;
 use readinglog_native::update::{Doing, Failure, Outcome};
 use readinglog_native::view::{
-    About, Ask, BookTab, Healing, Reset, Retrying, Shelf, Sort, Span, Window,
+    About, Ask, BookTab, Healing, Reset, Retrying, Search, Shelf, Sort, Span, Window,
 };
 
 /// The day the preview is set to, and the second of it.
@@ -113,6 +113,7 @@ const SCREENS: &[(&str, Tab)] = &[
     ("rhythm", Tab::Rhythm),
     ("books", Tab::Books),
     ("book", Tab::Books),
+    ("search", Tab::Books),
 ];
 
 /// One picture to draw: a screen or a sketch, and what it is showing.
@@ -454,8 +455,28 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
             Some(other) => bail!("no config shot called {other}"),
         });
     }
+    if shot.name == "search" {
+        app.set_search(Some(searching(shot.of.as_deref())));
+    }
     set_span(app, shot, week)?;
     app.draw(fb)
+}
+
+/// What a `search:<of>` shot is showing. `of` is the query itself, but for
+/// three names: nothing typed, a query naming no book, and one with the
+/// keyboard put away.
+fn searching(of: Option<&str>) -> Search {
+    let (query, keyboard) = match of.unwrap_or("the") {
+        "empty" => ("", true),
+        "none" => ("zzzz", true),
+        "down" => ("the", false),
+        said => (said, true),
+    };
+    Search {
+        query: query.into(),
+        keyboard,
+        from: 0,
+    }
 }
 
 /// The question a `book:<index>:<name>` shot puts up over the book.
@@ -721,6 +742,7 @@ fn list() {
                 "  (:<index> :<index>:marks :<index>:marks:<n> :<index>:restart\n   :<index>:mark :<index>:unmark :<index>:clear :<index>:cleared)"
             }
             "config" => "  (:reset :nobackup :restore :logs :heal :retry :many :many2)",
+            "search" => "  (:<query> :empty :none :down)",
             "books" => {
                 "  (:finished :unfinished :unfinished-progress :time :progress\n   :mid :last :window :windowweek :windowprogress :windowempty)"
             }

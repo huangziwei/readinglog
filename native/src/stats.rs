@@ -13,7 +13,7 @@ use crate::store::{BookRecord, FINISHED_PERCENT, Store};
 pub const NO_DAY: i64 = i64::MIN;
 
 /// One book, with everything ever read in it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct BookStat {
     /// The catalog's number for this book, and the key the views address it by.
     pub extent: i64,

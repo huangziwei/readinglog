@@ -199,6 +199,9 @@ pub struct Strings {
     pub shelf_unfinished: &'static str,
     /// The line for a shelf with no books.
     pub nothing_on_the_shelf: &'static str,
+    /// What stands in the search field before anything is typed, naming the
+    /// two lines of a row a query is matched against.
+    pub search_hint: &'static str,
     /// The three list orders.
     pub by_recent: &'static str,
     pub by_time: &'static str,
@@ -498,6 +501,7 @@ const ENGLISH: Strings = Strings {
     shelf_finished: "Finished",
     shelf_unfinished: "Unfinished",
     nothing_on_the_shelf: "No books here.",
+    search_hint: "Search title or author",
     by_recent: "Recent",
     by_time: "Time",
     by_progress: "Progress",
@@ -746,6 +750,7 @@ const GERMAN: Strings = Strings {
     shelf_finished: "Fertig",
     shelf_unfinished: "Offen",
     nothing_on_the_shelf: "Keine Bücher hier.",
+    search_hint: "Titel oder Autor suchen",
     by_recent: "Zuletzt",
     by_time: "Zeit",
     by_progress: "Fortschritt",
@@ -997,6 +1002,7 @@ const JAPANESE: Strings = Strings {
     shelf_finished: "読了",
     shelf_unfinished: "未読了",
     nothing_on_the_shelf: "該当する本はありません。",
+    search_hint: "題名か著者で検索",
     by_recent: "最近",
     by_time: "時間",
     by_progress: "進捗",
@@ -1224,6 +1230,7 @@ const SIMPLIFIED: Strings = Strings {
     shelf_finished: "已读完",
     shelf_unfinished: "未读完",
     nothing_on_the_shelf: "没有符合的书。",
+    search_hint: "搜索书名或作者",
     by_recent: "最近",
     by_time: "时长",
     by_progress: "进度",
@@ -1459,6 +1466,7 @@ const TRADITIONAL: Strings = Strings {
     shelf_finished: "已讀完",
     shelf_unfinished: "未讀完",
     nothing_on_the_shelf: "沒有符合的書。",
+    search_hint: "搜尋書名或作者",
     by_recent: "最近",
     by_time: "時長",
     by_progress: "進度",

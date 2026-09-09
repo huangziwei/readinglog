@@ -36,6 +36,8 @@ pub struct Input {
     checked: Option<Instant>,
     /// [`Input::set_covered`]'s state.
     covered: bool,
+    /// An extra descriptor to wake on, from [`Input::watch`].
+    watched: Option<RawFd>,
 }
 
 impl Input {
@@ -46,6 +48,7 @@ impl Input {
             orientation: Orientation::Up,
             checked: None,
             covered: false,
+            watched: None,
         }
     }
 
@@ -98,6 +101,20 @@ impl Input {
         }
     }
 
+    /// [`Touch::set_keyboard`]: the touchscreen's grab is dropped while the
+    /// on-screen keyboard stands, so that it can feel a tap at all.
+    pub fn set_keyboard(&mut self, up: bool) {
+        self.touch.set_keyboard(up);
+    }
+
+    /// Wake on `fd` as well as on the input devices, answering an
+    /// [`InputEvent::Tick`] when it is readable. The X connection is what this
+    /// is for: a key the on-screen keyboard sends arrives there, and a tick
+    /// every `TICK_MS` is too slow to type against.
+    pub fn watch(&mut self, fd: Option<RawFd>) {
+        self.watched = fd;
+    }
+
     /// [`Touch::retake`] and `Buttons::retake` over both devices.
     pub fn retake(&mut self) {
         self.touch.retake();
@@ -137,8 +154,19 @@ impl Input {
                     events: libc::POLLIN,
                     revents: 0,
                 },
+                libc::pollfd {
+                    fd: self.watched.unwrap_or(-1),
+                    events: libc::POLLIN,
+                    revents: 0,
+                },
             ];
-            let nfds: libc::nfds_t = if self.buttons.is_some() { 2 } else { 1 };
+            // A closed slot is passed as -1, which `poll` skips, so the count
+            // only shrinks where a device further down the list is absent.
+            let nfds: libc::nfds_t = match (self.buttons.is_some(), self.watched.is_some()) {
+                (_, true) => 3,
+                (true, false) => 2,
+                (false, false) => 1,
+            };
 
             // Remaining time to `deadline`, floored at 1ms against a sub-ms
             // spin, else [`TICK_MS`]. `poll` wakes early on fd readiness.
@@ -189,6 +217,12 @@ impl Input {
                     return Ok(InputEvent::Touch(ev));
                 }
                 continue;
+            }
+
+            // The X connection, where the on-screen keyboard's keys arrive.
+            // The caller drains them; this only wakes the loop.
+            if fds[2].revents & libc::POLLIN != 0 {
+                return Ok(InputEvent::Tick);
             }
 
             // Spurious wake with no POLLIN — poll again.

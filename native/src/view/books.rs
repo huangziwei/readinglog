@@ -16,6 +16,9 @@ const TITLE_LINES: usize = 2;
 /// The mark on the window chip, which a tap on it takes off the list.
 const DROP: &str = "×";
 
+/// The share of the search button's side the magnifier draws into.
+const GLYPH: (i32, i32) = (3, 5);
+
 /// The height one book takes, set by the cover it carries.
 fn row_height(theme: &Theme) -> i32 {
     theme.row_h * 5 / 2
@@ -104,7 +107,7 @@ pub fn last_page_at(theme: &Theme, area: Rect, count: usize) -> usize {
 
 /// The height a row is drawn at: the page's rows share `area`, capped at
 /// [`row_height`] and half again.
-fn row_span(theme: &Theme, area: Rect) -> i32 {
+pub(super) fn row_span(theme: &Theme, area: Rect) -> i32 {
     let fits = rows_per_page(theme, area) as i32;
     ((area.h - pager::height(theme)) / fits).clamp(row_height(theme), row_height(theme) * 3 / 2)
 }
@@ -115,9 +118,12 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
         empty(cx, area);
         return;
     }
-    // `sort_chip` stands on every shelf.
+    // The search button and `sort_chip` stand on every shelf.
     let (head, _) = area.split_top(chrome::chip_height(theme) + theme.gap * 2);
     let sort = sort_chip(cx, head, state.sort);
+    let search = search_button(cx, head);
+    let opens_at = search.right() + chrome::chip_gap(theme);
+    let head = Rect::new(opens_at, head.y, head.right() - opens_at, head.h);
     let opens = match shelved(cx.stats, cx.uncovered) {
         true => shelf_chips(cx, head, state.shelf, state.window) + theme.gap * 2,
         false => head.x,
@@ -156,6 +162,34 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
             [Hit::BooksPage(0), Hit::BooksPage(last)],
         );
     }
+}
+
+/// The search, at the head of the shelf chips' own row: a square of the same
+/// outline, the same height and the same gap as they carry, so it reads as a
+/// button beside them and not as a fourth shelf. A tap opens the search, and
+/// the box it took is returned.
+///
+/// The magnifier is drawn: no face on the device carries one.
+fn search_button(cx: &mut Ctx, area: Rect) -> Rect {
+    let theme: &Theme = cx.theme;
+    let side = chrome::chip_height(theme);
+    let box_ = Rect::new(area.x, area.y, side, side);
+    paint::stroke(cx.fb, box_, INK, theme.rule());
+    let glyph = side * GLYPH.0 / GLYPH.1;
+    paint::magnifier(
+        cx.fb,
+        Rect::new(
+            box_.x + (side - glyph) / 2,
+            box_.y + (side - glyph) / 2,
+            glyph,
+            glyph,
+        ),
+        INK,
+        paint::WHITE,
+        (glyph / 7).max(theme.rule()),
+    );
+    cx.hit(Hit::Search, box_);
+    box_
 }
 
 /// The order the list is in, at the right of the shelf chips' own row. One
@@ -248,7 +282,7 @@ fn bare(cx: &mut Ctx, area: Rect, said: &str) {
         .draw_in(script, cx.fb, area.x, baseline, said, false);
 }
 
-fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
+pub(super) fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
     let theme: &Theme = cx.theme;
     let book = &cx.stats.books[index];
     // `art` and `figures` keep `row`'s own edges.
