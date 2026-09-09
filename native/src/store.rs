@@ -375,8 +375,8 @@ impl Store {
         }
         if let Some(gate) = self.gate {
             out.push_str(&format!(
-                "n\t{}\t{}\t{}\n",
-                gate.len, gate.mtime, gate.marks
+                "n\t{}\t{}\t{}\t{}\n",
+                gate.len, gate.mtime, gate.marks, gate.rules
             ));
         }
         for m in &self.marks {
@@ -1765,13 +1765,16 @@ fn read_mark<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Mark> {
     out.state.is_in_the_book().then_some(out)
 }
 
-/// An `n` row: what the pass that wrote the `a` rows above it had seen.
+/// An `n` row: what the pass that wrote the `a` rows above it had seen, and
+/// the rules it read them under. A row from a build that stated no rules reads
+/// as 0, which no build matches, so its rows are merged again.
 fn read_gate<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Gate> {
     let mut next = || f.next().unwrap_or_default();
     Some(Gate {
         len: next().trim().parse().ok()?,
         mtime: next().trim().parse().ok()?,
         marks: next().trim().parse().ok()?,
+        rules: next().trim().parse().unwrap_or(0),
     })
 }
 
@@ -2097,11 +2100,10 @@ mod tests {
     #[test]
     fn an_a_row_states_a_mark_and_reads_back_as_the_same_one() {
         let mut store = Store::default();
-        let gate = Gate {
-            len: 36_220,
-            mtime: 1_788_849_968,
-            marks: 16,
-        };
+        let gate = crate::annotate::gate(
+            Path::new("/nonexistent/My Clippings.txt"),
+            &Default::default(),
+        );
         assert!(store.take_marks(vec![one_mark()], gate));
         let back = Store::from_text(&store.text());
         assert_eq!(back.marks, vec![one_mark()]);
@@ -2146,11 +2148,10 @@ mod tests {
         mine.extent = extent;
         store.take_marks(
             vec![mine],
-            Gate {
-                len: 1,
-                mtime: 2,
-                marks: 1,
-            },
+            crate::annotate::gate(
+                Path::new("/nonexistent/My Clippings.txt"),
+                &Default::default(),
+            ),
         );
         store.clear_book(extent, &key);
         assert!(store.marks.is_empty(), "the marks go with the reading");

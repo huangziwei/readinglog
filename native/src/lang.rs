@@ -267,17 +267,20 @@ pub struct Strings {
     pub the_journey: &'static str,
     pub read: &'static str,
     pub left: &'static str,
-    /// The book screen's two tabs.
+    /// The book screen's two tabs, each set in half the strip. A count is
+    /// appended to the second, so keep it to a word: a longer one runs past
+    /// its cell on a 6-inch panel.
     pub statistics: &'static str,
     pub marks_tab: &'static str,
     /// What stands over the marks for a book carrying none.
     pub marks_none: &'static str,
     /// The row counting a book's marks, beside `sittings` and `days`.
     pub marks_row: &'static str,
-    /// Before the display location a clipping stated, which is the only place
-    /// a mark no sidecar reached has. The reader's own word for it: the
-    /// Kindle's notebook writes `Location 608` over a highlight.
+    /// Before the display location a clipping stated. The reader's own word
+    /// for it: the Kindle's notebook writes `Location 608` over a highlight.
     pub at_location: &'static str,
+    /// Before the publisher's page label, where the book carries one.
+    pub at_page: &'static str,
     /// The seven kinds a mark can be, as a row's own label states them. The
     /// five a `.sdr` alone carries share [`Strings::kind_other`].
     pub kind_bookmark: &'static str,
@@ -545,10 +548,11 @@ const ENGLISH: Strings = Strings {
     no: "no",
     the_journey: "THE JOURNEY · {d} DAY[S]",
     statistics: "Statistics",
-    marks_tab: "Highlights and Notes",
+    marks_tab: "Highlights",
     marks_none: "Nothing marked in this book yet.",
     marks_row: "Highlights and notes",
     at_location: "Location",
+    at_page: "page",
     kind_bookmark: "Bookmark",
     kind_highlight: "Highlight",
     kind_note: "Note",
@@ -792,10 +796,11 @@ const GERMAN: Strings = Strings {
     no: "nein",
     the_journey: "DER VERLAUF · {d} TAG[E]",
     statistics: "Statistik",
-    marks_tab: "Markierungen und Notizen",
+    marks_tab: "Markierungen",
     marks_none: "In diesem Buch ist noch nichts markiert.",
     marks_row: "Markierungen und Notizen",
     at_location: "Position",
+    at_page: "Seite",
     kind_bookmark: "Lesezeichen",
     kind_highlight: "Markierung",
     kind_note: "Notiz",
@@ -1037,10 +1042,11 @@ const JAPANESE: Strings = Strings {
     no: "なし",
     the_journey: "読書の歩み · {d}日",
     statistics: "統計",
-    marks_tab: "ハイライトとメモ",
+    marks_tab: "ハイライト",
     marks_none: "この本にはまだ何も記されていません。",
     marks_row: "ハイライトとメモ",
     at_location: "位置",
+    at_page: "ページ",
     kind_bookmark: "ブックマーク",
     kind_highlight: "ハイライト",
     kind_note: "メモ",
@@ -1262,10 +1268,11 @@ const SIMPLIFIED: Strings = Strings {
     no: "否",
     the_journey: "阅读历程 · {d}天",
     statistics: "统计",
-    marks_tab: "标注与笔记",
+    marks_tab: "标注",
     marks_none: "这本书还没有任何标记。",
     marks_row: "标注与笔记",
     at_location: "位置",
+    at_page: "页码",
     kind_bookmark: "书签",
     kind_highlight: "标注",
     kind_note: "笔记",
@@ -1495,10 +1502,11 @@ const TRADITIONAL: Strings = Strings {
     no: "否",
     the_journey: "閱讀歷程 · {d}天",
     statistics: "統計",
-    marks_tab: "標註與筆記",
+    marks_tab: "標註",
     marks_none: "這本書還沒有任何標記。",
     marks_row: "標註與筆記",
     at_location: "位置",
+    at_page: "頁碼",
     kind_bookmark: "書籤",
     kind_highlight: "標註",
     kind_note: "筆記",

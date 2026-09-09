@@ -180,8 +180,9 @@ fn picker_height(theme: &Theme) -> i32 {
 
 /// The book's two pages as a segmented control, each its own hit box — the
 /// shape `rhythm::picker` gives the spans, so the two screens are picked
-/// from alike.
-fn picker(cx: &mut Ctx, area: Rect, on: BookTab) {
+/// from alike. The marks tab carries how many passages the book is marked on,
+/// so the count is read without opening it.
+fn picker(cx: &mut Ctx, area: Rect, on: BookTab, marked: usize) {
     let theme: &Theme = cx.theme;
     let cells = area.columns(BookTab::ALL.len() as i32, 0);
     cx.text.set_px(theme.body_px);
@@ -193,14 +194,17 @@ fn picker(cx: &mut Ctx, area: Rect, on: BookTab) {
             true => paint::fill(cx.fb, cell, INK),
             false => paint::stroke(cx.fb, cell, LIGHT, 1),
         }
-        let label = tab.label(cx.lang);
-        let w = cx.text.measure_width_in(script, label) as i32;
+        let label = match tab {
+            BookTab::Marks => format!("{} ({marked})", tab.label(cx.lang)),
+            BookTab::Statistics => tab.label(cx.lang).to_string(),
+        };
+        let w = cx.text.measure_width_in(script, &label) as i32;
         cx.text.draw_in(
             script,
             cx.fb,
             cell.x + (cell.w - w) / 2,
             baseline,
-            label,
+            &label,
             lit,
         );
         cx.hit(Hit::BookTab(*tab), cell);
@@ -223,6 +227,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, tab: BookTab, marks_from: us
         cx,
         Rect::new(bar.x, bar.y, bar.w, chrome::chip_height(theme)),
         tab,
+        cx.stats.marks_held(index),
     );
     // The cover, the headline figures, the progress bar and the controls are
     // the statistics page's own. What the reader marked gets the whole box:

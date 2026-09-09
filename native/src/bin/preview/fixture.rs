@@ -503,7 +503,12 @@ fn marked(store: &mut Store, last: i64) {
                 (false, _) => -1,
             },
             location: start / 150,
-            page: String::new(),
+            // A book carrying publisher pages states all three places; one
+            // without states the two its sources named.
+            page: match slot % 2 {
+                0 => (start / 3_000).to_string(),
+                _ => String::new(),
+            },
             colour: match (placed, kind) {
                 (true, Kind::Highlight | Kind::Underline) => "orange".into(),
                 _ => String::new(),

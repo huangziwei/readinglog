@@ -248,11 +248,20 @@ pub struct Merge {
     pub held: usize,
 }
 
+/// What this module joins on, as a number.
+///
+/// **Bump it with every change that would give a different set of rows over
+/// unchanged files.** A record is left alone only while the sources *and* the
+/// rules that read them both stand, so a build that changes the join reaches a
+/// device whose files have not moved.
+const RULES: u32 = 2;
+
 /// What a pass has to have seen for the rows it wrote to still stand: the
-/// clippings file as it was, and as many sidecar records as there were.
+/// clippings file as it was, as many sidecar records as there were, and the
+/// rules it read them under.
 ///
 /// The file only grows, but it can be replaced wholesale, so a length alone
-/// will not do. A pass over an unchanged pair is one `stat` and no read.
+/// will not do. A pass over an unchanged gate is one `stat` and no read.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Gate {
     /// `My Clippings.txt`'s length in bytes.
@@ -262,6 +271,9 @@ pub struct Gate {
     /// Annotation records across every rare sidecar, which is what says a
     /// mark was made or deleted since.
     pub marks: usize,
+    /// [`RULES`] as the pass that wrote the rows read them. A row an older
+    /// build wrote states a lower number, and is merged again.
+    pub rules: u32,
 }
 
 /// The gate `clips` and `shelf` stand at now.
@@ -275,6 +287,7 @@ pub fn gate(clips: &Path, shelf: &Shelf) -> Gate {
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or(0, |d| d.as_secs() as i64),
         marks: shelf.rosters.iter().map(|r| r.annotations.len()).sum(),
+        rules: RULES,
     }
 }
 
@@ -344,13 +357,34 @@ fn merge(records: &[Clipping], shelf: &Shelf, books: &[BookRecord]) -> Vec<Mark>
         })
         .collect();
 
-    let mut out: Vec<Mark> = Vec::new();
-    for clip in records {
-        out.push(one(clip, &mut held, books));
+    // The book each clipping names, read once: the second join needs it as
+    // much as the first.
+    let named: Vec<Option<&BookRecord>> = records
+        .iter()
+        .map(|clip| match clip.title.is_empty() {
+            true => None,
+            false => by_title(&clip.title, books),
+        })
+        .collect();
+
+    // The stamp first, which is exact wherever it holds.
+    let mut paired: Vec<Option<(usize, usize)>> = Vec::with_capacity(records.len());
+    for (clip, named) in records.iter().zip(&named) {
+        let found = matching(clip, &held, *named);
+        if let Some((at, i)) = found {
+            held[at].claimed[i] = true;
+        }
+        paired.push(found);
     }
-    // Every sidecar record no clipping claimed is a mark the file cannot
-    // speak for — handwriting, which `ClippingsManager.C` refuses, or a
-    // clippings file the reader emptied. It exists, so it is stored.
+    in_order(records, &named, &mut held, &mut paired);
+
+    let mut out: Vec<Mark> = Vec::new();
+    for ((clip, named), found) in records.iter().zip(&named).zip(&paired) {
+        out.push(one(clip, *named, *found, &held));
+    }
+    // Every sidecar record no clipping speaks for is a mark the file cannot
+    // reach — handwriting, which `ClippingsManager.C` refuses, or a clippings
+    // file the reader emptied. It exists, so it is stored, without words.
     for at in &held {
         for (i, annotation) in at.roster.annotations.iter().enumerate() {
             if at.claimed[i] {
@@ -386,13 +420,72 @@ fn merge(records: &[Clipping], shelf: &Shelf, books: &[BookRecord]) -> Vec<Mark>
         .collect()
 }
 
-/// One clipping as a [`Mark`], claiming the sidecar record that carries its
-/// stamp where there is one.
-fn one(clip: &Clipping, held: &mut [Held], books: &[BookRecord]) -> Mark {
-    let named = match clip.title.is_empty() {
-        true => None,
-        false => by_title(&clip.title, books),
-    };
+/// The second join: within one book and one kind, pair what the stamp left
+/// over **in reading order**.
+///
+/// `created` is the **sidecar's** clock, not the reader's: it is stamped when
+/// that record was filled, and a sidecar rebuilt — by a book removed and
+/// downloaded again — restamps every one of them. The stamps then no longer
+/// meet the clippings the reader made, and the words sit in one file with the
+/// places in the other.
+///
+/// Both sides are ordered by where they fall in the book, though: the sidecar
+/// by position and the clipping by display location, which are different axes
+/// but both monotone in reading order.
+///
+/// So where a book has **the same number** of leftovers on each side, the k-th
+/// is the k-th and the pairing is forced. Where the counts differ nothing is
+/// paired: there would be a choice to make, and no ground to make it on.
+fn in_order(
+    records: &[Clipping],
+    named: &[Option<&BookRecord>],
+    held: &mut [Held],
+    paired: &mut [Option<(usize, usize)>],
+) {
+    for (at, one) in held.iter_mut().enumerate() {
+        let Some(extent) = one.book.map(|b| b.extent) else {
+            continue;
+        };
+        for kind in Kind::ALL {
+            // The sidecar's leftovers, up the book.
+            let mut mine: Vec<usize> = (0..one.roster.annotations.len())
+                .filter(|i| !one.claimed[*i] && one.roster.annotations[*i].kind == kind)
+                .collect();
+            if mine.is_empty() {
+                continue;
+            }
+            // The file's leftovers for the same book and kind, up the book.
+            let mut theirs: Vec<usize> = (0..records.len())
+                .filter(|c| {
+                    paired[*c].is_none()
+                        && records[*c].kind == kind
+                        && named[*c].is_some_and(|b| b.extent == extent)
+                })
+                .collect();
+            if mine.len() != theirs.len() {
+                continue;
+            }
+            mine.sort_by_key(|i| {
+                let record = &one.roster.annotations[*i];
+                (record.start_position().unwrap_or(i64::MAX), record.created)
+            });
+            theirs.sort_by_key(|c| (records[*c].start, records[*c].at.clone()));
+            for (i, c) in mine.into_iter().zip(theirs) {
+                one.claimed[i] = true;
+                paired[c] = Some((at, i));
+            }
+        }
+    }
+}
+
+/// One clipping as a [`Mark`], taking the positions and the colour from the
+/// sidecar record `found` names, where it names one.
+fn one(
+    clip: &Clipping,
+    named: Option<&BookRecord>,
+    found: Option<(usize, usize)>,
+    held: &[Held],
+) -> Mark {
     let mut mark = Mark {
         extent: named.map_or(0, |b| b.extent),
         title: clip.title.clone(),
@@ -406,10 +499,9 @@ fn one(clip: &Clipping, held: &mut [Held], books: &[BookRecord]) -> Mark {
         colour: String::new(),
         body: clip.body.clone(),
     };
-    match matching(clip, held, named) {
+    match found {
         Some((at, i)) => {
             let annotation = &held[at].roster.annotations[i];
-            held[at].claimed[i] = true;
             mark.state = State::Live;
             mark.start = annotation.start_position().unwrap_or(-1);
             mark.end = annotation.end_position().unwrap_or(-1);
@@ -876,6 +968,130 @@ mod tests {
         );
         assert_eq!(got.len(), 1, "{got:#?}");
         assert_eq!(got[0].state, State::Live);
+    }
+
+    #[test]
+    fn a_book_re_downloaded_keeps_the_words_its_new_sidecar_lost() {
+        // A new `.sdr` stamps `created` when it received the mark, not when
+        // the reader made it, so it no longer meets the clipping appended the
+        // first time round. One leftover on each side of one book and one
+        // kind: the pairing is forced.
+        let books = [book(1000, "A Book", "A Book")];
+        let shelf = shelf_of(vec![roster(
+            "A Book",
+            true,
+            vec![annotation(
+                Kind::Highlight,
+                "2026-08-01T17:49:48",
+                21_336,
+                21_413,
+                "orange",
+            )],
+        )]);
+        let got = merge(
+            &[clip(
+                "A Book",
+                Kind::Highlight,
+                "2026-07-29T21:37:19",
+                179,
+                "no one today remembered why the war had come about",
+            )],
+            &shelf,
+            &books,
+        );
+        assert_eq!(got.len(), 1, "{got:#?}");
+        assert_eq!(got[0].state, State::Live);
+        // The words off the file, the place off the sidecar, and the display
+        // location the clipping stated kept beside it.
+        assert_eq!(
+            got[0].body,
+            "no one today remembered why the war had come about"
+        );
+        assert_eq!((got[0].start, got[0].end), (21_336, 21_413));
+        assert_eq!(got[0].location, 179);
+        assert_eq!(got[0].colour, "orange");
+        // The stamp kept is the clipping's: that is when the mark was made.
+        assert_eq!(got[0].at, "2026-07-29T21:37:19");
+    }
+
+    #[test]
+    fn leftovers_that_do_not_answer_one_for_one_are_left_alone() {
+        // Two records and one clipping: which of the two the words belong to
+        // is a choice, and there is no ground to make it on.
+        let books = [book(1000, "A Book", "A Book")];
+        let shelf = shelf_of(vec![roster(
+            "A Book",
+            true,
+            vec![
+                annotation(Kind::Highlight, "2026-08-01T17:49:48", 100, 160, "orange"),
+                annotation(Kind::Highlight, "2026-08-01T17:50:11", 900, 960, "orange"),
+            ],
+        )]);
+        let got = merge(
+            &[clip(
+                "A Book",
+                Kind::Highlight,
+                "2026-07-29T21:37:19",
+                179,
+                "a line",
+            )],
+            &shelf,
+            &books,
+        );
+        // The clipping stands alone and both records stand alone.
+        assert_eq!(got.len(), 3, "{got:#?}");
+        assert_eq!(
+            got.iter().filter(|m| m.body.is_empty()).count(),
+            2,
+            "neither record took the words"
+        );
+    }
+
+    #[test]
+    fn leftovers_pair_up_the_book_and_never_by_their_stamps() {
+        // Three of each, and the sidecar's stamps run in the opposite order
+        // to the reader's: the pairing is by place in the book, not by time.
+        let books = [book(1000, "A Book", "A Book")];
+        let shelf = shelf_of(vec![roster(
+            "A Book",
+            true,
+            vec![
+                annotation(Kind::Highlight, "2026-08-01T17:52:00", 700, 760, "orange"),
+                annotation(Kind::Highlight, "2026-08-01T17:51:00", 400, 460, "orange"),
+                annotation(Kind::Highlight, "2026-08-01T17:50:00", 100, 160, "orange"),
+            ],
+        )]);
+        let got = merge(
+            &[
+                clip(
+                    "A Book",
+                    Kind::Highlight,
+                    "2026-07-29T21:00:00",
+                    10,
+                    "first",
+                ),
+                clip(
+                    "A Book",
+                    Kind::Highlight,
+                    "2026-07-29T21:10:00",
+                    40,
+                    "second",
+                ),
+                clip(
+                    "A Book",
+                    Kind::Highlight,
+                    "2026-07-29T21:20:00",
+                    70,
+                    "third",
+                ),
+            ],
+            &shelf,
+            &books,
+        );
+        assert_eq!(got.len(), 3, "{got:#?}");
+        let mut placed: Vec<(i64, &str)> = got.iter().map(|m| (m.start, m.body.as_str())).collect();
+        placed.sort();
+        assert_eq!(placed, [(100, "first"), (400, "second"), (700, "third")]);
     }
 
     #[test]

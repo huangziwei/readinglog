@@ -53,10 +53,17 @@ fn indent(theme: &Theme) -> i32 {
 struct Metrics {
     /// How far the label's line stands over its own baseline.
     cap: i32,
-    /// The label's line, which the note is set on too.
+    /// The label's line.
     small: i32,
-    /// A line of the passage.
+    /// A line of the passage, which the note is set on too. Carries
+    /// [`leading`] over what the face itself asks for.
     line: i32,
+}
+
+/// What a line of a passage is opened up by over the face's own line height.
+/// A quotation is read slower than a list of figures and is set looser for it.
+fn leading(theme: &Theme) -> i32 {
+    theme.gap
 }
 
 impl Metrics {
@@ -67,29 +74,38 @@ impl Metrics {
         Self {
             cap,
             small,
-            line: text.line_height() as i32,
+            line: text.line_height() as i32 + leading(theme),
         }
     }
 
-    /// The height the passage and its note take together, the air over them
-    /// included. This is the block the coloured rule stands beside.
-    fn quoted(self, theme: &Theme, lines: usize, note: usize) -> i32 {
-        theme.gap * 2
-            + lines.max(1) as i32 * self.line
-            + match note {
-                0 => 0,
-                n => theme.gap + n as i32 * self.small,
-            }
+    /// The height the passage takes, the air over it included. **This block
+    /// alone is what the coloured rule stands beside**: the colour is the
+    /// highlight's, and the note is the reader's own writing about it, not
+    /// part of what was marked.
+    fn quoted(self, theme: &Theme, lines: usize) -> i32 {
+        theme.gap * 2 + lines.max(1) as i32 * self.line
     }
 
-    /// The height a row takes: the quoted block, the label under it, and the
-    /// air closing the row.
+    /// The height the note under a passage takes, and 0 where there is none.
+    fn noted(self, theme: &Theme, note: usize) -> i32 {
+        match note {
+            0 => 0,
+            n => theme.gap + n as i32 * self.line,
+        }
+    }
+
+    /// The height a row takes: the passage, the note under it, the label
+    /// under that, and the air closing the row.
     ///
     /// The label is **under** the words, not over them. It states where and
     /// when the mark was made, which is what the row is about only once the
     /// passage has been read.
     fn row(self, theme: &Theme, lines: usize, note: usize) -> i32 {
-        self.quoted(theme, lines, note) + theme.gap * 2 + self.small + theme.gap * 3
+        self.quoted(theme, lines)
+            + self.noted(theme, note)
+            + theme.gap * 2
+            + self.small
+            + theme.gap * 3
     }
 }
 
@@ -118,7 +134,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, book: usize, from: usize) {
         .iter()
         .map(|m| (m.mark.clone(), m.note.cloned()))
         .collect();
-    let named = heading(cx, book, held.len());
+    let named = heading(cx, book);
 
     // The strip `section` sets its title in, taken before the call.
     let bar = Rect::new(
@@ -224,14 +240,12 @@ fn wrapped(
         .text
         .wrap_and_clamp_in(script, &mark.body, room, lines)
         .len();
+    // The note is set beside the rule, not past it, so it has the whole width.
     let noted = match note {
-        Some(note) => {
-            cx.text.set_px(theme.small_px);
-            let room = (w - indent(theme) * 2).max(1) as u32;
-            cx.text
-                .wrap_and_clamp_in(script, &note.body, room, NOTE_LINES)
-                .len()
-        }
+        Some(note) => cx
+            .text
+            .wrap_and_clamp_in(script, &note.body, w.max(1) as u32, NOTE_LINES)
+            .len(),
         None => 0,
     };
     (said, noted)
@@ -273,11 +287,11 @@ fn row(
     let (said, noted) = wrapped(cx, area.w, mark, note, book, lines);
     let x = area.x + indent(theme);
 
-    // The rule beside the quoted block, in the colour the sidecar stated. A
-    // mark no sidecar reached states none, and takes the neutral.
+    // The rule beside the passage, in the colour the sidecar stated. A mark
+    // no sidecar reached states none, and takes the neutral.
     let coloured = paint::is_coloured(&cx.palette);
     let ink = paint::mark_colour(&mark.colour, coloured);
-    let quoted = m.quoted(theme, said, noted);
+    let quoted = m.quoted(theme, said);
     paint::fill_rgb(
         cx.fb,
         Rect::new(
@@ -299,22 +313,19 @@ fn row(
         y += m.line;
     }
 
-    // The reader's own note under it, a step further in and clear of it, so
-    // the passage and what was said about it are told apart at a glance.
+    // The reader's own note, under the passage and past the end of its rule,
+    // set in the same face and standing at the rule's own left edge. The rule
+    // and the indent mark the passage; the note has neither, and that is what
+    // tells the two apart.
     if let Some(note) = note {
-        let at = x + indent(theme);
-        cx.text.set_px(theme.small_px);
-        let room = (area.right() - at).max(1) as u32;
-        let lines_of = cx
-            .text
-            .wrap_and_clamp_in(script, &note.body, room, NOTE_LINES);
-        // Where `Metrics::quoted` set the note block down: under the passage,
-        // one gap clear of it.
-        let top = area.y + theme.gap * 2 + said as i32 * m.line + theme.gap;
-        let mut baseline = top + cx.text.cap_height() as i32;
+        let lines_of =
+            cx.text
+                .wrap_and_clamp_in(script, &note.body, area.w.max(1) as u32, NOTE_LINES);
+        let mut baseline = area.y + quoted + theme.gap + cx.text.cap_height() as i32;
         for line in &lines_of {
-            cx.text.draw_in(script, cx.fb, at, baseline, line, false);
-            baseline += m.small;
+            cx.text
+                .draw_in(script, cx.fb, area.x, baseline, line, false);
+            baseline += m.line;
         }
     }
 
@@ -322,7 +333,7 @@ fn row(
     // read.
     cx.text.set_px(theme.small_px);
     let ui = cx.ui_script();
-    let baseline = area.y + quoted + theme.gap * 2 + m.cap;
+    let baseline = area.y + quoted + m.noted(theme, noted) + theme.gap * 2 + m.cap;
     cx.text
         .draw_in(ui, cx.fb, area.x, baseline, &label(mark, book, s), false);
     // The day it was made, against the right edge.
@@ -334,20 +345,20 @@ fn row(
     }
 }
 
-/// What stands over the list: the book, and how many passages it carries a
-/// mark on. The title is cut to two thirds of the strip, the rest being the
+/// What stands over the list: the book it belongs to. The count is the tab's
+/// own, and the title is cut to two thirds of the strip, the rest being the
 /// pager's.
-fn heading(cx: &mut Ctx, book: usize, count: usize) -> String {
+fn heading(cx: &mut Ctx, book: usize) -> String {
     let theme: &Theme = cx.theme;
     let Some(book) = cx.stats.books.get(book) else {
-        return count.to_string();
+        return String::new();
     };
     let (title, language) = (book.title.clone(), book.language.clone());
     let script = Script::of_language(&language);
     cx.text.set_px(theme.small_px);
     let room = (chrome::content_box(theme).w * 2 / 3).max(1) as u32;
     let cut = cx.text.wrap_and_clamp_in(script, &title, room, 1);
-    format!("{}{DOT}{count}", cut.first().map_or("", String::as_str))
+    cut.first().cloned().unwrap_or_default()
 }
 
 /// What a row's label reads: where the mark falls and what kind it is —
@@ -356,20 +367,30 @@ fn label(mark: &Mark, book: &BookStat, s: &Strings) -> String {
     format!("{}{BAR}{}", place(mark, book, s), kind_name(mark.kind, s))
 }
 
-/// Where a mark falls, as a row states it.
+/// Where a mark falls, as a row states it: every one of the three the two
+/// sources between them named, in the order a reader meets them.
 ///
-/// A percentage where a sidecar record placed it on the book's own axis; the
-/// display location the clipping named where not — those are different axes,
-/// and a location converts to no fraction of a book.
+/// The publisher's page and the display location are the clipping's, and the
+/// percentage is the sidecar's own position against the book's extent. They
+/// are **three different axes** and none converts to another, so each stands
+/// only where its own source stated it. A mark with none says so.
 fn place(mark: &Mark, book: &BookStat, s: &Strings) -> String {
-    if let Some(through) = mark.through(book.extent) {
-        return s
-            .percent_plain
-            .replace("{d}", &format!("{:.0}", through * 100.0));
+    let mut said: Vec<String> = Vec::with_capacity(3);
+    if !mark.page.is_empty() {
+        said.push(format!("{} {}", s.at_page, mark.page));
     }
-    match mark.location {
-        at if at >= 0 => format!("{} {at}", s.at_location),
-        _ => DASH.into(),
+    if mark.location >= 0 {
+        said.push(format!("{} {}", s.at_location, mark.location));
+    }
+    if let Some(through) = mark.through(book.extent) {
+        said.push(
+            s.percent_plain
+                .replace("{d}", &format!("{:.0}", through * 100.0)),
+        );
+    }
+    match said.is_empty() {
+        true => DASH.into(),
+        false => said.join(DOT),
     }
 }
 
@@ -503,20 +524,28 @@ mod tests {
     }
 
     #[test]
-    fn a_mark_the_sidecar_placed_states_a_real_fraction_of_the_book() {
-        // 330 of 1000 is 33 %, and nothing here came off a display location.
-        let held = mark(State::Live, 330, 111);
-        assert_eq!(place(&held, &book(1_000), en()), "33%");
+    fn a_row_states_every_place_its_sources_named() {
+        // The page and the location came off the clipping, the percentage off
+        // the sidecar's own position: 330 of 1000.
+        let mut held = mark(State::Live, 330, 111);
+        held.page = "15".into();
+        assert_eq!(
+            place(&held, &book(1_000), en()),
+            "page 15 · Location 111 · 33%"
+        );
     }
 
     #[test]
-    fn a_mark_no_sidecar_placed_states_the_location_and_never_a_fraction() {
+    fn a_place_no_source_named_is_never_derived_from_another() {
         // A location is roughly 150 positions wide and is on another axis
         // altogether: stating a percentage off one would be inventing it.
         let held = mark(State::Unconfirmed, -1, 111);
         assert_eq!(place(&held, &book(1_000), en()), "Location 111");
-        // And a book whose extent nothing states says nothing either.
-        let held = mark(State::Live, 330, -1);
+        // A sidecar record no clipping speaks for has the fraction alone.
+        let mut held = mark(State::Live, 330, -1);
+        assert_eq!(place(&held, &book(1_000), en()), "33%");
+        // And a book whose extent nothing states says nothing at all.
+        held.location = -1;
         assert_eq!(place(&held, &book(0), en()), DASH);
     }
 
