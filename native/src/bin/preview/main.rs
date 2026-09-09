@@ -23,7 +23,7 @@ use readinglog_native::ui::splash;
 use readinglog_native::ui::text::TextRenderer;
 use readinglog_native::ui::theme::Theme;
 use readinglog_native::update::{Doing, Failure, Outcome};
-use readinglog_native::view::{Ask, Reset, Retrying, Shelf, Sort, Span, Window};
+use readinglog_native::view::{Ask, Healing, Reset, Retrying, Shelf, Sort, Span, Window};
 
 /// The day the preview is set to, and the second of it.
 const DAY: (i64, i64, i64) = (2026, 9, 16);
@@ -78,6 +78,13 @@ const RESETS: &[(&str, Reset)] = &[
     ("wipe", Reset::Wipe(true)),
     ("restore", Reset::Restore(0)),
     ("logs", Reset::Rebuild),
+];
+
+/// The banner over a heal, by the name a `heal:<of>` shot takes.
+const HEALS: &[(&str, Healing)] = &[
+    ("logs", Healing::Logs),
+    ("done", Healing::Done(142)),
+    ("none", Healing::Done(0)),
 ];
 
 /// The banner over a retry, by the name a `retry:<of>` shot takes.
@@ -397,6 +404,9 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
     if shot.name == "reset" {
         return resetting(app, fb, shot.of.as_deref().unwrap_or("logs"));
     }
+    if shot.name == "heal" {
+        return healing(app, fb, shot.of.as_deref().unwrap_or("done"));
+    }
     if shot.name == "retry" {
         return retrying(app, fb, shot.of.as_deref().unwrap_or("named"));
     }
@@ -479,6 +489,21 @@ fn resetting(app: &mut App, fb: &mut Framebuffer, of: &str) -> Result<()> {
         Reset::Rebuild => splash::step(s.step_logs, 31, 97),
     };
     app.banner(fb, &headline, &note, &step, true)
+}
+
+/// The banner over a heal, at whichever of its lines `of` names, drawn a
+/// third of the way through the logs it counts while it runs.
+fn healing(app: &mut App, fb: &mut Framebuffer, of: &str) -> Result<()> {
+    let Some((_, said)) = HEALS.iter().find(|(name, _)| *name == of) else {
+        return Err(anyhow!("no heal banner called {of}"));
+    };
+    let s = app.language().strings();
+    let step = match said {
+        Healing::Logs => splash::step(s.step_logs, 31, 97),
+        _ => String::new(),
+    };
+    let (headline, note) = said.banner(s);
+    app.banner(fb, headline, &note, &step, true)
 }
 
 /// The banner over a retry, at whichever of its lines `of` names, drawn a
@@ -697,6 +722,9 @@ fn list() {
     // And `RETRIES`.
     let retries: Vec<&str> = RETRIES.iter().map(|(name, _)| *name).collect();
     println!("  retry   (:{})", retries.join(" :"));
+    // And `HEALS`.
+    let heals: Vec<&str> = HEALS.iter().map(|(name, _)| *name).collect();
+    println!("  heal    (:{})", heals.join(" :"));
     println!("sketches:");
     match sketch::ALL.is_empty() {
         true => println!("  (none)"),

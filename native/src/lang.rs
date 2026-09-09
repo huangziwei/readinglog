@@ -288,6 +288,15 @@ pub struct Strings {
     pub figures_row: &'static str,
     pub figures_device: &'static str,
     pub figures_app: &'static str,
+    /// The button on that row, standing apart from its two values: read every
+    /// log the device still holds and measure each sitting in them again.
+    pub figures_heal: &'static str,
+    /// Its banner: the headline over the pass, the line under it while it
+    /// runs, and the two the outcome is stated in. `heal_done` counts.
+    pub heal_head: &'static str,
+    pub heal_doing: &'static str,
+    pub heal_done: &'static str,
+    pub heal_none: &'static str,
     /// The record section, and the row counting unnamed books.
     pub the_record: &'static str,
     pub unnamed_row: &'static str,
@@ -366,7 +375,7 @@ pub struct Strings {
     /// `{n} unidentified · {duration}`, closing a list of books.
     pub unidentified: &'static str,
     /// What a cover box says where no jacket can be drawn in it and the title
-    /// already stands beside it.
+    /// stands beside it.
     pub no_cover: &'static str,
     pub text_size: &'static str,
     /// The colours the charts draw in.
@@ -516,6 +525,11 @@ const ENGLISH: Strings = Strings {
     figures_row: "Use stats from",
     figures_device: "Device",
     figures_app: "App",
+    figures_heal: "Heal",
+    heal_head: "Measure the sittings again",
+    heal_doing: "Reading every log the device still holds.",
+    heal_done: "{d} sitting[s] measured again.",
+    heal_none: "Nothing the logs reach has changed.",
     the_record: "THE RECORD",
     unnamed_row: "Unidentified books",
     chip_show: "Show",
@@ -739,6 +753,11 @@ const GERMAN: Strings = Strings {
     figures_row: "Werte von",
     figures_device: "Gerät",
     figures_app: "App",
+    figures_heal: "Nachmessen",
+    heal_head: "Sitzungen neu messen",
+    heal_doing: "Liest jedes Protokoll auf dem Gerät.",
+    heal_done: "{d} Sitzung[en] neu gemessen.",
+    heal_none: "In den Protokollen hat sich nichts geändert.",
     the_record: "DIE AUFZEICHNUNG",
     recorded_row: "Aufgezeichnet",
     n_sittings: "{d} Sitzung[en]",
@@ -960,6 +979,11 @@ const JAPANESE: Strings = Strings {
     figures_row: "数値の取得元",
     figures_device: "端末",
     figures_app: "アプリ",
+    figures_heal: "再計測",
+    heal_head: "読書を再計測",
+    heal_doing: "端末に残っているログを読み直しています。",
+    heal_done: "{d}回を再計測しました。",
+    heal_none: "ログの範囲に変わりはありません。",
     the_record: "記録",
     recorded_row: "記録の中身",
     n_sittings: "{d}回",
@@ -1161,6 +1185,11 @@ const SIMPLIFIED: Strings = Strings {
     figures_row: "数据来源",
     figures_device: "设备",
     figures_app: "应用",
+    figures_heal: "重新测量",
+    heal_head: "重新测量各次阅读",
+    heal_doing: "正在重新读取设备上的日志。",
+    heal_done: "已重新测量 {d}次。",
+    heal_none: "日志所及的记录没有变动。",
     the_record: "记录",
     recorded_row: "已记录",
     n_sittings: "{d}次",
@@ -1370,6 +1399,11 @@ const TRADITIONAL: Strings = Strings {
     figures_row: "數據來源",
     figures_device: "裝置",
     figures_app: "應用",
+    figures_heal: "重新測量",
+    heal_head: "重新測量各次閱讀",
+    heal_doing: "正在重新讀取裝置上的日誌。",
+    heal_done: "已重新測量 {d}次。",
+    heal_none: "日誌所及的紀錄沒有變動。",
     the_record: "記錄",
     recorded_row: "已記錄",
     n_sittings: "{d}次",

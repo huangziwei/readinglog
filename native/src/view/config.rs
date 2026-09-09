@@ -19,6 +19,9 @@ const NONE_ON: usize = usize::MAX;
 /// values.
 const RETRY_CHIP: usize = 2;
 
+/// Where the heal chip sits in the figures row, past its two values.
+const HEAL_CHIP: usize = 2;
+
 /// One setting: what it is called, and the values it takes.
 struct Row<'a> {
     label: &'a str,
@@ -228,19 +231,25 @@ fn sections<'a>(
         apart: None,
     });
 
+    // The third chip is never filled, and stands apart: it sets nothing, it
+    // reads every log again and measures each sitting in them afresh.
     let figures = Row {
         label: s.figures_row,
         options: vec![
             (s.figures_device.to_string(), plain),
             (s.figures_app.to_string(), plain),
+            (s.figures_heal.to_string(), plain),
         ],
         on: Figures::ALL
             .iter()
             .position(|f| *f == settings.figures)
             .unwrap_or(0),
-        hit: Box::new(|i| Hit::Figures(Figures::ALL[i.min(Figures::ALL.len() - 1)])),
+        hit: Box::new(|i| match i {
+            HEAL_CHIP => Hit::Heal,
+            i => Hit::Figures(Figures::ALL[i.min(Figures::ALL.len() - 1)]),
+        }),
         one_row: false,
-        apart: None,
+        apart: Some(HEAL_CHIP),
     };
 
     // The third chip is never filled, and stands apart: it sets nothing, it
@@ -877,6 +886,38 @@ mod tests {
             .position(|section| section.heading == lang.strings().the_record)
             .expect("the record section");
         row(page, at, 1)
+    }
+
+    fn figures_row<'a>(page: &'a [Section<'a>], lang: Lang) -> &'a Row<'a> {
+        let at = page
+            .iter()
+            .position(|section| section.heading == lang.strings().the_record)
+            .expect("the record section");
+        row(page, at, 0)
+    }
+
+    #[test]
+    fn the_figures_row_carries_a_heal_past_its_two_values() {
+        let mut settings = Settings::new(Lang::English);
+        let empty = Record::default();
+        let page = sections(Lang::English, &settings, true, &empty);
+        let figures = figures_row(&page, Lang::English);
+        assert_eq!(figures.options.len(), 3);
+        assert_eq!((figures.hit)(0), Hit::Figures(Figures::Device));
+        assert_eq!((figures.hit)(1), Hit::Figures(Figures::App));
+        assert_eq!((figures.hit)(HEAL_CHIP), Hit::Heal);
+        // Set either way, the lit chip is one of the two values.
+        for from in Figures::ALL {
+            settings.figures = from;
+            let page = sections(Lang::English, &settings, true, &empty);
+            let figures = figures_row(&page, Lang::English);
+            assert_ne!(figures.on, HEAL_CHIP, "the button drawn filled");
+            assert_eq!(
+                figures.apart,
+                Some(HEAL_CHIP),
+                "the button reads as a value"
+            );
+        }
     }
 
     #[test]

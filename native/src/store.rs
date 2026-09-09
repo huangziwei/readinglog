@@ -24,14 +24,9 @@ pub(crate) const HEADER: &str = "#readinglog\t2";
 /// The percentage `BookRecord::stand_at` sets [`BookRecord::finished`] at.
 pub const FINISHED_PERCENT: f64 = 99.5;
 
-/// What named a book record, ranked strongest first. This is the order
-/// [`crate::identify::rescue`] asks the sources in, and why.
-///
-/// A source may take a class a weaker one named — that is how a book that
-/// arrived as a file name gets its real title — and nothing takes one the
-/// catalog named. Every record has to state one: the default is
-/// [`Named::Catalog`], which is right for a row written before the field
-/// existed and wrong for a record a source here synthesized.
+/// What named a book record, ranked strongest first, in the order
+/// [`crate::identify::rescue`] asks the sources. A source takes a class a
+/// weaker one named; nothing takes one [`Named::Catalog`] named.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Named {
     /// `cc.db`: the title, the author, the jacket, the content key, the place.
@@ -290,9 +285,8 @@ impl Store {
     }
 
     /// Set [`Named::Sidecar`] on each [`Named::Catalog`] record whose
-    /// `(extent, cde_key)` sits in [`Self::pairs`]. [`Self::recover`] writes
-    /// that `ep` row and keys the record by the book's file name; no other
-    /// record is keyed by its own pairing.
+    /// `(extent, cde_key)` sits in [`Self::pairs`] — the pairing
+    /// [`Self::recover`] writes, and no other record carries.
     fn migrate(&mut self) {
         for i in 0..self.books.len() {
             if self.books[i].named_by != Named::Catalog {
@@ -490,6 +484,17 @@ impl Store {
         )
     }
 
+    /// Re-measure every sitting the device's logs still reach. Answers the
+    /// stored rows whose figures moved.
+    pub fn heal(&mut self, on: &mut dyn FnMut(usize, usize)) -> usize {
+        self.heal_from(
+            Path::new(source::LIVE_LOG),
+            Path::new(source::LOG_DIR),
+            Path::new(source::DUMP_DIR),
+            on,
+        )
+    }
+
     /// Every `EndPos` class this counter pair was ever stated for: the sittings
     /// carrying their own last reading of it, and the `t` rows standing for
     /// those a record holds no sitting counter for.
@@ -594,6 +599,44 @@ impl Store {
         self.mark = self.mark.clone().max(whole.mark);
         self.floor.clear();
         added
+    }
+
+    /// [`Self::heal`] over the three log sources named. A stored row the fresh
+    /// parse restates takes its figures through [`Session::remeasure`]; a
+    /// sitting the record does not hold is added by [`Self::merge`].
+    fn heal_from(
+        &mut self,
+        live: &Path,
+        chunks: &Path,
+        dumps: &Path,
+        on: &mut dyn FnMut(usize, usize),
+    ) -> usize {
+        let got = source::collect_from(live, chunks, dumps, "", on);
+        let mut whole = Store {
+            ends: self.ends.clone(),
+            counters: self.counters.clone(),
+            cleared: self.cleared.clone(),
+            floor: self.floor.clone(),
+            ..Store::default()
+        };
+        whole.absorb(&got.lines, "");
+        let mut healed = 0;
+        for fresh in &whole.sessions {
+            let held = self.sessions.iter_mut().find(|s| {
+                s.started_at == fresh.started_at
+                    && s.end_position == fresh.end_position
+                    && s.ended_at == fresh.ended_at
+            });
+            if let Some(held) = held
+                && held.remeasure(fresh)
+            {
+                healed += 1;
+            }
+        }
+        // `merge` keeps the stored copy of a row it holds twice, the remeasured one.
+        self.merge(&whole);
+        self.mark = self.mark.clone().max(whole.mark);
+        healed
     }
 
     /// Fold what `catalog` states into [`Self::books`], answering how many
@@ -707,18 +750,9 @@ impl Store {
         }
     }
 
-    /// Name reading the catalog cannot, from what one source witnessed.
-    ///
-    /// Every witness goes to the sittings that **bracket** its instant, and
-    /// nothing else. A witness outside every sitting names nothing, and one
-    /// two classes bracket names nothing. A claim counts where the sitting
-    /// carrying it ran at least [`crate::stats::SITTING_FLOOR_SECS`], and a
-    /// class whose claims disagree on the title is left alone.
-    ///
-    /// `contested` carries the classes two titles have been found for. Such a
-    /// class is skipped, and every fresh contest is added to it.
-    ///
-    /// Answers how many classes were named.
+    /// Name reading the catalog cannot, from what one source witnessed. A
+    /// witness names the one class bracketing its instant, over a sitting of
+    /// at least [`crate::stats::SITTING_FLOOR_SECS`]; `contested` holds the rest.
     pub fn name_from(
         &mut self,
         witnesses: &[crate::identify::Witness],
@@ -917,23 +951,15 @@ impl Store {
     }
 
     /// Copy the jacket of each slot [`Self::shown_slots`] answers into `dir`,
-    /// point its `cover` at the copy, and delete every other file there.
-    /// Answers how many records changed.
-    ///
-    /// A slot it leaves out keeps no copy and names none;
-    /// [`BookRecord::art`] hands back that record's `thumbnail`.
+    /// point its `cover` at the copy, and delete every other file there. A
+    /// slot left out keeps an empty `cover`.
     pub fn keep_covers(&mut self, dir: &Path) -> usize {
         self.keep_covers_from(dir, Path::new(covers::THUMBNAILS_DIR))
     }
 
-    /// [`Self::keep_covers`] against a `thumbnails` directory.
-    ///
-    /// A record's `thumbnail` is taken where it names a file. `covers::cached`
-    /// over `thumbnails` answers the rest under `cde_key`: a record stating an
-    /// empty `thumbnail`, and one stating a path that opens nothing. It is
-    /// read once, and only under a `cde_key` no copy is held for.
-    ///
-    /// A record neither answers for holds an empty `cover`.
+    /// [`Self::keep_covers`] against a `thumbnails` directory. A record's
+    /// `thumbnail` is taken where it names a file; `covers::cached` answers
+    /// the rest under `cde_key`, read once. Neither leaves an empty `cover`.
     pub fn keep_covers_from(&mut self, dir: &Path, thumbnails: &Path) -> usize {
         let shown = self.shown_slots();
         // A non-empty `books` under an empty `shown`: no record changes and
@@ -1376,11 +1402,8 @@ struct Claim {
 }
 
 /// The class every sitting spanning `at` belongs to, the key one of them
-/// carried, and the longest of them in seconds.
-///
-/// `None` where no sitting spans `at`, and where two classes do: a witness two
-/// books bracket names neither. `longest` is the longest span any sitting
-/// runs, which bounds how far back a sitting reaching `at` can have started.
+/// carried, and the longest of them in seconds. `None` where no sitting spans
+/// `at`, and where two do. `longest` bounds the walk back.
 fn around(spans: &[Span], at: i64, longest: i64) -> Option<(i64, Option<&str>, i64)> {
     let over = spans.partition_point(|s| s.from <= at);
     let mut extent: Option<i64> = None;
@@ -3149,6 +3172,86 @@ mod tests {
         assert_eq!(added, 0);
         assert!(store.sessions.is_empty(), "a cleared book came back");
         assert_eq!(store.cleared.len(), 1, "the stamp came off");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_heal_corrects_the_row_the_logs_reach_and_keeps_the_one_they_do_not() {
+        let dir = scratch("heal-rows");
+        let live = dir.join("messages");
+        std::fs::write(
+            &live,
+            format!(
+                "{}\n{}\n",
+                page("260807:101501", 7_390_020),
+                page("260807:101543", 7_431_463)
+            ),
+        )
+        .expect("a log to read");
+
+        // The row the log restates, holding an older parse's figures, and one
+        // from before the log the device still keeps.
+        let mut store = Store {
+            sessions: vec![
+                Session {
+                    started_at: "2026-08-07T10:15:01".into(),
+                    ended_at: "2026-08-07T10:15:43".into(),
+                    end_position: 148_207,
+                    seconds: 9,
+                    awake_seconds: 0,
+                    ..Session::default()
+                },
+                Session {
+                    started_at: "2020-01-01T00:00:00".into(),
+                    ended_at: "2020-01-01T00:30:00".into(),
+                    end_position: 148_207,
+                    seconds: 1800,
+                    ..Session::default()
+                },
+            ],
+            mark: "260807:101543".into(),
+            ..Store::default()
+        };
+
+        let healed = store.heal_from(&live, &dir.join("none"), &dir.join("none"), &mut |_, _| {});
+        assert_eq!(healed, 1, "the row the log restates kept its old figures");
+        assert_eq!(store.sessions.len(), 2, "a row was given up");
+        let fresh = &store.sessions[1];
+        assert_eq!(fresh.started_at, "2026-08-07T10:15:01");
+        assert_eq!(fresh.seconds, 41, "the counter's own span");
+        let older = &store.sessions[0];
+        assert_eq!(older.started_at, "2020-01-01T00:00:00");
+        assert_eq!(older.seconds, 1800, "a row older than the logs was touched");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_heal_leaves_the_floor_and_the_era_under_it_alone() {
+        let dir = scratch("heal-floor");
+        let live = dir.join("messages");
+        std::fs::write(
+            &live,
+            format!(
+                "{}\n{}\n",
+                page("260807:101501", 7_390_020),
+                page("260807:101543", 7_431_463)
+            ),
+        )
+        .expect("a log to read");
+
+        let mut store = Store {
+            mark: "260807:101543".into(),
+            floor: "260807:120000".into(),
+            ..Store::default()
+        };
+        let healed = store.heal_from(&live, &dir.join("none"), &dir.join("none"), &mut |_, _| {});
+
+        assert_eq!(healed, 0);
+        assert!(
+            store.sessions.is_empty(),
+            "the era under the floor came back"
+        );
+        assert_eq!(store.floor, "260807:120000", "the floor was lifted");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

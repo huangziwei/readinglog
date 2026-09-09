@@ -108,6 +108,30 @@ pub struct Session {
     pub tz_offset_s: Option<i64>,
 }
 
+impl Session {
+    /// Take `fresh`'s figures over this sitting's own, keeping every field
+    /// `fresh` states nothing for. Answers whether anything moved.
+    pub fn remeasure(&mut self, fresh: &Session) -> bool {
+        let was = self.clone();
+        self.seconds = fresh.seconds;
+        self.page_turns = fresh.page_turns;
+        self.words = fresh.words;
+        self.hours = fresh.hours.clone();
+        self.measure = fresh.measure;
+        self.awake_seconds = fresh.awake_seconds;
+        self.start_counter_ms = fresh.start_counter_ms.or(self.start_counter_ms);
+        self.end_counter_ms = fresh.end_counter_ms.or(self.end_counter_ms);
+        self.start_words = fresh.start_words.or(self.start_words);
+        self.end_words = fresh.end_words.or(self.end_words);
+        self.asin = fresh.asin.clone().or_else(|| self.asin.clone());
+        self.progress = fresh.progress.or(self.progress);
+        self.time_left = fresh.time_left.or(self.time_left);
+        self.stated_wpm = fresh.stated_wpm.or(self.stated_wpm);
+        self.tz_offset_s = fresh.tz_offset_s.or(self.tz_offset_s);
+        was != *self
+    }
+}
+
 /// The share of a counter's advance that falls before a boundary inside the
 /// interval it was measured over, in proportion to the wall clock either side.
 fn share(advance: i64, elapsed: i64, before: i64) -> i64 {
@@ -1167,6 +1191,36 @@ mod tests {
         assert_eq!(out.len(), 1);
         // 10:50:00 to 11:10:00, asleep 10:55:00 to 11:05:00.
         assert_eq!(out[0].awake_seconds, 600);
+    }
+
+    #[test]
+    fn remeasure_takes_the_figures_and_keeps_what_the_fresh_parse_states_none_of() {
+        let mut held = Session {
+            seconds: 9,
+            awake_seconds: 0,
+            measure: Measure::Dwell,
+            asin: Some("B00OKPCRLG".into()),
+            tz_offset_s: Some(10_800),
+            stated_wpm: Some(240),
+            ..Session::default()
+        };
+        let fresh = Session {
+            seconds: 41,
+            awake_seconds: 600,
+            measure: Measure::Counted,
+            asin: None,
+            tz_offset_s: None,
+            stated_wpm: Some(260),
+            ..Session::default()
+        };
+        assert!(held.remeasure(&fresh));
+        assert_eq!(held.seconds, 41);
+        assert_eq!(held.awake_seconds, 600);
+        assert_eq!(held.measure, Measure::Counted);
+        assert_eq!(held.stated_wpm, Some(260));
+        assert_eq!(held.asin.as_deref(), Some("B00OKPCRLG"));
+        assert_eq!(held.tz_offset_s, Some(10_800));
+        assert!(!held.remeasure(&held.clone()), "an unchanged row counted");
     }
 
     /// An `OpenBook` line with `StoredBookData:null`.

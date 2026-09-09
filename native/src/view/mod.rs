@@ -57,6 +57,9 @@ pub enum Hit {
     /// Read the logs, the catalog and the sidecars again, to name the books
     /// nothing on the record names yet.
     Retry,
+    /// Read every log the device still holds, and measure each sitting in
+    /// them again.
+    Heal,
     /// The colours the charts are drawn in.
     ColorScheme(crate::settings::ColorScheme),
     /// Where a book's own figures come from.
@@ -162,6 +165,28 @@ impl Retrying {
             Retrying::Named(named) => vec![crate::lang::counted(s.retry_named, named as i64)],
         };
         (s.retry_head, said)
+    }
+}
+
+/// The pass [`Hit::Heal`] runs, as its banner states it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Healing {
+    /// Running, with every log the device holds to read.
+    Logs,
+    /// Over, having moved the figures of this many stored sittings.
+    Done(usize),
+}
+
+impl Healing {
+    /// The headline naming the act, and what stands under it: the pass, with
+    /// how long it runs, else what it came to.
+    pub fn banner(self, s: &Strings) -> (&'static str, Vec<String>) {
+        let said = match self {
+            Healing::Logs => vec![s.heal_doing.to_string(), s.retry_minutes.to_string()],
+            Healing::Done(0) => vec![s.heal_none.to_string()],
+            Healing::Done(healed) => vec![crate::lang::counted(s.heal_done, healed as i64)],
+        };
+        (s.heal_head, said)
     }
 }
 

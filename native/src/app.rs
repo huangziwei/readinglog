@@ -480,6 +480,10 @@ impl App {
                             self.retry(fb, input)?;
                             self.draw(fb)?;
                         }
+                        Action::Heal => {
+                            self.heal(fb, input)?;
+                            self.draw(fb)?;
+                        }
                         Action::Resetting(about) => {
                             self.resetting(fb, about)?;
                             self.draw(fb)?;
@@ -791,6 +795,7 @@ impl App {
             }
             Hit::Update => return Action::Update,
             Hit::Retry => return Action::Retry,
+            Hit::Heal => return Action::Heal,
             Hit::Prev => return self.paged(-1),
             Hit::Next => return self.paged(1),
             Hit::Clear(index) => return self.put(index, view::Ask::Clear),
@@ -893,12 +898,8 @@ impl App {
     }
 
     /// Read every source of identity again and state how many books that
-    /// named, over a banner. No sitting is folded in; only the rows placing
-    /// one on a book are read again.
-    ///
-    /// The sources come in `identify::rescue`'s own order, and the logs are
-    /// last of all: only the sidecar arm needs them, and it is the only source
-    /// the three ahead of it can leave with nothing to do.
+    /// named, over a banner. No sitting is folded in. The sources come in
+    /// `identify::rescue`'s order, the logs last, for the sidecar arm alone.
     fn retry(&mut self, fb: &mut Framebuffer, input: &mut Input) -> Result<()> {
         let before = self.unnamed_books();
         let (headline, doing) = view::Retrying::Files.banner(self.lang.strings());
@@ -928,6 +929,23 @@ impl App {
         self.hold(input, OUTCOME_LINGER)
     }
 
+    /// Measure every sitting the device's logs still reach again, over a
+    /// banner, and state how many stored rows moved. A row older than the logs
+    /// keeps what it holds, and no row is given up.
+    fn heal(&mut self, fb: &mut Framebuffer, input: &mut Input) -> Result<()> {
+        let (headline, doing) = view::Healing::Logs.banner(self.lang.strings());
+        self.banner(fb, headline, &doing, "", true)?;
+        let healed = self.over_the_logs(fb, headline, &doing, |store, on| store.heal(on));
+        eprintln!("heal: {healed} sittings the logs measured again");
+        if healed > 0 {
+            self.store_it("heal");
+            self.relearn();
+        }
+        let (headline, said) = view::Healing::Done(healed).banner(self.lang.strings());
+        self.banner(fb, headline, &said, "", true)?;
+        self.hold(input, OUTCOME_LINGER)
+    }
+
     /// Books read that no record names, whatever the page is set to show.
     fn unnamed_books(&self) -> usize {
         crate::stats::Stats::build(&self.store, self.today, true, self.settings.figures)
@@ -936,11 +954,7 @@ impl App {
 
     /// `catalog::read` through `Store::remember`, then every source that names
     /// a book the catalog cannot, then `Store::keep_covers` and
-    /// `Stats::build`. `Store::absorb` writes `sessions` and `ends`; every
-    /// title, author and jacket in `Store::books` arrives here.
-    ///
-    /// Answers the classes the sources past the catalog named, which is what
-    /// a retry counts on top of the books the catalog itself found.
+    /// `Stats::build`. Answers the classes the sources past the catalog named.
     fn relearn(&mut self) -> usize {
         let books = crate::catalog::read();
         let dir = self.dir.clone();
@@ -1167,6 +1181,9 @@ enum Action {
     Update,
     /// Name the books nothing names yet, over the whole screen.
     Retry,
+    /// Measure every sitting the logs still reach again, over the whole
+    /// screen.
+    Heal,
     /// Carry out one of the config page's resets, over the whole screen.
     Resetting(view::Reset),
 }
