@@ -256,7 +256,7 @@ pub struct Merge {
 /// unchanged files.** A record is left alone only while the sources *and* the
 /// rules that read them both stand, so a build that changes the join reaches a
 /// device whose files have not moved.
-const RULES: u32 = 3;
+const RULES: u32 = 4;
 
 /// What a pass has to have seen for the rows it wrote to still stand: the
 /// clippings file as it was, as many sidecar records as there were, and the
@@ -629,6 +629,9 @@ fn bounded(kind: Kind, body: &str) -> String {
 /// And one rule the two sources together add: a row the sidecar does not carry
 /// whose words a **live** row already holds is that same annotation's earlier
 /// write, not a second mark. It goes, so a day's count counts the act once.
+///
+/// The bodies are compared whole here — [`bounded`] runs after — which is what
+/// lets one passage be found inside another.
 fn settle(mut marks: Vec<Mark>) -> Vec<Mark> {
     // Earliest first, so the row kept is the one stating when the mark was
     // made and the bodies that follow are the later words.
@@ -656,27 +659,44 @@ fn settle(mut marks: Vec<Mark>) -> Vec<Mark> {
             None => out.push(mark),
         }
     }
-    // A retired or unconfirmed row whose words a live one holds is that
-    // annotation's own earlier write.
-    let live: Vec<(String, Kind, String)> = out
+    // A retired or unconfirmed row the sidecar's own words hold is that
+    // annotation's earlier write.
+    let live: Vec<Mark> = out
         .iter()
         .filter(|m| m.state == State::Live && !m.body.is_empty())
-        .map(|m| (normalise(&m.title), m.kind, m.body.clone()))
+        .cloned()
         .collect();
     out.retain(|m| {
-        m.state == State::Live
-            || m.body.is_empty()
-            || !live.contains(&(normalise(&m.title), m.kind, m.body.clone()))
+        m.state == State::Live || m.body.is_empty() || !live.iter().any(|l| words_alike(l, m))
     });
     out
 }
 
-/// Whether two rows name the same book, the same kind and the same words.
+/// Whether two rows are one mark: the same book, the same kind, and one
+/// passage holding the other.
+///
+/// `ClippingsManager.d` appends a whole second record every time a handle is
+/// dragged, so a passage the reader widened once is in the file two or three
+/// times over, each copy longer than the last and each holding the one before
+/// it. That containment is what says they are one mark. The stamps do not —
+/// a revision and the next mark are both a few seconds apart — and neither
+/// does the display location, which is wide enough to hold several distinct
+/// marks.
+///
+/// Nothing shorter than containment will do: two passages that merely overlap
+/// are two passages, and a book that quotes itself would otherwise lose one.
 fn words_alike(a: &Mark, b: &Mark) -> bool {
-    a.kind == b.kind
-        && !a.body.is_empty()
-        && a.body == b.body
-        && normalise(&a.title) == normalise(&b.title)
+    if a.kind != b.kind || a.body.is_empty() || b.body.is_empty() {
+        return false;
+    }
+    if normalise(&a.title) != normalise(&b.title) {
+        return false;
+    }
+    let (short, long) = match a.body.chars().count() <= b.body.chars().count() {
+        true => (&a.body, &b.body),
+        false => (&b.body, &a.body),
+    };
+    long.contains(short.as_str())
 }
 
 #[cfg(test)]
@@ -892,9 +912,10 @@ mod tests {
     }
 
     #[test]
-    fn an_extended_selection_keeps_the_revision_and_the_mark_it_became() {
-        // The reader dragged the handle: the file kept both, the sidecar kept
-        // the second. The first is retired, the second is what is in the book.
+    fn an_extended_selection_is_one_mark_at_the_words_it_became() {
+        // The reader dragged the handle, so the file carries the passage twice
+        // with the shorter inside the longer. That is one mark, and what
+        // stands is the sidecar's own — the words the book holds now.
         let books = [book(1000, "觀念史研究", "觀念史研究")];
         let shelf = shelf_of(vec![roster(
             "觀念史研究",
@@ -927,9 +948,77 @@ mod tests {
             &shelf,
             &books,
         );
-        assert_eq!(got.len(), 2, "{got:#?}");
-        assert_eq!(got[0].state, State::Retired);
-        assert_eq!(got[1].state, State::Live);
+        assert_eq!(got.len(), 1, "{got:#?}");
+        assert_eq!(got[0].state, State::Live);
+        assert_eq!(got[0].at, "2026-05-18T22:56:49");
+    }
+
+    #[test]
+    fn a_passage_widened_with_no_sidecar_to_say_so_is_still_one_mark() {
+        // No `.sdr`, so nothing states which of the three the book holds. The
+        // containment does: each is inside the next, so they are one passage
+        // the reader widened twice, opened when the first was made and reading
+        // as the last says.
+        let said = [
+            "The AI\u{2019}s primary job is to decrease the wage",
+            "The AI\u{2019}s primary job is to decrease the wage bill",
+            "The AI\u{2019}s primary job is to decrease the wage bill, and it does",
+        ];
+        let got = merge(
+            &said
+                .iter()
+                .enumerate()
+                .map(|(i, body)| {
+                    clip(
+                        "A Book",
+                        Kind::Highlight,
+                        &format!("2026-07-14T11:38:{:02}", 24 + i * 3),
+                        315,
+                        body,
+                    )
+                })
+                .collect::<Vec<Clipping>>(),
+            &shelf_of(Vec::new()),
+            &[],
+        );
+        assert_eq!(got.len(), 1, "{got:#?}");
+        assert_eq!(got[0].at, "2026-07-14T11:38:24");
+        assert_eq!(got[0].body, said[2]);
+    }
+
+    #[test]
+    fn two_passages_that_hold_neither_other_stay_two_marks() {
+        // Distinct marks a few seconds apart at one display location: the
+        // stamps cannot tell them from a revision and the location is wide
+        // enough for both, so only the words can, and these share none.
+        let got = merge(
+            &[
+                clip(
+                    "A Book",
+                    Kind::Highlight,
+                    "2026-08-08T13:27:38",
+                    69,
+                    "窓辺には花が飾られていた。",
+                ),
+                clip(
+                    "A Book",
+                    Kind::Highlight,
+                    "2026-08-08T13:27:44",
+                    69,
+                    "太い茎がすっと伸び、",
+                ),
+                clip(
+                    "A Book",
+                    Kind::Highlight,
+                    "2026-08-08T13:27:51",
+                    69,
+                    "茎の先でいくつも白い花が咲いている。",
+                ),
+            ],
+            &shelf_of(Vec::new()),
+            &[],
+        );
+        assert_eq!(got.len(), 3, "{got:#?}");
     }
 
     #[test]
