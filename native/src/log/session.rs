@@ -48,26 +48,6 @@ impl Measure {
     }
 }
 
-/// Seconds in the minute every zone offset is a whole multiple of.
-const OFFSET_STEP: i64 = 60;
-
-/// Seconds the device's local clock stands ahead of UTC, from a record stating
-/// an instant the line's own prefix also states. [`Moment::abs`] counts from
-/// 1970, which is the epoch the stamp counts from too.
-fn utc_offset(now: &crate::log::line::Moment, line: &str) -> Option<i64> {
-    if !crate::log::metric::METRIC_MARKERS
-        .iter()
-        .any(|m| line.contains(m))
-    {
-        return None;
-    }
-    let epoch_ms = crate::log::line::field_num(line, "close_timestamp")
-        .or_else(|| crate::log::line::field_num(line, "action_start_time"))?;
-    let raw = now.abs - epoch_ms.div_euclid(1000);
-    // `raw` past a day is a wrong clock, not a zone.
-    (raw.abs() < 24 * 3600).then(|| (raw as f64 / OFFSET_STEP as f64).round() as i64 * OFFSET_STEP)
-}
-
 /// One parsed sitting.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Session {
@@ -104,7 +84,9 @@ pub struct Session {
     /// beside `end_counter_ms` is the pair a sidecar's `timer.model` states.
     pub start_words: Option<i64>,
     pub end_words: Option<i64>,
-    /// Seconds the device's clock stands ahead of UTC, per [`utc_offset`].
+    /// Seconds the device's clock stood ahead of UTC when this sitting was
+    /// read out of the log, set by `Store::absorb` and unstated on a sitting
+    /// no pass caught up with. No log line carries a zone.
     pub tz_offset_s: Option<i64>,
 }
 
@@ -262,8 +244,6 @@ struct Open {
     time_left: Option<i64>,
     /// The last `TotalWPM` a line stated for this book.
     stated_wpm: Option<i64>,
-    /// The offset the newest record stated while this run was open.
-    tz_offset_s: Option<i64>,
 }
 
 impl Open {
@@ -300,7 +280,6 @@ impl Open {
             progress: None,
             time_left: None,
             stated_wpm: None,
-            tz_offset_s: None,
         }
     }
 
@@ -491,12 +470,12 @@ impl Open {
             progress: self.progress,
             time_left: self.time_left,
             stated_wpm: self.stated_wpm,
+            tz_offset_s: None,
             awake_seconds: awake.bound(self.began.abs, self.last.abs),
             start_counter_ms: self.time_lo,
             end_counter_ms: self.time_lo.map(|_| self.time_hi),
             start_words: self.words_lo,
             end_words: self.words_lo.map(|_| self.words_hi),
-            tz_offset_s: self.tz_offset_s,
         }
     }
 }
@@ -609,8 +588,6 @@ pub fn parse_sessions<'a>(
     let mut gapped = false;
     // The catalog key most recently named, and when, for the run it belongs to.
     let mut named: Option<(i64, String)> = None;
-    // The offset the newest record stated, for the run that opens over it.
-    let mut zone: Option<i64> = None;
     // Records no open run reached, drained into the run that opens over them.
     let mut pending: Vec<(Moment, Metric)> = Vec::new();
 
@@ -642,12 +619,6 @@ pub fn parse_sessions<'a>(
             named = Some((now.abs, key.to_string()));
             if live && let Some(cur) = open.as_mut() {
                 cur.asin = Some(key.to_string());
-            }
-        }
-        if let Some(offset) = utc_offset(&now, line) {
-            zone = Some(offset);
-            if let Some(cur) = open.as_mut() {
-                cur.tz_offset_s = zone;
             }
         }
 
@@ -697,11 +668,7 @@ pub fn parse_sessions<'a>(
             }
         }
         let fresh = open.is_none();
-        let cur = open.get_or_insert_with(|| {
-            let mut run = Open::new(obs.position, &now, seed.take());
-            run.tz_offset_s = zone;
-            run
-        });
+        let cur = open.get_or_insert_with(|| Open::new(obs.position, &now, seed.take()));
         if fresh {
             // `named` and `pending` in order, from `cur.began`.
             let from = cur.began.abs;
@@ -1031,40 +998,6 @@ mod tests {
         // `seconds` at each end is the counter's own span.
         assert_eq!(out[0].seconds, 40);
         assert_eq!(out[1].seconds, 40);
-    }
-
-    #[test]
-    fn a_close_record_states_the_zone_the_reader_s_clock_stands_in() {
-        // 2026-08-23T13:36:08 local beside the same instant in epoch
-        // milliseconds: the difference is the zone, to the minute.
-        let line = "260823:133608 fastmetrics[1]: D fastmetrics: Emitting a new record. \
-                    SchemaName[ereader_close_book], Fields[{ \"close_timestamp\" : \
-                    1787463368310 }] :";
-        let now = crate::log::line::stamp(line).expect("a stamp");
-        assert_eq!(utc_offset(&now, line), Some(8 * 3600));
-
-        // A line stating no instant, and a record of no schema, state no zone.
-        let bare = "260823:133608 fastmetrics[1]: D fastmetrics: \
-                    SchemaName[ereader_close_book], Fields[{ }] :";
-        assert_eq!(
-            utc_offset(&crate::log::line::stamp(bare).unwrap(), bare),
-            None
-        );
-        let other = "260823:133608 cvm[1]: I Something: \"close_timestamp\" : 1787463368310;";
-        assert_eq!(
-            utc_offset(&crate::log::line::stamp(other).unwrap(), other),
-            None
-        );
-    }
-
-    #[test]
-    fn a_clock_too_far_out_to_be_a_zone_states_none() {
-        // Two days apart is a wrong clock, not a timezone.
-        let line = "260825:133608 fastmetrics[1]: D fastmetrics: Emitting a new record. \
-                    SchemaName[ereader_close_book], Fields[{ \"close_timestamp\" : \
-                    1787463368310 }] :";
-        let now = crate::log::line::stamp(line).expect("a stamp");
-        assert_eq!(utc_offset(&now, line), None);
     }
 
     /// An `ereader_book_consume_content` record at `hhmmss`, stating `words`.

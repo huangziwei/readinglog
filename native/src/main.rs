@@ -13,7 +13,7 @@ use readinglog_native::eink::touch::Touch;
 use readinglog_native::orientation::Orientation;
 use readinglog_native::stats::Stats;
 use readinglog_native::store::Store;
-use readinglog_native::{app, catalog, date, font, identify, lang, settings, store, ui};
+use readinglog_native::{app, catalog, date, font, identify, lang, settings, store, ui, zone};
 
 fn main() {
     let mode = std::env::args().nth(1).unwrap_or_default();
@@ -57,7 +57,16 @@ fn collect() -> Result<Store> {
 /// [`collect`] over a loaded `store`, reporting log files opened and log files
 /// to open.
 fn collect_into(store: &mut Store, dir: &Path, on: &mut dyn FnMut(usize, usize)) {
+    eprintln!("zone: {}", zone::describe(date::epoch_now()));
     let pass = store.update(on);
+    // A clock that stepped back left the stretch it stepped over below the
+    // mark; the pass pulled the mark back and read that stretch again.
+    if pass.rewound > 0 {
+        eprintln!(
+            "clock: the device stepped back {}, and the log was read again from there",
+            date::duration(pass.rewound, lang::Lang::English.strings()),
+        );
+    }
     // The catalog speaks first: it is the cheapest to read and states the most
     // about every book it names. `identify::rescue` then asks the three
     // sources that can name what it left unnamed.

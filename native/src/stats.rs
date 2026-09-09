@@ -1288,6 +1288,7 @@ mod tests {
             pairs: Vec::new(),
             books: Vec::new(),
             mark: "260807:091000".into(),
+            mark_offset: None,
             floor: String::new(),
             cleared: Vec::new(),
         }

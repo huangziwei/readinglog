@@ -7,7 +7,7 @@ use crate::settings::WeekStart;
 
 /// `(year, month, day)` as days since 1970-01-01, negative before it. Howard
 /// Hinnant's `days_from_civil`, shifted to the Unix epoch.
-pub fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+pub const fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = y - if m <= 2 { 1 } else { 0 };
     let era = if y >= 0 { y } else { y - 399 } / 400;
     let yoe = y - era * 400;
@@ -83,18 +83,50 @@ pub fn secs_of(at: &str) -> i64 {
 /// The local clock, as `(day count, seconds into the day)`. Every stamp in
 /// the log is local wall clock with no zone on it.
 pub fn now() -> (i64, i64) {
-    // SAFETY: `time` takes a null pointer and answers the clock.
-    let clock = unsafe { libc::time(std::ptr::null_mut()) };
-    local_of(clock as i64).unwrap_or((0, 0))
+    local_of(epoch_now()).unwrap_or((0, 0))
 }
 
+/// The clock as an epoch second, which is what [`crate::zone`] takes.
+pub fn epoch_now() -> i64 {
+    // SAFETY: `time` takes a null pointer and answers the clock.
+    unsafe { libc::time(std::ptr::null_mut()) as i64 }
+}
+
+/// The days an instant may fall on to name one. The arithmetic above holds
+/// outside them, but nothing that far out is a device clock, and a stamp
+/// reaches here from `vocab.db` as well as from the clock.
+const FIRST_DAY: i64 = days_from_civil(1900, 1, 1);
+const LAST_DAY: i64 = days_from_civil(9999, 12, 31);
+
 /// An epoch second as `(day count, seconds into the day)` on the device's own
-/// clock, the way [`now`] reads the present one. `None` where the clock will
-/// not break the value down.
+/// clock, the way [`now`] reads the present one. `None` where it names no day.
 ///
 /// `vocab::Lookup` arrives as epoch milliseconds and every other instant the
-/// crate holds is local wall clock, so this is where the two meet.
+/// crate holds is local wall clock, so this is where the two meet. The zone
+/// comes from [`crate::zone`], the same file the log's own stamps are written
+/// through; [`libc_local_of`] answers for a device keeping none this can read.
 pub fn local_of(epoch: i64) -> Option<(i64, i64)> {
+    local_at(epoch, crate::zone::offset_at(epoch))
+}
+
+/// [`local_of`] with the zone already read, which is where the arithmetic is.
+/// An `offset` of `None` is a device keeping no zone file this can read.
+fn local_at(epoch: i64, offset: Option<i64>) -> Option<(i64, i64)> {
+    let (days, secs) = match offset {
+        Some(offset) => {
+            let local = epoch.checked_add(offset)?;
+            (local.div_euclid(86_400), local.rem_euclid(86_400))
+        }
+        None => libc_local_of(epoch)?,
+    };
+    (FIRST_DAY..=LAST_DAY)
+        .contains(&days)
+        .then_some((days, secs))
+}
+
+/// [`local_of`] through the C library, which takes the zone from the process
+/// environment.
+fn libc_local_of(epoch: i64) -> Option<(i64, i64)> {
     // SAFETY: `localtime_r` fills a caller-owned `tm` and takes the zone from
     // the process environment. No pointer outlives the call.
     unsafe {
@@ -279,11 +311,27 @@ mod tests {
     }
 
     #[test]
-    fn an_instant_the_clock_cannot_hold_names_no_day() {
-        // `time_t` is 32 bits on the device, so a stamp past 2038 has no day
-        // there. It has one on a 64-bit host, and either answer is right.
+    fn an_offset_places_an_instant_on_the_local_clock() {
+        let day = days_from_civil(2026, 9, 9);
+        let noon = day * 86_400 + 11 * 3600;
+        // +02:01, the offset a Kindle set by hand a minute fast stands at.
+        assert_eq!(local_at(noon, Some(7260)), Some((day, 13 * 3600 + 60)));
+        assert_eq!(local_at(noon, Some(0)), Some((day, 11 * 3600)));
+        // An offset that carries the instant into the next day, and one that
+        // carries it back into the day before.
+        assert_eq!(local_at(noon, Some(14 * 3600)), Some((day + 1, 3600)));
+        assert_eq!(local_at(noon, Some(-12 * 3600)), Some((day - 1, 23 * 3600)));
+    }
+
+    #[test]
+    fn an_instant_outside_the_calendar_names_no_day() {
         assert!(local_of(i64::MAX).is_none());
         assert!(local_of(i64::MIN).is_none());
+        // The edges themselves, whatever zone the machine stands in: a day
+        // either side of the calendar is out and the middle is in.
+        assert!(local_of(days_from_civil(1899, 12, 30) * 86_400).is_none());
+        assert!(local_of(days_from_civil(10_000, 1, 2) * 86_400).is_none());
+        assert!(local_of(days_from_civil(2026, 9, 9) * 86_400 + 12 * 3600).is_some());
     }
 
     #[test]

@@ -29,3 +29,4 @@ pub mod update;
 pub mod view;
 pub mod vocab;
 pub mod wrap;
+pub mod zone;
