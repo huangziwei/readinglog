@@ -31,6 +31,12 @@ impl Palette {
         self.steps[2]
     }
 
+    /// The ground a found word is set on: [`STEP_LUMAS`]`[1]`, which is
+    /// [`LIGHT`]'s own luma in the scheme's hue.
+    pub fn wash(&self) -> [u8; 3] {
+        self.steps[1]
+    }
+
     /// The [`Palette::steps`] entry at `level`, and `None` at zero.
     pub fn level(&self, level: usize) -> Option<[u8; 3]> {
         (level > 0)
@@ -108,7 +114,6 @@ impl Palette {
     }
 }
 
-/// A box on the screen.
 /// The eleven colours `AnnotationColor` names on 5.19, and the neutral a mark
 /// stating none, or a name this table does not hold, takes.
 const MARK_COLOURS: [(&str, [u8; 3]); 11] = [
@@ -137,13 +142,14 @@ pub fn mark_colour(name: &str, coloured: bool) -> [u8; 3] {
         .map_or([DARK; 3], |(_, rgb)| *rgb)
 }
 
-/// Whether `palette` can show a colour at all: a panel with no filter, and a
-/// reader who asked for grey, both draw the neutral.
+/// Whether `palette` can show a colour at all: [`Palette::GREY`] and a panel
+/// with no filter both draw three equal channels.
 pub fn is_coloured(palette: &Palette) -> bool {
     let [r, g, b] = palette.steps[3];
     r != g || g != b
 }
 
+/// A box on the screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Rect {
     pub x: i32,

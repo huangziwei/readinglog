@@ -96,7 +96,6 @@ struct Metrics {
 }
 
 /// What a line of a passage is opened up by over the face's own line height.
-/// A quotation is read slower than a list of figures and is set looser for it.
 fn leading(theme: &Theme) -> i32 {
     theme.gap
 }
@@ -269,9 +268,8 @@ fn list_box(text: &mut TextRenderer, theme: &Theme, area: Rect) -> Rect {
 pub fn draw(cx: &mut Ctx, area: Rect, book: usize, from: usize, search: Option<&Search>) {
     let theme: &Theme = cx.theme;
     let s = cx.s();
-    // Most recently marked first: what was marked last is what is being
-    // looked for. `Stats::marked` is what decides which kinds are here and
-    // which note belongs under which passage.
+    // `Stats::marked` sets the order, the kinds that are here, and which
+    // note belongs under which passage.
     let Some(record) = cx.stats.books.get(book).cloned() else {
         return;
     };
@@ -305,8 +303,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, book: usize, from: usize, search: Option<&
     let from = opens[page_at];
     let to = opens.get(page_at + 1).copied().unwrap_or(held.len());
     if opens.len() > 1 {
-        // The strip along the foot, which is where every screen paged as a
-        // whole is paged from.
+        // The strip along the foot, which every screen paged whole carries.
         let label = format!("{}–{to} {} {}", from + 1, s.of, held.len());
         let last = opens.last().copied().unwrap_or(0);
         let steps = match search {
@@ -359,7 +356,7 @@ pub(super) struct Layout<'a> {
     /// list running across books does, and a book's own list, standing under
     /// that book's heading, does not.
     named: bool,
-    /// The query the rows were found by, where they were found by one. A
+    /// The query a list is drawn against, where one names its rows. A
     /// passage holding it past its own head opens on the line that holds it.
     needle: Option<&'a str>,
 }
@@ -414,8 +411,8 @@ struct Wrapped {
     /// The lines of the passage the row shows, from [`Wrapped::opens`].
     said: Vec<String>,
     noted: Vec<String>,
-    /// The line of the whole passage the row opens on: 0 unless the query was
-    /// found further down, in which case the window opens one line above it.
+    /// The line of the whole passage the row opens on: 0 unless the query
+    /// stands further down, and one line above it where it does.
     opens: usize,
 }
 
@@ -431,8 +428,8 @@ fn wrapped(text: &mut TextRenderer, theme: &Theme, at: &Layout, held: &Row) -> W
     };
     let room = (at.width - indent(theme)).max(1) as u32;
     text.set_px(theme.body_px);
-    // With no query the passage is wrapped only as far as the row shows; with
-    // one it is wrapped whole, to find the line that holds it.
+    // With no query the passage wraps as far as the row shows; with one it
+    // wraps whole, and [`opens_at`] reads every line of it.
     let (said, opens) = match at.needle {
         None => (
             text.wrap_and_clamp_in(script, &held.mark.body, room, at.lines),
@@ -475,13 +472,66 @@ fn window(
     said
 }
 
-/// The line a passage's window opens on: one above the first line of `every`
-/// holding `needle`, and 0 where no line holds it.
+/// `ch` as a query matches it: [`crate::hanfold::folded`], lowercased.
+fn keyed(ch: char) -> char {
+    let ch = crate::hanfold::folded(ch);
+    ch.to_lowercase().next().unwrap_or(ch)
+}
+
+/// Every run of `needle` in `line`, as byte ranges, matched by [`keyed`] a
+/// character at a time.
+fn runs_in(line: &str, needle: &str) -> Vec<(usize, usize)> {
+    let want: Vec<char> = needle.chars().map(keyed).collect();
+    if want.is_empty() {
+        return Vec::new();
+    }
+    let held: Vec<(usize, char)> = line
+        .char_indices()
+        .map(|(at, ch)| (at, keyed(ch)))
+        .collect();
+    let mut out = Vec::new();
+    let mut at = 0;
+    while at + want.len() <= held.len() {
+        let same = held[at..at + want.len()]
+            .iter()
+            .map(|(_, ch)| *ch)
+            .eq(want.iter().copied());
+        if !same {
+            at += 1;
+            continue;
+        }
+        let to = match held.get(at + want.len()) {
+            Some((byte, _)) => *byte,
+            None => line.len(),
+        };
+        out.push((held[at].0, to));
+        at += want.len();
+    }
+    out
+}
+
+/// `Palette::wash` behind every run of `needle` in `line`, which is set from
+/// `x` on `baseline` at [`Theme::body_px`].
+fn wash(cx: &mut Ctx, script: Script, x: i32, baseline: i32, line: &str, needle: &str) {
+    let cap = cx.text.cap_height() as i32;
+    // The band clears the ascenders and takes in the descenders under it.
+    let drop = ((cx.text.line_height() as i32 - cap) / 2).max(1);
+    let over = (drop / 2).max(1);
+    let ink = cx.palette.wash();
+    for (from, to) in runs_in(line, needle) {
+        let before = cx.text.measure_width_in(script, &line[..from]) as i32;
+        let wide = cx.text.measure_width_in(script, &line[from..to]) as i32;
+        let box_ = Rect::new(x + before, baseline - cap - over, wide, cap + over + drop);
+        paint::fill_rgb(cx.fb, box_, ink);
+    }
+}
+
+/// The line a passage's window opens on: one above the first line
+/// [`runs_in`] finds `needle` in, and 0 where no line holds it.
 fn opens_at(every: &[String], needle: &str) -> usize {
-    let needle = needle.to_lowercase();
     every
         .iter()
-        .position(|line| line.to_lowercase().contains(&needle))
+        .position(|line| !runs_in(line, needle).is_empty())
         .unwrap_or(0)
         .saturating_sub(1)
 }
@@ -533,6 +583,9 @@ pub(super) fn row(cx: &mut Ctx, area: Rect, held: &Row, at: &Layout) {
     cx.text.set_px(theme.body_px);
     let mut y = top + theme.gap * 2 + cx.text.cap_height() as i32;
     for line in &w.said {
+        if let Some(needle) = at.needle {
+            wash(cx, script, x, y, line, needle);
+        }
         cx.text.draw_in(script, cx.fb, x, y, line, false);
         y += m.line;
     }
@@ -542,17 +595,18 @@ pub(super) fn row(cx: &mut Ctx, area: Rect, held: &Row, at: &Layout) {
             .draw_in(script, cx.fb, x, top + theme.gap, MORE, false);
     }
 
-    // `note` stands at `area.x`, past the end of the rule and clear of
-    // [`indent`], which is what tells it from the passage.
+    // `note` stands at `area.x`, past the rule and clear of [`indent`].
     let mut baseline = top + quoted + theme.gap + cx.text.cap_height() as i32;
     for line in &w.noted {
+        if let Some(needle) = at.needle {
+            wash(cx, script, area.x, baseline, line, needle);
+        }
         cx.text
             .draw_in(script, cx.fb, area.x, baseline, line, false);
         baseline += m.line;
     }
 
-    // The label last: it is what the row is about only once the words are
-    // read.
+    // The label last, under the words and the note.
     cx.text.set_px(theme.small_px);
     let ui = cx.ui_script();
     let baseline = top + quoted + m.noted(theme, w.noted.len()) + theme.gap * 2 + m.cap;
@@ -656,8 +710,8 @@ mod tests {
 
     #[test]
     fn a_row_states_every_place_its_sources_named() {
-        // The page and the location came off the clipping, the percentage off
-        // the sidecar's own position: 330 of 1000.
+        // The page and the location come off the clipping, the percentage
+        // off the sidecar's own position: 330 of 1000.
         let mut held = mark(State::Live, 330, 111);
         held.page = "15".into();
         assert_eq!(place(&held, 1_000, en()), "page 15 · Location 111 · 33%");
@@ -689,6 +743,38 @@ mod tests {
         assert_eq!(opens_at(&every, "SECOND"), 0, "case folded");
         // And a query the note alone matched leaves the passage where it is.
         assert_eq!(opens_at(&every, "nowhere"), 0);
+    }
+
+    #[test]
+    fn a_query_is_found_in_a_line_wherever_it_stands_in_it() {
+        let line = "The bigger the company";
+        let runs = runs_in(line, "the");
+        assert_eq!(runs, [(0, 3), (11, 14)]);
+        assert_eq!(&line[runs[0].0..runs[0].1], "The");
+        assert_eq!(&line[runs[1].0..runs[1].1], "the");
+        // A run at the end of the line reaches the end of it.
+        assert_eq!(runs_in(line, "company"), [(15, 22)]);
+        // A word no line holds, and a query with nothing in it.
+        assert!(runs_in(line, "zzz").is_empty());
+        assert!(runs_in(line, "").is_empty());
+        // Runs never overlap: two of three take the head of the line.
+        assert_eq!(runs_in("aaaa", "aa"), [(0, 2), (2, 4)]);
+    }
+
+    #[test]
+    fn a_query_in_one_script_is_found_in_a_line_written_in_the_other() {
+        let line = "下列觀念是中國現代政治思想";
+        // 观 is what a pinyin keyboard commits, and 觀 is what the line holds.
+        let runs = runs_in(line, "观念");
+        assert_eq!(runs.len(), 1);
+        assert_eq!(&line[runs[0].0..runs[0].1], "觀念");
+        assert_eq!(runs_in(line, "觀念"), runs);
+        // And the window opens on the line a fold found, not on the head.
+        let every: Vec<String> = ["a first line", "a second", line.to_string().as_str()]
+            .iter()
+            .map(|line| line.to_string())
+            .collect();
+        assert_eq!(opens_at(&every, "观念"), 1);
     }
 
     #[test]
