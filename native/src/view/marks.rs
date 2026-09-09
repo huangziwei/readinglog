@@ -1,12 +1,6 @@
-//! What a book was marked with: every highlight and note, most recent first,
-//! and where in the book each one falls.
-//!
-//! A row states three things and the sources for them are not the same. The
-//! words are the clippings file's — the only copy of them outside the book.
-//! The place is the `.sdr` sidecar's, and it is a real position, so a book
-//! whose sidecar still holds the mark states a **percentage**; one that does
-//! not can only state the display location the clipping named, which is on
-//! another axis and converts to nothing. See [`crate::annotate`].
+//! One book's highlights and notes, most recent first. `Mark::body` comes
+//! from the clippings file and `Mark::start` from the `.sdr` sidecar;
+//! [`place`] states each on its own axis.
 
 use crate::annotate::Mark;
 use crate::clippings::Kind;
@@ -18,6 +12,7 @@ use crate::ui::chrome;
 use crate::ui::paint::{self, PALE, Rect};
 use crate::ui::text::TextRenderer;
 use crate::ui::theme::Theme;
+use crate::wrap::{MORE, mark_more};
 
 use super::{Ctx, Hit, pager};
 
@@ -27,6 +22,56 @@ const DOT: &str = " · ";
 
 /// What a book with no place for a mark states in place of one.
 const DASH: &str = "—";
+
+/// The most passage lines one row of a [`Layout::found`] list shows.
+const WINDOW_LINES: usize = 4;
+
+/// The most lines a row's `title` takes, wrapped to the row's own width.
+const NAME_LINES: usize = 3;
+
+/// One row of a list of marks: `mark`, the `note` written on it, and the
+/// `title`, `language` and `extent` of the book it was made in.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct Row {
+    /// The book, by its index in `Stats::books`.
+    pub book: usize,
+    /// The row's place in that book's own `Stats::marked` list, which is
+    /// where its Marks tab opens.
+    pub at: usize,
+    pub mark: Mark,
+    pub note: Option<Mark>,
+    /// The book's title, which stands over the row in a list running across
+    /// books.
+    pub title: String,
+    /// The book's catalog language, which picks the face the words are set in.
+    pub language: String,
+    /// The book's extent, which the percentage is measured against.
+    pub extent: i64,
+}
+
+impl Row {
+    pub(super) fn new(
+        book: usize,
+        at: usize,
+        record: &BookStat,
+        mark: &Mark,
+        note: Option<&Mark>,
+    ) -> Self {
+        Self {
+            book,
+            at,
+            mark: mark.clone(),
+            note: note.cloned(),
+            title: record.title.clone(),
+            language: record.language.clone(),
+            extent: record.extent,
+        }
+    }
+
+    fn script(&self) -> Script {
+        Script::of_language(&self.language)
+    }
+}
 
 /// How wide the rule beside a passage is, and how far the words stand clear of
 /// it.
@@ -68,10 +113,8 @@ impl Metrics {
         }
     }
 
-    /// The height the passage takes, the air over it included. **This block
-    /// alone is what the coloured rule stands beside**: the colour is the
-    /// highlight's, and the note is the reader's own writing about it, not
-    /// part of what was marked.
+    /// The height `lines` of passage take, the air over them included, which
+    /// is the block `paint::mark_colour`'s rule stands beside.
     fn quoted(self, theme: &Theme, lines: usize) -> i32 {
         theme.gap * 2 + lines.max(1) as i32 * self.line
     }
@@ -84,14 +127,12 @@ impl Metrics {
         }
     }
 
-    /// The height a row takes: the passage, the note under it, the label
-    /// under that, and the air closing the row.
-    ///
-    /// The label is **under** the words, not over them. It states where and
-    /// when the mark was made, which is what the row is about only once the
-    /// passage has been read.
-    fn row(self, theme: &Theme, lines: usize, note: usize) -> i32 {
-        self.quoted(theme, lines)
+    /// The height a row takes: `name` lines over the passage's `lines`, the
+    /// `note` under those, [`label`]'s own line under that, and the air
+    /// closing the row.
+    fn row(self, theme: &Theme, name: usize, lines: usize, note: usize) -> i32 {
+        name as i32 * self.small
+            + self.quoted(theme, lines)
             + self.noted(theme, note)
             + theme.gap * 2
             + self.small
@@ -99,26 +140,30 @@ impl Metrics {
     }
 }
 
-/// The most passage lines one row can take in a box `h` tall.
-///
-/// A row is given every line its own words need, up to this: the passage is
-/// what the page is for, and cutting one that would have fitted hides the half
-/// the reader marked it for. A passage longer than a whole page is ellipsized
-/// at this, and the rest is in `My Clippings.txt`.
+/// The passage lines a [`Layout::found`] row shows in a box `high` tall:
+/// [`WINDOW_LINES`], less wherever two rows that deep overflow `high`. The
+/// row measured carries one line of `title` and no `note`.
+fn window_lines(m: Metrics, theme: &Theme, high: i32) -> usize {
+    let mut lines = WINDOW_LINES;
+    while lines > 1 && m.row(theme, 1, lines, 0) * 2 > high {
+        lines -= 1;
+    }
+    lines
+}
+
+/// The most passage lines one row can take in a box `h` tall. A `mark.body`
+/// running past it is ellipsized there.
 fn lines_in(m: Metrics, theme: &Theme, h: i32) -> usize {
     let mut lines = 1;
-    while m.row(theme, lines + 1, 0) <= h {
+    while m.row(theme, 0, lines + 1, 0) <= h {
         lines += 1;
     }
     lines
 }
 
-/// Where each page of one book's marks opens in `area`, ascending and starting
-/// at 0. Empty for a book carrying none.
-///
-/// A row is as tall as its own words, so the passages have to be wrapped to
-/// know where a page ends. [`draw`] pages from this and so does the step a
-/// swipe or a page button makes, which is what keeps the two together.
+/// Where each page of `book`'s marks opens in `area`, ascending from 0, and
+/// empty for a book carrying none. [`draw`] pages from this, and the step a
+/// swipe or a page button takes reads the same list.
 pub fn pages(
     text: &mut TextRenderer,
     theme: &Theme,
@@ -126,33 +171,33 @@ pub fn pages(
     book: usize,
     area: Rect,
 ) -> Vec<usize> {
-    let held: Vec<(Mark, Option<Mark>)> = stats
-        .marked(book)
-        .iter()
-        .map(|m| (m.mark.clone(), m.note.cloned()))
-        .collect();
     let Some(record) = stats.books.get(book) else {
         return Vec::new();
     };
+    let held = rows(stats, book, record);
     if held.is_empty() {
         return Vec::new();
     }
     let inner = list_box(text, theme, area);
-    let m = Metrics::of(text, theme);
-    let at = Layout {
-        book: record,
-        m,
-        lines: lines_in(m, theme, inner.h),
-        width: inner.w,
-    };
-    starts(text, theme, &held, &at, inner.h)
+    let at = Layout::of(text, theme, inner, false);
+    openings(text, theme, &held, &at, inner.h)
 }
 
-/// [`pages`] over rows already gathered.
-fn starts(
+/// One book's own rows, most recently marked first, as its list holds them.
+fn rows(stats: &Stats, book: usize, record: &BookStat) -> Vec<Row> {
+    stats
+        .marked(book)
+        .iter()
+        .enumerate()
+        .map(|(at, m)| Row::new(book, at, record, m.mark, m.note))
+        .collect()
+}
+
+/// Where each page of `held` opens, ascending and starting at 0.
+pub(super) fn openings(
     text: &mut TextRenderer,
     theme: &Theme,
-    held: &[(Mark, Option<Mark>)],
+    held: &[Row],
     at: &Layout,
     high: i32,
 ) -> Vec<usize> {
@@ -181,12 +226,10 @@ pub fn draw(cx: &mut Ctx, area: Rect, book: usize, from: usize) {
     // Most recently marked first: what was marked last is what is being
     // looked for. `Stats::marked` is what decides which kinds are here and
     // which note belongs under which passage.
-    let held: Vec<(Mark, Option<Mark>)> = cx
-        .stats
-        .marked(book)
-        .iter()
-        .map(|m| (m.mark.clone(), m.note.cloned()))
-        .collect();
+    let Some(record) = cx.stats.books.get(book).cloned() else {
+        return;
+    };
+    let held = rows(cx.stats, book, &record);
     let named = heading(cx, book);
     let inner = list_box(cx.text, theme, area);
     chrome::section(cx.fb, cx.text, theme, area, &named);
@@ -200,21 +243,9 @@ pub fn draw(cx: &mut Ctx, area: Rect, book: usize, from: usize) {
         return;
     }
 
-    let Some(record) = cx.stats.books.get(book).cloned() else {
-        return;
-    };
-    let m = Metrics::of(cx.text, theme);
-    // Every row takes the lines its own passage needs, so a page holds as many
-    // whole passages as it can rather than a fixed count of cut ones.
-    let at = Layout {
-        book: &record,
-        m,
-        lines: lines_in(m, theme, inner.h),
-        width: inner.w,
-    };
-    // The page showing is the last one opening at or before `from`, so an
-    // index left over from another book lands on a real page.
-    let opens = starts(cx.text, theme, &held, &at, inner.h);
+    let at = Layout::of(cx.text, theme, inner, false);
+    // The page showing opens at the last opening at or before `from`.
+    let opens = openings(cx.text, theme, &held, &at, inner.h);
     let page = opens.iter().rposition(|o| *o <= from).unwrap_or(0);
     let from = opens[page];
     let to = opens.get(page + 1).copied().unwrap_or(held.len());
@@ -236,15 +267,9 @@ pub fn draw(cx: &mut Ctx, area: Rect, book: usize, from: usize) {
 
     let shown = &held[from..to];
     let mut y = inner.y;
-    for (n, (mark, note)) in shown.iter().enumerate() {
-        let high = height(cx.text, theme, &at, mark, note.as_ref());
-        row(
-            cx,
-            Rect::new(inner.x, y, inner.w, high),
-            mark,
-            note.as_ref(),
-            &at,
-        );
+    for (n, held) in shown.iter().enumerate() {
+        let high = height(cx.text, theme, &at, held);
+        row(cx, Rect::new(inner.x, y, inner.w, high), held, &at);
         // A rule between rows, and none under the last.
         if n + 1 < shown.len() {
             paint::hline(
@@ -262,28 +287,53 @@ pub fn draw(cx: &mut Ctx, area: Rect, book: usize, from: usize) {
 
 /// What every row of one list is measured and drawn against.
 #[derive(Clone, Copy)]
-struct Layout<'a> {
-    /// The book, whose language picks the face the words are set in.
-    book: &'a BookStat,
+pub(super) struct Layout<'a> {
     m: Metrics,
     /// The most passage lines a row may take, which is what the box holds.
     lines: usize,
     /// The width a row draws into.
     width: i32,
+    /// Whether a row states the book it was made in, over its own words: a
+    /// list running across books does, and a book's own list, standing under
+    /// that book's heading, does not.
+    named: bool,
+    /// The query the rows were found by, where they were found by one. A
+    /// passage holding it past its own head opens on the line that holds it.
+    needle: Option<&'a str>,
+}
+
+impl<'a> Layout<'a> {
+    /// What a list drawn into `box_` is measured against. `named` states
+    /// whether a row carries the book it was made in.
+    pub(super) fn of(text: &mut TextRenderer, theme: &Theme, box_: Rect, named: bool) -> Self {
+        let m = Metrics::of(text, theme);
+        Self {
+            m,
+            lines: lines_in(m, theme, box_.h),
+            width: box_.w,
+            named,
+            needle: None,
+        }
+    }
+
+    /// The same list in a box `high` tall, over rows a search found: each
+    /// shows [`window_lines`] of its passage at the most, opening on the line
+    /// holding `query`. An empty `query` opens every row at its head.
+    pub(super) fn found(self, theme: &Theme, high: i32, query: &'a str) -> Self {
+        Self {
+            lines: self.lines.min(window_lines(self.m, theme, high)),
+            needle: (!query.is_empty()).then_some(query),
+            ..self
+        }
+    }
 }
 
 /// Rows of `held` from `at` that a box `high` tall holds, each at its own
 /// height, and never fewer than one.
-fn fits(
-    text: &mut TextRenderer,
-    theme: &Theme,
-    held: &[(Mark, Option<Mark>)],
-    at: &Layout,
-    high: i32,
-) -> usize {
+fn fits(text: &mut TextRenderer, theme: &Theme, held: &[Row], at: &Layout, high: i32) -> usize {
     let (mut deep, mut used) = (0, 0);
-    for (mark, note) in held {
-        let row = height(text, theme, at, mark, note.as_ref());
+    for held in held {
+        let row = height(text, theme, at, held);
         if deep > 0 && used + row > high {
             break;
         }
@@ -293,67 +343,124 @@ fn fits(
     deep.max(1)
 }
 
-/// How many lines the passage and the note actually wrap to.
-fn wrapped(
-    text: &mut TextRenderer,
-    theme: &Theme,
-    at: &Layout,
-    mark: &Mark,
-    note: Option<&Mark>,
-) -> (usize, usize) {
-    let script = Script::of_language(&at.book.language);
+/// What one row's three parts wrap to, and where its passage opens.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Wrapped {
+    /// The book's name, on its own lines over the words, and empty where the
+    /// list does not state it.
+    name: Vec<String>,
+    /// The lines of the passage the row shows, from [`Wrapped::opens`].
+    said: Vec<String>,
+    noted: Vec<String>,
+    /// The line of the whole passage the row opens on: 0 unless the query was
+    /// found further down, in which case the window opens one line above it.
+    opens: usize,
+}
+
+/// How the words of one row fall against `at`.
+fn wrapped(text: &mut TextRenderer, theme: &Theme, at: &Layout, held: &Row) -> Wrapped {
+    let script = held.script();
+    let name = match at.named {
+        false => Vec::new(),
+        true => {
+            text.set_px(theme.small_px);
+            text.wrap_and_clamp_in(script, &held.title, at.width.max(1) as u32, NAME_LINES)
+        }
+    };
     let room = (at.width - indent(theme)).max(1) as u32;
     text.set_px(theme.body_px);
-    let said = text
-        .wrap_and_clamp_in(script, &mark.body, room, at.lines)
-        .len();
-    // The note is set beside the rule, not past it, so it has the whole width.
-    let noted = match note {
-        Some(note) => text
-            .wrap_and_clamp_in(script, &note.body, at.width.max(1) as u32, at.lines)
-            .len(),
-        None => 0,
+    // With no query the passage is wrapped only as far as the row shows; with
+    // one it is wrapped whole, to find the line that holds it.
+    let (said, opens) = match at.needle {
+        None => (
+            text.wrap_and_clamp_in(script, &held.mark.body, room, at.lines),
+            0,
+        ),
+        Some(needle) => {
+            let every = text.wrap_and_clamp_in(script, &held.mark.body, room, usize::MAX);
+            let opens = opens_at(&every, needle);
+            (window(text, script, every, opens, at.lines, room), opens)
+        }
     };
-    (said, noted)
+    // `note` is set beside the rule, not past it, and takes `at.width` whole.
+    let noted = match &held.note {
+        Some(note) => text.wrap_and_clamp_in(script, &note.body, at.width.max(1) as u32, at.lines),
+        None => Vec::new(),
+    };
+    Wrapped {
+        name,
+        said,
+        noted,
+        opens,
+    }
+}
+
+/// The lines of `every` a row shows: `lines` of them from `opens`, the last
+/// marked where the passage runs on past the window.
+fn window(
+    text: &mut TextRenderer,
+    script: Script,
+    every: Vec<String>,
+    opens: usize,
+    lines: usize,
+    room: u32,
+) -> Vec<String> {
+    let more = opens + lines < every.len();
+    let mut said: Vec<String> = every.into_iter().skip(opens).take(lines).collect();
+    if more && let Some(last) = said.last_mut() {
+        mark_more(last, room, |s| text.measure_width_in(script, s));
+    }
+    said
+}
+
+/// The line a passage's window opens on: one above the first line of `every`
+/// holding `needle`, and 0 where no line holds it.
+fn opens_at(every: &[String], needle: &str) -> usize {
+    let needle = needle.to_lowercase();
+    every
+        .iter()
+        .position(|line| line.to_lowercase().contains(&needle))
+        .unwrap_or(0)
+        .saturating_sub(1)
 }
 
 /// The height one row takes, the words wrapped to see how many lines they
 /// actually run to.
-fn height(
-    text: &mut TextRenderer,
-    theme: &Theme,
-    at: &Layout,
-    mark: &Mark,
-    note: Option<&Mark>,
-) -> i32 {
-    let (said, noted) = wrapped(text, theme, at, mark, note);
-    at.m.row(theme, said, noted)
+pub(super) fn height(text: &mut TextRenderer, theme: &Theme, at: &Layout, held: &Row) -> i32 {
+    let w = wrapped(text, theme, at, held);
+    at.m.row(theme, w.name.len(), w.said.len(), w.noted.len())
 }
 
-/// One mark: the passage behind a rule in the colour the highlight was made
-/// in, the note written on it under that, and the label stating where and when
-/// below both.
-///
-/// The rule takes the page's own left margin and the words run to its right
-/// one, so the white either side of the block is the same.
-fn row(cx: &mut Ctx, area: Rect, mark: &Mark, note: Option<&Mark>, at: &Layout) {
+/// One mark: `title` where `at.named`, `mark.body` behind a rule in
+/// `mark.colour`, the `note` under that, and [`label`] with `Mark::day` below
+/// both. The rule stands on `area`'s left margin and the words end at its right.
+pub(super) fn row(cx: &mut Ctx, area: Rect, held: &Row, at: &Layout) {
     let theme: &Theme = cx.theme;
     let s = cx.s();
-    let (m, book) = (at.m, at.book);
-    let script = Script::of_language(&book.language);
-    let (said, noted) = wrapped(cx.text, theme, at, mark, note);
+    let m = at.m;
+    let script = held.script();
+    let w = wrapped(cx.text, theme, at, held);
     let x = area.x + indent(theme);
 
-    // The rule beside the passage, in the colour the sidecar stated. A mark
-    // no sidecar reached states none, and takes the neutral.
+    // `title`, over the words and the whole width of `area`.
+    cx.text.set_px(theme.small_px);
+    let mut baseline = area.y + cx.text.cap_height() as i32;
+    for line in &w.name {
+        cx.text
+            .draw_in(script, cx.fb, area.x, baseline, line, false);
+        baseline += m.small;
+    }
+    let top = area.y + w.name.len() as i32 * m.small;
+
+    // An empty `mark.colour` takes `paint::mark_colour`'s neutral.
     let coloured = paint::is_coloured(&cx.palette);
-    let ink = paint::mark_colour(&mark.colour, coloured);
-    let quoted = m.quoted(theme, said);
+    let ink = paint::mark_colour(&held.mark.colour, coloured);
+    let quoted = m.quoted(theme, w.said.len());
     paint::fill_rgb(
         cx.fb,
         Rect::new(
             area.x,
-            area.y + theme.gap,
+            top + theme.gap,
             rule_width(theme),
             (quoted - theme.gap).max(1),
         ),
@@ -362,41 +469,35 @@ fn row(cx: &mut Ctx, area: Rect, mark: &Mark, note: Option<&Mark>, at: &Layout) 
 
     // The passage, set in the book's own script.
     cx.text.set_px(theme.body_px);
-    let room = (area.right() - x).max(1) as u32;
-    let lines_of = cx
-        .text
-        .wrap_and_clamp_in(script, &mark.body, room, at.lines);
-    let mut y = area.y + theme.gap * 2 + cx.text.cap_height() as i32;
-    for line in &lines_of {
+    let mut y = top + theme.gap * 2 + cx.text.cap_height() as i32;
+    for line in &w.said {
         cx.text.draw_in(script, cx.fb, x, y, line, false);
         y += m.line;
     }
+    // [`MORE`] stands over a passage opening past `w.opens` 0.
+    if w.opens > 0 {
+        cx.text
+            .draw_in(script, cx.fb, x, top + theme.gap, MORE, false);
+    }
 
-    // The reader's own note, under the passage and past the end of its rule,
-    // set in the same face and standing at the rule's own left edge. The rule
-    // and the indent mark the passage; the note has neither, and that is what
-    // tells the two apart.
-    if let Some(note) = note {
-        let lines_of =
-            cx.text
-                .wrap_and_clamp_in(script, &note.body, area.w.max(1) as u32, at.lines);
-        let mut baseline = area.y + quoted + theme.gap + cx.text.cap_height() as i32;
-        for line in &lines_of {
-            cx.text
-                .draw_in(script, cx.fb, area.x, baseline, line, false);
-            baseline += m.line;
-        }
+    // `note` stands at `area.x`, past the end of the rule and clear of
+    // [`indent`], which is what tells it from the passage.
+    let mut baseline = top + quoted + theme.gap + cx.text.cap_height() as i32;
+    for line in &w.noted {
+        cx.text
+            .draw_in(script, cx.fb, area.x, baseline, line, false);
+        baseline += m.line;
     }
 
     // The label last: it is what the row is about only once the words are
     // read.
     cx.text.set_px(theme.small_px);
     let ui = cx.ui_script();
-    let baseline = area.y + quoted + m.noted(theme, noted) + theme.gap * 2 + m.cap;
-    cx.text
-        .draw_in(ui, cx.fb, area.x, baseline, &label(mark, book, s), false);
+    let baseline = top + quoted + m.noted(theme, w.noted.len()) + theme.gap * 2 + m.cap;
+    let said = label(&held.mark, held.extent, s);
+    cx.text.draw_in(ui, cx.fb, area.x, baseline, &said, false);
     // The day it was made, against the right edge.
-    if let Some(day) = mark.day() {
+    if let Some(day) = held.mark.day() {
         let when = crate::date::year_day(day, s);
         let w = cx.text.measure_width_in(ui, &when) as i32;
         cx.text
@@ -422,18 +523,14 @@ fn heading(cx: &mut Ctx, book: usize) -> String {
 
 /// What a row's label reads: where the mark falls and what kind it is —
 /// `Location 608 | Highlight`. The day stands at the other end of the line.
-fn label(mark: &Mark, book: &BookStat, s: &Strings) -> String {
-    format!("{}{BAR}{}", place(mark, book, s), kind_name(mark.kind, s))
+fn label(mark: &Mark, extent: i64, s: &Strings) -> String {
+    format!("{}{BAR}{}", place(mark, extent, s), kind_name(mark.kind, s))
 }
 
-/// Where a mark falls, as a row states it: every one of the three the two
-/// sources between them named, in the order a reader meets them.
-///
-/// The publisher's page and the display location are the clipping's, and the
-/// percentage is the sidecar's own position against the book's extent. They
-/// are **three different axes** and none converts to another, so each stands
-/// only where its own source stated it. A mark with none says so.
-fn place(mark: &Mark, book: &BookStat, s: &Strings) -> String {
+/// `mark.page`, `mark.location` and `mark.through(extent)`, [`DOT`]-joined in
+/// that order, each standing only where its own source stated it. Three axes,
+/// and none converts to another; a mark stating none takes [`DASH`].
+fn place(mark: &Mark, extent: i64, s: &Strings) -> String {
     let mut said: Vec<String> = Vec::with_capacity(3);
     if !mark.page.is_empty() {
         said.push(format!("{} {}", s.at_page, mark.page));
@@ -441,7 +538,7 @@ fn place(mark: &Mark, book: &BookStat, s: &Strings) -> String {
     if mark.location >= 0 {
         said.push(format!("{} {}", s.at_location, mark.location));
     }
-    if let Some(through) = mark.through(book.extent) {
+    if let Some(through) = mark.through(extent) {
         said.push(
             s.percent_plain
                 .replace("{d}", &format!("{:.0}", through * 100.0)),
@@ -453,9 +550,8 @@ fn place(mark: &Mark, book: &BookStat, s: &Strings) -> String {
     }
 }
 
-/// What a kind is called. The five only a `.sdr` carries share one word: they
-/// are rare, they carry no words of their own, and naming each would be five
-/// strings in five languages for a row that says nothing else.
+/// What `kind` is called. The five kinds a `.sdr` alone carries take
+/// `s.kind_other` between them.
 pub fn kind_name(kind: Kind, s: &Strings) -> &'static str {
     match kind {
         Kind::Bookmark => s.kind_bookmark,
@@ -496,63 +592,66 @@ mod tests {
         }
     }
 
-    /// A book of a known extent, so a position reads as a fraction of it.
-    fn book(extent: i64) -> BookStat {
-        BookStat {
-            extent,
-            cde_key: "KEY1".into(),
-            cde_type: "EBOK".into(),
-            finished: false,
-            title: "A Book".into(),
-            author: String::new(),
-            thumbnail: String::new(),
-            percent: -1.0,
-            on_device: false,
-            location: String::new(),
-            language: String::new(),
-            seconds: 0,
-            counted_seconds: 0,
-            dwell_seconds: 0,
-            awake_seconds: 0,
-            sittings: 0,
-            page_turns: 0,
-            words: 0,
-            days: 0,
-            first_day: 0,
-            last_day: 0,
-            last_secs: 0,
-            stated_time_left: None,
-            stated_wpm: None,
-            device_seconds: 0,
-            device_words: 0,
-            marks: Vec::new(),
-        }
-    }
-
     #[test]
     fn a_row_states_every_place_its_sources_named() {
         // The page and the location came off the clipping, the percentage off
         // the sidecar's own position: 330 of 1000.
         let mut held = mark(State::Live, 330, 111);
         held.page = "15".into();
-        assert_eq!(
-            place(&held, &book(1_000), en()),
-            "page 15 · Location 111 · 33%"
-        );
+        assert_eq!(place(&held, 1_000, en()), "page 15 · Location 111 · 33%");
     }
 
     #[test]
     fn a_place_no_source_named_is_never_derived_from_another() {
-        // A location is roughly 150 positions wide and is on another axis
-        // altogether: stating a percentage off one would be inventing it.
+        // `mark.location` is on another axis than `mark.start`.
         let held = mark(State::Unconfirmed, -1, 111);
-        assert_eq!(place(&held, &book(1_000), en()), "Location 111");
+        assert_eq!(place(&held, 1_000, en()), "Location 111");
         // A sidecar record no clipping speaks for has the fraction alone.
         let mut held = mark(State::Live, 330, -1);
-        assert_eq!(place(&held, &book(1_000), en()), "33%");
+        assert_eq!(place(&held, 1_000, en()), "33%");
         // And a book whose extent nothing states says nothing at all.
         held.location = -1;
-        assert_eq!(place(&held, &book(0), en()), DASH);
+        assert_eq!(place(&held, 0, en()), DASH);
+    }
+
+    #[test]
+    fn a_window_opens_on_the_line_before_the_one_that_holds_the_query() {
+        let every: Vec<String> = ["a first line", "a second", "a third", "a fourth"]
+            .iter()
+            .map(|line| line.to_string())
+            .collect();
+        assert_eq!(opens_at(&every, "third"), 1);
+        assert_eq!(opens_at(&every, "fourth"), 2);
+        // A match in the first two lines opens the passage at its head.
+        assert_eq!(opens_at(&every, "first"), 0);
+        assert_eq!(opens_at(&every, "SECOND"), 0, "case folded");
+        // And a query the note alone matched leaves the passage where it is.
+        assert_eq!(opens_at(&every, "nowhere"), 0);
+    }
+
+    #[test]
+    fn a_result_row_gives_up_a_line_rather_than_take_the_whole_page() {
+        let m = Metrics {
+            cap: 14,
+            small: 20,
+            line: 26,
+        };
+        for (w, h) in PANELS {
+            let theme = Theme::for_screen(w, h);
+            // A page deep enough for two of the deepest rows keeps them.
+            let deep = m.row(&theme, 1, WINDOW_LINES, 0);
+            assert_eq!(window_lines(m, &theme, deep * 2), WINDOW_LINES, "{w}x{h}");
+            // One that is not gives the window up a line at a time, and never
+            // gives up the last one.
+            assert!(
+                window_lines(m, &theme, deep * 2 - 1) < WINDOW_LINES,
+                "{w}x{h}"
+            );
+            assert_eq!(window_lines(m, &theme, 1), 1, "{w}x{h}");
+            // Whatever it answers, two rows that deep stand in the box.
+            let lines = window_lines(m, &theme, deep + 10);
+            assert!((1..=WINDOW_LINES).contains(&lines), "{w}x{h}");
+        }
     }
 
     #[test]
@@ -564,8 +663,7 @@ mod tests {
 
     #[test]
     fn a_row_stands_as_tall_as_the_words_it_holds() {
-        // The heights a face would answer, so the arithmetic is read without
-        // one: a small line, a cap, and a body line.
+        // The heights `Metrics::of` reads off a face.
         let m = Metrics {
             cap: 14,
             small: 20,
@@ -573,18 +671,23 @@ mod tests {
         };
         for (w, h) in PANELS {
             let theme = Theme::for_screen(w, h);
-            // A one-line passage takes a shorter row than a two-line one, so
-            // nothing is left standing over a hole.
-            assert!(m.row(&theme, 2, 0) > m.row(&theme, 1, 0));
-            assert_eq!(m.row(&theme, 0, 0), m.row(&theme, 1, 0), "never no lines");
-            // A row carrying a note stands taller than the same row without.
-            assert!(m.row(&theme, 2, 2) > m.row(&theme, 2, 0));
-            // A box with no room still gives a passage one line, and every
-            // line the box does hold is a line a passage may take.
+            // A one-line passage takes a shorter row than a two-line one.
+            assert!(m.row(&theme, 0, 2, 0) > m.row(&theme, 0, 1, 0));
+            assert_eq!(
+                m.row(&theme, 0, 0, 0),
+                m.row(&theme, 0, 1, 0),
+                "never no lines"
+            );
+            // A row carrying a note stands taller than the same row without,
+            // and one stating its book taller again.
+            assert!(m.row(&theme, 0, 2, 2) > m.row(&theme, 0, 2, 0));
+            assert!(m.row(&theme, 1, 2, 0) > m.row(&theme, 0, 2, 0));
+            // A box of 1 gives a passage one line, and `lines_in` counts
+            // every line a taller box holds.
             assert_eq!(lines_in(m, &theme, 1), 1);
-            let deep = lines_in(m, &theme, m.row(&theme, 7, 0));
+            let deep = lines_in(m, &theme, m.row(&theme, 0, 7, 0));
             assert_eq!(deep, 7, "{w}x{h}");
-            assert!(m.row(&theme, deep + 1, 0) > m.row(&theme, 7, 0));
+            assert!(m.row(&theme, 0, deep + 1, 0) > m.row(&theme, 0, 7, 0));
         }
     }
 }

@@ -61,16 +61,28 @@ where
     if lines.len() > max_lines {
         lines.truncate(max_lines);
         if let Some(last) = lines.last_mut() {
-            // Trim until `"<last>…"` fits `max_width`.
-            let mut candidate = format!("{last}…");
-            while !last.is_empty() && measure(&candidate) > max_width {
-                last.pop();
-                candidate = format!("{last}…");
-            }
-            *last = candidate;
+            mark_more(last, max_width, measure);
         }
     }
     lines
+}
+
+/// The mark a line carries where the text runs on past it.
+pub const MORE: &str = "…";
+
+/// Marks `last` as a line the text runs on past, trimming its own trailing
+/// characters until `"<last>…"` measures within `max_width`, down to a bare
+/// [`MORE`].
+pub fn mark_more<F>(last: &mut String, max_width: u32, mut measure: F)
+where
+    F: FnMut(&str) -> u32,
+{
+    let mut candidate = format!("{last}{MORE}");
+    while !last.is_empty() && measure(&candidate) > max_width {
+        last.pop();
+        candidate = format!("{last}{MORE}");
+    }
+    *last = candidate;
 }
 
 #[cfg(test)]

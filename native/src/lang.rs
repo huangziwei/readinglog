@@ -199,8 +199,12 @@ pub struct Strings {
     pub shelf_unfinished: &'static str,
     /// The line for a shelf with no books.
     pub nothing_on_the_shelf: &'static str,
+    /// The same, for a search over the marks that named none.
+    pub nothing_marked: &'static str,
     /// What stands in the search field before anything is typed.
     pub search_hint: &'static str,
+    /// The same, where the search is over the marks.
+    pub search_hint_marks: &'static str,
     /// The three list orders.
     pub by_recent: &'static str,
     pub by_time: &'static str,
@@ -269,9 +273,8 @@ pub struct Strings {
     pub the_journey: &'static str,
     pub read: &'static str,
     pub left: &'static str,
-    /// The book screen's two tabs, each set in half the strip. A count is
-    /// appended to the second, so keep it to a word: a longer one runs past
-    /// its cell on a 6-inch panel.
+    /// The book screen's two tabs, each set in half the strip. `marks_tab`
+    /// carries a count after it and holds one word.
     pub statistics: &'static str,
     pub marks_tab: &'static str,
     /// What stands over the marks for a book carrying none.
@@ -280,8 +283,7 @@ pub struct Strings {
     /// carries both. `{d}` is filled by [`counted`].
     pub n_highlights: &'static str,
     pub n_notes: &'static str,
-    /// Before the display location a clipping stated. The reader's own word
-    /// for it: the Kindle's notebook writes `Location 608` over a highlight.
+    /// Before the display location a clipping stated, as `Location 608`.
     pub at_location: &'static str,
     /// Before the publisher's page label, where the book carries one.
     pub at_page: &'static str,
@@ -300,9 +302,8 @@ pub struct Strings {
     pub first_run_1: &'static str,
     pub first_run_2: &'static str,
     pub catching_up: &'static str,
-    /// The line under a banner counting files: `{d}` files behind it, of `{n}`
-    /// to open. `step_logs` counts the device's logs, `step_files` the entries
-    /// of an archive.
+    /// The line under a banner counting files: `{d}` files behind it, of
+    /// `{n}` to open. `step_logs` counts logs, `step_files` archive entries.
     pub step_logs: &'static str,
     pub step_files: &'static str,
 
@@ -317,7 +318,7 @@ pub struct Strings {
     pub figures_device: &'static str,
     pub figures_app: &'static str,
     /// The button on that row, standing apart from its two values: read every
-    /// log the device still holds and measure each sitting in them again.
+    /// log again and measure each sitting in them.
     pub figures_heal: &'static str,
     /// The question it puts up first, its note naming the minutes and what
     /// moves, and the answer that runs it.
@@ -368,7 +369,7 @@ pub struct Strings {
     pub reset_row: &'static str,
     pub reset_keep: &'static str,
     pub reset_none: &'static str,
-    /// The restore row, and the chip offering the device's own logs.
+    /// The restore row, and the chip offering the logs.
     pub restore_row: &'static str,
     pub restore_logs: &'static str,
     /// Emptying the record, keeping an archive first. `{what}` is what goes,
@@ -384,7 +385,7 @@ pub struct Strings {
     pub restore_ask: &'static str,
     pub restore_note: &'static str,
     pub restore_do: &'static str,
-    /// Reading the device's whole log again.
+    /// Reading every log again.
     pub rebuild_ask: &'static str,
     pub rebuild_note: &'static str,
     pub rebuild_do: &'static str,
@@ -500,7 +501,9 @@ const ENGLISH: Strings = Strings {
     shelf_finished: "Finished",
     shelf_unfinished: "Unfinished",
     nothing_on_the_shelf: "No books here.",
+    nothing_marked: "No highlights here.",
     search_hint: "Search title or author",
+    search_hint_marks: "Search highlights or notes",
     by_recent: "Recent",
     by_time: "Time",
     by_progress: "Progress",
@@ -749,7 +752,9 @@ const GERMAN: Strings = Strings {
     shelf_finished: "Fertig",
     shelf_unfinished: "Offen",
     nothing_on_the_shelf: "Keine Bücher hier.",
+    nothing_marked: "Keine Markierungen hier.",
     search_hint: "Titel oder Autor suchen",
+    search_hint_marks: "Markierungen oder Notizen suchen",
     by_recent: "Zuletzt",
     by_time: "Zeit",
     by_progress: "Fortschritt",
@@ -1001,7 +1006,9 @@ const JAPANESE: Strings = Strings {
     shelf_finished: "読了",
     shelf_unfinished: "未読了",
     nothing_on_the_shelf: "該当する本はありません。",
+    nothing_marked: "該当するハイライトはありません。",
     search_hint: "題名か著者で検索",
+    search_hint_marks: "ハイライトかメモで検索",
     by_recent: "最近",
     by_time: "時間",
     by_progress: "進捗",
@@ -1229,7 +1236,9 @@ const SIMPLIFIED: Strings = Strings {
     shelf_finished: "已读完",
     shelf_unfinished: "未读完",
     nothing_on_the_shelf: "没有符合的书。",
+    nothing_marked: "没有符合的标注。",
     search_hint: "搜索书名或作者",
+    search_hint_marks: "搜索标注或笔记",
     by_recent: "最近",
     by_time: "时长",
     by_progress: "进度",
@@ -1465,7 +1474,9 @@ const TRADITIONAL: Strings = Strings {
     shelf_finished: "已讀完",
     shelf_unfinished: "未讀完",
     nothing_on_the_shelf: "沒有符合的書。",
+    nothing_marked: "沒有符合的標註。",
     search_hint: "搜尋書名或作者",
+    search_hint_marks: "搜尋標註或筆記",
     by_recent: "最近",
     by_time: "時長",
     by_progress: "進度",

@@ -161,6 +161,32 @@ impl WeekStart {
     }
 }
 
+/// Which list the search names, which its head row picks between.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Scope {
+    /// Titles and authors, through `view::search::listed`.
+    #[default]
+    Books,
+    /// Passages and the notes written on them, through
+    /// `view::search::listed_marks`.
+    Marks,
+}
+
+impl Scope {
+    pub const ALL: [Scope; 2] = [Scope::Books, Scope::Marks];
+
+    fn token(self) -> &'static str {
+        match self {
+            Scope::Books => "books",
+            Scope::Marks => "marks",
+        }
+    }
+
+    fn of_token(token: &str) -> Option<Self> {
+        Scope::ALL.into_iter().find(|s| s.token() == token)
+    }
+}
+
 /// The fields `view::config` sets.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
@@ -175,6 +201,8 @@ pub struct Settings {
     pub show_unnamed: bool,
     /// Whether `view::books::listed` keeps a book failing `BookStat::has_cover`.
     pub show_uncovered: bool,
+    /// Which list the search opens on, which is the one it last showed.
+    pub scope: Scope,
     /// The lines `Settings::parse` matched no key for, held for `to_text`.
     unknown: Vec<String>,
 }
@@ -190,6 +218,7 @@ impl Settings {
             figures: Figures::default(),
             show_unnamed: true,
             show_uncovered: true,
+            scope: Scope::default(),
             unknown: Vec::new(),
         }
     }
@@ -249,6 +278,11 @@ impl Settings {
                 }
                 "show_unnamed" => out.show_unnamed = value != "no",
                 "show_uncovered" => out.show_uncovered = value != "no",
+                "scope" => {
+                    if let Some(scope) = Scope::of_token(value) {
+                        out.scope = scope;
+                    }
+                }
                 _ => out.unknown.push(line.to_string()),
             }
         }
@@ -269,6 +303,7 @@ impl Settings {
         };
         out.push_str(&format!("show_unnamed={}\n", yes_no(self.show_unnamed)));
         out.push_str(&format!("show_uncovered={}\n", yes_no(self.show_uncovered)));
+        out.push_str(&format!("scope={}\n", self.scope.token()));
         for line in &self.unknown {
             out.push_str(line);
             out.push('\n');
@@ -372,6 +407,25 @@ mod tests {
         // `show_uncovered` and `show_unnamed` are separate fields.
         let hidden = Settings::parse("show_uncovered=no\n", Lang::English);
         assert!(hidden.show_unnamed, "hiding one hid the other");
+    }
+
+    #[test]
+    fn the_search_opens_on_the_books_until_it_has_been_flipped() {
+        assert_eq!(Settings::new(Lang::English).scope, Scope::Books);
+        // A file written before the scope existed.
+        let old = Settings::parse("language=e\nshow_uncovered=no\n", Lang::English);
+        assert_eq!(old.scope, Scope::Books);
+        let marks = Settings::parse("scope=marks\n", Lang::English);
+        assert_eq!(marks.scope, Scope::Marks);
+        // A token `of_token` answers `None` for keeps the default.
+        let odd = Settings::parse("scope=highlights\n", Lang::English);
+        assert_eq!(odd.scope, Scope::Books);
+        // And every scope survives a write.
+        for scope in Scope::ALL {
+            let mut s = Settings::new(Lang::English);
+            s.scope = scope;
+            assert_eq!(Settings::parse(&s.to_text(), Lang::English).scope, scope);
+        }
     }
 
     #[test]

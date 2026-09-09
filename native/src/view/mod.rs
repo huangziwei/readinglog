@@ -17,7 +17,7 @@ pub mod search;
 use crate::date;
 use crate::eink::fb::Framebuffer;
 use crate::lang::{Lang, Strings};
-use crate::settings::WeekStart;
+use crate::settings::{Scope, WeekStart};
 use crate::stats::Stats;
 use crate::ui::chrome::Tab;
 use crate::ui::cover::Covers;
@@ -37,8 +37,11 @@ pub enum Hit {
     BookTab(BookTab),
     /// Where the open book's list of marks opens, as an index into it.
     MarksPage(usize),
-    /// Hand a book on the device back to the Kindle's reader, by its index in
-    /// [`Stats::books`]. Leaves the app, as [`Hit::Exit`] does.
+    /// A passage the search found: the book it was marked in, and the row's
+    /// place in that book's own list of marks.
+    Mark(usize, usize),
+    /// Open a book through `open::uri`, by its index in [`Stats::books`].
+    /// Leaves the app, as [`Hit::Exit`] does.
     Open(usize),
     /// Ask to set `BookRecord::finished` on a book, by its index in
     /// [`Stats::books`] and the value a tap sets. [`Hit::Answer`] answers it.
@@ -66,8 +69,7 @@ pub enum Hit {
     Retry,
     /// The answer to that question.
     Retried,
-    /// Ask before reading every log the device holds and measuring each
-    /// sitting in them again.
+    /// Ask before reading every log again and re-measuring each sitting.
     Heal,
     /// The answer to that question.
     Healed,
@@ -96,6 +98,8 @@ pub enum Hit {
     ConfigPage(usize),
     /// The order the Books screen lists in.
     Sorted(Sort),
+    /// Which list the search names, off the chips in its head row.
+    Scoped(Scope),
     /// Open the search over the Books tab, with the keyboard up.
     Search,
     /// A tap on the search field, which raises the keyboard.
@@ -121,7 +125,7 @@ pub enum Hit {
     Restore(usize),
     /// Take it back.
     Restored(usize),
-    /// Ask to read the device's whole log again, and read it.
+    /// Ask to read every log again, and read them.
     Rebuild,
     Rebuilt,
 }
@@ -158,7 +162,7 @@ pub enum Reset {
     Wipe(bool),
     /// Take the archive at this place in `backup::list` back.
     Restore(usize),
-    /// Read the device's whole log again.
+    /// Read every log again.
     Rebuild,
 }
 
@@ -204,7 +208,7 @@ impl Retrying {
 /// The pass [`Hit::Heal`] runs, as its banner states it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Healing {
-    /// Running, with every log the device holds to read.
+    /// Running, with every log left to read.
     Logs,
     /// Over, having moved the figures of this many stored sittings.
     Done(usize),
@@ -538,6 +542,9 @@ pub struct State {
     pub window: Option<Window>,
     /// The order it lists them in, which a tab change keeps.
     pub sort: Sort,
+    /// Which list the search names, which a tab change keeps as well.
+    /// `Settings::scope` holds it between launches.
+    pub scope: Scope,
     /// Whether the day picked off the grid opens as its own page.
     pub opened_day: bool,
     /// Which page of All Time is showing, of [`alltime::PAGES`].
@@ -566,6 +573,7 @@ impl State {
             shelf: Shelf::default(),
             window: None,
             sort: Sort::default(),
+            scope: Scope::default(),
             opened_day: false,
             alltime_page: 0,
             list_from: 0,
@@ -583,6 +591,14 @@ impl State {
         if let Some(search) = self.search.as_mut() {
             search.keyboard = false;
         }
+    }
+
+    /// Open `book` at the passage standing `at` in its own list of marks,
+    /// which is where a search result leads.
+    pub fn open_mark(&mut self, book: usize, at: usize) {
+        self.open_book(book);
+        self.book_tab = BookTab::Marks;
+        self.marks_from = at;
     }
 
     /// Show `tab` of the open book. Answers whether that moved anywhere.
@@ -721,7 +737,7 @@ pub struct Ctx<'a> {
     /// What the charts draw in, from `crate::ui::paint::Palette::for_panel`.
     pub palette: crate::ui::paint::Palette,
     pub stats: &'a Stats,
-    /// The device's own local day, and the second of it.
+    /// The local day, and the second of it.
     pub today: i64,
     pub now: i64,
     /// Whether the record stands on a floor. The one thing a screen asks it:
@@ -854,6 +870,35 @@ mod tests {
         s.open_book(4);
         assert_eq!(s.book_tab, BookTab::Statistics);
         assert_eq!(s.marks_from, 0);
+    }
+
+    #[test]
+    fn a_tab_change_keeps_the_order_and_the_scope_and_takes_the_search_off() {
+        let mut s = State::new(third());
+        s.sort = Sort::Time;
+        s.scope = Scope::Marks;
+        s.search = Some(Search::default());
+        assert!(s.go(Tab::Rhythm));
+        assert!(s.search.is_none(), "the search is over the Books tab");
+        assert_eq!(s.sort, Sort::Time, "the order is the reader's own answer");
+        assert_eq!(s.scope, Scope::Marks, "and so is the scope");
+    }
+
+    #[test]
+    fn a_passage_the_search_found_opens_its_book_at_that_passage() {
+        let mut s = State::new(third());
+        s.search = Some(Search {
+            query: "port".into(),
+            keyboard: true,
+            ..Search::default()
+        });
+        s.open_mark(4, 7);
+        assert_eq!(s.book, Some(4));
+        assert_eq!(s.book_tab, BookTab::Marks);
+        assert_eq!(s.marks_from, 7, "the book opens on the passage tapped");
+        // The keyboard comes down under the book, as it does for any book
+        // opened out of the results.
+        assert_eq!(s.search.map(|search| search.keyboard), Some(false));
     }
 
     #[test]

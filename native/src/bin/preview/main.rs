@@ -14,7 +14,7 @@ use readinglog_native::app::App;
 use readinglog_native::date;
 use readinglog_native::eink::fb::Framebuffer;
 use readinglog_native::lang::Lang;
-use readinglog_native::settings::{ColorScheme, TextSize, WeekStart};
+use readinglog_native::settings::{ColorScheme, Scope, TextSize, WeekStart};
 use readinglog_native::stats::Stats;
 use readinglog_native::store::Store;
 use readinglog_native::ui::chrome::Tab;
@@ -114,6 +114,7 @@ const SCREENS: &[(&str, Tab)] = &[
     ("books", Tab::Books),
     ("book", Tab::Books),
     ("search", Tab::Books),
+    ("highlights", Tab::Books),
 ];
 
 /// One picture to draw: a screen or a sketch, and what it is showing.
@@ -368,8 +369,8 @@ fn thinned_for(shot: &Shot, opts: &Opts, art: &Path) -> Option<Store> {
     Some(fixture::thinned(opts.day, art, keep))
 }
 
-/// A directory of archives for the shots that draw them, under `out`. The
-/// archives are real: written by the same writer the device uses.
+/// A directory of archives for the shots that draw them, under `out`, each
+/// written by `backup::write`.
 fn archives_for(shot: &Shot, store: &Store, out: &Path) -> Result<Option<PathBuf>> {
     let stamps: &[&str] = match (shot.name.as_str(), shot.of.as_deref()) {
         ("config", Some("restore")) => &["260906:010231", "260830:184500"],
@@ -455,8 +456,12 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
             Some(other) => bail!("no config shot called {other}"),
         });
     }
-    if shot.name == "search" {
+    if shot.name == "search" || shot.name == "highlights" {
         app.set_search(Some(searching(shot.of.as_deref())));
+        app.set_scope(match shot.name.as_str() {
+            "highlights" => Scope::Marks,
+            _ => Scope::Books,
+        });
     }
     set_span(app, shot, week)?;
     app.draw(fb)
@@ -744,7 +749,7 @@ fn list() {
                 "  (:<index> :<index>:marks :<index>:marks:<n> :<index>:restart\n   :<index>:mark :<index>:unmark :<index>:clear :<index>:cleared)"
             }
             "config" => "  (:reset :nobackup :restore :logs :heal :retry :many :many2)",
-            "search" => "  (:<query> :empty :none :down :preedit)",
+            "search" | "highlights" => "  (:<query> :empty :none :down :preedit)",
             "books" => {
                 "  (:finished :unfinished :unfinished-progress :time :progress\n   :mid :last :window :windowweek :windowprogress :windowempty)"
             }

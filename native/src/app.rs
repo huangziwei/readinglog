@@ -16,7 +16,7 @@ use crate::eink::input::{Input, InputEvent};
 use crate::eink::screenshot;
 use crate::eink::touch::{SwipeDir, TouchEvent, classify_swipe};
 use crate::lang::Lang;
-use crate::settings::Settings;
+use crate::settings::{Scope, Settings};
 use crate::stats::Stats;
 use crate::ui::chrome::{self, Tab};
 use crate::ui::cover::Covers;
@@ -61,6 +61,7 @@ impl App {
     pub fn new(store: crate::store::Store, theme: Theme, text: TextRenderer) -> Self {
         let (today, now) = date::now();
         let settings = Settings::load(Lang::detect());
+        let settings_scope = settings.scope;
         let stats = Stats::build(&store, today, settings.show_unnamed, settings.figures);
         let colour = crate::eink::fb::has_cfa();
         eprintln!(
@@ -80,7 +81,12 @@ impl App {
             stats,
             colour,
             dir: std::path::PathBuf::from(crate::store::STORE_DIR),
-            state: State::new(today),
+            state: State {
+                // The search opens on the list it last showed, which outlives
+                // the launch in `Settings::scope`.
+                scope: settings_scope,
+                ..State::new(today)
+            },
             today,
             now,
             hits: Vec::new(),
@@ -215,6 +221,11 @@ impl App {
     /// Put a search up over the Books screen, or take one down.
     pub fn set_search(&mut self, search: Option<view::Search>) {
         self.state.search = search;
+    }
+
+    /// Which list that search names.
+    pub fn set_scope(&mut self, scope: Scope) {
+        self.state.scope = scope;
     }
 
     /// Takes `keysyms` into `State::search`, answering whether it moved.
@@ -391,7 +402,7 @@ impl App {
                 Tab::Home => view::home::draw(cx, area, state.list_from),
                 Tab::Rhythm => view::rhythm::draw(cx, area, &state),
                 Tab::Books => match &state.search {
-                    Some(search) => view::search::draw(cx, area, search),
+                    Some(search) => view::search::draw(cx, area, search, state.scope),
                     None => view::books::draw(cx, area, &state),
                 },
             },
@@ -728,8 +739,8 @@ impl App {
         }
     }
 
-    /// The book at `index` gives up its place and its mark, then goes back to
-    /// the Kindle's reader.
+    /// The book at `index` gives up its place and its mark, then opens
+    /// through `open::uri`.
     fn restart(&mut self, index: usize) -> Action {
         if let Some(book) = self.stats.books.get(index) {
             let (extent, key, cde_type) =
@@ -857,6 +868,9 @@ impl App {
                 }
                 self.state.marks_from = from;
             }
+            // A passage the search found opens the book it was marked in, at
+            // its own place in that book's list.
+            Hit::Mark(book, at) => self.state.open_mark(book, at),
             // A second tap on the day picked drops it again.
             Hit::Day(day) => {
                 self.state.picked = !(self.state.picked && self.state.day == day);
@@ -877,6 +891,21 @@ impl App {
                 }
                 self.state.sort = order;
                 self.state.books_from = 0;
+            }
+            Hit::Scoped(pick) => {
+                if self.state.scope == pick {
+                    return Action::Nothing;
+                }
+                self.state.scope = pick;
+                // The next launch opens the search on the list this one was
+                // last looking at.
+                self.settings.scope = pick;
+                self.settings.save();
+                // The other scope is another list, and a page held part way
+                // down this one names nothing in it.
+                if let Some(search) = self.state.search.as_mut() {
+                    search.from = 0;
+                }
             }
             // A shelf is reached from a figure, and lands on the Books tab.
             Hit::Shelved(shelf, window) => {
@@ -1111,9 +1140,9 @@ impl App {
         self.hold(input, OUTCOME_LINGER)
     }
 
-    /// Measure every sitting the device's logs reach again, over a
-    /// banner, and state how many stored rows moved. A row older than the logs
-    /// keeps what it holds, and no row is given up.
+    /// Measure every sitting the logs reach again, over a banner, and state
+    /// how many stored rows moved. A row older than the logs keeps what it
+    /// holds, and no row is given up.
     fn heal(&mut self, fb: &mut Framebuffer, input: &mut Input) -> Result<()> {
         let (headline, doing) = view::Healing::Logs.banner(self.lang.strings());
         self.banner(fb, headline, &doing, "", true)?;
@@ -1222,7 +1251,7 @@ impl App {
         }
     }
 
-    /// One pass over the device's logs, counting the files it opens onto the
+    /// One pass over the logs, counting the files it opens onto the
     /// banner. The pass holds `self.store` and `App::banner` holds `self`, and
     /// the record stands out of both for the length of it.
     fn over_the_logs(
@@ -1291,11 +1320,9 @@ impl App {
         self.paged(page.step())
     }
 
-    /// One step forward or back: a span on Rhythm, a page of the list, the
-    /// next book.
-    /// A step across the open book, which is one track: the statistics page,
-    /// then each page of its marks in turn. A step off either end is no step —
-    /// the book screen is left by a tab, not by stepping past it.
+    /// One step across the open book: `BookTab::Statistics`, then each page
+    /// of `view::marks::pages` in turn. A step off either end answers
+    /// `Action::Nothing`.
     fn through_book(&mut self, book: usize, by: i64) -> Action {
         let area = chrome::content_box(&self.theme);
         let (_, rest) = area.split_top(view::book::picker_height(&self.theme));
@@ -1359,13 +1386,39 @@ impl App {
                     return Action::Nothing;
                 };
                 let area = chrome::content_box(&self.theme);
-                let count =
-                    view::search::listed(&self.stats, &search.query, self.settings.show_uncovered)
+                let capped = match self.state.scope {
+                    Scope::Books => {
+                        let count = view::search::listed(
+                            &self.stats,
+                            &search.query,
+                            self.settings.show_uncovered,
+                        )
                         .len();
-                let step = view::search::rows_per_page(&self.theme, area, search.keyboard) as i64;
-                let last = view::search::last_page_at(&self.theme, area, search.keyboard, count);
-                let from = search.from as i64 + by * step;
-                let capped = from.clamp(0, last as i64) as usize;
+                        let step =
+                            view::search::rows_per_page(&self.theme, area, search.keyboard) as i64;
+                        let last =
+                            view::search::last_page_at(&self.theme, area, search.keyboard, count);
+                        let from = search.from as i64 + by * step;
+                        from.clamp(0, last as i64) as usize
+                    }
+                    // A page steps to the next entry of `opens`, every row
+                    // being as tall as its own words.
+                    Scope::Marks => {
+                        let opens = view::search::mark_pages(
+                            &mut self.text,
+                            &self.theme,
+                            &self.stats,
+                            area,
+                            &search,
+                            self.settings.show_uncovered,
+                        );
+                        let page =
+                            opens.iter().rposition(|o| *o <= search.from).unwrap_or(0) as i64;
+                        let last = opens.len().saturating_sub(1) as i64;
+                        let next = (page + by).clamp(0, last) as usize;
+                        opens.get(next).copied().unwrap_or(0)
+                    }
+                };
                 if capped == search.from {
                     return Action::Nothing;
                 }

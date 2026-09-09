@@ -36,8 +36,8 @@ pub struct BookStat {
     /// `BookRecord::finished`.
     pub finished: bool,
     pub seconds: i64,
-    /// The seconds the device's own counter credited, whatever [`Figures`]
-    /// names. `words` was counted across these and no others.
+    /// The seconds `Session` counted, whatever [`Figures`] names. `words` was
+    /// counted across these and no others.
     pub counted_seconds: i64,
     /// The parts of `seconds` carrying `Measure::Dwell` and `Measure::Awake`.
     pub dwell_seconds: i64,
@@ -51,8 +51,7 @@ pub struct BookStat {
     pub last_day: i64,
     /// Seconds into `last_day` at which the last sitting ended.
     pub last_secs: i64,
-    /// The seconds the device stated were left in the book as the newest
-    /// sitting closed, off `Session::time_left`.
+    /// `Session::time_left` as the newest sitting closed.
     pub stated_time_left: Option<i64>,
     /// The rate it stated at the same moment, off `Session::stated_wpm`.
     pub stated_wpm: Option<i64>,
@@ -169,9 +168,9 @@ impl BookStat {
         Some((read as f64 * (100.0 - self.percent) / self.percent) as i64)
     }
 
-    /// Words a minute over this book: `TotalWPM` as the device stated it, else
-    /// its words over the seconds it counted them across. Both sides of the
-    /// pair come off the same counter; `awake_seconds` never divides them.
+    /// Words a minute over this book: `stated_wpm`, else `words` over
+    /// `counted_seconds`. Both sides come off one counter, and
+    /// `awake_seconds` never divides them.
     pub fn wpm(&self, from: Figures) -> Option<i64> {
         if let (Figures::Device, Some(stated)) = (from, self.stated_wpm) {
             return Some(stated);
@@ -260,6 +259,20 @@ pub struct Stats {
     /// Every mark the record holds, ascending by when it was made.
     /// [`BookStat::marks`] indexes into this.
     pub marks: Vec<Mark>,
+}
+
+/// One row of [`Stats::marked`] and where in the record it came from, which is
+/// what a list running across books states.
+#[derive(Debug, Clone, Copy)]
+pub struct Across<'a> {
+    /// The book, by its index in [`Stats::books`].
+    pub book: usize,
+    /// The row's place in that book's own [`Stats::marked`] list, which is
+    /// where the Marks tab opens.
+    pub at: usize,
+    pub mark: &'a Mark,
+    /// The note written on it, as [`crate::annotate::Marked`] pairs them.
+    pub note: Option<&'a Mark>,
 }
 
 impl Stats {
@@ -353,17 +366,13 @@ impl Stats {
         out
     }
 
-    /// Hand every `a` row to the book it names. `sort_books` has run, so the
-    /// indices this writes are the ones the screens address.
-    ///
-    /// A mark whose book nothing here lists — a clipping for a book the record
-    /// has no sitting of — is held all the same. It is what was read and
-    /// marked on a day, and the days are counted whether or not a book was
-    /// ever named.
+    /// Hand every `a` row to the book it names, after `sort_books`, at the
+    /// indices the screens address. A mark naming no book in [`Self::books`]
+    /// is held in [`Self::marks`] all the same.
     fn hold_marks(&mut self, store: &Store) {
         self.marks = store.marks.clone();
-        // The extent is the key; a record the catalog reached by its content
-        // key alone carries none, so its title stands in.
+        // The extent is the key; a record reached by `cde_key` alone carries
+        // none, and `title` stands in.
         let by_title: Vec<(String, usize)> = self
             .books
             .iter()
@@ -396,12 +405,9 @@ impl Stats {
             .flat_map(|b| b.marks.iter().filter_map(|at| self.marks.get(*at)))
     }
 
-    /// One book's marks as a screen lists them: the kinds that mark a passage
-    /// of the book's own text, most recently made first, each with the note
-    /// the reader wrote on it.
-    ///
-    /// A bookmark and a pin mark a place rather than a passage and carry no
-    /// words at all; neither is a highlight or a note, and neither is here.
+    /// One book's marks as a screen lists them: `Kind::marks_a_passage`, most
+    /// recently made first, each with the note `annotate::paired` folds under
+    /// it. `Kind::Bookmark` and `Kind::Pin` carry no words and are not here.
     pub fn marked(&self, book: usize) -> Vec<crate::annotate::Marked<'_>> {
         let mut held: Vec<&Mark> = self
             .marks_of(book)
@@ -411,16 +417,34 @@ impl Stats {
         crate::annotate::paired(&held)
     }
 
+    /// Every book's [`Self::marked`] rows as one list, `Mark::at` descending,
+    /// each carrying its `book` and its `at` in that book's own list. A mark
+    /// carrying an empty `Mark::at` stands at the end.
+    pub fn marked_across(&self) -> Vec<Across<'_>> {
+        let mut out: Vec<Across<'_>> = Vec::new();
+        for book in 0..self.books.len() {
+            for (at, held) in self.marked(book).into_iter().enumerate() {
+                out.push(Across {
+                    book,
+                    at,
+                    mark: held.mark,
+                    note: held.note,
+                });
+            }
+        }
+        out.sort_by(|a, b| b.mark.at.cmp(&a.mark.at));
+        out
+    }
+
     /// One book's marks as a row states them: passages marked, and notes
-    /// written. A note the reader made on a passage counts under the second
-    /// and the passage under the first, so the two never double-count a row.
+    /// written. A note counts under the second and its passage under the
+    /// first, and the two never double-count a row.
     pub fn marks_counted(&self, book: usize) -> (usize, usize) {
         Self::counted(self.marked(book).iter().collect::<Vec<_>>().as_slice())
     }
 
-    /// [`Self::marks_counted`] over the marks made on one day alone, which is
-    /// what a row listing that book's reading on that day states: the time
-    /// beside it is that day's, and so is this.
+    /// [`Self::marks_counted`] over the marks made on `day` alone, which is
+    /// what a row listing that book's reading on that day states.
     pub fn marks_counted_on(&self, book: usize, day: i64) -> (usize, usize) {
         let held = self.marked(book);
         let mine: Vec<&crate::annotate::Marked<'_>> = held
@@ -430,8 +454,7 @@ impl Stats {
         Self::counted(&mine)
     }
 
-    /// The two figures [`Self::marks_counted`] states, over rows already
-    /// gathered.
+    /// The two figures [`Self::marks_counted`] states, over `rows`.
     fn counted(rows: &[&crate::annotate::Marked<'_>]) -> (usize, usize) {
         let notes = rows
             .iter()
@@ -447,8 +470,7 @@ impl Stats {
     }
 
     /// How many rows [`Self::marked`] lists for one book, which is the count
-    /// its tab carries. Every stored row is one the book still holds:
-    /// `annotate::fold` writes none for a mark the reader deleted.
+    /// its tab carries. `annotate::fold` writes no row for a deleted mark.
     pub fn marks_held(&self, book: usize) -> usize {
         self.marked(book).len()
     }
@@ -830,14 +852,9 @@ impl Stats {
     }
 }
 
-/// The jacket `found` names, where it names one that will draw, and nothing
-/// where it does not.
-///
-/// A stated path is the catalog's own and outlives what it names: the device
-/// deletes the file, writes a retry count in place of the path, or leaves the
-/// store's "no artwork" answer standing under the `.jpg` name a jacket would
-/// have had. None of the three is a picture, and each would draw as a bare box
-/// however it is asked for.
+/// The jacket `found` names, where `covers::drawable` answers true of it, and
+/// an empty path where it does not. `BookRecord::art` outlives the file, a
+/// retry count and a placeholder alike.
 fn jacket(found: &BookRecord) -> String {
     let art = found.art();
     match crate::covers::drawable(std::path::Path::new(art)) {
@@ -973,7 +990,7 @@ fn streaks(days: &[(i64, i64)], today: i64) -> (i64, i64) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::catalog::Book;
 
@@ -1619,8 +1636,7 @@ mod tests {
     fn a_stated_jacket_that_is_no_picture_leaves_the_book_naming_none() {
         let dir = std::env::temp_dir().join("readinglog-stats-nojacket");
         let _ = std::fs::create_dir_all(&dir);
-        // What the store answers for a key it holds no artwork for: a GIF
-        // under the `.jpg` name a jacket would have had.
+        // A GIF under the `.jpg` name `BookRecord::art` states.
         let placeholder = dir.join("none.jpg");
         std::fs::write(&placeholder, b"GIF89a\x3c\x00\x28\x00\x80\x00\x00").expect("written");
 
@@ -1972,8 +1988,7 @@ mod tests {
     #[test]
     fn a_book_states_the_device_s_own_counters_or_the_sittings_measured() {
         let mut store = store();
-        // The counter the device holds for this book, past the 3600 s of
-        // sittings the log reaches.
+        // `store.counters` for this book, past the 3600 s of its sittings.
         store.counters = vec![(148_207, 9_000_000, 30_000)];
         for s in store.sessions.iter_mut() {
             s.stated_wpm = Some(240);
@@ -1995,7 +2010,7 @@ mod tests {
     #[test]
     fn under_app_a_sitting_states_the_wall_clock_the_power_events_witnessed() {
         let mut store = store();
-        // 1800 s counted over a run the device was awake for 2700 s of.
+        // 1800 s of `seconds` under 2700 s of `awake_seconds`.
         for s in store.sessions.iter_mut() {
             s.awake_seconds = s.seconds * 3 / 2;
         }
@@ -2011,8 +2026,8 @@ mod tests {
                 .seconds
         };
         assert_eq!(at(&app), at(&device) * 3 / 2);
-        // The rate divides the device's words by the device's own seconds under
-        // either setting: `awake_seconds` never reaches it.
+        // The rate divides `words` by `counted_seconds` under either
+        // [`Figures`]; `awake_seconds` never reaches it.
         let rate = |s: &Stats| {
             s.books
                 .iter()
@@ -2027,7 +2042,7 @@ mod tests {
             let summed: i64 = sitting.hours.iter().map(|(_, s)| s).sum();
             assert_eq!(summed, sitting.seconds);
         }
-        // A run no power event brackets keeps the device's own accounting.
+        // An `awake_seconds` of 0 keeps `Session::seconds`.
         for s in store.sessions.iter_mut() {
             s.awake_seconds = 0;
         }
@@ -2073,5 +2088,86 @@ mod tests {
         assert!(stats.books.is_empty());
         let today = day(2026, 8, 7);
         assert!(stats.book_totals(today..=today).is_empty());
+    }
+
+    /// Two books carrying marks: the first an English passage with a note
+    /// written on it, the second a passage and a `Kind::Bookmark`. Both
+    /// passages hold `port`, and the second book's carries the later `at`.
+    pub(crate) fn marked_shelf() -> Stats {
+        let mark = |extent: i64, kind: Kind, at: &str, body: &str, span: (i64, i64)| Mark {
+            extent,
+            kind,
+            at: at.into(),
+            body: body.into(),
+            start: span.0,
+            end: span.1,
+            ..Mark::default()
+        };
+        let winter = BookStat {
+            title: "The Ninth Winter".into(),
+            author: "Cordelia Nash".into(),
+            thumbnail: "a".into(),
+            extent: 1000,
+            marks: vec![0, 1],
+            ..BookStat::default()
+        };
+        let dream = BookStat {
+            title: "夢遊症候群".into(),
+            author: "林素".into(),
+            thumbnail: "b".into(),
+            extent: 2000,
+            language: "ja".into(),
+            marks: vec![2, 3],
+            ..BookStat::default()
+        };
+        Stats {
+            books: vec![winter, dream],
+            marks: vec![
+                mark(
+                    1000,
+                    Kind::Highlight,
+                    "2026-01-02T10:00:00",
+                    "the sky above the port",
+                    (100, 200),
+                ),
+                mark(
+                    1000,
+                    Kind::Note,
+                    "2026-01-02T10:05:00",
+                    "a borrowed line",
+                    (150, 150),
+                ),
+                mark(
+                    2000,
+                    Kind::Highlight,
+                    "2026-03-04T09:00:00",
+                    "港 is the word for port",
+                    (10, 20),
+                ),
+                mark(2000, Kind::Bookmark, "2026-03-05T09:00:00", "", (30, 30)),
+            ],
+            ..Stats::default()
+        }
+    }
+
+    #[test]
+    fn the_whole_record_lists_its_marks_newest_first() {
+        let stats = marked_shelf();
+        let across = stats.marked_across();
+        // Two passages: the note folds into the first book's row, and the
+        // bookmark marks no passage at all.
+        assert_eq!(across.len(), 2);
+        assert_eq!((across[0].book, across[0].at), (1, 0));
+        assert!(across[0].note.is_none());
+        assert_eq!((across[1].book, across[1].at), (0, 0));
+        assert_eq!(
+            across[1].note.map(|n| n.body.as_str()),
+            Some("a borrowed line")
+        );
+        // Every row stands where its own book's list holds it, which is what
+        // the Marks tab opens at.
+        for row in &across {
+            assert_eq!(stats.marked(row.book)[row.at].mark, row.mark);
+        }
     }
 }
