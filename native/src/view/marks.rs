@@ -21,17 +21,6 @@ use crate::ui::theme::Theme;
 
 use super::{Ctx, Hit, pager};
 
-/// Lines of a passage a row draws before the rest of it is ellipsized, and the
-/// lines it is laid out for. The list is set at [`BODY_LINES`] and takes
-/// [`BODY_MOST`] where there are few enough marks to have the room: the words
-/// are what the page is for, and a passage cut after one line is a passage
-/// nobody can place.
-const BODY_LINES: usize = 2;
-const BODY_MOST: usize = 3;
-
-/// Lines of a note a row draws under the passage it was written on.
-const NOTE_LINES: usize = 2;
-
 /// What separates the parts of a row's own label: `Location 608 | Highlight`.
 const BAR: &str = " | ";
 const DOT: &str = " · ";
@@ -110,15 +99,18 @@ impl Metrics {
     }
 }
 
-/// Passage lines every row of a list `h` tall is allowed, of [`BODY_MOST`]:
-/// the most that lets all `rows` of them stand, and never fewer than
-/// [`BODY_LINES`].
-fn lines_in(m: Metrics, theme: &Theme, h: i32, rows: usize) -> usize {
-    let each = (h / rows.max(1) as i32).max(1);
-    (BODY_LINES + 1..=BODY_MOST)
-        .rev()
-        .find(|&lines| m.row(theme, lines, 0) <= each)
-        .unwrap_or(BODY_LINES)
+/// The most passage lines one row can take in a box `h` tall.
+///
+/// A row is given every line its own words need, up to this: the passage is
+/// what the page is for, and cutting one that would have fitted hides the half
+/// the reader marked it for. A passage longer than a whole page is ellipsized
+/// at this, and the rest is in `My Clippings.txt`.
+fn lines_in(m: Metrics, theme: &Theme, h: i32) -> usize {
+    let mut lines = 1;
+    while m.row(theme, lines + 1, 0) <= h {
+        lines += 1;
+    }
+    lines
 }
 
 /// Where each page of one book's marks opens in `area`, ascending and starting
@@ -146,10 +138,11 @@ pub fn pages(
         return Vec::new();
     }
     let inner = list_box(text, theme, area);
+    let m = Metrics::of(text, theme);
     let at = Layout {
         book: record,
-        m: Metrics::of(text, theme),
-        lines: lines_in(Metrics::of(text, theme), theme, inner.h, held.len()),
+        m,
+        lines: lines_in(m, theme, inner.h),
         width: inner.w,
     };
     starts(text, theme, &held, &at, inner.h)
@@ -211,12 +204,12 @@ pub fn draw(cx: &mut Ctx, area: Rect, book: usize, from: usize) {
         return;
     };
     let m = Metrics::of(cx.text, theme);
-    // A list short enough to give every row its full [`BODY_MOST`] does; a
-    // longer one is set at [`BODY_LINES`] so more of it stands at once.
+    // Every row takes the lines its own passage needs, so a page holds as many
+    // whole passages as it can rather than a fixed count of cut ones.
     let at = Layout {
         book: &record,
         m,
-        lines: lines_in(m, theme, inner.h, held.len()),
+        lines: lines_in(m, theme, inner.h),
         width: inner.w,
     };
     // The page showing is the last one opening at or before `from`, so an
@@ -273,7 +266,7 @@ struct Layout<'a> {
     /// The book, whose language picks the face the words are set in.
     book: &'a BookStat,
     m: Metrics,
-    /// Passage lines a row is allowed, of [`BODY_MOST`].
+    /// The most passage lines a row may take, which is what the box holds.
     lines: usize,
     /// The width a row draws into.
     width: i32,
@@ -317,7 +310,7 @@ fn wrapped(
     // The note is set beside the rule, not past it, so it has the whole width.
     let noted = match note {
         Some(note) => text
-            .wrap_and_clamp_in(script, &note.body, at.width.max(1) as u32, NOTE_LINES)
+            .wrap_and_clamp_in(script, &note.body, at.width.max(1) as u32, at.lines)
             .len(),
         None => 0,
     };
@@ -386,7 +379,7 @@ fn row(cx: &mut Ctx, area: Rect, mark: &Mark, note: Option<&Mark>, at: &Layout) 
     if let Some(note) = note {
         let lines_of =
             cx.text
-                .wrap_and_clamp_in(script, &note.body, area.w.max(1) as u32, NOTE_LINES);
+                .wrap_and_clamp_in(script, &note.body, area.w.max(1) as u32, at.lines);
         let mut baseline = area.y + quoted + theme.gap + cx.text.cap_height() as i32;
         for line in &lines_of {
             cx.text
@@ -580,19 +573,18 @@ mod tests {
         };
         for (w, h) in PANELS {
             let theme = Theme::for_screen(w, h);
-            // A row is as tall as its own words: a one-line passage takes a
-            // shorter row than a two-line one.
+            // A one-line passage takes a shorter row than a two-line one, so
+            // nothing is left standing over a hole.
             assert!(m.row(&theme, 2, 0) > m.row(&theme, 1, 0));
             assert_eq!(m.row(&theme, 0, 0), m.row(&theme, 1, 0), "never no lines");
             // A row carrying a note stands taller than the same row without.
-            assert!(m.row(&theme, 2, NOTE_LINES) > m.row(&theme, 2, 0));
-            // A crowded list holds every row to [`BODY_LINES`].
-            assert_eq!(lines_in(m, &theme, 1, 4), BODY_LINES);
-            // A short one gives them all [`BODY_MOST`].
-            assert_eq!(
-                lines_in(m, &theme, m.row(&theme, BODY_MOST, 0) * 4, 4),
-                BODY_MOST
-            );
+            assert!(m.row(&theme, 2, 2) > m.row(&theme, 2, 0));
+            // A box with no room still gives a passage one line, and every
+            // line the box does hold is a line a passage may take.
+            assert_eq!(lines_in(m, &theme, 1), 1);
+            let deep = lines_in(m, &theme, m.row(&theme, 7, 0));
+            assert_eq!(deep, 7, "{w}x{h}");
+            assert!(m.row(&theme, deep + 1, 0) > m.row(&theme, 7, 0));
         }
     }
 }

@@ -58,11 +58,13 @@ use crate::store::{BookRecord, Store};
 ///
 /// A note is the reader's writing: short, theirs, and the thing a reading log
 /// must never lose, so it is kept whole. A highlight's text belongs to the
-/// book, and a full copy would put megabytes of a publisher's prose into
-/// `sessions.tsv` and then into every archive beside it. Enough to recognise
-/// the passage is enough; `My Clippings.txt` holds the rest, on the same
-/// device, and a screen that wants it can read it live.
-pub const EXCERPT: usize = 240;
+/// book, and an unbounded copy would put a publisher's prose into
+/// `sessions.tsv` and then into every archive beside it. So there is a bound —
+/// but it is set well past what a reader actually marks, because a passage cut
+/// mid-sentence is one they cannot place. `My Clippings.txt` holds whatever
+/// runs past it, on the same device, and a screen that wants it can read it
+/// live.
+pub const EXCERPT: usize = 600;
 
 /// What the ellipsis on a cut body is.
 const CUT: char = '…';
@@ -254,7 +256,7 @@ pub struct Merge {
 /// unchanged files.** A record is left alone only while the sources *and* the
 /// rules that read them both stand, so a build that changes the join reaches a
 /// device whose files have not moved.
-const RULES: u32 = 2;
+const RULES: u32 = 3;
 
 /// What a pass has to have seen for the rows it wrote to still stand: the
 /// clippings file as it was, as many sidecar records as there were, and the

@@ -837,6 +837,7 @@ fn everything() -> Vec<Shot> {
         "books:windowprogress",
         "books:windowempty",
         "book",
+        "book:5:marks",
         "book:8:marks",
         "book:8:marks:5",
         "book:13:marks",
