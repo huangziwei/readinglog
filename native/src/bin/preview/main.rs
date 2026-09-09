@@ -23,7 +23,7 @@ use readinglog_native::ui::splash;
 use readinglog_native::ui::text::TextRenderer;
 use readinglog_native::ui::theme::Theme;
 use readinglog_native::update::{Doing, Failure, Outcome};
-use readinglog_native::view::{Ask, Healing, Reset, Retrying, Shelf, Sort, Span, Window};
+use readinglog_native::view::{About, Ask, Healing, Reset, Retrying, Shelf, Sort, Span, Window};
 
 /// The day the preview is set to, and the second of it.
 const DAY: (i64, i64, i64) = (2026, 9, 16);
@@ -431,10 +431,12 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
     if shot.name == "config" {
         app.set_config_page(usize::from(shot.of.as_deref() == Some("many2")));
         app.ask_about(match shot.of.as_deref() {
-            Some("reset") => Some(Reset::Wipe(true)),
-            Some("nobackup") => Some(Reset::Wipe(false)),
-            Some("restore") => Some(Reset::Restore(0)),
-            Some("logs") => Some(Reset::Rebuild),
+            Some("reset") => Some(About::Reset(Reset::Wipe(true))),
+            Some("nobackup") => Some(About::Reset(Reset::Wipe(false))),
+            Some("restore") => Some(About::Reset(Reset::Restore(0))),
+            Some("logs") => Some(About::Reset(Reset::Rebuild)),
+            Some("heal") => Some(About::Heal),
+            Some("retry") => Some(About::Retry),
             Some("many" | "many2") | None => None,
             Some(other) => bail!("no config shot called {other}"),
         });
@@ -705,7 +707,7 @@ fn list() {
             "book" => {
                 "  (:<index> :<index>:restart :<index>:mark :<index>:unmark\n   :<index>:clear :<index>:cleared)"
             }
-            "config" => "  (:reset :nobackup :restore :logs :many :many2)",
+            "config" => "  (:reset :nobackup :restore :logs :heal :retry :many :many2)",
             "books" => {
                 "  (:finished :unfinished :unfinished-progress :time :progress\n   :mid :last :window :windowweek :windowprogress :windowempty)"
             }

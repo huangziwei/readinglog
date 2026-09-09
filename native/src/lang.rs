@@ -291,6 +291,11 @@ pub struct Strings {
     /// The button on that row, standing apart from its two values: read every
     /// log the device still holds and measure each sitting in them again.
     pub figures_heal: &'static str,
+    /// The question it puts up first, its note naming the minutes and what
+    /// moves, and the answer that runs it.
+    pub heal_ask: &'static str,
+    pub heal_note: &'static str,
+    pub heal_do: &'static str,
     /// Its banner: the headline over the pass, the line under it while it
     /// runs, and the two the outcome is stated in. `heal_done` counts.
     pub heal_head: &'static str,
@@ -308,6 +313,11 @@ pub struct Strings {
     /// read the logs, the catalog and the sidecars again, and name what they
     /// name.
     pub unnamed_retry: &'static str,
+    /// The question it puts up first, its note naming the minutes and what
+    /// moves, and the answer that runs it.
+    pub retry_ask: &'static str,
+    pub retry_note: &'static str,
+    pub retry_go: &'static str,
     /// Its banner: the headline over the pass, the two lines under a pass that
     /// reads the logs, the one under a pass that reads the books' own files
     /// alone, and the two the outcome is stated in. `retry_named` counts.
@@ -526,6 +536,9 @@ const ENGLISH: Strings = Strings {
     figures_device: "Device",
     figures_app: "App",
     figures_heal: "Heal",
+    heal_ask: "Measure every sitting again?",
+    heal_note: "Every log the device still holds is read from the start, which takes a few minutes. Each sitting the logs still reach is measured again and its figures replaced. Reading older than the logs is left as it stands.",
+    heal_do: "Measure them",
     heal_head: "Measure the sittings again",
     heal_doing: "Reading every log the device still holds.",
     heal_done: "{d} sitting[s] measured again.",
@@ -535,6 +548,9 @@ const ENGLISH: Strings = Strings {
     chip_show: "Show",
     chip_hide: "Hide",
     unnamed_retry: "Retry",
+    retry_ask: "Look for the missing titles again?",
+    retry_note: "Every source that can name a book is read again, the device's logs among them, which takes a few minutes. A book with a title keeps it; only the unidentified ones change.",
+    retry_go: "Look again",
     retry_head: "Identify the books",
     retry_logs: "Reading the logs, then the books' own files.",
     retry_minutes: "This can take a few minutes.",
@@ -754,6 +770,9 @@ const GERMAN: Strings = Strings {
     figures_device: "Gerät",
     figures_app: "App",
     figures_heal: "Nachmessen",
+    heal_ask: "Jede Sitzung neu messen?",
+    heal_note: "Jedes Protokoll, das das Gerät noch hat, wird von vorn gelesen — das dauert einige Minuten. Jede Sitzung, die die Protokolle noch erreichen, wird neu gemessen und ihre Werte ersetzt. Ältere Sitzungen bleiben, wie sie sind.",
+    heal_do: "Neu messen",
     heal_head: "Sitzungen neu messen",
     heal_doing: "Liest jedes Protokoll auf dem Gerät.",
     heal_done: "{d} Sitzung[en] neu gemessen.",
@@ -814,6 +833,9 @@ const GERMAN: Strings = Strings {
     chip_show: "Zeigen",
     chip_hide: "Verbergen",
     unnamed_retry: "Wiederholen",
+    retry_ask: "Erneut nach den fehlenden Titeln suchen?",
+    retry_note: "Jede Quelle, die ein Buch benennen kann, wird erneut gelesen, die Protokolle des Geräts eingeschlossen — das dauert einige Minuten. Ein Buch mit Titel behält ihn; nur die unbekannten ändern sich.",
+    retry_go: "Erneut suchen",
     retry_head: "Bücher erkennen",
     retry_logs: "Liest die Protokolle, dann die Dateien der Bücher.",
     retry_minutes: "Das dauert einige Minuten.",
@@ -980,6 +1002,9 @@ const JAPANESE: Strings = Strings {
     figures_device: "端末",
     figures_app: "アプリ",
     figures_heal: "再計測",
+    heal_ask: "すべての読書を計測し直しますか？",
+    heal_note: "端末に残っているログをすべて最初から読み直すため、数分かかります。ログが届く範囲の読書はすべて計測し直され、数値が置き換わります。ログより古い記録はそのままです。",
+    heal_do: "計測し直す",
     heal_head: "読書を再計測",
     heal_doing: "端末に残っているログを読み直しています。",
     heal_done: "{d}回を再計測しました。",
@@ -1031,6 +1056,9 @@ const JAPANESE: Strings = Strings {
     chip_show: "表示",
     chip_hide: "非表示",
     unnamed_retry: "再試行",
+    retry_ask: "見つからない書名をもう一度探しますか？",
+    retry_note: "本を特定できる情報源をすべて読み直します。端末のログも含むため数分かかります。書名のある本はそのまま、不明な本だけが変わります。",
+    retry_go: "もう一度探す",
     retry_head: "本を特定する",
     retry_logs: "ログと本のファイルを読んでいます。",
     retry_minutes: "数分かかります。",
@@ -1186,6 +1214,9 @@ const SIMPLIFIED: Strings = Strings {
     figures_device: "设备",
     figures_app: "应用",
     figures_heal: "重新测量",
+    heal_ask: "重新测量每一次阅读？",
+    heal_note: "设备上还留着的每份日志都会从头读起，需要几分钟。日志还涵盖的每一次阅读都会重新测量并覆写其数字。比日志更早的记录维持原样。",
+    heal_do: "重新测量",
     heal_head: "重新测量各次阅读",
     heal_doing: "正在重新读取设备上的日志。",
     heal_done: "已重新测量 {d}次。",
@@ -1234,6 +1265,9 @@ const SIMPLIFIED: Strings = Strings {
     chip_show: "显示",
     chip_hide: "隐藏",
     unnamed_retry: "重试",
+    retry_ask: "再次寻找缺少的书名？",
+    retry_note: "每个能认出书的来源都会重读一次，包括设备上的日志，需要几分钟。已有书名的书保持不变，只有未识别的会改动。",
+    retry_go: "再找一次",
     retry_head: "识别书籍",
     retry_logs: "正在读取日志和书籍文件。",
     retry_minutes: "需要几分钟。",
@@ -1400,6 +1434,9 @@ const TRADITIONAL: Strings = Strings {
     figures_device: "裝置",
     figures_app: "應用",
     figures_heal: "重新測量",
+    heal_ask: "重新測量每一次閱讀？",
+    heal_note: "裝置上還留著的每份日誌都會從頭讀起，需要幾分鐘。日誌還涵蓋的每一次閱讀都會重新測量並覆寫其數字。比日誌更早的紀錄維持原樣。",
+    heal_do: "重新測量",
     heal_head: "重新測量各次閱讀",
     heal_doing: "正在重新讀取裝置上的日誌。",
     heal_done: "已重新測量 {d}次。",
@@ -1448,6 +1485,9 @@ const TRADITIONAL: Strings = Strings {
     chip_show: "顯示",
     chip_hide: "隱藏",
     unnamed_retry: "重試",
+    retry_ask: "再次尋找缺少的書名？",
+    retry_note: "每個能認出書的來源都會重讀一次，包括裝置上的日誌，需要幾分鐘。已有書名的書保持不變，只有未識別的會改動。",
+    retry_go: "再找一次",
     retry_head: "識別書籍",
     retry_logs: "正在讀取日誌和書籍檔案。",
     retry_minutes: "需要幾分鐘。",

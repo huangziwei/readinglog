@@ -10,7 +10,7 @@ use crate::ui::paint::Rect;
 use crate::ui::theme::Theme;
 use crate::update;
 
-use super::{Confirm, Ctx, Hit, Reset};
+use super::{About, Confirm, Ctx, Hit, Reset};
 
 /// The index no option is drawn filled at.
 const NONE_ON: usize = usize::MAX;
@@ -390,25 +390,35 @@ pub fn question(confirm: &Confirm, s: &crate::lang::Strings) -> (String, String,
             .replace("{size}", &size)
     };
     match confirm.about {
-        Reset::Wipe(true) => (
+        About::Reset(Reset::Wipe(true)) => (
             s.wipe_ask.into(),
             filled(s.wipe_note),
             s.wipe_do.to_string(),
         ),
-        Reset::Wipe(false) => (
+        About::Reset(Reset::Wipe(false)) => (
             s.nowipe_ask.into(),
             filled(s.nowipe_note),
             s.nowipe_do.to_string(),
         ),
-        Reset::Restore(_) => (
+        About::Reset(Reset::Restore(_)) => (
             s.restore_ask.into(),
             filled(s.restore_note),
             s.restore_do.to_string(),
         ),
-        Reset::Rebuild => (
+        About::Reset(Reset::Rebuild) => (
             s.rebuild_ask.into(),
             s.rebuild_note.to_string(),
             s.rebuild_do.to_string(),
+        ),
+        About::Heal => (
+            s.heal_ask.into(),
+            s.heal_note.to_string(),
+            s.heal_do.to_string(),
+        ),
+        About::Retry => (
+            s.retry_ask.into(),
+            s.retry_note.to_string(),
+            s.retry_go.to_string(),
         ),
     }
 }
@@ -426,9 +436,11 @@ pub fn asking(cx: &mut Ctx, area: Rect, confirm: &Confirm) {
     let s = cx.s();
     let (heading, note, answer) = question(confirm, s);
     let carry = match confirm.about {
-        Reset::Wipe(keep) => Hit::Wiped(keep),
-        Reset::Restore(at) => Hit::Restored(at),
-        Reset::Rebuild => Hit::Rebuilt,
+        About::Reset(Reset::Wipe(keep)) => Hit::Wiped(keep),
+        About::Reset(Reset::Restore(at)) => Hit::Restored(at),
+        About::Reset(Reset::Rebuild) => Hit::Rebuilt,
+        About::Heal => Hit::Healed,
+        About::Retry => Hit::Retried,
     };
     crate::ui::dialog::draw(
         cx,
@@ -894,6 +906,44 @@ mod tests {
             .position(|section| section.heading == lang.strings().the_record)
             .expect("the record section");
         row(page, at, 0)
+    }
+
+    #[test]
+    fn every_long_pass_asks_before_it_runs() {
+        let s = Lang::English.strings();
+        let blank = Confirm {
+            about: About::Heal,
+            sittings: 0,
+            books: 0,
+            bytes: 0,
+            named: String::new(),
+        };
+        for about in [
+            About::Heal,
+            About::Retry,
+            About::Reset(Reset::Rebuild),
+            About::Reset(Reset::Wipe(true)),
+            About::Reset(Reset::Wipe(false)),
+            About::Reset(Reset::Restore(0)),
+        ] {
+            let asked = Confirm {
+                about,
+                ..blank.clone()
+            };
+            let (heading, note, answer) = question(&asked, s);
+            assert!(!heading.is_empty(), "{about:?} asks nothing");
+            assert!(!note.is_empty(), "{about:?} states nothing");
+            assert!(!answer.is_empty(), "{about:?} offers no answer");
+        }
+        // `Heal`, `Retry` and `Rebuild` name the minutes; a wipe is instant.
+        for about in [About::Heal, About::Retry, About::Reset(Reset::Rebuild)] {
+            let asked = Confirm {
+                about,
+                ..blank.clone()
+            };
+            let (_, note, _) = question(&asked, s);
+            assert!(note.contains("minute"), "{about:?} names no time: {note:?}");
+        }
     }
 
     #[test]

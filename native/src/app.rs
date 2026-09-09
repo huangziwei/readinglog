@@ -166,10 +166,10 @@ impl App {
 
     /// Put one of the config page's questions up, gathering the figures it
     /// states, or take one down.
-    pub fn ask_about(&mut self, about: Option<view::Reset>) {
+    pub fn ask_about(&mut self, about: Option<view::About>) {
         match about {
             Some(about) => {
-                self.ask_reset(about);
+                self.ask_question(about);
             }
             None => self.state.confirm = None,
         }
@@ -794,20 +794,27 @@ impl App {
                 self.state.books_from = at;
             }
             Hit::Update => return Action::Update,
-            Hit::Retry => return Action::Retry,
-            Hit::Heal => return Action::Heal,
+            Hit::Retry => return self.ask_question(view::About::Retry),
+            Hit::Heal => return self.ask_question(view::About::Heal),
             Hit::Prev => return self.paged(-1),
             Hit::Next => return self.paged(1),
             Hit::Clear(index) => return self.put(index, view::Ask::Clear),
             Hit::ClearBook(index) => return self.clear_book(index, false),
             Hit::ForgetBook(index) => return self.clear_book(index, true),
-            Hit::Wipe(keep) => return self.ask_reset(view::Reset::Wipe(keep)),
-            Hit::Restore(at) => return self.ask_reset(view::Reset::Restore(at)),
-            Hit::Rebuild => return self.ask_reset(view::Reset::Rebuild),
-            // `App::resetting` carries these out, holding `fb`.
+            Hit::Wipe(keep) => {
+                return self.ask_question(view::About::Reset(view::Reset::Wipe(keep)));
+            }
+            Hit::Restore(at) => {
+                return self.ask_question(view::About::Reset(view::Reset::Restore(at)));
+            }
+            Hit::Rebuild => return self.ask_question(view::About::Reset(view::Reset::Rebuild)),
+            // `App::resetting`, `App::retry` and `App::heal` carry these out,
+            // holding `fb`.
             Hit::Wiped(keep) => return Action::Resetting(view::Reset::Wipe(keep)),
             Hit::Restored(at) => return Action::Resetting(view::Reset::Restore(at)),
             Hit::Rebuilt => return Action::Resetting(view::Reset::Rebuild),
+            Hit::Retried => return Action::Retry,
+            Hit::Healed => return Action::Heal,
         }
         Action::Redraw
     }
@@ -831,10 +838,17 @@ impl App {
 
     /// Put one of the config page's questions up, with the figures it states
     /// gathered here: the dialog itself walks nothing.
-    fn ask_reset(&mut self, about: view::Reset) -> Action {
+    fn ask_question(&mut self, about: view::About) -> Action {
         let (jackets, archives) = crate::backup::sizes(self.dir());
         let confirm = match about {
-            view::Reset::Wipe(keep) => view::Confirm {
+            view::About::Heal | view::About::Retry => view::Confirm {
+                about,
+                sittings: self.stats.sittings.len(),
+                books: self.stats.book_count(),
+                bytes: 0,
+                named: String::new(),
+            },
+            view::About::Reset(view::Reset::Wipe(keep)) => view::Confirm {
                 about,
                 sittings: self.stats.sittings.len(),
                 books: self.stats.book_count(),
@@ -845,7 +859,7 @@ impl App {
                 },
                 named: crate::backup::name(crate::backup::Kind::Record, &self.store.mark),
             },
-            view::Reset::Restore(at) => {
+            view::About::Reset(view::Reset::Restore(at)) => {
                 let held = crate::backup::list(self.dir());
                 let Some(backup) = held.get(at) else {
                     return Action::Nothing;
@@ -867,7 +881,7 @@ impl App {
                         .unwrap_or_default(),
                 }
             }
-            view::Reset::Rebuild => view::Confirm {
+            view::About::Reset(view::Reset::Rebuild) => view::Confirm {
                 about,
                 sittings: 0,
                 books: 0,

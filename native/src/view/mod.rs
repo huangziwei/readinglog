@@ -54,12 +54,16 @@ pub enum Hit {
     ShowUnnamed(bool),
     /// Whether a book no jacket can be drawn for is listed at all.
     ShowUncovered(bool),
-    /// Read the logs, the catalog and the sidecars again, to name the books
-    /// nothing on the record names yet.
+    /// Ask before reading the logs, the catalog and the sidecars again, to
+    /// name the books nothing on the record names yet.
     Retry,
-    /// Read every log the device still holds, and measure each sitting in
-    /// them again.
+    /// The answer to that question.
+    Retried,
+    /// Ask before reading every log the device still holds and measuring each
+    /// sitting in them again.
     Heal,
+    /// The answer to that question.
+    Healed,
     /// The colours the charts are drawn in.
     ColorScheme(crate::settings::ColorScheme),
     /// Where a book's own figures come from.
@@ -108,7 +112,7 @@ pub enum Hit {
 /// gathered when it went up: nothing is walked while the dialog is drawn.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Confirm {
-    pub about: Reset,
+    pub about: About,
     /// What the question is about, counted when it went up.
     pub sittings: usize,
     pub books: usize,
@@ -118,7 +122,18 @@ pub struct Confirm {
     pub named: String,
 }
 
-/// What a [`Confirm`] asks.
+/// What a [`Confirm`] asks about: a reset, or one of the two passes over the
+/// device's logs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum About {
+    Reset(Reset),
+    /// Measure every sitting the logs still reach again.
+    Heal,
+    /// Read every source of identity again.
+    Retry,
+}
+
+/// Which reset a [`Confirm`] asks about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reset {
     /// Empty the record; the flag is whether an archive is kept.
@@ -769,7 +784,7 @@ mod tests {
         let mut s = State::new(third());
         s.go(Tab::Config);
         s.confirm = Some(Confirm {
-            about: Reset::Wipe(true),
+            about: About::Reset(Reset::Wipe(true)),
             sittings: 12,
             books: 3,
             bytes: 0,
