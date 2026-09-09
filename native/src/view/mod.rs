@@ -98,7 +98,7 @@ pub enum Hit {
     Sorted(Sort),
     /// Open the search over the Books tab, with the keyboard up.
     Search,
-    /// A tap on the search field, which raises the keyboard again.
+    /// A tap on the search field, which raises the keyboard.
     SearchField,
     /// The mark in the field's right end: it takes the query off, and closes
     /// the search where there is none to take.
@@ -259,27 +259,24 @@ impl BookTab {
     }
 }
 
-/// The search standing over the Books tab: what has been typed, how far the
-/// results have been paged, and whether the keyboard is up over them.
+/// The search standing over the Books tab.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Search {
     pub query: String,
     pub from: usize,
     /// Whether the on-screen keyboard stands over the foot of the screen.
-    /// Return puts it away; a tap on the field raises it again.
     pub keyboard: bool,
 }
 
 impl Search {
-    /// Take `said` on, and open the results at their head: a longer query
-    /// names other books, and a page held part way down names none of them.
+    /// Takes `said` onto `query`, and puts `from` back to the head.
     pub fn typed(&mut self, said: char) {
         self.query.push(said);
         self.from = 0;
     }
 
-    /// Take the last character off, and open the results at their head.
-    /// Answers whether there was one.
+    /// Takes the last character off `query`, answering whether there was one,
+    /// and puts `from` back to the head.
     pub fn backspace(&mut self) -> bool {
         self.from = 0;
         self.query.pop().is_some()
@@ -489,7 +486,7 @@ pub struct State {
     pub config_page: usize,
     /// How far down the book list has been paged.
     pub books_from: usize,
-    /// The search open over the Books tab, and what has been typed into it.
+    /// The search open over the Books tab.
     pub search: Option<Search>,
     /// Which books the Books screen lists.
     pub shelf: Shelf,
@@ -533,9 +530,8 @@ impl State {
         }
     }
 
-    /// Open `book`'s own screen, at the page a book always opens on. Any
-    /// keyboard standing over the search that named it goes: the book's own
-    /// screen has nothing to type into.
+    /// Open `book`'s own screen, at the page a book always opens on, with
+    /// `Search::keyboard` cleared.
     pub fn open_book(&mut self, book: usize) {
         self.book = Some(book);
         self.book_tab = BookTab::default();

@@ -97,17 +97,13 @@ fn fold(events: &[Event], screensaver: Atom, covered: bool, size: (u32, u32)) ->
     pump
 }
 
-/// The keysym one keycode stands for under `state`.
+/// The keysym `keycode` carries under `state`.
 ///
-/// The mapping is asked for a keycode at a time rather than cached, because
-/// the on-screen keyboard writes a keysym the map does not carry into a
-/// scratch keycode of its own just before sending it. It rotates through
-/// thirty-five of them, so the answer is still the right one by the time the
-/// event is read.
+/// `get_keyboard_mapping` runs once per press. Keycodes 220 to 254 are
+/// rewritten between presses.
 fn keysym_of(conn: &RustConnection, keycode: u8, state: u16) -> Option<u32> {
     let reply = conn.get_keyboard_mapping(keycode, 1).ok()?.reply().ok()?;
-    // A scratch keycode carries one keysym and no shifted form, so the shifted
-    // column falls back to the plain one.
+    // A keycode with one keysym has no shifted column.
     let shifted = usize::from(state & u16::from(KeyButMask::SHIFT) != 0);
     let at = shifted.min(reply.keysyms.len().saturating_sub(1));
     let keysym = match reply.keysyms.get(at).copied().unwrap_or(0) {
@@ -226,7 +222,7 @@ pub struct Pump {
     pub covered: Option<bool>,
     /// A `ConfigureNotify` size differing from the one being drawn.
     pub resized: Option<(u32, u32)>,
-    /// What was typed into this window, in order, as keysyms.
+    /// The keysym of every `KeyPress` drained, in order.
     pub typed: Vec<u32>,
 }
 
@@ -301,13 +297,9 @@ impl Framebuffer {
             // `CreateWindowAux` sets no `backing_store`.
             &CreateWindowAux::new()
                 .background_pixel(screen.white_pixel)
-                // `VISIBILITY_CHANGE` reports a window put over this one, and
-                // `STRUCTURE_NOTIFY` `MapNotify` and `ConfigureNotify`.
-                //
-                // `KEY_PRESS` is what the on-screen keyboard types into: it
-                // sends a synthetic `KeyPress` to whichever window holds the
-                // input focus, and a window selecting no key mask never gets
-                // one. `KEY_RELEASE` follows each press and is dropped.
+                // `VISIBILITY_CHANGE` reports a window put over this one,
+                // `STRUCTURE_NOTIFY` `MapNotify` and `ConfigureNotify`, and
+                // `KEY_PRESS` a `KeyPress` sent to the focused window.
                 .event_mask(
                     EventMask::EXPOSURE
                         | EventMask::VISIBILITY_CHANGE
@@ -416,16 +408,14 @@ impl Framebuffer {
         })
     }
 
-    /// Whether a server stands behind this framebuffer. `false` under
-    /// [`Framebuffer::offscreen`], where nothing is presented and no other X
-    /// client can be spoken to either.
+    /// Whether `surface` holds a connection. `false` under
+    /// [`Framebuffer::offscreen`].
     pub fn on_screen(&self) -> bool {
         self.surface.is_some()
     }
 
-    /// The X connection's own descriptor, for a `poll(2)` beside the input
-    /// devices. Readable means an event is on the wire, which
-    /// [`Framebuffer::pump_events`] then drains.
+    /// `Surface::conn`'s descriptor, for `poll(2)`.
+    /// [`Framebuffer::pump_events`] drains what lands on it.
     pub fn raw_fd(&self) -> Option<std::os::fd::RawFd> {
         use std::os::fd::AsRawFd;
         self.surface

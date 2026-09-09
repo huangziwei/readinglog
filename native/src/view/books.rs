@@ -16,7 +16,7 @@ const TITLE_LINES: usize = 2;
 /// The mark on the window chip, which a tap on it takes off the list.
 const DROP: &str = "×";
 
-/// The share of the search button's side the magnifier draws into.
+/// The share of [`search_button`]'s side `paint::magnifier` draws into.
 const GLYPH: (i32, i32) = (3, 5);
 
 /// The height one book takes, set by the cover it carries.
@@ -118,7 +118,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
         empty(cx, area);
         return;
     }
-    // The search button and `sort_chip` stand on every shelf.
+    // `search_button` and `sort_chip` stand on every shelf.
     let (head, _) = area.split_top(chrome::chip_height(theme) + theme.gap * 2);
     let sort = sort_chip(cx, head, state.sort);
     let search = search_button(cx, head);
@@ -164,12 +164,8 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
     }
 }
 
-/// The search, at the head of the shelf chips' own row: a square of the same
-/// outline, the same height and the same gap as they carry, so it reads as a
-/// button beside them and not as a fourth shelf. A tap opens the search, and
-/// the box it took is returned.
-///
-/// The magnifier is drawn: no face on the device carries one.
+/// The search, at the head of the shelf chips' own row: a square of
+/// `chrome::chip_height` a side, in their outline. Answers the box it took.
 fn search_button(cx: &mut Ctx, area: Rect) -> Rect {
     let theme: &Theme = cx.theme;
     let side = chrome::chip_height(theme);

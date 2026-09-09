@@ -101,16 +101,13 @@ impl Input {
         }
     }
 
-    /// [`Touch::set_keyboard`]: the touchscreen's grab is dropped while the
-    /// on-screen keyboard stands, so that it can feel a tap at all.
+    /// [`Touch::set_keyboard`] over the touchscreen.
     pub fn set_keyboard(&mut self, up: bool) {
         self.touch.set_keyboard(up);
     }
 
     /// Wake on `fd` as well as on the input devices, answering an
-    /// [`InputEvent::Tick`] when it is readable. The X connection is what this
-    /// is for: a key the on-screen keyboard sends arrives there, and a tick
-    /// every `TICK_MS` is too slow to type against.
+    /// [`InputEvent::Tick`] where it is readable.
     pub fn watch(&mut self, fd: Option<RawFd>) {
         self.watched = fd;
     }
@@ -160,8 +157,7 @@ impl Input {
                     revents: 0,
                 },
             ];
-            // A closed slot is passed as -1, which `poll` skips, so the count
-            // only shrinks where a device further down the list is absent.
+            // A slot holding -1 is skipped by `poll`.
             let nfds: libc::nfds_t = match (self.buttons.is_some(), self.watched.is_some()) {
                 (_, true) => 3,
                 (true, false) => 2,
@@ -219,8 +215,7 @@ impl Input {
                 continue;
             }
 
-            // The X connection, where the on-screen keyboard's keys arrive.
-            // The caller drains them; this only wakes the loop.
+            // `watched` is readable; the caller drains it.
             if fds[2].revents & libc::POLLIN != 0 {
                 return Ok(InputEvent::Tick);
             }

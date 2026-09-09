@@ -462,9 +462,8 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
     app.draw(fb)
 }
 
-/// What a `search:<of>` shot is showing. `of` is the query itself, but for
-/// three names: nothing typed, a query naming no book, and one with the
-/// keyboard put away.
+/// What a `search:<of>` shot is showing. `of` is the query, but for `empty`,
+/// `none` and `down`.
 fn searching(of: Option<&str>) -> Search {
     let (query, keyboard) = match of.unwrap_or("the") {
         "empty" => ("", true),

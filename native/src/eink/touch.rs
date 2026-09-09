@@ -93,8 +93,7 @@ pub struct Touch {
     exclusive: bool,
     /// [`Touch::set_covered`]'s state: no grab, no [`Touch::next_event`].
     covered: bool,
-    /// Whether the on-screen keyboard stands over this app, which wants the
-    /// grab dropped for as long as it does.
+    /// [`Touch::set_keyboard`]'s state: no grab.
     keyboard: bool,
     /// Applied by [`Touch::transform_xy`].
     orientation: Orientation,
@@ -160,7 +159,7 @@ impl Touch {
     }
 
     /// Drops `EVIOCGRAB` and sets `covered` while another window covers this
-    /// app's; takes the grab back when that window goes.
+    /// one; takes the grab back when that window goes.
     pub fn set_covered(&mut self, covered: bool) {
         if covered == self.covered {
             return;
@@ -170,13 +169,11 @@ impl Touch {
         self.forget_stroke();
     }
 
-    /// Drops `EVIOCGRAB` while the on-screen keyboard stands, and takes it
-    /// back when it goes.
+    /// Drops `EVIOCGRAB` and sets `keyboard`; takes the grab back on a
+    /// `false`.
     ///
-    /// The grab is exclusive against the X server itself, so a keyboard raised
-    /// under one draws and never feels a tap. Ungrabbed, this app still reads
-    /// its own fd: the caller has to throw away whatever lands on the
-    /// keyboard's own rectangle.
+    /// `EVIOCGRAB` is exclusive against the X server. Ungrabbed,
+    /// [`Touch::next_event`] answers touches that land on the keyboard.
     pub fn set_keyboard(&mut self, up: bool) {
         if up == self.keyboard {
             return;
@@ -186,8 +183,8 @@ impl Touch {
         self.forget_stroke();
     }
 
-    /// Take `EVIOCGRAB` where this app is exclusive and nothing wants it
-    /// dropped, and drop it where something does.
+    /// Holds `EVIOCGRAB` while `exclusive` and neither `covered` nor
+    /// `keyboard`.
     fn apply_grab(&mut self) {
         let want = self.exclusive && !self.covered && !self.keyboard;
         if want == self.grabbed {

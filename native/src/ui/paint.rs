@@ -340,7 +340,7 @@ pub fn round_stroke(fb: &mut Framebuffer, r: Rect, radius: i32, value: u8, width
 }
 
 /// One quarter-circle: the pixels of the `radius × radius` corner box lying
-/// `[radius - t, radius]` from `at`. `(sx, sy) ∈ {-1, 1}` picks the quadrant.
+/// `[radius - t, radius]` from `at`. `s` holds two signs, each -1 or 1.
 fn corner_arc(fb: &mut Framebuffer, at: (i32, i32), radius: u32, t: u32, value: u8, s: (i32, i32)) {
     let outer = radius as f32;
     let inner = radius.saturating_sub(t) as f32;
@@ -366,17 +366,14 @@ pub fn cross(fb: &mut Framebuffer, r: Rect, size: i32, value: u8, width: i32) {
     }
 }
 
-/// Where the magnifier's lens sits inside its box, as a share of the box's
-/// side, and how far down the diagonal the handle reaches.
+/// [`magnifier`]'s lens and handle, as shares of the box's side.
 const LENS_AT: f32 = 0.38;
 const LENS_R: f32 = 0.29;
 const HANDLE_TO: f32 = 0.97;
 
 /// A magnifier filling `r`, `width` thick, in `value` over `paper`.
 ///
-/// No face on the device carries one, so it is drawn. Coverage is worked out
-/// per pixel and mixed against `paper`: a lens this small reads as a polygon
-/// without it.
+/// [`covered`] mixes each pixel against `paper`.
 pub fn magnifier(fb: &mut Framebuffer, r: Rect, value: u8, paper: u8, width: i32) {
     let side = r.w.min(r.h) as f32;
     let w = width.max(1) as f32;
@@ -404,7 +401,7 @@ fn covered(away: f32, w: f32) -> f32 {
     (0.5 - (away - w / 2.0)).clamp(0.0, 1.0)
 }
 
-/// How far a point lies from a segment.
+/// How far `p` lies from the segment `a` to `b`.
 fn to_segment(p: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
     let (dx, dy) = (b.0 - a.0, b.1 - a.1);
     let len = dx * dx + dy * dy;

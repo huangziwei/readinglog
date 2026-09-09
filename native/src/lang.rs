@@ -199,8 +199,7 @@ pub struct Strings {
     pub shelf_unfinished: &'static str,
     /// The line for a shelf with no books.
     pub nothing_on_the_shelf: &'static str,
-    /// What stands in the search field before anything is typed, naming the
-    /// two lines of a row a query is matched against.
+    /// What stands in the search field before anything is typed.
     pub search_hint: &'static str,
     /// The three list orders.
     pub by_recent: &'static str,

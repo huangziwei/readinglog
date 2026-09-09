@@ -1,47 +1,67 @@
-//! The device's own on-screen keyboard. It is a standalone X client stacked
-//! above every application window: raising it costs one property set, it
-//! covers the foot of the screen without moving or resizing anything of ours,
-//! and it goes away on another.
+//! The device's on-screen keyboard. [`open`] and [`close`] set one property
+//! each on [`SERVICE`]; [`height`] states how much of the screen it takes.
 
 use std::process::Command;
 
-/// The keyboard's own lipc service, and the two properties that raise and
-/// dismiss it.
+/// The lipc service [`open`] and [`close`] set a property on.
 const SERVICE: &str = "com.lab126.keyboard";
 const OPEN: &str = "open";
 const CLOSE: &str = "close";
 
-/// The name the keyboard addresses its client by. It sets the properties
-/// carrying an IME's commits on this service, and takes it off the `open`
-/// string with no validation: what we pass here is what it answers to.
+/// The lipc service name [`open`] hands over, and [`close`] matches against.
 const CLIENT: &str = "com.readinglog.stats";
 
-/// Which of the keymap's layouts is drawn. Only `pad` and `web` are matched
-/// against; anything else takes the plain alphabetic one.
+/// The layout [`open`] asks for. `pad` and `web` are the two matched against;
+/// any other value draws the alphabetic layout.
 const LAYOUT: &str = "abc";
 
-/// The flags the client opens with: bit 0 runs the predictor and shows the
-/// candidate bar, which is what the languages with an IME need. Bit 1 asks
-/// for surrounding text and bit 2 makes backspace eat a whole word; a field
-/// this short wants neither.
+/// Bit 0 runs the predictor and its candidate bar, bit 1 asks for surrounding
+/// text, bit 2 makes backspace take a word.
 const FLAGS: u32 = 0x1;
 
-/// Where the live layout is written when the keyboard language changes.
+/// The live layout, rewritten on a keyboard language change.
 const KEYMAP: &str = "/var/local/system/current.keymap";
 
-/// The field naming how much of the screen the keyboard takes: the keys and
-/// the candidate bar over them together.
+/// The [`KEYMAP`] field naming the keys and the candidate bar together.
 const FIELD: &str = "\"portrait_height\"";
 
-/// What the keymaps state for the panels the device ships, screen height to
-/// keyboard height. Every language carries the same figure for a panel.
+/// Screen height to keyboard height, as the keymaps state it. One figure per
+/// panel, the same for all 29 languages.
 const PANELS: [(i32, i32); 3] = [(2480, 808), (1696, 578), (1680, 578)];
+
+/// Raises the keyboard, in the language it holds. Answers whether
+/// `lipc-set-prop` exited clean.
+pub fn open() -> bool {
+    set(OPEN, &format!("{CLIENT}:{LAYOUT}:{FLAGS}"))
+}
+
+/// Dismisses it, by the bare [`CLIENT`] name.
+pub fn close() -> bool {
+    set(CLOSE, CLIENT)
+}
+
+/// One `lipc-set-prop` on [`SERVICE`].
+fn set(prop: &str, value: &str) -> bool {
+    match Command::new("lipc-set-prop")
+        .args([SERVICE, prop, value])
+        .status()
+    {
+        Ok(status) if status.success() => true,
+        Ok(status) => {
+            eprintln!("keyboard: lipc-set-prop {prop} {status}");
+            false
+        }
+        Err(err) => {
+            eprintln!("keyboard: lipc-set-prop would not run: {err}");
+            false
+        }
+    }
+}
 
 /// How much of a `screen` px tall screen the keyboard covers, anchored to its
 /// foot and drawn the full width.
 ///
-/// The live layout states it; a panel this build has never seen falls back to
-/// the table, and one absent from that to a third of the screen.
+/// [`KEYMAP`] first, then [`PANELS`], then a third of `screen`.
 pub fn height(screen: i32) -> i32 {
     if let Some(said) = std::fs::read_to_string(KEYMAP).ok().and_then(|said| {
         let head: String = said.chars().take(2048).collect();
@@ -61,37 +81,7 @@ fn of_panel(screen: i32) -> i32 {
         .unwrap_or(screen / 3)
 }
 
-/// Raise the keyboard, in whatever language it was last left in. Answers
-/// whether `lipc-set-prop` ran and exited clean.
-pub fn open() -> bool {
-    set(OPEN, &format!("{CLIENT}:{LAYOUT}:{FLAGS}"))
-}
-
-/// Dismiss it. The value is the bare client name: anything else and the
-/// keyboard finds no match for it and stays up.
-pub fn close() -> bool {
-    set(CLOSE, CLIENT)
-}
-
-/// One `lipc-set-prop` on the keyboard's service.
-fn set(prop: &str, value: &str) -> bool {
-    match Command::new("lipc-set-prop")
-        .args([SERVICE, prop, value])
-        .status()
-    {
-        Ok(status) if status.success() => true,
-        Ok(status) => {
-            eprintln!("keyboard: lipc-set-prop {prop} {status}");
-            false
-        }
-        Err(err) => {
-            eprintln!("keyboard: lipc-set-prop would not run: {err}");
-            false
-        }
-    }
-}
-
-/// The `portrait_height` a keymap states, as a positive number of pixels.
+/// The [`FIELD`] value in `said`, as a positive number of pixels.
 fn of_keymap(said: &str) -> Option<i32> {
     let (_, rest) = said.split_once(FIELD)?;
     let (_, rest) = rest.split_once(':')?;
@@ -107,7 +97,7 @@ fn of_keymap(said: &str) -> Option<i32> {
 mod tests {
     use super::*;
 
-    /// The head of the Scribe's own `current.keymap`.
+    /// The head of a [`KEYMAP`].
     const SCRIBE: &str = r#"{
     "keyboard_language" : "en-US",
     "candidate_height" : 100,
@@ -121,7 +111,6 @@ mod tests {
         assert_eq!(of_keymap(SCRIBE), Some(808));
     }
 
-    /// A keymap naming no such field, or naming it as nothing, states nothing.
     #[test]
     fn a_keymap_without_the_field_states_nothing() {
         assert_eq!(of_keymap("{}"), None);
@@ -129,8 +118,6 @@ mod tests {
         assert_eq!(of_keymap(r#"{"portrait_height" : 0}"#), None);
     }
 
-    /// Every panel the device ships is in the table, and anything else takes
-    /// a third of its screen.
     #[test]
     fn a_panel_off_the_table_takes_a_third() {
         assert_eq!(of_panel(2480), 808);

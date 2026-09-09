@@ -1,10 +1,5 @@
-//! Books by title or author, typed on the device's own keyboard. The field is
-//! a rounded pill at the head of the page and the results are the Books
-//! list's own rows; a tap on one opens the book.
-//!
-//! The keyboard stands over the foot of the screen without moving anything of
-//! ours, so the list lays itself out above it while it is up and takes the
-//! whole page back when it goes.
+//! Books by title or author: [`field`] carries the query, [`listed`] names
+//! the books, and [`results_box`] holds the rows the Books list draws.
 
 use crate::stats::Stats;
 use crate::ui::chrome;
@@ -14,29 +9,27 @@ use crate::ui::theme::Theme;
 
 use super::{Ctx, Hit, Search, books, pager};
 
-/// The field's proportions, as shares of its own height: where the glyph's
-/// centre falls, how big it is, the air between it and the query, and the
-/// width of the mark's own end.
+/// [`field`]'s proportions, as shares of its height.
 const GLYPH_R: f32 = 0.205;
 const GLYPH_AT: f32 = 0.568;
 const TEXT_GAP: f32 = 0.273;
 const CLEAR_W: f32 = 1.70;
 
-/// How tall the field is, against a chip on the row it stands in place of.
+/// The height [`field`] draws at, against `chrome::chip_height`.
 fn field_height(theme: &Theme) -> i32 {
     chrome::chip_height(theme) * 5 / 4
 }
 
-/// The head the field stands in, and the box left below it.
+/// The head [`field`] stands in, and the box left below it.
 fn split(theme: &Theme, area: Rect) -> (Rect, Rect) {
     area.split_top(field_height(theme) + theme.gap * 2)
 }
 
 /// The books `query` names, by their index in [`Stats::books`], in the order
-/// the list already holds them: most recently read first.
+/// they are held.
 ///
-/// A query matches a book whose title or author holds it, case folded. An
-/// empty one names every book, so the screen is never blank.
+/// A book matches where its `title` or its `author` holds `query`, case
+/// folded. An empty `query` names every book.
 pub fn listed(stats: &Stats, query: &str, uncovered: bool) -> Vec<usize> {
     let needle = query.to_lowercase();
     (0..stats.books.len())
@@ -50,8 +43,8 @@ pub fn listed(stats: &Stats, query: &str, uncovered: bool) -> Vec<usize> {
         .collect()
 }
 
-/// The box the results are drawn into: the page under the field, floored at
-/// the keyboard's own top edge while it stands.
+/// The box the rows are drawn into: the page under [`field`], floored at the
+/// keyboard's top edge where `keyboard`.
 pub fn results_box(theme: &Theme, area: Rect, keyboard: bool) -> Rect {
     let (_, under) = split(theme, area);
     if !keyboard {
@@ -110,9 +103,8 @@ pub fn draw(cx: &mut Ctx, area: Rect, search: &Search) {
     }
 }
 
-/// The field: a rounded outline, the glyph in its left end, the query set
-/// tail-first with the caret after it, and the mark that clears it in the
-/// right end. A tap on it raises the keyboard again.
+/// A rounded outline, the magnifier in its left end, `query` set tail-first
+/// with the caret after it, and [`Hit::SearchClear`]'s mark in the right end.
 fn field(cx: &mut Ctx, at: Rect, query: &str) {
     let theme: &Theme = cx.theme;
     let h = at.h as f32;
@@ -129,8 +121,7 @@ fn field(cx: &mut Ctx, at: Rect, query: &str) {
     );
     cx.hit(Hit::SearchField, at);
 
-    // The mark stands on an empty field too: it is the way out, and while the
-    // keyboard is up it is the only one — the tab strip is under it.
+    // The mark stands on an empty `query` as well.
     let clear = (h * CLEAR_W) as i32;
     let zone = Rect::new(at.right() - clear, at.y, clear, at.h);
     paint::cross(cx.fb, zone, (h * 0.17) as i32, INK, theme.rule() + 1);
@@ -149,7 +140,7 @@ fn field(cx: &mut Ctx, at: Rect, query: &str) {
         cx.text.draw_in(script, cx.fb, x, baseline, said, false);
         return;
     }
-    // The tail is what is being typed, so a long query loses its head.
+    // A `query` wider than `room` loses its head.
     let said = tail(cx.text, script, query, room);
     let w = cx.text.measure_width_in(script, &said) as i32;
     cx.text.draw_in(script, cx.fb, x, baseline, &said, false);
@@ -178,7 +169,7 @@ fn tail(text: &mut TextRenderer, script: crate::font::Script, said: &str, room: 
     String::new()
 }
 
-/// The line a query naming no book stands under.
+/// The line drawn where [`listed`] is empty.
 fn nothing(cx: &mut Ctx, area: Rect) {
     let script = cx.ui_script();
     let said = cx.s().nothing_on_the_shelf;
@@ -194,7 +185,7 @@ mod tests {
     use crate::stats::BookStat;
     use crate::ui::theme::tests::PANELS;
 
-    /// Two books with nothing in common but a letter.
+    /// Two books sharing no word.
     fn shelf() -> Stats {
         let one = BookStat {
             title: "The Ninth Winter".into(),
@@ -214,8 +205,6 @@ mod tests {
         }
     }
 
-    /// A query names a book by its title or by its author, whatever case it
-    /// is typed in.
     #[test]
     fn a_query_names_a_book_by_either_of_its_two_lines() {
         let stats = shelf();
@@ -226,7 +215,6 @@ mod tests {
         assert_eq!(listed(&stats, "症候", true), [1]);
     }
 
-    /// Nothing typed names every book, and a query naming none is empty.
     #[test]
     fn an_empty_query_names_every_book() {
         let stats = shelf();
@@ -234,8 +222,6 @@ mod tests {
         assert!(listed(&stats, "zzz", true).is_empty());
     }
 
-    /// The keyboard takes rows off the page while it stands, and gives them
-    /// back when it goes.
     #[test]
     fn the_keyboard_costs_the_list_rows_while_it_stands() {
         for panel in PANELS {

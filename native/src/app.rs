@@ -49,8 +49,8 @@ pub struct App {
     dir: std::path::PathBuf,
     /// Where every touchable thing was on the last frame.
     hits: Vec<(Hit, crate::ui::paint::Rect)>,
-    /// Whether the device's keyboard stands over the foot of the screen.
-    /// [`App::reconcile_keyboard`] holds it against what the state asks for.
+    /// Whether the on-screen keyboard stands. Set by
+    /// [`App::reconcile_keyboard`].
     keyboard: bool,
 }
 
@@ -213,9 +213,7 @@ impl App {
         self.state.search = search;
     }
 
-    /// Take `keysyms` into the open search, answering whether the screen
-    /// moved. Nothing is typed anywhere else: the keyboard only stands over a
-    /// search.
+    /// Takes `keysyms` into `State::search`, answering whether it moved.
     fn typed(&mut self, keysyms: &[u32]) -> bool {
         use crate::eink::keysym::{Typed, of_keysym};
         if keysyms.is_empty() || self.state.search.is_none() {
@@ -226,7 +224,7 @@ impl App {
             let Some(said) = of_keysym(*keysym) else {
                 continue;
             };
-            // A key that leaves the search takes the rest of the batch with it.
+            // `Typed::Escape` drops the rest of `keysyms`.
             if said == Typed::Escape {
                 self.state.search = None;
                 return true;
@@ -240,8 +238,6 @@ impl App {
                     moved = true;
                 }
                 Typed::Backspace => moved |= search.backspace(),
-                // The query is finished: the keyboard goes and the results
-                // take the whole page back.
                 Typed::Enter => {
                     moved |= search.keyboard;
                     search.keyboard = false;
@@ -252,19 +248,14 @@ impl App {
         moved
     }
 
-    /// Whether a touch at `y` lands on the keyboard rather than on this app.
-    ///
-    /// Ungrabbed, the touchscreen still delivers to us everything the keyboard
-    /// is being typed on, and a row drawn under it would answer a tap meant
-    /// for a key.
+    /// Whether a touch at `y` lands on the on-screen keyboard.
     fn under_keyboard(&self, y: i32) -> bool {
         self.keyboard
             && y >= self.theme.screen.bottom() - crate::keyboard::height(self.theme.screen.h)
     }
 
-    /// Raise or dismiss the device's keyboard, to match what the state asks
-    /// for. It is another X client, so it is only ever spoken to from a frame
-    /// that has a server behind it.
+    /// Raises or dismisses the keyboard to match `State::search`, where
+    /// `on_screen`.
     fn reconcile_keyboard(&mut self, on_screen: bool) {
         let want = on_screen && self.state.search.as_ref().is_some_and(|s| s.keyboard);
         if want == self.keyboard {
@@ -531,14 +522,12 @@ impl App {
     pub fn run(&mut self, fb: &mut Framebuffer, input: &mut Input) -> Result<()> {
         fb.pump_events();
         self.took_size(fb);
-        // A key the on-screen keyboard sends arrives on the X connection, not
-        // on either input device.
+        // A `KeyPress` arrives on the X connection, not on an input device.
         input.watch(fb.raw_fd());
         self.draw(fb)?;
         let mut down: Option<(u32, u32)> = None;
         loop {
-            // An exclusive grab on the touchscreen blinds the X server, and
-            // with it the keyboard: it would draw and never feel a tap.
+            // `EVIOCGRAB` is exclusive against the X server.
             input.set_keyboard(self.keyboard);
             match input.event()? {
                 // `follow_orientation_now` maps the `Up` this stroke ends on. A
@@ -1404,9 +1393,7 @@ enum Action {
 }
 
 impl Drop for App {
-    /// A keyboard left up outlives the app: the reader is handed back to the
-    /// framework with a third of the screen taken by a keyboard nothing is
-    /// listening to.
+    /// Closes a keyboard left standing.
     fn drop(&mut self) {
         if self.keyboard {
             crate::keyboard::close();
