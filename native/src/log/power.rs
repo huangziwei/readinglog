@@ -1,6 +1,6 @@
-//! The stretches `powerd` recorded as `ACTIVE`, in absolute seconds, out of
-//! its state machine — `ACTIVE`, `SCREEN SAVER`, `READY TO SUSPEND`,
-//! `SUSPENDED`, `HIBERNATE`. [`Awake::between`] bounds an uncounted sitting.
+//! The stretches `powerd` recorded as `ACTIVE`, and the sleeps between them,
+//! in absolute seconds. [`Awake::between`] sums the stretches inside a span,
+//! [`Awake::bound`] takes the sleeps off it.
 
 use super::line::{field_text, stamp};
 
@@ -61,12 +61,13 @@ pub fn is_state_change(line: &str) -> bool {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Awake {
     spans: Vec<(i64, i64)>,
+    asleep: Vec<(i64, i64)>,
 }
 
 impl Awake {
-    /// Read the power lines out of an event stream. A span opens at
-    /// `Woke::Active` and closes at the next `Woke::Idle`; one left open is
-    /// dropped. One `Family` at a time, since both state the same move.
+    /// `spans` opens at `Woke::Active` and closes at the next `Woke::Idle`;
+    /// one left open is dropped. `asleep` is the same walk from `Woke::Idle`.
+    /// One `Family` at a time.
     pub fn from_events<'a>(events: impl IntoIterator<Item = &'a str>) -> Self {
         let changes: Vec<(Family, i64, Woke)> = events
             .into_iter()
@@ -81,35 +82,53 @@ impl Awake {
         };
 
         let mut spans = Vec::new();
-        let mut open: Option<i64> = None;
+        let mut asleep = Vec::new();
+        let mut woke_at: Option<i64> = None;
+        let mut slept_at: Option<i64> = None;
         for (_, at, woke) in changes.iter().filter(|(f, ..)| *f == family) {
-            match (woke, open) {
-                (Woke::Active, None) => open = Some(*at),
-                (Woke::Idle, Some(from)) if *at > from => {
-                    spans.push((from, *at));
-                    open = None;
+            match woke {
+                Woke::Active => {
+                    if let Some(from) = slept_at.take()
+                        && *at > from
+                    {
+                        asleep.push((from, *at));
+                    }
+                    woke_at = woke_at.or(Some(*at));
                 }
-                (Woke::Idle, Some(_)) => open = None,
-                _ => {}
+                Woke::Idle => {
+                    if let Some(from) = woke_at.take()
+                        && *at > from
+                    {
+                        spans.push((from, *at));
+                    }
+                    slept_at = slept_at.or(Some(*at));
+                }
             }
         }
         spans.sort_unstable();
-        Self { spans }
+        asleep.sort_unstable();
+        Self { spans, asleep }
     }
 
-    /// Drop the `ACTIVE` spans that no reading line falls in.
-    ///
-    /// `read_at` names the instants a reading line stands at, ascending.
-    pub fn witnessed(self, read_at: &[i64]) -> Self {
-        let spans = self
-            .spans
-            .into_iter()
-            .filter(|(from, to)| {
-                let next = read_at.partition_point(|at| at < from);
-                read_at.get(next).is_some_and(|at| at <= to)
-            })
-            .collect();
-        Self { spans }
+    /// Drop the `ACTIVE` spans that no reading line falls in. `asleep` keeps
+    /// every stretch. `read_at` names the instants a reading line stands at,
+    /// ascending.
+    pub fn witnessed(mut self, read_at: &[i64]) -> Self {
+        self.spans.retain(|(from, to)| {
+            let next = read_at.partition_point(|at| at < from);
+            read_at.get(next).is_some_and(|at| at <= to)
+        });
+        self
+    }
+
+    /// Seconds between two instants, less the `asleep` stretches inside them.
+    pub fn bound(&self, from: i64, to: i64) -> i64 {
+        let slept: i64 = self
+            .asleep
+            .iter()
+            .map(|(s, e)| (to.min(*e) - from.max(*s)).max(0))
+            .sum();
+        (to - from - slept).max(0)
     }
 
     /// Seconds of `ACTIVE` between two instants.
@@ -161,6 +180,51 @@ mod tests {
 
     fn at(clock: &str) -> i64 {
         stamp(&format!("{clock} x")).expect("a stamped line").abs
+    }
+
+    /// A `powerd` LIPC event at `clock`.
+    fn event(clock: &str, name: &str) -> String {
+        format!(
+            "{clock} powerd[4213]: I lipc:evts:name={name}, origin=com.lab126.powerd:Event sent"
+        )
+    }
+
+    fn read(lines: &[String]) -> Awake {
+        Awake::from_events(lines.iter().map(String::as_str))
+    }
+
+    #[test]
+    fn a_batch_opening_mid_active_still_bounds_its_own_window() {
+        // One `goingToScreenSaver`, and no `outOfScreenSaver` above it.
+        let a = read(&[event("260814:113500", "goingToScreenSaver")]);
+        assert!(a.is_empty(), "no whole ACTIVE pair to span");
+        assert_eq!(a.between(at("260814:112000"), at("260814:113000")), 0);
+        assert_eq!(a.bound(at("260814:112000"), at("260814:113000")), 600);
+    }
+
+    #[test]
+    fn a_sleep_inside_the_window_comes_off_the_bound() {
+        let a = read(&[
+            event("260814:112000", "goingToScreenSaver"),
+            event("260814:113000", "outOfScreenSaver"),
+        ]);
+        // 11:10:00 to 11:40:00 over a sleep of 11:20:00 to 11:30:00.
+        assert_eq!(a.bound(at("260814:111000"), at("260814:114000")), 20 * 60);
+        // 11:22:00 to 11:28:00, inside that sleep.
+        assert_eq!(a.bound(at("260814:112200"), at("260814:112800")), 0);
+    }
+
+    #[test]
+    fn the_bound_outlives_the_wakes_witnessed_drops() {
+        // `outOfScreenSaver` at 12:00:00, `goingToScreenSaver` two seconds on.
+        let a = read(&[
+            event("260814:110000", "goingToScreenSaver"),
+            event("260814:120000", "outOfScreenSaver"),
+            event("260814:120002", "goingToScreenSaver"),
+        ])
+        .witnessed(&[]);
+        assert!(a.is_empty());
+        assert_eq!(a.bound(at("260814:110000"), at("260814:120002")), 2);
     }
 
     #[test]

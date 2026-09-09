@@ -94,8 +94,7 @@ pub struct Session {
     /// The rate the device stated for this book as the sitting closed, off
     /// `TotalWPM`, in whole words a minute.
     pub stated_wpm: Option<i64>,
-    /// Seconds the device was `ACTIVE` across this run with the book open, off
-    /// [`Awake`] alone. Zero where no power event brackets the run.
+    /// Seconds this run spanned, less the sleeps [`Awake`] states inside it.
     pub awake_seconds: i64,
     /// The book's own reading counter where this run began and where it was
     /// last seen. Both or neither: a run the device never counted has none.
@@ -407,7 +406,7 @@ impl Open {
     /// Close the run at the midnight it was cut at, crediting this day the
     /// share of the unfinished interval before the boundary. The stored end is
     /// one second short of it: `T00:00:00` belongs to the next day.
-    fn finish_at(mut self, boundary: &Start) -> Session {
+    fn finish_at(mut self, boundary: &Start, awake: &Awake) -> Session {
         // `boundary.counter_ms` is absent where either side stated none.
         let at_boundary = boundary.counter_ms.unwrap_or(self.time_hi);
         if let Some(from) = self.last_time {
@@ -425,7 +424,7 @@ impl Open {
             self.words_hi = self.words_hi.max(w);
         }
         self.ended_at = format!("{}T23:59:59", self.last.day);
-        self.finish(&Awake::default())
+        self.finish(awake)
     }
 
     /// The run as a session, under the best [`Measure`] its records support:
@@ -468,7 +467,7 @@ impl Open {
             progress: self.progress,
             time_left: self.time_left,
             stated_wpm: self.stated_wpm,
-            awake_seconds: witnessed,
+            awake_seconds: awake.bound(self.began.abs, self.last.abs),
             start_counter_ms: self.time_lo,
             end_counter_ms: self.time_lo.map(|_| self.time_hi),
             start_words: self.words_lo,
@@ -664,7 +663,11 @@ pub fn parse_sessions<'a>(
                 out.push(open.take().expect("a run to break").finish(&awake));
             }
             Some(Break::Midnight(boundary)) => {
-                out.push(open.take().expect("a run to cut").finish_at(&boundary));
+                out.push(
+                    open.take()
+                        .expect("a run to cut")
+                        .finish_at(&boundary, &awake),
+                );
                 // `boundary` is the start `seed` carries into the next run.
                 seed = Some(boundary);
             }
@@ -1137,7 +1140,36 @@ mod tests {
         assert_eq!(summed, out[0].seconds);
     }
 
-    /// An `OpenBook` on a book the device declines to time.
+    #[test]
+    fn a_run_no_power_line_brackets_still_states_the_wall_clock_it_ran_over() {
+        // Three `page` lines, and no `power` line above or between them.
+        let lines = [
+            page("105000", 7_390_020),
+            page("105500", 7_420_020),
+            page("110000", 7_450_020),
+        ];
+        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].measure, Measure::Counted);
+        assert_eq!(out[0].seconds, 60, "the counter credited a minute of it");
+        assert_eq!(out[0].awake_seconds, 600);
+    }
+
+    #[test]
+    fn a_run_broken_by_a_sleep_states_the_wall_clock_less_the_sleep() {
+        let lines = [
+            page("105000", 7_390_020),
+            power("105500", "goingToScreenSaver"),
+            power("110500", "outOfScreenSaver"),
+            page("111000", 7_420_020),
+        ];
+        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        assert_eq!(out.len(), 1);
+        // 10:50:00 to 11:10:00, asleep 10:55:00 to 11:05:00.
+        assert_eq!(out[0].awake_seconds, 600);
+    }
+
+    /// An `OpenBook` line with `StoredBookData:null`.
     fn open_book(hhmmss: &str) -> String {
         format!(
             "260807:{hhmmss} java[1]: I ReadingTimerController:Information::OpenBook,\
