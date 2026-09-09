@@ -9,7 +9,7 @@ const OPEN: &str = "open";
 const CLOSE: &str = "close";
 
 /// The lipc service name [`open`] hands over, and [`close`] matches against.
-const CLIENT: &str = "com.readinglog.stats";
+pub const CLIENT: &str = "com.readinglog.stats";
 
 /// The layout [`open`] asks for. `pad` and `web` are the two matched against;
 /// any other value draws the alphabetic layout.

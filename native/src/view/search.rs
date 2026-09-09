@@ -71,6 +71,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, search: &Search) {
         cx,
         Rect::new(head.x, head.y, head.w, field_height(theme)),
         &search.query,
+        &search.preedit,
     );
 
     let area = results_box(cx.theme, area, search.keyboard);
@@ -103,9 +104,10 @@ pub fn draw(cx: &mut Ctx, area: Rect, search: &Search) {
     }
 }
 
-/// A rounded outline, the magnifier in its left end, `query` set tail-first
-/// with the caret after it, and [`Hit::SearchClear`]'s mark in the right end.
-fn field(cx: &mut Ctx, at: Rect, query: &str) {
+/// A rounded outline, the magnifier in its left end, `query` and `preedit`
+/// set tail-first with the caret after them, and [`Hit::SearchClear`]'s mark
+/// in the right end. `preedit` carries a rule under it.
+fn field(cx: &mut Ctx, at: Rect, query: &str, preedit: &str) {
     let theme: &Theme = cx.theme;
     let h = at.h as f32;
     let weight = (at.h / 26).max(theme.rule());
@@ -132,7 +134,7 @@ fn field(cx: &mut Ctx, at: Rect, query: &str) {
     let baseline = at.center_y() + cx.text.cap_height() as i32 / 2;
     let x = centre + r + (h * TEXT_GAP) as i32;
     let room = (zone.x - theme.gap - x).max(0) as u32;
-    if query.is_empty() {
+    if query.is_empty() && preedit.is_empty() {
         let said = cx
             .text
             .wrap_and_clamp_in(script, cx.s().search_hint, room, 1);
@@ -140,10 +142,15 @@ fn field(cx: &mut Ctx, at: Rect, query: &str) {
         cx.text.draw_in(script, cx.fb, x, baseline, said, false);
         return;
     }
-    // A `query` wider than `room` loses its head.
-    let said = tail(cx.text, script, query, room);
+    // A line wider than `room` loses its head.
+    let said = tail(cx.text, script, &format!("{query}{preedit}"), room);
     let w = cx.text.measure_width_in(script, &said) as i32;
     cx.text.draw_in(script, cx.fb, x, baseline, &said, false);
+    if !preedit.is_empty() {
+        let under = cx.text.measure_width_in(script, preedit) as i32;
+        let rule = theme.rule();
+        paint::hline(cx.fb, x + w - under, baseline + rule * 2, under, INK, rule);
+    }
     paint::vline(
         cx.fb,
         x + w + theme.gap / 2,

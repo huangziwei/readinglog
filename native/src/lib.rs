@@ -17,6 +17,7 @@ pub mod font;
 pub mod identify;
 pub mod keyboard;
 pub mod lang;
+pub mod lipc;
 pub mod log;
 pub mod mark;
 pub mod net;

@@ -36,8 +36,9 @@ pub struct Input {
     checked: Option<Instant>,
     /// [`Input::set_covered`]'s state.
     covered: bool,
-    /// An extra descriptor to wake on, from [`Input::watch`].
-    watched: Option<RawFd>,
+    /// The descriptors to wake on beside the input devices, from
+    /// [`Input::watch`].
+    watched: [RawFd; 2],
 }
 
 impl Input {
@@ -48,7 +49,7 @@ impl Input {
             orientation: Orientation::Up,
             checked: None,
             covered: false,
-            watched: None,
+            watched: [-1; 2],
         }
     }
 
@@ -106,10 +107,10 @@ impl Input {
         self.touch.set_keyboard(up);
     }
 
-    /// Wake on `fd` as well as on the input devices, answering an
-    /// [`InputEvent::Tick`] where it is readable.
-    pub fn watch(&mut self, fd: Option<RawFd>) {
-        self.watched = fd;
+    /// Wake on `fds` as well as on the input devices, answering an
+    /// [`InputEvent::Tick`] where one is readable.
+    pub fn watch(&mut self, fds: [Option<RawFd>; 2]) {
+        self.watched = fds.map(|fd| fd.unwrap_or(-1));
     }
 
     /// [`Touch::retake`] and `Buttons::retake` over both devices.
@@ -152,17 +153,18 @@ impl Input {
                     revents: 0,
                 },
                 libc::pollfd {
-                    fd: self.watched.unwrap_or(-1),
+                    fd: self.watched[0],
+                    events: libc::POLLIN,
+                    revents: 0,
+                },
+                libc::pollfd {
+                    fd: self.watched[1],
                     events: libc::POLLIN,
                     revents: 0,
                 },
             ];
             // A slot holding -1 is skipped by `poll`.
-            let nfds: libc::nfds_t = match (self.buttons.is_some(), self.watched.is_some()) {
-                (_, true) => 3,
-                (true, false) => 2,
-                (false, false) => 1,
-            };
+            let nfds: libc::nfds_t = fds.len() as libc::nfds_t;
 
             // Remaining time to `deadline`, floored at 1ms against a sub-ms
             // spin, else [`TICK_MS`]. `poll` wakes early on fd readiness.
@@ -215,8 +217,8 @@ impl Input {
                 continue;
             }
 
-            // `watched` is readable; the caller drains it.
-            if fds[2].revents & libc::POLLIN != 0 {
+            // A `watched` slot is readable; the caller drains it.
+            if fds[2..].iter().any(|fd| fd.revents & libc::POLLIN != 0) {
                 return Ok(InputEvent::Tick);
             }
 

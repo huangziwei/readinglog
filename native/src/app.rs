@@ -52,6 +52,9 @@ pub struct App {
     /// Whether the on-screen keyboard stands. Set by
     /// [`App::reconcile_keyboard`].
     keyboard: bool,
+    /// The lipc service the keyboard sets its IME properties on, opened by
+    /// [`App::reconcile_keyboard`] with the first keyboard.
+    lipc: Option<crate::lipc::Service>,
 }
 
 impl App {
@@ -82,6 +85,7 @@ impl App {
             now,
             hits: Vec::new(),
             keyboard: false,
+            lipc: None,
         }
     }
 
@@ -262,10 +266,38 @@ impl App {
             return;
         }
         self.keyboard = want;
+        if want && self.lipc.is_none() {
+            match crate::lipc::Service::open(crate::keyboard::CLIENT) {
+                Ok(service) => {
+                    eprintln!("lipc: {} is open", service.name());
+                    self.lipc = Some(service);
+                }
+                // Every key the candidate engine does not eat arrives over X,
+                // which needs none of this.
+                Err(err) => eprintln!("lipc: {err:#} — Latin typing only"),
+            }
+        }
         let _ = match want {
             true => crate::keyboard::open(),
             false => crate::keyboard::close(),
         };
+    }
+
+    /// Takes what the keyboard set on this app's lipc service into
+    /// `State::search`, answering whether it moved.
+    fn committed(&mut self) -> bool {
+        let Some(service) = self.lipc.as_mut() else {
+            return false;
+        };
+        let sets = service.drain();
+        let Some(search) = self.state.search.as_mut() else {
+            return false;
+        };
+        let mut moved = false;
+        for set in sets {
+            moved |= search.set(&set.property, &set.value);
+        }
+        moved
     }
 
     /// List the books on `shelf`, whatever the Books screen was left on.
@@ -522,13 +554,14 @@ impl App {
     pub fn run(&mut self, fb: &mut Framebuffer, input: &mut Input) -> Result<()> {
         fb.pump_events();
         self.took_size(fb);
-        // A `KeyPress` arrives on the X connection, not on an input device.
-        input.watch(fb.raw_fd());
         self.draw(fb)?;
         let mut down: Option<(u32, u32)> = None;
         loop {
             // `EVIOCGRAB` is exclusive against the X server.
             input.set_keyboard(self.keyboard);
+            // A `KeyPress` arrives on the X connection and a commit on the
+            // lipc socket, neither of them an input device.
+            input.watch([fb.raw_fd(), self.lipc.as_ref().map(|s| s.raw_fd())]);
             match input.event()? {
                 // `follow_orientation_now` maps the `Up` this stroke ends on. A
                 // `Down` behind a change is dropped, leaving a tap at its `Up`.
@@ -598,7 +631,7 @@ impl App {
                         input.set_covered(covered);
                     }
                     input.retake();
-                    let typed = self.typed(&pump.typed);
+                    let typed = self.typed(&pump.typed) | self.committed();
                     if input.follow_orientation() {
                         down = None;
                     }

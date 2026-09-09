@@ -463,16 +463,19 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
 }
 
 /// What a `search:<of>` shot is showing. `of` is the query, but for `empty`,
-/// `none` and `down`.
+/// `none`, `down` and `preedit`.
 fn searching(of: Option<&str>) -> Search {
-    let (query, keyboard) = match of.unwrap_or("the") {
-        "empty" => ("", true),
-        "none" => ("zzzz", true),
-        "down" => ("the", false),
-        said => (said, true),
+    let (query, preedit, keyboard) = match of.unwrap_or("the") {
+        "empty" => ("", "", true),
+        "none" => ("zzzz", "", true),
+        "down" => ("the", "", false),
+        // A pinyin run part way to a character, under its own rule.
+        "preedit" => ("夢", "youzheng", true),
+        said => (said, "", true),
     };
     Search {
         query: query.into(),
+        preedit: preedit.into(),
         keyboard,
         from: 0,
     }
@@ -741,7 +744,7 @@ fn list() {
                 "  (:<index> :<index>:marks :<index>:marks:<n> :<index>:restart\n   :<index>:mark :<index>:unmark :<index>:clear :<index>:cleared)"
             }
             "config" => "  (:reset :nobackup :restore :logs :heal :retry :many :many2)",
-            "search" => "  (:<query> :empty :none :down)",
+            "search" => "  (:<query> :empty :none :down :preedit)",
             "books" => {
                 "  (:finished :unfinished :unfinished-progress :time :progress\n   :mid :last :window :windowweek :windowprogress :windowempty)"
             }

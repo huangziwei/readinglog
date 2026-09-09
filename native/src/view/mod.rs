@@ -263,6 +263,9 @@ impl BookTab {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Search {
     pub query: String,
+    /// What an IME is composing, drawn after `query` and matched on by
+    /// nothing.
+    pub preedit: String,
     pub from: usize,
     /// Whether the on-screen keyboard stands over the foot of the screen.
     pub keyboard: bool,
@@ -280,6 +283,48 @@ impl Search {
     pub fn backspace(&mut self) -> bool {
         self.from = 0;
         self.query.pop().is_some()
+    }
+
+    /// Takes `said` onto `query`, clearing `preedit`.
+    pub fn commit(&mut self, said: &str) {
+        self.preedit.clear();
+        self.query.push_str(said);
+        self.from = 0;
+    }
+
+    /// Takes `count` characters off the end of `query`.
+    pub fn delete(&mut self, count: usize) {
+        for _ in 0..count {
+            self.query.pop();
+        }
+        self.from = 0;
+    }
+
+    /// What one of the keyboard's own properties says. `keyboardCommit`
+    /// carries the text; `keyboardSetPreeditString` `str:position`;
+    /// `keyboardDelete` `before:after`; `keyboardReplace`
+    /// `before:after:str`.
+    pub fn set(&mut self, property: &str, value: &str) -> bool {
+        match property {
+            "keyboardCommit" => self.commit(value),
+            "keyboardSetPreeditString" => {
+                let (said, _) = value.rsplit_once(':').unwrap_or((value, ""));
+                said.clone_into(&mut self.preedit);
+            }
+            "keyboardDelete" => {
+                let (before, _) = value.split_once(':').unwrap_or((value, ""));
+                self.delete(before.parse().unwrap_or(0));
+            }
+            "keyboardReplace" => {
+                let mut parts = value.splitn(3, ':');
+                let before = parts.next().unwrap_or_default().parse().unwrap_or(0);
+                let said = parts.nth(1).unwrap_or_default().to_string();
+                self.delete(before);
+                self.commit(&said);
+            }
+            _ => return false,
+        }
+        true
     }
 }
 
@@ -988,5 +1033,59 @@ mod tests {
         assert_eq!(s.shelf, Shelf::All);
         assert!(s.window.is_none());
         assert!(!s.go(Tab::Books), "and the whole shelf stays put");
+    }
+
+    /// A commit lands at the end of the query and takes any preedit with it.
+    #[test]
+    fn a_commit_takes_the_preedit_off_and_the_text_on() {
+        let mut search = Search::default();
+        assert!(search.set("keyboardSetPreeditString", "youzheng:8"));
+        assert_eq!(search.preedit, "youzheng");
+        assert!(search.set("keyboardCommit", "夢遊"));
+        assert_eq!(search.query, "夢遊");
+        assert!(search.preedit.is_empty());
+    }
+
+    /// A preedit's own value carries the cursor after its last colon, and the
+    /// text may hold colons of its own.
+    #[test]
+    fn a_preedit_keeps_every_colon_but_the_last() {
+        let mut search = Search::default();
+        search.set("keyboardSetPreeditString", "a:b:2");
+        assert_eq!(search.preedit, "a:b");
+        search.set("keyboardSetPreeditString", "");
+        assert!(search.preedit.is_empty());
+    }
+
+    /// A delete counts characters, never bytes.
+    #[test]
+    fn a_delete_counts_characters() {
+        let mut search = Search::default();
+        search.set("keyboardCommit", "夢遊症");
+        assert!(search.set("keyboardDelete", "2:0"));
+        assert_eq!(search.query, "夢");
+    }
+
+    /// A replace deletes and inserts in one, and its text may hold colons.
+    #[test]
+    fn a_replace_deletes_then_inserts() {
+        let mut search = Search::default();
+        search.set("keyboardCommit", "abc");
+        assert!(search.set("keyboardReplace", "2:0:XY:Z"));
+        assert_eq!(search.query, "aXY:Z");
+    }
+
+    /// Every set opens the results at their head, and a property this screen
+    /// does not answer moves nothing.
+    #[test]
+    fn a_property_this_screen_does_not_answer_moves_nothing() {
+        let mut search = Search {
+            from: 8,
+            ..Search::default()
+        };
+        assert!(!search.set("keyboardGetSurround", ""));
+        assert_eq!(search.from, 8);
+        assert!(search.set("keyboardCommit", "a"));
+        assert_eq!(search.from, 0);
     }
 }
