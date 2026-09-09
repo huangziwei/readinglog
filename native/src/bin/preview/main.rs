@@ -849,8 +849,6 @@ fn scheme(name: &str) -> Result<ColorScheme> {
 
 fn scheme_name(scheme: ColorScheme) -> &'static str {
     match scheme {
-        ColorScheme::Azure => "azure",
-        ColorScheme::AsagiShu => "asagi",
         ColorScheme::TobiKogane => "tobi",
         ColorScheme::SakuraWakatake => "wakatake",
         ColorScheme::KurenaiKon => "kon",

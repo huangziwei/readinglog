@@ -639,7 +639,7 @@ mod tests {
         assert_eq!(level(50, 100), 3);
         assert_eq!(level(100, 100), 4);
         // A day with nothing on it takes no ink at all.
-        let pal = paint::Palette::AZURE;
+        let pal = paint::Palette::KURENAI_KON;
         assert!(pal.level(0).is_none());
         assert!(pal.level(1).is_some());
         assert_eq!(pal.level(4), Some(pal.steps[4]));

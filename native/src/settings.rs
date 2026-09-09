@@ -58,26 +58,23 @@ impl TextSize {
 /// The colours a chart is drawn in. `ui::paint::Palette::for_panel` reads it
 /// only where `eink::fb::has_cfa` holds.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Each names one plate of Sanzo Wada's dictionary, and they stand a hue
+/// family apart: a scheme is told from the next by hue before luma, and two
+/// blues at 6° read as one scheme drawn twice.
 pub enum ColorScheme {
-    /// One azure hue across the ramp, marked in warm red.
-    #[default]
-    Azure,
-    /// 浅葱 across the ramp, marked in 朱.
-    AsagiShu,
     /// 鳶 across the ramp, marked in 黄金.
     TobiKogane,
     /// 若竹 and 松葉 across the ramp, marked at 桜's hue.
     SakuraWakatake,
     /// 紺's hue across the ramp, marked at 紅's.
+    #[default]
     KurenaiKon,
     /// The greys a panel without a colour filter draws, on one that has it.
     Grey,
 }
 
 impl ColorScheme {
-    pub const ALL: [ColorScheme; 6] = [
-        ColorScheme::Azure,
-        ColorScheme::AsagiShu,
+    pub const ALL: [ColorScheme; 4] = [
         ColorScheme::TobiKogane,
         ColorScheme::SakuraWakatake,
         ColorScheme::KurenaiKon,
@@ -86,8 +83,6 @@ impl ColorScheme {
 
     fn token(self) -> &'static str {
         match self {
-            ColorScheme::Azure => "azure",
-            ColorScheme::AsagiShu => "asagi",
             ColorScheme::TobiKogane => "tobi",
             ColorScheme::SakuraWakatake => "wakatake",
             ColorScheme::KurenaiKon => "kon",
@@ -360,11 +355,14 @@ mod tests {
     #[test]
     fn a_file_written_before_the_schemes_existed_opens_on_the_default() {
         let s = Settings::parse("language=e\ntext_size=large\n", Lang::English);
-        assert_eq!(s.color_scheme, ColorScheme::Azure);
+        assert_eq!(s.color_scheme, ColorScheme::KurenaiKon);
         assert_eq!(s.text_size, TextSize::Large, "the rest still reads");
-        // A scheme no `of_token` arm names.
-        let odd = Settings::parse("color_scheme=notacolour\n", Lang::English);
-        assert_eq!(odd.color_scheme, ColorScheme::Azure);
+        // A scheme no `of_token` arm names — including the two blues the page
+        // no longer offers, which a file written on an earlier build holds.
+        for token in ["notacolour", "azure", "asagi"] {
+            let odd = Settings::parse(&format!("color_scheme={token}\n"), Lang::English);
+            assert_eq!(odd.color_scheme, ColorScheme::KurenaiKon, "{token}");
+        }
     }
 
     #[test]

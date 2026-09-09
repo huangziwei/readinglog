@@ -52,30 +52,6 @@ impl Palette {
         mark: [75; 3],
     };
 
-    /// One azure hue across the ramp, marked in warm red.
-    pub const AZURE: Palette = Palette {
-        steps: [
-            [0xCF, 0xE6, 0xF7],
-            [0x9F, 0xCB, 0xE8],
-            [0x5B, 0x9D, 0xCB],
-            [0x2F, 0x6B, 0x96],
-            [0x0A, 0x12, 0x18],
-        ],
-        mark: [0xC4, 0x45, 0x36],
-    };
-
-    /// 浅葱 `#6B9BB0` at `steps[2]`, marked in 朱 `#D8453A`.
-    pub const ASAGI_SHU: Palette = Palette {
-        steps: [
-            [0xD6, 0xE5, 0xEB],
-            [0xAD, 0xC8, 0xD5],
-            [0x6B, 0x9B, 0xB0],
-            [0x3F, 0x67, 0x79],
-            [0x0B, 0x12, 0x14],
-        ],
-        mark: [0xD8, 0x45, 0x3A],
-    };
-
     /// 鳶 `#8A5A3B` at `steps[3]`, marked in 黄金 `#D4AF37` — a `mark` lighter
     /// than [`Palette::bar`].
     pub const TOBI_KOGANE: Palette = Palette {
@@ -116,8 +92,6 @@ impl Palette {
     /// The colours `scheme` names.
     pub fn of(scheme: ColorScheme) -> Self {
         match scheme {
-            ColorScheme::Azure => Self::AZURE,
-            ColorScheme::AsagiShu => Self::ASAGI_SHU,
             ColorScheme::TobiKogane => Self::TOBI_KOGANE,
             ColorScheme::SakuraWakatake => Self::SAKURA_WAKATAKE,
             ColorScheme::KurenaiKon => Self::KURENAI_KON,
@@ -359,10 +333,8 @@ mod tests {
     const SLACK: i32 = 8;
 
     /// Every [`Palette`] const in this module.
-    const SCHEMES: [(&str, Palette); 6] = [
+    const SCHEMES: [(&str, Palette); 4] = [
         ("grey", Palette::GREY),
-        ("azure", Palette::AZURE),
-        ("asagi-shu", Palette::ASAGI_SHU),
         ("tobi-kogane", Palette::TOBI_KOGANE),
         ("sakura-wakatake", Palette::SAKURA_WAKATAKE),
         ("kurenai-kon", Palette::KURENAI_KON),
