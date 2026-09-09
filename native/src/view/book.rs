@@ -11,7 +11,7 @@ use crate::ui::paint::{self, INK, LIGHT, Rect};
 use crate::ui::text::TextRenderer;
 use crate::ui::{charts, theme::Theme};
 
-use super::{Ask, BookTab, Ctx, Hit, band, marks};
+use super::{Ask, BookTab, Ctx, Hit, Search, State, band, books, marks, search};
 
 /// The most columns the strip along the bottom is cut into.
 const SPAN_COLUMNS: i64 = 30;
@@ -140,15 +140,9 @@ fn open_box(theme: &Theme, band: Rect) -> Rect {
     band.split_bottom((band.h - theme.gap * 2).max(1)).0
 }
 
-/// The box the jacket is drawn in and the column of words beside it, from the
-/// heading's top band and the box [`crate::ui::cover::Covers::box_in`]
-/// measured the jacket into.
-///
-/// The jacket keeps the left edge every other element on the page starts at:
-/// the box is cut to the jacket's own width, so a cover narrower than its slot
-/// hands that width to the words instead of standing it in the margin. The
-/// words then run from the jacket's right edge to the band's, and take the
-/// jacket's own top and foot.
+/// The box the jacket is drawn in and the column of words beside it. `art`
+/// takes `placed`'s width at `top`'s left edge and height; the words run from
+/// `art`'s right edge to `top`'s, on `placed`'s own top and foot.
 fn cover_and_words(theme: &Theme, top: Rect, placed: Rect) -> (Rect, Rect) {
     let art = Rect::new(top.x, top.y, placed.w, top.h);
     let x = art.right() + theme.gap * 2;
@@ -178,10 +172,27 @@ pub fn picker_height(theme: &Theme) -> i32 {
     chrome::chip_height(theme) + theme.gap * 2
 }
 
-/// The book's two pages as a segmented control, each its own hit box — the
-/// shape `rhythm::picker` gives the spans, so the two screens are picked
-/// from alike. The marks tab carries how many passages the book is marked on,
-/// so the count is read without opening it.
+/// The box the two pages take: the head row less the search's own square and
+/// the air after it.
+fn pages_box(theme: &Theme, head: Rect) -> Rect {
+    let opens = books::search_box(theme, head).right() + chrome::chip_gap(theme);
+    Rect::new(opens, head.y, (head.right() - opens).max(1), head.h)
+}
+
+/// The search at the head of the row, in the square and the outline the Books
+/// list gives it. Answers [`pages_box`].
+fn search_button(cx: &mut Ctx, area: Rect) -> Rect {
+    let theme: &Theme = cx.theme;
+    let box_ = books::search_box(theme, area);
+    paint::stroke(cx.fb, box_, INK, theme.rule());
+    books::magnifier(cx, box_);
+    cx.hit(Hit::Search, box_);
+    pages_box(theme, area)
+}
+
+/// The book's two pages as a segmented control, each its own hit box, in the
+/// shape `rhythm::picker` gives the spans. `BookTab::Marks` carries `marked`,
+/// the count of passages the book is marked on.
 fn picker(cx: &mut Ctx, area: Rect, on: BookTab, marked: usize) {
     let theme: &Theme = cx.theme;
     let cells = area.columns(BookTab::ALL.len() as i32, 0);
@@ -198,20 +209,24 @@ fn picker(cx: &mut Ctx, area: Rect, on: BookTab, marked: usize) {
             BookTab::Marks => format!("{} ({marked})", tab.label(cx.lang)),
             BookTab::Statistics => tab.label(cx.lang).to_string(),
         };
-        let w = cx.text.measure_width_in(script, &label) as i32;
+        // A label wider than its cell is cut there, never over its neighbour.
+        let room = (cell.w - chrome::chip_pad(theme)).max(1) as u32;
+        let label = cx.text.wrap_and_clamp_in(script, &label, room, 1);
+        let label = label.first().map(String::as_str).unwrap_or_default();
+        let w = cx.text.measure_width_in(script, label) as i32;
         cx.text.draw_in(
             script,
             cx.fb,
             cell.x + (cell.w - w) / 2,
             baseline,
-            &label,
+            label,
             lit,
         );
         cx.hit(Hit::BookTab(*tab), cell);
     }
 }
 
-pub fn draw(cx: &mut Ctx, area: Rect, index: usize, tab: BookTab, marks_from: usize) {
+pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
     let Some(book) = cx.stats.books.get(index) else {
         return;
     };
@@ -222,19 +237,21 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, tab: BookTab, marks_from: us
     // Each band takes what it draws into.
     let air = theme.gap * 2;
     let ui = cx.ui_script();
+    let tab = state.book_tab;
     let (bar, area) = area.split_top(picker_height(theme));
-    picker(
-        cx,
-        Rect::new(bar.x, bar.y, bar.w, chrome::chip_height(theme)),
-        tab,
-        cx.stats.marks_held(index),
-    );
-    // The cover, the headline figures, the progress bar and the controls are
-    // the statistics page's own. What the reader marked gets the whole box:
-    // the words are what that page is for, and every band over them is one
-    // fewer passage on it.
+    let head = Rect::new(bar.x, bar.y, bar.w, chrome::chip_height(theme));
+    // A field takes the whole head row, and the two pages stand down.
+    if let Some(open) = state.book_search.as_ref() {
+        field(cx, head, open);
+        marks::draw(cx, area, index, open.from, Some(open));
+        return;
+    }
+    let cells = search_button(cx, head);
+    picker(cx, cells, tab, cx.stats.marks_held(index));
+    // `BookTab::Marks` takes the whole box under the head row. The cover, the
+    // headline figures, the bar and the controls are `BookTab::Statistics`'s.
     if tab == BookTab::Marks {
-        marks::draw(cx, area, index, marks_from);
+        marks::draw(cx, area, index, state.marks_from, None);
         return;
     }
     let (head, rest) = area.split_top(heading_height(cx.text, theme, ui, &book, s) + air);
@@ -310,6 +327,13 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, tab: BookTab, marks_from: us
     );
 }
 
+/// The query over one book's passages, across the whole head row. The
+/// magnifier keeps the square `search_button` drew it in.
+fn field(cx: &mut Ctx, head: Rect, open: &Search) {
+    let hint = cx.s().search_hint_marks;
+    search::field(cx, head, &open.query, &open.preedit, hint);
+}
+
 /// The seconds read in each column of the strip, and the days one column
 /// covers. A book read over [`SPAN_COLUMNS`] days or fewer gets a column each.
 fn journey(cx: &Ctx, index: usize, opened: i64, closed: i64) -> (Vec<i64>, i64) {
@@ -341,7 +365,7 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat, index: usize) {
     let top = Rect::new(top.x, top.y, top.w, (top.h - theme.gap * 2).max(1));
     let slot = top.split_left(cover::width_for(top.h)).0;
     let (art, words) = cover_and_words(theme, top, cx.covers.box_in(slot, &book.thumbnail));
-    // The title stands beside the box, so an empty one says only that.
+    // `cover::note` fills a box no jacket draws into.
     if !cx.covers.draw(cx.fb, art, &book.thumbnail) {
         cover::note(cx, art);
     }
@@ -478,7 +502,7 @@ pub fn asking(cx: &mut Ctx, area: Rect, ask: Ask, index: usize) {
 }
 
 /// Lines the title takes in a column `high` tall: [`TITLE_LINES`], fewer where
-/// the author's line and [`figures`] leave room for fewer, and never none.
+/// `author` and [`figures`] leave room for fewer, and never none.
 fn title_lines(text: &mut TextRenderer, theme: &Theme, high: i32, author: bool) -> usize {
     let stood = chrome::figure_height(text, theme);
     text.set_px(theme.small_px);
@@ -511,7 +535,7 @@ fn figures(cx: &mut Ctx, words: Rect, book: &BookStat) {
     chrome::figures(cx.fb, cx.text, theme, row, &stated);
 }
 
-/// Whether the catalog names this book on the device.
+/// `BookStat::on_device` as `s.yes` or `s.no`.
 fn where_note(book: &BookStat, s: &Strings) -> String {
     match book.on_device {
         true => s.yes.into(),
@@ -629,8 +653,8 @@ mod tests {
 
     #[test]
     fn only_a_book_the_reader_can_be_handed_takes_the_reading_controls() {
-        // A book the device holds, one it does not, and one it holds under a
-        // name the catalog never stated.
+        // Three `location` values: a path, a book carrying none, and an
+        // empty one.
         let on_device = held("/mnt/us/documents/a.kfx");
         assert_eq!(
             control_labels(&on_device, en()),
@@ -650,7 +674,7 @@ mod tests {
             control_labels(&part, en()),
             [Some("Continue"), Some("Restart")]
         );
-        // The same book off the device offers neither: both hand it over.
+        // The same book with no `location` offers neither control.
         let gone = BookStat {
             percent: 46.0,
             ..book(600, 0, 0)
@@ -695,6 +719,29 @@ mod tests {
             ..done
         };
         assert!(back.can_mark());
+    }
+
+    #[test]
+    fn the_head_row_carries_the_search_where_the_shelf_does() {
+        for (w, h) in PANELS {
+            let theme = Theme::for_screen(w, h);
+            let area = chrome::content_box(&theme);
+            // The Books list splits its head off the content box, and the
+            // book screen splits `picker_height` off the same box.
+            let shelf = area
+                .split_top(chrome::chip_height(&theme) + theme.gap * 2)
+                .0;
+            let head = area.split_top(picker_height(&theme)).0;
+            assert_eq!(head, shelf, "{w}x{h}");
+            let square = books::search_box(&theme, head);
+            assert_eq!(square.x, area.x, "{w}x{h}");
+            assert_eq!(square.w, chrome::chip_height(&theme), "{w}x{h}");
+            // The two pages open after the square, and the row ends where a
+            // field standing over the whole of it ends.
+            let pages = pages_box(&theme, head);
+            assert!(pages.x > square.right(), "{w}x{h}");
+            assert_eq!(pages.right(), head.right(), "{w}x{h}");
+        }
     }
 
     #[test]

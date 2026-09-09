@@ -419,29 +419,40 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
     };
     // `book:<index>`, `book:<index>:marks` for the book's other page, and
     // `book:<index>:<question>` with one up over it.
-    let (book, asking, page, from) = match shot.name.as_str() {
+    let (book, asking, page, from, find) = match shot.name.as_str() {
         "book" => {
             let of = shot.of.as_deref().unwrap_or("0");
-            let (at, asking, page, from) = match of.split_once(':') {
-                Some((at, "cleared")) => (at, None, BookTab::Statistics, 0),
+            let (at, asking, page, from, find) = match of.split_once(':') {
+                Some((at, "cleared")) => (at, None, BookTab::Statistics, 0, None),
                 // `marks` opens the list at its head; `marks:<n>` `n` rows down,
                 // which is where the pager's own second page starts.
-                Some((at, "marks")) => (at, None, BookTab::Marks, 0),
+                Some((at, "marks")) => (at, None, BookTab::Marks, 0, None),
+                // `find` puts a field over the book's own passages, and
+                // `find:<of>` reads what a `search:<of>` shot reads.
+                Some((at, page)) if page == "find" || page.starts_with("find:") => (
+                    at,
+                    None,
+                    BookTab::Marks,
+                    0,
+                    Some(searching(page.strip_prefix("find:"))),
+                ),
                 Some((at, page)) if page.starts_with("marks:") => (
                     at,
                     None,
                     BookTab::Marks,
                     page["marks:".len()..].parse().unwrap_or(0),
+                    None,
                 ),
-                Some((at, name)) => (at, Some(question(name)?), BookTab::Statistics, 0),
-                None => (of, None, BookTab::Statistics, 0),
+                Some((at, name)) => (at, Some(question(name)?), BookTab::Statistics, 0, None),
+                None => (of, None, BookTab::Statistics, 0, None),
             };
-            (Some(at.parse().unwrap_or(0)), asking, page, from)
+            (Some(at.parse().unwrap_or(0)), asking, page, from, find)
         }
-        _ => (None, None, BookTab::Statistics, 0),
+        _ => (None, None, BookTab::Statistics, 0, None),
     };
     app.show(*tab, book);
     app.set_book_tab(page, from);
+    app.set_book_search(find);
     app.ask(book.zip(asking));
     if shot.name == "config" {
         app.set_config_page(usize::from(shot.of.as_deref() == Some("many2")));
@@ -746,7 +757,7 @@ fn list() {
             }
             "today" => "  (:quiet :empty :busy)",
             "book" => {
-                "  (:<index> :<index>:marks :<index>:marks:<n> :<index>:restart\n   :<index>:mark :<index>:unmark :<index>:clear :<index>:cleared)"
+                "  (:<index> :<index>:marks :<index>:marks:<n> :<index>:find\n   :<index>:find:<query> :<index>:restart :<index>:mark :<index>:unmark\n   :<index>:clear :<index>:cleared)"
             }
             "config" => "  (:reset :nobackup :restore :logs :heal :retry :many :many2)",
             "search" | "highlights" => "  (:<query> :empty :none :down :preedit)",

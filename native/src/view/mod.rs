@@ -536,6 +536,8 @@ pub struct State {
     pub books_from: usize,
     /// The search open over the Books tab.
     pub search: Option<Search>,
+    /// The search open over the book on screen, held apart from `search`.
+    pub book_search: Option<Search>,
     /// Which books the Books screen lists.
     pub shelf: Shelf,
     /// The stretch that list is narrowed to.
@@ -570,6 +572,7 @@ impl State {
             config_page: 0,
             books_from: 0,
             search: None,
+            book_search: None,
             shelf: Shelf::default(),
             window: None,
             sort: Sort::default(),
@@ -588,9 +591,32 @@ impl State {
         self.book = Some(book);
         self.book_tab = BookTab::default();
         self.marks_from = 0;
+        self.book_search = None;
         if let Some(search) = self.search.as_mut() {
             search.keyboard = false;
         }
+    }
+
+    /// Where the search in play is held: the open book's own where a book is
+    /// open, and the Books tab's where none is.
+    pub fn searching_slot(&mut self) -> &mut Option<Search> {
+        match self.book {
+            Some(_) => &mut self.book_search,
+            None => &mut self.search,
+        }
+    }
+
+    /// The search in play, where one stands.
+    pub fn searching(&self) -> Option<&Search> {
+        match self.book {
+            Some(_) => self.book_search.as_ref(),
+            None => self.search.as_ref(),
+        }
+    }
+
+    /// The same search, to type into.
+    pub fn searching_mut(&mut self) -> Option<&mut Search> {
+        self.searching_slot().as_mut()
     }
 
     /// Open `book` at the passage standing `at` in its own list of marks,
@@ -633,6 +659,7 @@ impl State {
         self.picked = false;
         self.opened_day = false;
         self.search = None;
+        self.book_search = None;
         self.shelf = Shelf::All;
         self.window = None;
         self.alltime_page = 0;
@@ -713,6 +740,12 @@ pub fn under_title(
         cx.text
             .draw(cx.fb, area.right() - counts, baseline, marked, false);
     }
+}
+
+/// `area` floored a gap clear of the keyboard's top edge.
+pub(crate) fn over_keyboard(theme: &Theme, area: Rect) -> Rect {
+    let over = theme.screen.bottom() - crate::keyboard::height(theme.screen.h);
+    Rect::new(area.x, area.y, area.w, (over - theme.gap - area.y).max(0))
 }
 
 /// The index the last page of `count` rows opens at, `deep` rows to a page.

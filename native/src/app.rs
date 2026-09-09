@@ -223,15 +223,20 @@ impl App {
         self.state.search = search;
     }
 
+    /// Put one up over the open book's own screen, or take it down.
+    pub fn set_book_search(&mut self, search: Option<view::Search>) {
+        self.state.book_search = search;
+    }
+
     /// Which list that search names.
     pub fn set_scope(&mut self, scope: Scope) {
         self.state.scope = scope;
     }
 
-    /// Takes `keysyms` into `State::search`, answering whether it moved.
+    /// Takes `keysyms` into the search in play, answering whether it moved.
     fn typed(&mut self, keysyms: &[u32]) -> bool {
         use crate::eink::keysym::{Typed, of_keysym};
-        if keysyms.is_empty() || self.state.search.is_none() {
+        if keysyms.is_empty() || self.state.searching().is_none() {
             return false;
         }
         let mut moved = false;
@@ -241,10 +246,10 @@ impl App {
             };
             // `Typed::Escape` drops the rest of `keysyms`.
             if said == Typed::Escape {
-                self.state.search = None;
+                *self.state.searching_slot() = None;
                 return true;
             }
-            let Some(search) = self.state.search.as_mut() else {
+            let Some(search) = self.state.searching_mut() else {
                 return moved;
             };
             match said {
@@ -269,10 +274,10 @@ impl App {
             && y >= self.theme.screen.bottom() - crate::keyboard::height(self.theme.screen.h)
     }
 
-    /// Raises or dismisses the keyboard to match `State::search`, where
+    /// Raises or dismisses the keyboard to match the search in play, where
     /// `on_screen`.
     fn reconcile_keyboard(&mut self, on_screen: bool) {
-        let want = on_screen && self.state.search.as_ref().is_some_and(|s| s.keyboard);
+        let want = on_screen && self.state.searching().is_some_and(|s| s.keyboard);
         if want == self.keyboard {
             return;
         }
@@ -294,14 +299,14 @@ impl App {
         };
     }
 
-    /// Takes what the keyboard set on this app's lipc service into
-    /// `State::search`, answering whether it moved.
+    /// Takes what the keyboard set on this app's lipc service into the search
+    /// in play, answering whether it moved.
     fn committed(&mut self) -> bool {
         let Some(service) = self.lipc.as_mut() else {
             return false;
         };
         let sets = service.drain();
-        let Some(search) = self.state.search.as_mut() else {
+        let Some(search) = self.state.searching_mut() else {
             return false;
         };
         let mut moved = false;
@@ -385,7 +390,7 @@ impl App {
         };
         self.frame(fb, &mut |cx, area| match state.book {
             Some(index) => {
-                view::book::draw(cx, area, index, state.book_tab, state.marks_from);
+                view::book::draw(cx, area, index, &state);
                 if let Some((at, ask)) = state.asked
                     && at == index
                 {
@@ -950,14 +955,16 @@ impl App {
                 }
                 self.state.books_from = at;
             }
+            // The open book's own search, or the Books tab's: one field
+            // stands at a time, and `State::searching_slot` names which.
             Hit::Search => {
-                self.state.search = Some(view::Search {
+                *self.state.searching_slot() = Some(view::Search {
                     keyboard: true,
                     ..view::Search::default()
                 });
             }
             Hit::SearchField => {
-                let Some(search) = self.state.search.as_mut() else {
+                let Some(search) = self.state.searching_mut() else {
                     return Action::Nothing;
                 };
                 if search.keyboard {
@@ -966,20 +973,20 @@ impl App {
                 search.keyboard = true;
             }
             Hit::SearchClear => {
-                let Some(search) = self.state.search.as_mut() else {
+                let slot = self.state.searching_slot();
+                let Some(search) = slot.as_mut() else {
                     return Action::Nothing;
                 };
-                match search.query.is_empty() {
+                if search.query.is_empty() {
                     // An empty `query` takes the search off.
-                    true => self.state.search = None,
-                    false => {
-                        search.query.clear();
-                        search.from = 0;
-                    }
+                    *slot = None;
+                } else {
+                    search.query.clear();
+                    search.from = 0;
                 }
             }
             Hit::SearchPage(at) => {
-                let Some(search) = self.state.search.as_mut() else {
+                let Some(search) = self.state.searching_mut() else {
                     return Action::Nothing;
                 };
                 if at == search.from {
@@ -1326,7 +1333,11 @@ impl App {
     fn through_book(&mut self, book: usize, by: i64) -> Action {
         let area = chrome::content_box(&self.theme);
         let (_, rest) = area.split_top(view::book::picker_height(&self.theme));
-        let opens = view::marks::pages(&mut self.text, &self.theme, &self.stats, book, rest);
+        // A field standing over the book pages what it found.
+        if let Some(open) = self.state.book_search.clone() {
+            return self.through_found(book, rest, &open, by);
+        }
+        let opens = view::marks::pages(&mut self.text, &self.theme, &self.stats, book, rest, None);
         let forward = by > 0;
         match self.state.book_tab {
             view::BookTab::Statistics if forward => {
@@ -1359,6 +1370,38 @@ impl App {
                 }
             }
         }
+    }
+
+    /// One step through the passages a search found in `book`, drawn into
+    /// `rest`. A step off either end answers `Action::Nothing`.
+    fn through_found(
+        &mut self,
+        book: usize,
+        rest: crate::ui::paint::Rect,
+        open: &view::Search,
+        by: i64,
+    ) -> Action {
+        let opens = view::marks::pages(
+            &mut self.text,
+            &self.theme,
+            &self.stats,
+            book,
+            rest,
+            Some(open),
+        );
+        let page = opens.iter().rposition(|o| *o <= open.from).unwrap_or(0) as i64;
+        let last = opens.len().saturating_sub(1) as i64;
+        let from = opens
+            .get((page + by).clamp(0, last) as usize)
+            .copied()
+            .unwrap_or(0);
+        if from == open.from {
+            return Action::Nothing;
+        }
+        if let Some(search) = self.state.book_search.as_mut() {
+            search.from = from;
+        }
+        Action::Redraw
     }
 
     fn paged(&mut self, by: i64) -> Action {

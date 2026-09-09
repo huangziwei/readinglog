@@ -164,12 +164,19 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
     }
 }
 
+/// The square the search stands in at the head of a row: `chip_height` a
+/// side, at the left edge of `area`. The book screen opens its own head row
+/// with this one.
+pub(super) fn search_box(theme: &Theme, area: Rect) -> Rect {
+    let side = chrome::chip_height(theme);
+    Rect::new(area.x, area.y, side, side)
+}
+
 /// The search, at the head of the shelf chips' own row: a square of
 /// `chrome::chip_height` a side, in their outline. Answers the box it took.
 fn search_button(cx: &mut Ctx, area: Rect) -> Rect {
     let theme: &Theme = cx.theme;
-    let side = chrome::chip_height(theme);
-    let box_ = Rect::new(area.x, area.y, side, side);
+    let box_ = search_box(theme, area);
     paint::stroke(cx.fb, box_, INK, theme.rule());
     magnifier(cx, box_);
     cx.hit(Hit::Search, box_);
@@ -314,9 +321,9 @@ pub(super) fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
         .wrap_and_clamp_in(script, &book.title, words.w as u32, TITLE_LINES);
     let title_h = lines.len() as i32 * cx.text.line_height() as i32;
     cx.text.set_px(theme.small_px);
-    // The line under the title carries the author at its left and what the
-    // book is marked with at its right. A row with neither gives the line's
-    // height back to the block.
+    // The line under the title carries `book.author` at its left and
+    // `marks_said` at its right. A row with neither gives the line's height
+    // back to the block.
     let marked = super::marks_said(cx.s(), cx.stats.marks_counted(index));
     let author_h = match book.author.is_empty() && marked.is_empty() {
         true => 0,

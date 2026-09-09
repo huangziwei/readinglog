@@ -14,7 +14,7 @@ use crate::ui::text::TextRenderer;
 use crate::ui::theme::Theme;
 use crate::wrap::{MORE, mark_more};
 
-use super::{Ctx, Hit, pager};
+use super::{Ctx, Hit, Search, pager, search};
 
 /// What separates the parts of a row's own label: `Location 608 | Highlight`.
 const BAR: &str = " | ";
@@ -162,24 +162,27 @@ fn lines_in(m: Metrics, theme: &Theme, h: i32) -> usize {
 }
 
 /// Where each page of `book`'s marks opens in `area`, ascending from 0, and
-/// empty for a book carrying none. [`draw`] pages from this, and the step a
-/// swipe or a page button takes reads the same list.
+/// empty for a book carrying none. [`draw`] and the page step read this one
+/// list; `search` names the passages it holds.
 pub fn pages(
     text: &mut TextRenderer,
     theme: &Theme,
     stats: &Stats,
     book: usize,
     area: Rect,
+    search: Option<&Search>,
 ) -> Vec<usize> {
     let Some(record) = stats.books.get(book) else {
         return Vec::new();
     };
-    let held = rows(stats, book, record);
+    let query = search.map(|search| search.query.as_str());
+    let held = listing(stats, book, record, query);
     if held.is_empty() {
         return Vec::new();
     }
-    let inner = list_box(text, theme, area);
-    let at = Layout::of(text, theme, inner, false);
+    let page = page_box(theme, area, search.is_some_and(|search| search.keyboard));
+    let inner = list_box(text, theme, page);
+    let at = layout(text, theme, inner, query);
     openings(text, theme, &held, &at, inner.h)
 }
 
@@ -191,6 +194,39 @@ fn rows(stats: &Stats, book: usize, record: &BookStat) -> Vec<Row> {
         .enumerate()
         .map(|(at, m)| Row::new(book, at, record, m.mark, m.note))
         .collect()
+}
+
+/// The rows a list holds: every one of `book`'s, or those a `query` names by
+/// the words of the passage or of the note on it.
+fn listing(stats: &Stats, book: usize, record: &BookStat, query: Option<&str>) -> Vec<Row> {
+    let held = rows(stats, book, record);
+    let Some(needle) = query.map(search::Needle::of) else {
+        return held;
+    };
+    held.into_iter()
+        .filter(|row| {
+            needle.holds(&row.mark.body)
+                || row
+                    .note
+                    .as_ref()
+                    .is_some_and(|note| needle.holds(&note.body))
+        })
+        .collect()
+}
+
+/// What the rows are measured against: a list a query found windows each
+/// passage on it, and a book's own list gives a row every line its box holds.
+fn layout<'a>(
+    text: &mut TextRenderer,
+    theme: &Theme,
+    inner: Rect,
+    query: Option<&'a str>,
+) -> Layout<'a> {
+    let at = Layout::of(text, theme, inner, false);
+    match query {
+        Some(query) => at.found(theme, inner.h, query),
+        None => at,
+    }
 }
 
 /// Where each page of `held` opens, ascending and starting at 0.
@@ -210,6 +246,15 @@ pub(super) fn openings(
     out
 }
 
+/// The page the list and its pager share: `area`, floored at the keyboard's
+/// top edge where the keyboard stands.
+fn page_box(theme: &Theme, area: Rect, keyboard: bool) -> Rect {
+    match keyboard {
+        true => super::over_keyboard(theme, area),
+        false => area,
+    }
+}
+
 /// The box the rows are drawn in: `area` under the section heading and over
 /// the pager's own strip.
 fn list_box(text: &mut TextRenderer, theme: &Theme, area: Rect) -> Rect {
@@ -219,8 +264,9 @@ fn list_box(text: &mut TextRenderer, theme: &Theme, area: Rect) -> Rect {
 }
 
 /// One book's marks under their own heading, opened at `from`, which is held
-/// inside the list.
-pub fn draw(cx: &mut Ctx, area: Rect, book: usize, from: usize) {
+/// inside the list. `search` names the passages listed, opens the list at its
+/// own `from`, and floors the box while the keyboard stands.
+pub fn draw(cx: &mut Ctx, area: Rect, book: usize, from: usize, search: Option<&Search>) {
     let theme: &Theme = cx.theme;
     let s = cx.s();
     // Most recently marked first: what was marked last is what is being
@@ -229,39 +275,50 @@ pub fn draw(cx: &mut Ctx, area: Rect, book: usize, from: usize) {
     let Some(record) = cx.stats.books.get(book).cloned() else {
         return;
     };
-    let held = rows(cx.stats, book, &record);
+    let query = search.map(|search| search.query.as_str());
+    let held = listing(cx.stats, book, &record, query);
     let named = heading(cx, book);
-    let inner = list_box(cx.text, theme, area);
+    let page = page_box(theme, area, search.is_some_and(|search| search.keyboard));
+    let inner = list_box(cx.text, theme, page);
     chrome::section(cx.fb, cx.text, theme, area, &named);
 
     if held.is_empty() {
         cx.text.set_px(theme.body_px);
         let script = cx.ui_script();
         let baseline = inner.y + theme.gap + cx.text.cap_height() as i32;
+        // An empty list under a query holding nothing is a book with no
+        // marks of its own.
+        let said = match query.is_some_and(|query| !query.is_empty()) {
+            true => s.nothing_marked,
+            false => s.marks_none,
+        };
         cx.text
-            .draw_in(script, cx.fb, inner.x, baseline, s.marks_none, false);
+            .draw_in(script, cx.fb, inner.x, baseline, said, false);
         return;
     }
 
-    let at = Layout::of(cx.text, theme, inner, false);
+    let at = layout(cx.text, theme, inner, query);
     // The page showing opens at the last opening at or before `from`.
+    let from = search.map_or(from, |search| search.from);
     let opens = openings(cx.text, theme, &held, &at, inner.h);
-    let page = opens.iter().rposition(|o| *o <= from).unwrap_or(0);
-    let from = opens[page];
-    let to = opens.get(page + 1).copied().unwrap_or(held.len());
+    let page_at = opens.iter().rposition(|o| *o <= from).unwrap_or(0);
+    let from = opens[page_at];
+    let to = opens.get(page_at + 1).copied().unwrap_or(held.len());
     if opens.len() > 1 {
         // The strip along the foot, which is where every screen paged as a
         // whole is paged from.
         let label = format!("{}–{to} {} {}", from + 1, s.of, held.len());
+        let last = opens.last().copied().unwrap_or(0);
+        let steps = match search {
+            Some(_) => [Hit::SearchPage(0), Hit::SearchPage(last)],
+            None => [Hit::MarksPage(0), Hit::MarksPage(last)],
+        };
         pager::draw(
             cx,
-            pager::foot(theme, area),
+            pager::foot(theme, page),
             &label,
-            [page > 0, page + 1 < opens.len()],
-            [
-                Hit::MarksPage(0),
-                Hit::MarksPage(*opens.last().unwrap_or(&0)),
-            ],
+            [page_at > 0, page_at + 1 < opens.len()],
+            steps,
         );
     }
 
@@ -269,7 +326,12 @@ pub fn draw(cx: &mut Ctx, area: Rect, book: usize, from: usize) {
     let mut y = inner.y;
     for (n, held) in shown.iter().enumerate() {
         let high = height(cx.text, theme, &at, held);
-        row(cx, Rect::new(inner.x, y, inner.w, high), held, &at);
+        let box_of = Rect::new(inner.x, y, inner.w, high);
+        row(cx, box_of, held, &at);
+        // A row a search found opens the book's own list at that passage.
+        if search.is_some() {
+            cx.hit(Hit::Mark(held.book, held.at), box_of);
+        }
         // A rule between rows, and none under the last.
         if n + 1 < shown.len() {
             paint::hline(
@@ -651,6 +713,38 @@ mod tests {
             // Whatever it answers, two rows that deep stand in the box.
             let lines = window_lines(m, &theme, deep + 10);
             assert!((1..=WINDOW_LINES).contains(&lines), "{w}x{h}");
+        }
+    }
+
+    #[test]
+    fn a_query_names_the_passages_of_one_book_and_no_other() {
+        let stats = crate::stats::tests::marked_shelf();
+        let record = stats.books[0].clone();
+        // The whole book with no query, and with one that holds nothing.
+        assert_eq!(listing(&stats, 0, &record, None).len(), 1);
+        assert_eq!(listing(&stats, 0, &record, Some("")).len(), 1);
+        // The passage's own words, and the note written on it.
+        assert_eq!(listing(&stats, 0, &record, Some("SKY")).len(), 1);
+        assert_eq!(listing(&stats, 0, &record, Some("borrowed")).len(), 1);
+        // A word the other book's passage holds names nothing here.
+        assert!(listing(&stats, 0, &record, Some("港")).is_empty());
+        // And the row states the place its own book's list opens at.
+        let held = listing(&stats, 0, &record, Some("sky"));
+        assert_eq!((held[0].book, held[0].at), (0, 0));
+    }
+
+    #[test]
+    fn the_keyboard_floors_the_list_while_it_stands() {
+        for (w, h) in PANELS {
+            let theme = Theme::for_screen(w, h);
+            let area = chrome::content_box(&theme);
+            let down = page_box(&theme, area, false);
+            let up = page_box(&theme, area, true);
+            assert_eq!(down, area, "{w}x{h}");
+            assert!(up.h < down.h, "{w}x{h}: {} against {}", up.h, down.h);
+            assert!(up.h > 0, "{w}x{h}");
+            let over = theme.screen.bottom() - crate::keyboard::height(theme.screen.h);
+            assert!(up.bottom() <= over, "{w}x{h}: the list reaches the keys");
         }
     }
 

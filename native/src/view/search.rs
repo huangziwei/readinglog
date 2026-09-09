@@ -35,23 +35,23 @@ pub fn listed(stats: &Stats, query: &str, uncovered: bool) -> Vec<usize> {
         .collect()
 }
 
-/// A query as both lists test it: `said` case folded, and `folded` taken
+/// A query as every list tests it: `said` case folded, and `folded` taken
 /// through [`hanfold::fold`] as well. [`Needle::holds`] takes either, which
 /// only ever adds matches.
-struct Needle {
+pub(super) struct Needle {
     said: String,
     folded: String,
 }
 
 impl Needle {
-    fn of(query: &str) -> Self {
+    pub(super) fn of(query: &str) -> Self {
         let said = query.to_lowercase();
         let folded = hanfold::fold(&said).into_owned();
         Self { said, folded }
     }
 
     /// Whether `body` holds it. An empty query is held by everything.
-    fn holds(&self, body: &str) -> bool {
+    pub(super) fn holds(&self, body: &str) -> bool {
         if self.said.is_empty() {
             return true;
         }
@@ -108,16 +108,10 @@ pub fn mark_pages(
 /// keyboard's top edge where `keyboard`.
 pub fn results_box(theme: &Theme, area: Rect, keyboard: bool) -> Rect {
     let (_, under) = split(theme, area);
-    if !keyboard {
-        return under;
+    match keyboard {
+        true => super::over_keyboard(theme, under),
+        false => under,
     }
-    let over = theme.screen.bottom() - crate::keyboard::height(theme.screen.h);
-    Rect::new(
-        under.x,
-        under.y,
-        under.w,
-        (over - theme.gap - under.y).max(0),
-    )
 }
 
 /// The box the rows themselves take: [`results_box`] over the pager's strip.
@@ -279,7 +273,7 @@ fn marked(cx: &mut Ctx, area: Rect, search: &Search) {
 /// An outline over `at`, `books::magnifier` at its left end and
 /// [`Hit::SearchClear`]'s mark at its right. `query` and `preedit` are set
 /// tail-first, the caret after them; `hint` stands for both empty.
-fn field(cx: &mut Ctx, at: Rect, query: &str, preedit: &str, hint: &str) {
+pub(super) fn field(cx: &mut Ctx, at: Rect, query: &str, preedit: &str, hint: &str) {
     let theme: &Theme = cx.theme;
     paint::stroke(cx.fb, at, INK, theme.rule());
     books::magnifier(cx, Rect::new(at.x, at.y, at.h, at.h));

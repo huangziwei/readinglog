@@ -13,7 +13,7 @@ use super::{Ctx, Hit, Shelf, Span, State, Window, alltime, daybooks, home};
 /// Books a day of a month names, the rest counted in `+n`.
 const LANES: usize = 4;
 
-/// The bar the picker and the span's name each stand in.
+/// The bar the span's name stands in.
 fn bar_height(theme: &Theme) -> i32 {
     theme.row_h * 3 / 4
 }
@@ -23,8 +23,10 @@ fn bar_height(theme: &Theme) -> i32 {
 /// books. `grid` is what the span asks for, clamped to what the page holds.
 fn bands(area: Rect, theme: &Theme, figures: i32, grid: i32, listed: bool) -> [Rect; 5] {
     let air = theme.gap * 2;
+    // The spans are picked off a row of chips, at `chrome::chip_height`.
+    let tabs = chrome::chip_height(theme);
     let bar = bar_height(theme);
-    let (picker, rest) = area.split_top(bar + air);
+    let (picker, rest) = area.split_top(tabs + air);
     let (nav, rest) = rest.split_top(bar + air);
     // The span's name stands clear of the figures under it: the two are a
     // heading and its body, not one block.
@@ -38,7 +40,7 @@ fn bands(area: Rect, theme: &Theme, figures: i32, grid: i32, listed: bool) -> [R
     // A span listing no books takes a band, clamped to the foot of `rest`.
     let under = (rest.y + grid + air).min(rest.bottom());
     [
-        Rect::new(picker.x, picker.y, picker.w, bar),
+        Rect::new(picker.x, picker.y, picker.w, tabs),
         Rect::new(nav.x, nav.y, nav.w, bar),
         Rect::new(stated.x, stated.y, stated.w, figures),
         Rect::new(rest.x, rest.y, rest.w, grid),
@@ -81,8 +83,9 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
         span_page(cx, area, state);
         return;
     }
-    let (bar, rest) = area.split_top(bar_height(theme) + theme.gap * 2);
-    picker(cx, Rect::new(bar.x, bar.y, bar.w, bar_height(theme)), state);
+    let tabs = chrome::chip_height(theme);
+    let (bar, rest) = area.split_top(tabs + theme.gap * 2);
+    picker(cx, Rect::new(bar.x, bar.y, bar.w, tabs), state);
     match state.picked {
         true => day_page(cx, rest, state),
         false => alltime::draw(cx, rest, state.alltime_page),
@@ -521,9 +524,8 @@ fn year_heatmap(cx: &mut Ctx, area: Rect, day: i64, picked: bool) {
     }
 }
 
-/// The band of the day's own level laid across the head of its cell, in design
-/// pixels. A month of them is read across the whole page at once, so it is
-/// sized to be told apart at arm's length and not up close.
+/// The band of the day's own level laid across the head of its cell, in
+/// design pixels, at a size told apart at arm's length.
 const HEAD_BAND: i32 = 12;
 
 /// [`HEAD_BAND`] on this panel.
@@ -532,13 +534,12 @@ fn head_band(theme: &Theme) -> i32 {
 }
 
 /// The box a day's cell draws into: inside its own outline, and under the
-/// band across its head. The band is spent out of the height the lanes stand
-/// in, so [`HEAD_BAND`] is bounded by how many books a cell must still stack.
+/// band across its head. [`HEAD_BAND`] is spent out of the height the lanes
+/// stand in.
 fn cell_inner(theme: &Theme, cell: Rect) -> Rect {
     let air = theme.gap / 2;
-    // The band runs to the cell's own edges, so the air below it is measured
-    // from the band and not from the cell. Every cell takes the same offset,
-    // band or none: a day with no reading lines its date up with the rest.
+    // The air below the band is measured from the band, which runs to the
+    // cell's own edges. Every cell takes the same offset, band or none.
     let (_, under) = cell.split_top(head_band(theme) + air);
     Rect::new(
         cell.x + air,
@@ -548,9 +549,8 @@ fn cell_inner(theme: &Theme, cell: Rect) -> Rect {
     )
 }
 
-/// The date across the head of a day's cell, with the total against it.
-///
-/// A `peak` above zero lays [`head_band`] along the top edge at the day's own
+/// The date across the head of a day's cell, with the total against it. A
+/// `peak` above zero lays [`head_band`] along the top edge at the day's own
 /// level.
 fn head_line(cx: &mut Ctx, cell: Rect, day: i64, date: &str, peak: i64) {
     let theme: &Theme = cx.theme;
@@ -837,8 +837,7 @@ fn jacket(cx: &mut Ctx, box_: Rect, book: usize, secs: i64, percent: Option<i64>
     let w = cover::width_for(art.h).min(art.w);
     let art = Rect::new(art.x + (art.w - w) / 2, art.y, w, art.h);
     let stat = &cx.stats.books[book];
-    // The grid names its books by their jackets and by nothing else, so an
-    // empty box carries the title itself.
+    // `cover::titled` sets the title into a box no jacket draws into.
     if !cx.covers.draw(cx.fb, art, &stat.thumbnail) {
         let script = crate::font::Script::of_language(&stat.language);
         cover::titled(cx, art, &stat.title, script);
@@ -987,10 +986,8 @@ mod tests {
         theme.px(HEAD)
     }
 
-    /// Whether the page is a 7-inch one. Every band below is one deeper there
-    /// than on a 6-inch page, which is what 4.7 inches of content buys: the
-    /// Paperwhite 1-2 at 212 ppi and the Voyage at 300 are the same page, and
-    /// both hold one row fewer than an Oasis.
+    /// Whether the page is a 7-inch one, which every band below stands one
+    /// row deeper on.
     fn tall_page(theme: &Theme, area: Rect) -> bool {
         area.h >= theme.px(1400)
     }
@@ -1026,6 +1023,18 @@ mod tests {
                 }
                 assert!(list.bottom() <= area.bottom(), "{w}x{h} {span:?}");
                 assert_eq!(list.h > 0, listed, "{w}x{h} {span:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_spans_are_picked_off_a_row_one_chip_tall() {
+        for (w, h) in PANELS {
+            let (theme, area) = page(w, h);
+            for span in Span::CALENDAR {
+                let want = wanted(span, area, &theme);
+                let [picker, ..] = bands(area, &theme, figures(&theme), want, lists_books(span));
+                assert_eq!(picker.h, chrome::chip_height(&theme), "{w}x{h} {span:?}");
             }
         }
     }
@@ -1196,8 +1205,7 @@ mod tests {
             let (_, cells) = grid.split_top(charts::weekday_head_height(&theme));
             let laid = charts::month_cells(cells, 2026, 8, theme.gap, WeekStart::Monday);
             let cell = laid[0].1;
-            // The band is a share of the cell, never the half of it a run of
-            // them would make the page into.
+            // The band is a share of the cell, never the half of it.
             let band = head_band(&theme);
             assert!(band >= 1, "{w}x{h}: the band rounded away");
             assert!(
@@ -1244,7 +1252,7 @@ mod tests {
     /// The list `day_page` draws the day's books into, on a `w` by `h` panel.
     fn day_list(w: u32, h: u32) -> (Theme, Rect) {
         let (theme, area) = page(w, h);
-        let (_, rest) = area.split_top(bar_height(&theme) + theme.gap * 2);
+        let (_, rest) = area.split_top(chrome::chip_height(&theme) + theme.gap * 2);
         let [_, _, list] = home::bands(rest, &theme, figures(&theme), head(&theme));
         let head = head(&theme);
         (
