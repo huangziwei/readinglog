@@ -9,6 +9,7 @@ pub mod books;
 pub mod config;
 pub mod daybooks;
 pub mod home;
+pub mod pager;
 pub mod rhythm;
 
 use crate::date;
@@ -85,6 +86,8 @@ pub enum Hit {
     Shelved(Shelf, Option<Window>),
     /// Where the Books list opens, as an index into it.
     BooksPage(usize),
+    /// Which page of the config screen is showing, counted from zero.
+    ConfigPage(usize),
     /// The order the Books screen lists in.
     Sorted(Sort),
     /// Ask what should become of one book's reading, by its index in

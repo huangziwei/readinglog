@@ -793,6 +793,12 @@ impl App {
                 }
                 self.state.books_from = at;
             }
+            Hit::ConfigPage(at) => {
+                if at == self.state.config_page {
+                    return Action::Nothing;
+                }
+                self.state.config_page = at;
+            }
             Hit::Update => return Action::Update,
             Hit::Retry => return self.ask_question(view::About::Retry),
             Hit::Heal => return self.ask_question(view::About::Heal),

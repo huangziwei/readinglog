@@ -16,8 +16,8 @@ const HEADLINE_LINES: usize = 2;
 const NOTE_LINES: usize = 3;
 
 /// What a banner says: a headline, the lines under it, and the way out while
-/// there is one. `script` is the convention the words are set in — 日本語 drawn
-/// from a Simplified face is the defect carrying it here prevents.
+/// there is one. `script` is the convention the words are set in: a banner set
+/// from another script's face draws the wrong glyphs.
 pub struct Words<'a> {
     pub script: Script,
     pub headline: &'a str,

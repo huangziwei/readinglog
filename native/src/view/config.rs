@@ -10,7 +10,7 @@ use crate::ui::paint::Rect;
 use crate::ui::theme::Theme;
 use crate::update;
 
-use super::{About, Confirm, Ctx, Hit, Reset};
+use super::{About, Confirm, Ctx, Hit, Reset, pager};
 
 /// The index no option is drawn filled at.
 const NONE_ON: usize = usize::MAX;
@@ -487,38 +487,6 @@ fn paged(tall: &[i32], room: i32) -> Vec<(usize, usize)> {
     out
 }
 
-/// Which page of the settings this is, between the two arrows that step it,
-/// drawn as All Time draws its own. Each arrow's hit box reaches a third of
-/// the way in: an arrow is a small target.
-fn pager(cx: &mut Ctx, foot: Rect, at: usize, pages: usize) {
-    let theme: &Theme = cx.theme;
-    let script = cx.ui_script();
-    let said = format!("{} {} {}", at + 1, cx.s().of, pages);
-    cx.text.set_px(theme.small_px);
-    let w = cx.text.measure_width_in(script, &said) as i32;
-    let baseline = foot.y + cx.text.cap_height() as i32;
-    cx.text.draw_in(
-        script,
-        cx.fb,
-        foot.x + (foot.w - w) / 2,
-        baseline,
-        &said,
-        false,
-    );
-
-    cx.text.set_px(theme.head_px);
-    for (arrow, at_left, hit) in [("‹", true, Hit::Prev), ("›", false, Hit::Next)] {
-        let reach = foot.w / 3;
-        let aw = cx.text.measure_width_in(script, arrow) as i32;
-        let (x, from) = match at_left {
-            true => (foot.x, foot.x),
-            false => (foot.right() - aw, foot.right() - reach),
-        };
-        cx.text.draw_in(script, cx.fb, x, baseline, arrow, false);
-        cx.hit(hit, Rect::new(from, foot.y, reach, foot.h));
-    }
-}
-
 pub fn draw(
     cx: &mut Ctx,
     area: Rect,
@@ -550,20 +518,28 @@ pub fn draw(
         .iter()
         .map(|s| section_height(cx, s, theme, width, air))
         .collect();
-    // `leaves` is packed against `area.h` less the band `pager` takes, and
+    // `leaves` is packed against `area.h` less the strip the pager takes, and
     // against the whole of `area.h` where one page holds every section.
-    let leaves = match paged(&tall, area.h - theme.row_h).len() > 1 {
-        true => paged(&tall, area.h - theme.row_h),
+    let strip = pager::height(theme);
+    let leaves = match paged(&tall, area.h - strip).len() > 1 {
+        true => paged(&tall, area.h - strip),
         false => paged(&tall, area.h),
     };
     let pages = leaves.len().max(1);
     let at = at.min(pages - 1);
-    let (foot, mut rest) = match pages > 1 {
-        true => area.split_bottom(theme.row_h),
-        false => (Rect::new(area.x, area.bottom(), area.w, 0), area),
+    let mut rest = match pages > 1 {
+        true => area.split_bottom(strip).1,
+        false => area,
     };
     if pages > 1 {
-        pager(cx, foot, at, pages);
+        let label = format!("{} {} {}", at + 1, cx.s().of, pages);
+        pager::draw(
+            cx,
+            pager::foot(theme, area),
+            &label,
+            [at > 0, at + 1 < pages],
+            [Hit::ConfigPage(0), Hit::ConfigPage(pages - 1)],
+        );
     }
     let (from, upto) = leaves.get(at).copied().unwrap_or((0, page.len()));
 
@@ -725,7 +701,8 @@ mod tests {
 
     #[test]
     fn each_language_names_itself_in_its_own_script() {
-        // 日本語 drawn from a Simplified face is the defect this prevents.
+        // A name set from another script's face draws the wrong glyphs:
+        // 日本語 is not the same shape in a Simplified face.
         let settings = Settings::new(Lang::English);
         let empty = Record::default();
         let page = sections(Lang::English, &settings, true, &empty);

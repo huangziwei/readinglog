@@ -8,16 +8,10 @@ use crate::ui::cover;
 use crate::ui::paint::{self, INK, LIGHT, Rect};
 use crate::ui::theme::Theme;
 
-use super::{Ctx, Hit, Shelf, Sort, State, Window, band};
+use super::{Ctx, Hit, Shelf, Sort, State, Window, band, pager};
 
 /// Lines a title takes before the rest of it is ellipsized.
 const TITLE_LINES: usize = 2;
-
-/// The four marks along the foot: both ends, and one step either way.
-const JUMP_FIRST: &str = "«";
-const JUMP_LAST: &str = "»";
-const STEP_BACK: &str = "‹";
-const STEP_ON: &str = "›";
 
 /// The mark on the window chip, which a tap on it takes off the list.
 const DROP: &str = "×";
@@ -25,24 +19,6 @@ const DROP: &str = "×";
 /// The height one book takes, set by the cover it carries.
 fn row_height(theme: &Theme) -> i32 {
     theme.row_h * 5 / 2
-}
-
-/// The strip under the rows that the page counter sits in,
-/// `chrome::chip_height` tall.
-fn foot_height(theme: &Theme) -> i32 {
-    chrome::chip_height(theme)
-}
-
-/// The bottom [`foot_height`] of `area`, deepened by [`chrome::floor_air`].
-/// Its foot is the tab strip's top edge.
-fn foot_box(theme: &Theme, area: Rect) -> Rect {
-    let high = foot_height(theme);
-    Rect::new(
-        area.x,
-        area.bottom() - high,
-        area.w,
-        high + chrome::floor_air(theme),
-    )
 }
 
 /// The width `figure` measures at.
@@ -116,9 +92,9 @@ pub fn list_box(theme: &Theme, area: Rect, chips: bool) -> Rect {
     }
 }
 
-/// Rows one page of the list holds, `foot_height` taken off first.
+/// Rows one page of the list holds, the pager's own strip taken off first.
 pub fn rows_per_page(theme: &Theme, area: Rect) -> usize {
-    (((area.h - foot_height(theme)) / row_height(theme)).max(1)) as usize
+    (((area.h - pager::height(theme)) / row_height(theme)).max(1)) as usize
 }
 
 /// Where the last page of `count` books opens, in `area`.
@@ -130,7 +106,7 @@ pub fn last_page_at(theme: &Theme, area: Rect, count: usize) -> usize {
 /// [`row_height`] and half again.
 fn row_span(theme: &Theme, area: Rect) -> i32 {
     let fits = rows_per_page(theme, area) as i32;
-    ((area.h - foot_height(theme)) / fits).clamp(row_height(theme), row_height(theme) * 3 / 2)
+    ((area.h - pager::height(theme)) / fits).clamp(row_height(theme), row_height(theme) * 3 / 2)
 }
 
 pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
@@ -172,12 +148,12 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
     if from > 0 || to < shelf.len() {
         let last = last_page_at(theme, area, shelf.len());
         let label = format!("{}–{} {} {}", from + 1, to, cx.s().of, shelf.len());
-        pager(
+        pager::draw(
             cx,
-            foot_box(theme, area),
+            pager::foot(theme, area),
             &label,
             [from > 0, to < shelf.len()],
-            last,
+            [Hit::BooksPage(0), Hit::BooksPage(last)],
         );
     }
 }
@@ -210,69 +186,6 @@ fn sort_chip(cx: &mut Ctx, area: Rect, on: Sort) -> Rect {
     );
     cx.hit(Hit::Sorted(on.next()), chip);
     chip
-}
-
-/// The width a mark along the foot takes, its air included.
-fn mark_reach(cx: &mut Ctx) -> i32 {
-    let theme: &Theme = cx.theme;
-    cx.text.set_px(theme.small_px);
-    cx.text.measure_width(JUMP_LAST) as i32 + theme.gap * 4
-}
-
-/// The baseline `said` takes for its own ink to centre on `foot`, through
-/// [`crate::ui::text::TextRenderer::ink_box`]. `foot.center_y()` where `said`
-/// inks nothing.
-fn on_centre(cx: &mut Ctx, foot: Rect, said: &str) -> i32 {
-    let Some((top, bottom)) = cx.text.ink_box(said) else {
-        return foot.center_y();
-    };
-    foot.center_y() - (top + bottom) / 2
-}
-
-/// The pager across `foot`: [`JUMP_FIRST`] and [`JUMP_LAST`] at the ends of
-/// the row, [`STEP_BACK`] and [`STEP_ON`] either side of `label`, and `label`
-/// itself in the middle. `open` states whether each way leads anywhere.
-fn pager(cx: &mut Ctx, foot: Rect, label: &str, open: [bool; 2], last: usize) {
-    let theme: &Theme = cx.theme;
-    let reach = mark_reach(cx);
-    cx.text.set_px(theme.small_px);
-    let width = cx.text.measure_width(label) as i32;
-    let middle = foot.x + (foot.w - width) / 2;
-    // `back` and `on` keep clear of the ends, whatever width `label` takes.
-    let back = (middle - reach).max(foot.x + reach);
-    let on = (middle + width).min(foot.right() - reach * 2);
-    let marks = [
-        (foot.x, JUMP_FIRST, open[0].then_some(Hit::BooksPage(0))),
-        (back, STEP_BACK, open[0].then_some(Hit::Prev)),
-        (on, STEP_ON, open[1].then_some(Hit::Next)),
-        (
-            foot.right() - reach,
-            JUMP_LAST,
-            open[1].then_some(Hit::BooksPage(last)),
-        ),
-    ];
-    for (x, said, hit) in marks {
-        mark(cx, foot, x, said, hit);
-    }
-    cx.text.set_px(theme.small_px);
-    let baseline = on_centre(cx, foot, label);
-    let script = cx.ui_script();
-    cx.text
-        .draw_in(script, cx.fb, middle, baseline, label, false);
-}
-
-/// One mark of the pager, [`mark_reach`] wide at `x`, taking a tap onto
-/// `hit`. A `hit` of `None` draws nothing: the list stands at that end.
-fn mark(cx: &mut Ctx, foot: Rect, x: i32, said: &str, hit: Option<Hit>) {
-    let Some(hit) = hit else { return };
-    let reach = mark_reach(cx);
-    let box_ = Rect::new(x, foot.y, reach, foot.h);
-    cx.text.set_px(cx.theme.small_px);
-    let w = cx.text.measure_width(said) as i32;
-    let baseline = on_centre(cx, foot, said);
-    cx.text
-        .draw(cx.fb, box_.x + (box_.w - w) / 2, baseline, said, false);
-    cx.hit(hit, box_);
 }
 
 /// The shelves as a chip apiece, the one showing filled, each its own hit box,
@@ -606,7 +519,7 @@ mod tests {
     /// A content box holding exactly `rows` rows and the page counter.
     fn area_for(theme: &Theme, rows: i32) -> Rect {
         let box_ = chrome::content_box(theme);
-        let h = row_height(theme) * rows + foot_height(theme);
+        let h = row_height(theme) * rows + pager::height(theme);
         Rect::new(box_.x, box_.y, box_.w, h)
     }
 
@@ -626,7 +539,7 @@ mod tests {
             let area = chrome::content_box(&theme);
             let rows = rows_per_page(&theme, area) as i32;
             let bottom = area.y + rows * row_span(&theme, area);
-            let foot = area.bottom() - foot_height(&theme);
+            let foot = area.bottom() - pager::height(&theme);
             assert!(
                 bottom <= foot,
                 "{w}x{h}: rows end at {bottom}, foot at {foot}"
@@ -640,7 +553,7 @@ mod tests {
             let theme = Theme::for_screen(w, h);
             let box_ = chrome::content_box(&theme);
             let area = list_box(&theme, box_, true);
-            let foot = foot_box(&theme, area);
+            let foot = pager::foot(&theme, area);
             // `foot.bottom()` is the tab strip's top edge.
             assert_eq!(
                 foot.bottom(),

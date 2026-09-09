@@ -52,8 +52,8 @@ impl Named {
         }
     }
 
-    /// What a `b` row's letter names, and `None` for a row written before the
-    /// field existed.
+    /// What a `b` row's letter names, and `None` for a row carrying none or
+    /// any other text.
     fn from_stored(text: &str) -> Option<Self> {
         match text.trim() {
             "c" => Some(Self::Catalog),
@@ -1638,9 +1638,8 @@ fn read_book<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<BookRecord> {
         read_state: next().trim().parse().unwrap_or(-1),
         cde_type: next().to_string(),
         kept: next().trim() == "1",
-        // A row written before the field carried one reads as the catalog's,
-        // which is what no source may take. `Store::migrate` picks out the
-        // records a sidecar made.
+        // A row stating none reads as the catalog's, which is what no source
+        // may take. `Store::migrate` picks out the records a sidecar made.
         named_by: Named::from_stored(next()).unwrap_or_default(),
     })
     // `read_through` marks a record the row left unmarked.
@@ -1751,7 +1750,7 @@ fn read_session<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Session> {
         asin: Some(next().to_string()).filter(|a| !a.is_empty()),
         progress: next().parse().ok(),
         hours: read_hours(next()),
-        // A row written before the counters were held states none.
+        // A row carrying no counters leaves all four unstated.
         start_counter_ms: next().parse().ok(),
         end_counter_ms: next().parse().ok(),
         start_words: next().parse().ok(),
@@ -3988,8 +3987,8 @@ mod tests {
         let read = Store::load(&dir);
         assert_eq!(read.books, store.books, "a `b` row lost what named it");
 
-        // The same file as a build before the field wrote it: every `b` row
-        // one column short. The pairing is what picks the stem out.
+        // The same file with every `b` row one column short, its last field
+        // gone. The pairing is what picks the stem out.
         let older: String = std::fs::read_to_string(Store::file(&dir))
             .expect("a store to shorten")
             .lines()
