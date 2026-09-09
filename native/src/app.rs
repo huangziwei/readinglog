@@ -180,10 +180,11 @@ impl App {
         self.state.config_page = page;
     }
 
-    /// Draw the open book at `tab`, whatever it was left on.
-    pub fn set_book_tab(&mut self, tab: view::BookTab) {
+    /// Draw the open book at `tab`, whatever it was left on, with its marks
+    /// opened `from` rows down.
+    pub fn set_book_tab(&mut self, tab: view::BookTab, from: usize) {
         self.state.book_tab = tab;
-        self.state.marks_from = 0;
+        self.state.marks_from = from;
     }
 
     /// Draw All Time at `page`, whatever it was left on.
@@ -1148,25 +1149,50 @@ impl App {
 
     /// One step forward or back: a span on Rhythm, a page of the list, the
     /// next book.
+    /// A step across the open book, which is one track: the statistics page,
+    /// then each page of its marks in turn. A step off either end is no step —
+    /// the book screen is left by a tab, not by stepping past it.
+    fn through_book(&mut self, book: usize, by: i64) -> Action {
+        let area = chrome::content_box(&self.theme);
+        let (_, rest) = area.split_top(view::book::picker_height(&self.theme));
+        let opens = view::marks::pages(&mut self.text, &self.theme, &self.stats, book, rest);
+        let forward = by > 0;
+        match self.state.book_tab {
+            view::BookTab::Statistics if forward => {
+                self.state.go_in_book(view::BookTab::Marks);
+                Action::Redraw
+            }
+            view::BookTab::Statistics => Action::Nothing,
+            view::BookTab::Marks => {
+                let page = opens
+                    .iter()
+                    .rposition(|o| *o <= self.state.marks_from)
+                    .unwrap_or(0);
+                let next = match forward {
+                    true => page + 1,
+                    false => match page {
+                        // The head of the list steps back onto the statistics.
+                        0 => {
+                            self.state.go_in_book(view::BookTab::Statistics);
+                            return Action::Redraw;
+                        }
+                        _ => page - 1,
+                    },
+                };
+                match opens.get(next) {
+                    Some(opens) => {
+                        self.state.marks_from = *opens;
+                        Action::Redraw
+                    }
+                    None => Action::Nothing,
+                }
+            }
+        }
+    }
+
     fn paged(&mut self, by: i64) -> Action {
         if let Some(at) = self.state.book {
-            // The step walks the shelf as the Books list holds it, so a book
-            // that list hides is not stepped onto either.
-            let shelf = view::books::listed(
-                &self.stats,
-                view::Shelf::All,
-                view::Sort::Recent,
-                None,
-                self.settings.show_uncovered,
-            );
-            if shelf.is_empty() {
-                return Action::Nothing;
-            }
-            // A book open when the setting changed may be one of the hidden.
-            let here = shelf.iter().position(|b| *b == at).unwrap_or(0) as i64;
-            let next = (here + by).rem_euclid(shelf.len() as i64) as usize;
-            self.state.open_book(shelf[next]);
-            return Action::Redraw;
+            return self.through_book(at, by);
         }
         match self.state.tab {
             // `config::draw` clamps `config_page` to the pages it has.

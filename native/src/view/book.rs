@@ -174,7 +174,7 @@ fn heading_height(
 }
 
 /// The height of the strip the two pages are picked off, its air included.
-fn picker_height(theme: &Theme) -> i32 {
+pub fn picker_height(theme: &Theme) -> i32 {
     chrome::chip_height(theme) + theme.gap * 2
 }
 

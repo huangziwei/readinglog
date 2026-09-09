@@ -13,12 +13,13 @@ use crate::clippings::Kind;
 use crate::font::Script;
 use crate::lang::Strings;
 use crate::stats::BookStat;
+use crate::stats::Stats;
 use crate::ui::chrome;
-use crate::ui::paint::{self, LIGHT, PALE, Rect};
+use crate::ui::paint::{self, PALE, Rect};
 use crate::ui::text::TextRenderer;
 use crate::ui::theme::Theme;
 
-use super::{Ctx, Hit};
+use super::{Ctx, Hit, pager};
 
 /// Lines of a passage a row draws before the rest of it is ellipsized, and the
 /// lines it is laid out for. The list is set at [`BODY_LINES`] and takes
@@ -120,6 +121,65 @@ fn lines_in(m: Metrics, theme: &Theme, h: i32, rows: usize) -> usize {
         .unwrap_or(BODY_LINES)
 }
 
+/// Where each page of one book's marks opens in `area`, ascending and starting
+/// at 0. Empty for a book carrying none.
+///
+/// A row is as tall as its own words, so the passages have to be wrapped to
+/// know where a page ends. [`draw`] pages from this and so does the step a
+/// swipe or a page button makes, which is what keeps the two together.
+pub fn pages(
+    text: &mut TextRenderer,
+    theme: &Theme,
+    stats: &Stats,
+    book: usize,
+    area: Rect,
+) -> Vec<usize> {
+    let held: Vec<(Mark, Option<Mark>)> = stats
+        .marked(book)
+        .iter()
+        .map(|m| (m.mark.clone(), m.note.cloned()))
+        .collect();
+    let Some(record) = stats.books.get(book) else {
+        return Vec::new();
+    };
+    if held.is_empty() {
+        return Vec::new();
+    }
+    let inner = list_box(text, theme, area);
+    let at = Layout {
+        book: record,
+        m: Metrics::of(text, theme),
+        lines: lines_in(Metrics::of(text, theme), theme, inner.h, held.len()),
+        width: inner.w,
+    };
+    starts(text, theme, &held, &at, inner.h)
+}
+
+/// [`pages`] over rows already gathered.
+fn starts(
+    text: &mut TextRenderer,
+    theme: &Theme,
+    held: &[(Mark, Option<Mark>)],
+    at: &Layout,
+    high: i32,
+) -> Vec<usize> {
+    let mut out = Vec::new();
+    let mut opens = 0;
+    while opens < held.len() {
+        out.push(opens);
+        opens += fits(text, theme, &held[opens..], at, high);
+    }
+    out
+}
+
+/// The box the rows are drawn in: `area` under the section heading and over
+/// the pager's own strip.
+fn list_box(text: &mut TextRenderer, theme: &Theme, area: Rect) -> Rect {
+    // `split_bottom` answers the strip first and what is left above it second.
+    let (_, rest) = area.split_bottom(pager::height(theme));
+    rest.split_top(chrome::section_height(text, theme)).1
+}
+
 /// One book's marks under their own heading, opened at `from`, which is held
 /// inside the list.
 pub fn draw(cx: &mut Ctx, area: Rect, book: usize, from: usize) {
@@ -135,15 +195,8 @@ pub fn draw(cx: &mut Ctx, area: Rect, book: usize, from: usize) {
         .map(|m| (m.mark.clone(), m.note.cloned()))
         .collect();
     let named = heading(cx, book);
-
-    // The strip `section` sets its title in, taken before the call.
-    let bar = Rect::new(
-        area.x,
-        area.y,
-        area.w,
-        chrome::section_height(cx.text, theme),
-    );
-    let inner = chrome::section(cx.fb, cx.text, theme, area, &named);
+    let inner = list_box(cx.text, theme, area);
+    chrome::section(cx.fb, cx.text, theme, area, &named);
 
     if held.is_empty() {
         cx.text.set_px(theme.body_px);
@@ -154,38 +207,53 @@ pub fn draw(cx: &mut Ctx, area: Rect, book: usize, from: usize) {
         return;
     }
 
-    let Some(book) = cx.stats.books.get(book).cloned() else {
+    let Some(record) = cx.stats.books.get(book).cloned() else {
         return;
     };
     let m = Metrics::of(cx.text, theme);
     // A list short enough to give every row its full [`BODY_MOST`] does; a
     // longer one is set at [`BODY_LINES`] so more of it stands at once.
-    let lines = lines_in(m, theme, inner.h, held.len());
-    // Two passes over the same arithmetic: the first says how many rows the
-    // box holds, which is what the pager states and what a step moves by.
-    let deep = fits(cx, &held, &book, m, lines, inner, 0);
-    let from = from.min(held.len().saturating_sub(1) / deep.max(1) * deep.max(1));
-    let deep = fits(cx, &held, &book, m, lines, inner, from);
-    let to = (from + deep).min(held.len());
-    if held.len() > deep {
-        pager(cx, bar, from, to, held.len(), deep);
+    let at = Layout {
+        book: &record,
+        m,
+        lines: lines_in(m, theme, inner.h, held.len()),
+        width: inner.w,
+    };
+    // The page showing is the last one opening at or before `from`, so an
+    // index left over from another book lands on a real page.
+    let opens = starts(cx.text, theme, &held, &at, inner.h);
+    let page = opens.iter().rposition(|o| *o <= from).unwrap_or(0);
+    let from = opens[page];
+    let to = opens.get(page + 1).copied().unwrap_or(held.len());
+    if opens.len() > 1 {
+        // The strip along the foot, which is where every screen paged as a
+        // whole is paged from.
+        let label = format!("{}–{to} {} {}", from + 1, s.of, held.len());
+        pager::draw(
+            cx,
+            pager::foot(theme, area),
+            &label,
+            [page > 0, page + 1 < opens.len()],
+            [
+                Hit::MarksPage(0),
+                Hit::MarksPage(*opens.last().unwrap_or(&0)),
+            ],
+        );
     }
 
     let shown = &held[from..to];
     let mut y = inner.y;
-    for (at, (mark, note)) in shown.iter().enumerate() {
-        let high = height(cx, m, inner.w, mark, note.as_ref(), &book, lines);
+    for (n, (mark, note)) in shown.iter().enumerate() {
+        let high = height(cx.text, theme, &at, mark, note.as_ref());
         row(
             cx,
             Rect::new(inner.x, y, inner.w, high),
             mark,
             note.as_ref(),
-            &book,
-            m,
-            lines,
+            &at,
         );
         // A rule between rows, and none under the last.
-        if at + 1 < shown.len() {
+        if n + 1 < shown.len() {
             paint::hline(
                 cx.fb,
                 inner.x,
@@ -199,52 +267,57 @@ pub fn draw(cx: &mut Ctx, area: Rect, book: usize, from: usize) {
     }
 }
 
-/// Rows of `held` from `at` that `inner` holds, each at its own height, and
-/// never fewer than one.
-fn fits(
-    cx: &mut Ctx,
-    held: &[(Mark, Option<Mark>)],
-    book: &BookStat,
+/// What every row of one list is measured and drawn against.
+#[derive(Clone, Copy)]
+struct Layout<'a> {
+    /// The book, whose language picks the face the words are set in.
+    book: &'a BookStat,
     m: Metrics,
+    /// Passage lines a row is allowed, of [`BODY_MOST`].
     lines: usize,
-    inner: Rect,
-    at: usize,
+    /// The width a row draws into.
+    width: i32,
+}
+
+/// Rows of `held` from `at` that a box `high` tall holds, each at its own
+/// height, and never fewer than one.
+fn fits(
+    text: &mut TextRenderer,
+    theme: &Theme,
+    held: &[(Mark, Option<Mark>)],
+    at: &Layout,
+    high: i32,
 ) -> usize {
     let (mut deep, mut used) = (0, 0);
-    for (mark, note) in &held[at.min(held.len())..] {
-        let high = height(cx, m, inner.w, mark, note.as_ref(), book, lines);
-        if deep > 0 && used + high > inner.h {
+    for (mark, note) in held {
+        let row = height(text, theme, at, mark, note.as_ref());
+        if deep > 0 && used + row > high {
             break;
         }
-        used += high;
+        used += row;
         deep += 1;
     }
     deep.max(1)
 }
 
-/// How many lines the passage and the note actually wrap to inside a row `w`
-/// wide.
+/// How many lines the passage and the note actually wrap to.
 fn wrapped(
-    cx: &mut Ctx,
-    w: i32,
+    text: &mut TextRenderer,
+    theme: &Theme,
+    at: &Layout,
     mark: &Mark,
     note: Option<&Mark>,
-    book: &BookStat,
-    lines: usize,
 ) -> (usize, usize) {
-    let theme: &Theme = cx.theme;
-    let script = Script::of_language(&book.language);
-    let room = (w - indent(theme)).max(1) as u32;
-    cx.text.set_px(theme.body_px);
-    let said = cx
-        .text
-        .wrap_and_clamp_in(script, &mark.body, room, lines)
+    let script = Script::of_language(&at.book.language);
+    let room = (at.width - indent(theme)).max(1) as u32;
+    text.set_px(theme.body_px);
+    let said = text
+        .wrap_and_clamp_in(script, &mark.body, room, at.lines)
         .len();
     // The note is set beside the rule, not past it, so it has the whole width.
     let noted = match note {
-        Some(note) => cx
-            .text
-            .wrap_and_clamp_in(script, &note.body, w.max(1) as u32, NOTE_LINES)
+        Some(note) => text
+            .wrap_and_clamp_in(script, &note.body, at.width.max(1) as u32, NOTE_LINES)
             .len(),
         None => 0,
     };
@@ -254,16 +327,14 @@ fn wrapped(
 /// The height one row takes, the words wrapped to see how many lines they
 /// actually run to.
 fn height(
-    cx: &mut Ctx,
-    m: Metrics,
-    w: i32,
+    text: &mut TextRenderer,
+    theme: &Theme,
+    at: &Layout,
     mark: &Mark,
     note: Option<&Mark>,
-    book: &BookStat,
-    lines: usize,
 ) -> i32 {
-    let (said, noted) = wrapped(cx, w, mark, note, book, lines);
-    m.row(cx.theme, said, noted)
+    let (said, noted) = wrapped(text, theme, at, mark, note);
+    at.m.row(theme, said, noted)
 }
 
 /// One mark: the passage behind a rule in the colour the highlight was made
@@ -272,19 +343,12 @@ fn height(
 ///
 /// The rule takes the page's own left margin and the words run to its right
 /// one, so the white either side of the block is the same.
-fn row(
-    cx: &mut Ctx,
-    area: Rect,
-    mark: &Mark,
-    note: Option<&Mark>,
-    book: &BookStat,
-    m: Metrics,
-    lines: usize,
-) {
+fn row(cx: &mut Ctx, area: Rect, mark: &Mark, note: Option<&Mark>, at: &Layout) {
     let theme: &Theme = cx.theme;
     let s = cx.s();
+    let (m, book) = (at.m, at.book);
     let script = Script::of_language(&book.language);
-    let (said, noted) = wrapped(cx, area.w, mark, note, book, lines);
+    let (said, noted) = wrapped(cx.text, theme, at, mark, note);
     let x = area.x + indent(theme);
 
     // The rule beside the passage, in the colour the sidecar stated. A mark
@@ -306,7 +370,9 @@ fn row(
     // The passage, set in the book's own script.
     cx.text.set_px(theme.body_px);
     let room = (area.right() - x).max(1) as u32;
-    let lines_of = cx.text.wrap_and_clamp_in(script, &mark.body, room, lines);
+    let lines_of = cx
+        .text
+        .wrap_and_clamp_in(script, &mark.body, room, at.lines);
     let mut y = area.y + theme.gap * 2 + cx.text.cap_height() as i32;
     for line in &lines_of {
         cx.text.draw_in(script, cx.fb, x, y, line, false);
@@ -408,59 +474,6 @@ pub fn kind_name(kind: Kind, s: &Strings) -> &'static str {
         Kind::Asterisk => s.kind_asterisk,
         _ => s.kind_other,
     }
-}
-
-/// `from`–`to` of `count` at the right of the list's heading, a chip either
-/// side of it stepping by `deep`. The same shape `daybooks` pages by, so two
-/// lists on two screens read alike.
-fn pager(cx: &mut Ctx, head: Rect, from: usize, to: usize, count: usize, deep: usize) {
-    let theme: &Theme = cx.theme;
-    let last = super::last_page_at(count, deep);
-    let of = format!("{}–{to} {} {count}", from + 1, cx.s().of);
-    let row = chrome::heading_row(cx.text, theme, head);
-    let script = cx.ui_script();
-    cx.text.set_px(theme.small_px);
-    let said = cx.text.measure_width(&of) as i32;
-    let steps = [
-        ("‹", Hit::MarksPage(from.saturating_sub(deep))),
-        ("›", Hit::MarksPage((from + deep).min(last))),
-    ];
-    let chips: Vec<i32> = steps
-        .iter()
-        .map(|(label, _)| cx.text.measure_width_in(script, label) as i32 + theme.gap * 2)
-        .collect();
-
-    let air = theme.gap * 2;
-    let whole = chips.iter().sum::<i32>() + said + air * 2;
-    let mut x = head.right() - whole;
-    chip(cx, row, x, steps[0].0, steps[0].1, chips[0]);
-    x += chips[0] + air;
-
-    cx.text.set_px(theme.small_px);
-    let baseline = row.center_y() + cx.text.cap_height() as i32 / 2;
-    cx.text.draw(cx.fb, x, baseline, &of, false);
-    x += said + air;
-    chip(cx, row, x, steps[1].0, steps[1].1, chips[1]);
-}
-
-/// One chip of the heading, `w` wide at `x` on `row`, taking a tap onto `hit`.
-fn chip(cx: &mut Ctx, row: Rect, x: i32, label: &str, hit: Hit, w: i32) {
-    let theme: &Theme = cx.theme;
-    let script = cx.ui_script();
-    let box_ = Rect::new(x, row.y, w, row.h);
-    paint::stroke(cx.fb, box_, LIGHT, 1);
-    cx.text.set_px(theme.small_px);
-    let tw = cx.text.measure_width_in(script, label) as i32;
-    let baseline = box_.center_y() + cx.text.cap_height() as i32 / 2;
-    cx.text.draw_in(
-        script,
-        cx.fb,
-        box_.x + (box_.w - tw) / 2,
-        baseline,
-        label,
-        false,
-    );
-    cx.hit(hit, box_);
 }
 
 #[cfg(test)]

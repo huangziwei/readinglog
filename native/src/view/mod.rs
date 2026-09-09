@@ -701,6 +701,32 @@ mod tests {
     }
 
     #[test]
+    fn a_book_opens_on_its_statistics_and_steps_onto_its_marks() {
+        // The book screen is one track: the statistics page, then each page of
+        // its marks. Stepping is what walks it, and stepping off either end
+        // does nothing — the screen is left by a tab.
+        let mut s = State::new(third());
+        s.open_book(3);
+        assert_eq!(s.book_tab, BookTab::Statistics);
+        assert_eq!(s.marks_from, 0);
+
+        assert!(s.go_in_book(BookTab::Marks));
+        assert!(!s.go_in_book(BookTab::Marks), "already there");
+        s.marks_from = 5;
+        // Coming back to the statistics opens the marks at their head again.
+        assert!(s.go_in_book(BookTab::Statistics));
+        assert_eq!(s.marks_from, 0);
+
+        // And another book opens on its own statistics, whatever the last one
+        // was left showing.
+        s.go_in_book(BookTab::Marks);
+        s.marks_from = 5;
+        s.open_book(4);
+        assert_eq!(s.book_tab, BookTab::Statistics);
+        assert_eq!(s.marks_from, 0);
+    }
+
+    #[test]
     fn a_tab_tap_closes_the_book_open_over_it() {
         // The only way out of a book. Tapping the tab it was opened from
         // returns to that tab's screen and stays there.
