@@ -3,7 +3,8 @@
 # Author: _hzw
 
 # scripts/dumplogs.sh — writes $OUT: the $WORK/markers lines of every log in
-# $SOURCES, the $COLUMNS rows of $CATALOG, $STORE and $APP_LOG.
+# $SOURCES, the $COLUMNS rows of $CATALOG, $STORE, $APP_LOG and the zone file
+# $TZ_PATHS names.
 
 # LC_ALL=C orders markers.log by byte and takes lines that are not UTF-8.
 LC_ALL=C
@@ -31,6 +32,13 @@ EXT=/mnt/us/extensions/readinglog
 STORE=$EXT/sessions.tsv
 CONFIG=$EXT/config.xml
 APP_LOG=/mnt/us/logs/readinglog.log
+
+# $TZ_PATHS lists the zone file, the symlink every firmware keeps first and
+# the two layouts it resolves through behind it. $TZ_VARS lists KINDLE_TZ's
+# file beside it. Nothing else on a Kindle states a zone: there is no zoneinfo
+# database, and /etc/TZ reads UTC on every firmware.
+TZ_PATHS="/etc/localtime /var/local/system/tz /var/base-local/metadata/system/tz"
+TZ_VARS="/var/local/system/tzVar /var/base-local/metadata/system/tzVar"
 
 # $CATALOG_PATHS lists the catalog paths, newest firmware first.
 CATALOG_PATHS="/var/base-local/metadata/cc.db /var/local/metadata/cc.db /var/local/cc.db"
@@ -89,6 +97,25 @@ exits() {
     bad=$(sed -n 's/.*exit=\([0-9][0-9]*\).*/\1/p' "$1" | grep -v '^0$' | sort -u |
         tr '\n' ' ')
     echo "$all exits${bad:+, non-zero ${bad% }}"
+}
+
+# target answers what the symlink $1 points at, and nothing where $1 is not
+# one.
+target() {
+    ls -l "$1" 2>/dev/null | sed -n 's/.* -> //p'
+}
+
+# footer answers whether the zone file $1 ends in an empty POSIX-TZ footer —
+# two newlines with nothing between them. Every firmware-written zone file
+# does, and musl reads that as UTC for any instant past the file's last
+# transition, where glibc reads the last transition's own offset.
+footer() {
+    [ -f "$1" ] || { echo "no zone file"; return; }
+    left=$(tail -c 2 "$1" 2>/dev/null | tr -d '\n' | wc -c)
+    case $((left)) in
+    0) echo "empty" ;;
+    *) echo "present" ;;
+    esac
 }
 
 # say writes "$*" to standard error, a line at a time.
@@ -236,8 +263,41 @@ fi
 [ -f "$STORE" ] && cp "$STORE" "$WORK/e/sessions.tsv"
 [ -f "$APP_LOG" ] && cp "$APP_LOG" "$WORK/e/readinglog.log"
 
-# report.txt names /etc/version.txt, meminfo, $CONFIG's version, the $SOURCES
-# read with their sizes, and the lines each entry beside it holds.
+say "reading the clock"
+
+# $TZ_FILE is the first of $TZ_PATHS that opens, $TZ_VAR the KINDLE_TZ line
+# beside it. The file itself travels in the zip: it is small, and it is the
+# only thing that says what offset the device stands on.
+TZ_FILE=
+for path in $TZ_PATHS; do
+    [ -f "$path" ] || continue
+    TZ_FILE=$path
+    break
+done
+TZ_VAR=
+for path in $TZ_VARS; do
+    [ -r "$path" ] || continue
+    TZ_VAR=$(cat "$path" 2>/dev/null)
+    break
+done
+[ -n "$TZ_FILE" ] && cp "$TZ_FILE" "$WORK/e/localtime.tzif"
+
+# $LOG_NOW is syslogd's own wall clock, off the newest line it wrote, and
+# $LOG_FROM where that line came from. It is the clock every stored sitting is
+# stamped on, so `date` and it must agree.
+LOG_FROM=$LIVE_LOG
+LOG_NOW=$(tail -n 1 "$LIVE_LOG" 2>/dev/null | cut -c 1-13)
+case "$LOG_NOW" in
+[0-9][0-9][0-9][0-9][0-9][0-9]:[0-9][0-9][0-9][0-9][0-9][0-9]) ;;
+*)
+    LOG_FROM=$WORK/e/markers.log
+    LOG_NOW=$(tail -n 1 "$LOG_FROM" 2>/dev/null | cut -c 1-13)
+    ;;
+esac
+
+# report.txt names /etc/version.txt, meminfo, $CONFIG's version, the clock the
+# device and its log stand on, the $SOURCES read with their sizes, and the
+# lines each entry beside it holds.
 {
     echo "readinglog diagnostics"
     echo "written        $(date)"
@@ -246,6 +306,17 @@ fi
     echo "               $(cat /proc/device-tree/model 2>/dev/null) $(uname -m)"
     echo "memory         $(meminfo)"
     echo "app            $(sed -n 's|.*<version>\(.*\)</version>.*|\1|p' "$CONFIG" 2>/dev/null)"
+    echo
+    echo "clock          local    $(date)"
+    echo "               utc      $(date -u)"
+    echo "               offset   $(date '+%z') at epoch $(date '+%s'), per libc"
+    echo "               syslog   ${LOG_NOW:-no stamp}, off ${LOG_FROM##*/}"
+    echo "               date     $(date '+%y%m%d:%H%M%S'), the same shape as the line above"
+    echo "                        — minutes apart is an idle log, an hour apart is the fault"
+    echo "               zone     ${TZ_FILE:-none of $TZ_PATHS}, $(bytes "$TZ_FILE") bytes"
+    localtime=$(target /etc/localtime)
+    echo "               /etc/localtime -> ${localtime:-not a symlink}"
+    echo "               ${TZ_VAR:-no tzVar}, POSIX footer $(footer "$TZ_FILE")"
     echo
     echo "markers.log    $MARKER_LINES lines, off $LIVE live, $CHUNKS chunks, $DUMPS dumps, $DAYS days"
     echo "catalog.tsv    $(lines "$WORK/e/catalog.tsv") rows from ${CATALOG:-nowhere}"
@@ -257,6 +328,8 @@ fi
     echo "sources        $TOTAL read, $BYTES_READ bytes, $OUTSIDE more outside $DAYS days"
     echo "               the $LARGEST largest, in bytes:"
     sort -rn "$WORK/sizes" | head -n "$LARGEST" | sed 's/^/    /'
+    echo
+    echo "localtime.tzif is the zone file above, byte for byte."
     echo
     echo "markers.log holds the log lines carrying one of these and no others:"
     sed 's/^/    /' "$WORK/markers"
