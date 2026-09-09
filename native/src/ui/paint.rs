@@ -110,11 +110,7 @@ impl Palette {
 
 /// A box on the screen.
 /// The eleven colours `AnnotationColor` names on 5.19, and the neutral a mark
-/// stating none takes.
-///
-/// A `.sdr` states the colour verbatim and nothing here reads it, so a name
-/// this table does not hold — a colour a later firmware adds — takes the
-/// neutral rather than a wrong swatch.
+/// stating none, or a name this table does not hold, takes.
 const MARK_COLOURS: [(&str, [u8; 3]); 11] = [
     ("orange", [0xF5, 0xA6, 0x23]),
     ("yellow", [0xF3, 0xCE, 0x2B]),
@@ -131,9 +127,6 @@ const MARK_COLOURS: [(&str, [u8; 3]); 11] = [
 
 /// What the bar beside a marked passage is drawn in: the colour the sidecar
 /// stated, and [`DARK`] on a panel drawing grey or for a mark stating none.
-///
-/// A clipping carries no colour at all, so a mark the sidecar never reached
-/// takes the neutral — which is the honest answer, not a guess at one.
 pub fn mark_colour(name: &str, coloured: bool) -> [u8; 3] {
     if !coloured {
         return [DARK; 3];
@@ -309,51 +302,6 @@ pub fn stroke(fb: &mut Framebuffer, r: Rect, value: u8, width: i32) {
     fill(fb, Rect::new(r.right() - width, r.y, width, r.h), value);
 }
 
-/// An outline `width` thick inside the box, `radius` at the corners.
-pub fn round_stroke(fb: &mut Framebuffer, r: Rect, radius: i32, value: u8, width: i32) {
-    if r.x < 0 || r.y < 0 || r.w <= 0 || r.h <= 0 || width <= 0 {
-        return;
-    }
-    let (x, y) = (r.x as u32, r.y as u32);
-    let (w, h) = (r.w as u32, r.h as u32);
-    let radius = (radius.max(0) as u32).min(w / 2).min(h / 2);
-    let t = (width as u32).min(w).min(h);
-    let (straight_w, straight_h) = (w.saturating_sub(radius * 2), h.saturating_sub(radius * 2));
-    if straight_w > 0 {
-        fb.fill_rect(y, x + radius, straight_w, t, value);
-        fb.fill_rect(y + h - t, x + radius, straight_w, t, value);
-    }
-    if straight_h > 0 {
-        fb.fill_rect(y + radius, x, t, straight_h, value);
-        fb.fill_rect(y + radius, x + w - t, t, straight_h, value);
-    }
-    let (left, right) = (r.x + radius as i32, r.right() - 1 - radius as i32);
-    let (top, bottom) = (r.y + radius as i32, r.bottom() - 1 - radius as i32);
-    for (cx, cy, sx, sy) in [
-        (left, top, -1, -1),
-        (right, top, 1, -1),
-        (left, bottom, -1, 1),
-        (right, bottom, 1, 1),
-    ] {
-        corner_arc(fb, (cx, cy), radius, t, value, (sx, sy));
-    }
-}
-
-/// One quarter-circle: the pixels of the `radius × radius` corner box lying
-/// `[radius - t, radius]` from `at`. `s` holds two signs, each -1 or 1.
-fn corner_arc(fb: &mut Framebuffer, at: (i32, i32), radius: u32, t: u32, value: u8, s: (i32, i32)) {
-    let outer = radius as f32;
-    let inner = radius.saturating_sub(t) as f32;
-    for dy in 0..=radius as i32 {
-        for dx in 0..=radius as i32 {
-            let away = ((dx * dx + dy * dy) as f32).sqrt();
-            if away >= inner && away <= outer {
-                fb.put_pixel(at.0 + s.0 * dx, at.1 + s.1 * dy, value);
-            }
-        }
-    }
-}
-
 /// Two diagonals crossing at the centre of `r`, `size` from it to a stroke's
 /// end and `width` thick.
 pub fn cross(fb: &mut Framebuffer, r: Rect, size: i32, value: u8, width: i32) {
@@ -463,8 +411,8 @@ mod tests {
         let inner = row.inset_y(14);
         assert_eq!((inner.x, inner.w), (row.x, row.w), "the row lost its edges");
         assert_eq!((inner.y, inner.h), (114, 242));
-        // A row shallower than the air it asks for keeps no height, and still
-        // no margin.
+        // A row shallower than the air it asks for keeps no height, and no
+        // margin.
         let thin = Rect::new(39, 100, 1186, 10).inset_y(14);
         assert_eq!((thin.x, thin.w, thin.h), (39, 1186, 0));
     }

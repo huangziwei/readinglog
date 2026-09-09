@@ -3,26 +3,19 @@
 
 use crate::stats::Stats;
 use crate::ui::chrome;
-use crate::ui::paint::{self, INK, Rect, WHITE};
+use crate::ui::paint::{self, INK, Rect};
 use crate::ui::text::TextRenderer;
 use crate::ui::theme::Theme;
 
 use super::{Ctx, Hit, Search, books, pager};
 
-/// [`field`]'s proportions, as shares of its height.
-const GLYPH_R: f32 = 0.205;
-const GLYPH_AT: f32 = 0.568;
-const TEXT_GAP: f32 = 0.273;
-const CLEAR_W: f32 = 1.70;
+/// Half the width of [`field`]'s mark, as a share of its height.
+const CROSS: f32 = 0.19;
 
-/// The height [`field`] draws at, against `chrome::chip_height`.
-fn field_height(theme: &Theme) -> i32 {
-    chrome::chip_height(theme) * 5 / 4
-}
-
-/// The head [`field`] stands in, and the box left below it.
+/// The head [`field`] stands in, and the box left below it: the Books list's
+/// own head, holding `books::search_button` and every row below it in place.
 fn split(theme: &Theme, area: Rect) -> (Rect, Rect) {
-    area.split_top(field_height(theme) + theme.gap * 2)
+    area.split_top(chrome::chip_height(theme) + theme.gap * 2)
 }
 
 /// The books `query` names, by their index in [`Stats::books`], in the order
@@ -59,9 +52,21 @@ pub fn results_box(theme: &Theme, area: Rect, keyboard: bool) -> Rect {
     )
 }
 
+/// The height one result row is drawn at: the height the Books list gives a
+/// row of the whole page, held while the keyboard stands over part of it.
+fn row_span(theme: &Theme, area: Rect) -> i32 {
+    books::row_span(theme, split(theme, area).1)
+}
+
 /// Rows one page of the results holds.
 pub fn rows_per_page(theme: &Theme, area: Rect, keyboard: bool) -> usize {
-    books::rows_per_page(theme, results_box(theme, area, keyboard))
+    let box_ = results_box(theme, area, keyboard);
+    (((box_.h - pager::height(theme)) / row_span(theme, area)).max(1)) as usize
+}
+
+/// Where the last page of `count` results opens.
+pub fn last_page_at(theme: &Theme, area: Rect, keyboard: bool, count: usize) -> usize {
+    super::last_page_at(count, rows_per_page(theme, area, keyboard))
 }
 
 pub fn draw(cx: &mut Ctx, area: Rect, search: &Search) {
@@ -69,34 +74,32 @@ pub fn draw(cx: &mut Ctx, area: Rect, search: &Search) {
     let (head, _) = split(theme, area);
     field(
         cx,
-        Rect::new(head.x, head.y, head.w, field_height(theme)),
+        Rect::new(head.x, head.y, head.w, chrome::chip_height(theme)),
         &search.query,
         &search.preedit,
     );
 
-    let area = results_box(cx.theme, area, search.keyboard);
+    let row_h = row_span(theme, area);
+    let fits = rows_per_page(theme, area, search.keyboard);
+    let box_ = results_box(theme, area, search.keyboard);
     let found = listed(cx.stats, &search.query, cx.uncovered);
     if found.is_empty() {
-        nothing(cx, area);
+        nothing(cx, box_);
         return;
     }
-    let row_h = books::row_span(cx.theme, area);
-    let fits = books::rows_per_page(cx.theme, area);
-    let from = search
-        .from
-        .min(books::last_page_at(cx.theme, area, found.len()));
+    let last = super::last_page_at(found.len(), fits);
+    let from = search.from.min(last);
     let to = (from + fits).min(found.len());
     for (slot, index) in found[from..to].iter().enumerate() {
-        let row = Rect::new(area.x, area.y + slot as i32 * row_h, area.w, row_h);
+        let row = Rect::new(box_.x, box_.y + slot as i32 * row_h, box_.w, row_h);
         books::book_row(cx, row, *index);
         cx.hit(Hit::Book(*index), row);
     }
     if from > 0 || to < found.len() {
-        let last = books::last_page_at(cx.theme, area, found.len());
         let label = format!("{}–{} {} {}", from + 1, to, cx.s().of, found.len());
         pager::draw(
             cx,
-            pager::foot(cx.theme, area),
+            pager::foot(theme, box_),
             &label,
             [from > 0, to < found.len()],
             [Hit::SearchPage(0), Hit::SearchPage(last)],
@@ -104,35 +107,25 @@ pub fn draw(cx: &mut Ctx, area: Rect, search: &Search) {
     }
 }
 
-/// A rounded outline, the magnifier in its left end, `query` and `preedit`
-/// set tail-first with the caret after them, and [`Hit::SearchClear`]'s mark
-/// in the right end. `preedit` carries a rule under it.
+/// An outline the width of the page, the magnifier in the square at its left
+/// end and [`Hit::SearchClear`]'s mark in the square at its right. `query` and
+/// `preedit` are set tail-first, the caret after them, a rule under `preedit`.
 fn field(cx: &mut Ctx, at: Rect, query: &str, preedit: &str) {
     let theme: &Theme = cx.theme;
-    let h = at.h as f32;
-    let weight = (at.h / 26).max(theme.rule());
-    paint::round_stroke(cx.fb, at, at.h / 2, INK, weight);
-    let r = (h * GLYPH_R) as i32;
-    let centre = at.x + (h * GLYPH_AT) as i32;
-    paint::magnifier(
-        cx.fb,
-        Rect::new(centre - r, at.center_y() - r, r * 2, r * 2),
-        INK,
-        WHITE,
-        weight,
-    );
+    paint::stroke(cx.fb, at, INK, theme.rule());
+    books::magnifier(cx, Rect::new(at.x, at.y, at.h, at.h));
     cx.hit(Hit::SearchField, at);
 
-    // The mark stands on an empty `query` as well.
-    let clear = (h * CLEAR_W) as i32;
-    let zone = Rect::new(at.right() - clear, at.y, clear, at.h);
-    paint::cross(cx.fb, zone, (h * 0.17) as i32, INK, theme.rule() + 1);
+    // [`Hit::SearchClear`] stands on an empty `query` as well.
+    let zone = Rect::new(at.right() - at.h, at.y, at.h, at.h);
+    let arm = (at.h as f32 * CROSS) as i32;
+    paint::cross(cx.fb, zone, arm, INK, theme.rule() + 1);
     cx.hit(Hit::SearchClear, zone);
 
     let script = cx.ui_script();
     cx.text.set_px(theme.body_px);
     let baseline = at.center_y() + cx.text.cap_height() as i32 / 2;
-    let x = centre + r + (h * TEXT_GAP) as i32;
+    let x = at.x + at.h;
     let room = (zone.x - theme.gap - x).max(0) as u32;
     if query.is_empty() && preedit.is_empty() {
         let said = cx
@@ -142,7 +135,7 @@ fn field(cx: &mut Ctx, at: Rect, query: &str, preedit: &str) {
         cx.text.draw_in(script, cx.fb, x, baseline, said, false);
         return;
     }
-    // A line wider than `room` loses its head.
+    // `tail` drops the head of a line wider than `room`.
     let said = tail(cx.text, script, &format!("{query}{preedit}"), room);
     let w = cx.text.measure_width_in(script, &said) as i32;
     cx.text.draw_in(script, cx.fb, x, baseline, &said, false);
@@ -151,11 +144,12 @@ fn field(cx: &mut Ctx, at: Rect, query: &str, preedit: &str) {
         let rule = theme.rule();
         paint::hline(cx.fb, x + w - under, baseline + rule * 2, under, INK, rule);
     }
+    let caret = cx.text.cap_height() as i32 * 3 / 2;
     paint::vline(
         cx.fb,
         x + w + theme.gap / 2,
-        at.y + theme.gap,
-        at.h - theme.gap * 2,
+        at.center_y() - caret / 2,
+        caret,
         INK,
         theme.rule(),
     );
@@ -227,6 +221,26 @@ mod tests {
         let stats = shelf();
         assert_eq!(listed(&stats, "", true), [0, 1]);
         assert!(listed(&stats, "zzz", true).is_empty());
+    }
+
+    #[test]
+    fn the_head_and_the_rows_stand_where_the_books_list_puts_them() {
+        for panel in PANELS {
+            let theme = crate::ui::theme::Theme::for_screen(panel.0, panel.1);
+            let area = chrome::content_box(&theme);
+            let list = books::list_box(&theme, area, true);
+            assert_eq!(results_box(&theme, area, false), list, "{panel:?}");
+            assert_eq!(
+                row_span(&theme, area),
+                books::row_span(&theme, list),
+                "{panel:?}"
+            );
+            assert_eq!(
+                rows_per_page(&theme, area, false),
+                books::rows_per_page(&theme, list),
+                "{panel:?}"
+            );
+        }
     }
 
     #[test]

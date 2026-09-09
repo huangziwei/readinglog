@@ -16,7 +16,7 @@ const TITLE_LINES: usize = 2;
 /// The mark on the window chip, which a tap on it takes off the list.
 const DROP: &str = "×";
 
-/// The share of [`search_button`]'s side `paint::magnifier` draws into.
+/// The share of a search box's side [`magnifier`] draws into.
 const GLYPH: (i32, i32) = (3, 5);
 
 /// The height one book takes, set by the cover it carries.
@@ -171,21 +171,26 @@ fn search_button(cx: &mut Ctx, area: Rect) -> Rect {
     let side = chrome::chip_height(theme);
     let box_ = Rect::new(area.x, area.y, side, side);
     paint::stroke(cx.fb, box_, INK, theme.rule());
-    let glyph = side * GLYPH.0 / GLYPH.1;
+    magnifier(cx, box_);
+    cx.hit(Hit::Search, box_);
+    box_
+}
+
+/// The magnifier centred in `box_`, [`GLYPH`] of its shorter side across.
+pub(super) fn magnifier(cx: &mut Ctx, box_: Rect) {
+    let glyph = box_.w.min(box_.h) * GLYPH.0 / GLYPH.1;
     paint::magnifier(
         cx.fb,
         Rect::new(
-            box_.x + (side - glyph) / 2,
-            box_.y + (side - glyph) / 2,
+            box_.x + (box_.w - glyph) / 2,
+            box_.y + (box_.h - glyph) / 2,
             glyph,
             glyph,
         ),
         INK,
         paint::WHITE,
-        (glyph / 7).max(theme.rule()),
+        (glyph / 7).max(cx.theme.rule()),
     );
-    cx.hit(Hit::Search, box_);
-    box_
 }
 
 /// The order the list is in, at the right of the shelf chips' own row. One

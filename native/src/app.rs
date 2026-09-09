@@ -839,8 +839,8 @@ impl App {
                     return Action::Nothing;
                 }
                 self.settings.show_uncovered = pick;
-                // The lists are shorter or longer for it, and a page held
-                // part way down one of them names other books now.
+                // `show_uncovered` makes both lists shorter or longer, and a
+                // page held part way down one of them names other books.
                 self.state.books_from = 0;
                 self.state.list_from = 0;
                 self.settings.save();
@@ -941,7 +941,7 @@ impl App {
                     return Action::Nothing;
                 };
                 match search.query.is_empty() {
-                    // Nothing to take off, so the mark takes the search off.
+                    // An empty `query` takes the search off.
                     true => self.state.search = None,
                     false => {
                         search.query.clear();
@@ -1089,13 +1089,10 @@ impl App {
         let before = self.unnamed_books();
         let (headline, doing) = view::Retrying::Files.banner(self.lang.strings());
         self.banner(fb, headline, &doing, "", true)?;
-        // A book that arrives with its real title in place of a file name was
-        // named before and after, so the count the sources report is the only
-        // one that sees it.
+        // `rescued` counts what the sources report, not the change in names.
         let mut rescued = self.relearn();
-        // A sidecar is reached through the counter its class was logged with,
-        // so the logs are read again only for a class that still names no book
-        // and holds no counter. Nothing else this needs is in them.
+        // `wants_the_logs` holds for a class naming no book and holding no
+        // counter — the counter a sidecar is reached through.
         if self.store.wants_the_logs() {
             let (headline, doing) = view::Retrying::Logs.banner(self.lang.strings());
             self.banner(fb, headline, &doing, "", true)?;
@@ -1114,7 +1111,7 @@ impl App {
         self.hold(input, OUTCOME_LINGER)
     }
 
-    /// Measure every sitting the device's logs still reach again, over a
+    /// Measure every sitting the device's logs reach again, over a
     /// banner, and state how many stored rows moved. A row older than the logs
     /// keeps what it holds, and no row is given up.
     fn heal(&mut self, fb: &mut Framebuffer, input: &mut Input) -> Result<()> {
@@ -1365,9 +1362,8 @@ impl App {
                 let count =
                     view::search::listed(&self.stats, &search.query, self.settings.show_uncovered)
                         .len();
-                let box_ = view::search::results_box(&self.theme, area, search.keyboard);
-                let step = view::books::rows_per_page(&self.theme, box_) as i64;
-                let last = view::books::last_page_at(&self.theme, box_, count);
+                let step = view::search::rows_per_page(&self.theme, area, search.keyboard) as i64;
+                let last = view::search::last_page_at(&self.theme, area, search.keyboard, count);
                 let from = search.from as i64 + by * step;
                 let capped = from.clamp(0, last as i64) as usize;
                 if capped == search.from {
@@ -1418,7 +1414,7 @@ enum Action {
     Update,
     /// Name the books nothing names yet, over the whole screen.
     Retry,
-    /// Measure every sitting the logs still reach again, over the whole
+    /// Measure every sitting the logs reach again, over the whole
     /// screen.
     Heal,
     /// Carry out one of the config page's resets, over the whole screen.
