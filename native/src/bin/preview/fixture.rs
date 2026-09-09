@@ -575,6 +575,32 @@ fn marked(store: &mut Store, last: i64) {
             141,
             "There is no word in the harbour dialect for a journey that ends where it began, and no shortage of them.",
         ),
+        // Slot 13 is read on the last day drawn, so the day's own list states
+        // what was marked on it.
+        (
+            13,
+            Kind::Highlight,
+            State::Live,
+            0.017,
+            0,
+            "An interval is not a gap in the music; it is the part of the music that is only listening.",
+        ),
+        (
+            13,
+            Kind::Note,
+            State::Live,
+            0.0171,
+            0,
+            "Title comes from here.",
+        ),
+        (
+            13,
+            Kind::Highlight,
+            State::Live,
+            0.026,
+            0,
+            "Rests are counted, not waited out.",
+        ),
     ];
     for (slot, kind, state, through, back, body) in MARKS {
         let Some(book) = store.books.get(*slot) else {

@@ -279,7 +279,11 @@ fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
         .wrap_and_clamp_in(script, &book.title, words.w as u32, TITLE_LINES);
     let title_h = lines.len() as i32 * cx.text.line_height() as i32;
     cx.text.set_px(theme.small_px);
-    let author_h = match book.author.is_empty() {
+    // The line under the title carries the author at its left and what the
+    // book is marked with at its right. A row with neither gives the line's
+    // height back to the block.
+    let marked = super::marks_said(cx.s(), cx.stats.marks_counted(index));
+    let author_h = match book.author.is_empty() && marked.is_empty() {
         true => 0,
         false => theme.gap / 2 + cx.text.line_height() as i32,
     };
@@ -297,19 +301,11 @@ fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
     }
 
     cx.text.set_px(theme.small_px);
-    if !book.author.is_empty() {
+    if author_h > 0 {
         y += theme.gap / 2;
-        let author = cx
-            .text
-            .wrap_and_clamp_in(script, &book.author, words.w as u32, 1);
-        cx.text.draw_in(
-            script,
-            cx.fb,
-            words.x,
-            y,
-            author.first().map(String::as_str).unwrap_or_default(),
-            false,
-        );
+        let line = Rect::new(words.x, words.y, body.right() - words.x, words.h);
+        let author = book.author.clone();
+        super::under_title(cx, line, y, script, &author, &marked);
     }
 
     cx.text.set_px(theme.body_px);

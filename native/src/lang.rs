@@ -274,8 +274,10 @@ pub struct Strings {
     pub marks_tab: &'static str,
     /// What stands over the marks for a book carrying none.
     pub marks_none: &'static str,
-    /// The row counting a book's marks, beside `sittings` and `days`.
-    pub marks_row: &'static str,
+    /// What a book's row in a list says it carries, joined by `·` where it
+    /// carries both. `{d}` is filled by [`counted`].
+    pub n_highlights: &'static str,
+    pub n_notes: &'static str,
     /// Before the display location a clipping stated. The reader's own word
     /// for it: the Kindle's notebook writes `Location 608` over a highlight.
     pub at_location: &'static str,
@@ -550,7 +552,8 @@ const ENGLISH: Strings = Strings {
     statistics: "Statistics",
     marks_tab: "Highlights",
     marks_none: "Nothing marked in this book yet.",
-    marks_row: "Highlights and notes",
+    n_highlights: "{d} highlight[s]",
+    n_notes: "{d} note[s]",
     at_location: "Location",
     at_page: "page",
     kind_bookmark: "Bookmark",
@@ -798,7 +801,8 @@ const GERMAN: Strings = Strings {
     statistics: "Statistik",
     marks_tab: "Markierungen",
     marks_none: "In diesem Buch ist noch nichts markiert.",
-    marks_row: "Markierungen und Notizen",
+    n_highlights: "{d} Markierung[en]",
+    n_notes: "{d} Notiz[en]",
     at_location: "Position",
     at_page: "Seite",
     kind_bookmark: "Lesezeichen",
@@ -1044,7 +1048,8 @@ const JAPANESE: Strings = Strings {
     statistics: "統計",
     marks_tab: "ハイライト",
     marks_none: "この本にはまだ何も記されていません。",
-    marks_row: "ハイライトとメモ",
+    n_highlights: "ハイライト{d}",
+    n_notes: "メモ{d}",
     at_location: "位置",
     at_page: "ページ",
     kind_bookmark: "ブックマーク",
@@ -1270,7 +1275,8 @@ const SIMPLIFIED: Strings = Strings {
     statistics: "统计",
     marks_tab: "标注",
     marks_none: "这本书还没有任何标记。",
-    marks_row: "标注与笔记",
+    n_highlights: "标注{d}",
+    n_notes: "笔记{d}",
     at_location: "位置",
     at_page: "页码",
     kind_bookmark: "书签",
@@ -1504,7 +1510,8 @@ const TRADITIONAL: Strings = Strings {
     statistics: "統計",
     marks_tab: "標註",
     marks_none: "這本書還沒有任何標記。",
-    marks_row: "標註與筆記",
+    n_highlights: "標註{d}",
+    n_notes: "筆記{d}",
     at_location: "位置",
     at_page: "頁碼",
     kind_bookmark: "書籤",

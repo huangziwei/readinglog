@@ -411,13 +411,43 @@ impl Stats {
         crate::annotate::paired(&held)
     }
 
+    /// One book's marks as a row states them: passages marked, and notes
+    /// written. A note the reader made on a passage counts under the second
+    /// and the passage under the first, so the two never double-count a row.
+    pub fn marks_counted(&self, book: usize) -> (usize, usize) {
+        Self::counted(self.marked(book).iter().collect::<Vec<_>>().as_slice())
+    }
+
+    /// [`Self::marks_counted`] over the marks made on one day alone, which is
+    /// what a row listing that book's reading on that day states: the time
+    /// beside it is that day's, and so is this.
+    pub fn marks_counted_on(&self, book: usize, day: i64) -> (usize, usize) {
+        let held = self.marked(book);
+        let mine: Vec<&crate::annotate::Marked<'_>> = held
+            .iter()
+            .filter(|m| m.mark.day() == Some(day) || m.note.is_some_and(|n| n.day() == Some(day)))
+            .collect();
+        Self::counted(&mine)
+    }
+
+    /// The two figures [`Self::marks_counted`] states, over rows already
+    /// gathered.
+    fn counted(rows: &[&crate::annotate::Marked<'_>]) -> (usize, usize) {
+        let notes = rows
+            .iter()
+            .filter(|m| m.note.is_some() || m.mark.kind == Kind::Note)
+            .count();
+        let marked = rows.iter().filter(|m| m.mark.kind != Kind::Note).count();
+        (marked, notes)
+    }
+
     /// Marks made on one day, whatever book they belong to.
     pub fn marks_on(&self, day: i64) -> impl Iterator<Item = &Mark> {
         self.marks.iter().filter(move |m| m.day() == Some(day))
     }
 
-    /// How many passages one book carries a mark on, which is what
-    /// [`Self::marked`] lists. Every stored row is one the book still holds:
+    /// How many rows [`Self::marked`] lists for one book, which is the count
+    /// its tab carries. Every stored row is one the book still holds:
     /// `annotate::fold` writes none for a mark the reader deleted.
     pub fn marks_held(&self, book: usize) -> usize {
         self.marked(book).len()

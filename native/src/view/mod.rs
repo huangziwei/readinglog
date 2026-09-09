@@ -569,6 +569,58 @@ pub fn covered(stats: &Stats, uncovered: bool, read: &mut Vec<(usize, i64)>) {
     }
 }
 
+/// What a list row says a book carries: the passages marked and the notes
+/// written on them, joined where it carries both.
+///
+/// Empty for a book carrying neither, which is most of a shelf — a row states
+/// nothing rather than a pair of zeroes.
+pub fn marks_said(s: &Strings, (marked, notes): (usize, usize)) -> String {
+    let said = [(marked, s.n_highlights), (notes, s.n_notes)];
+    said.iter()
+        .filter(|(n, _)| *n > 0)
+        .map(|(n, one)| crate::lang::counted(one, *n as i64))
+        .collect::<Vec<String>>()
+        .join(" · ")
+}
+
+/// The line under a row's title: the author at the left of `area` and what the
+/// book is marked with at its right, so the counts fall under the row's own
+/// time figure.
+///
+/// The author is cut to what the counts leave, which is what keeps a long one
+/// from running into them. Drawn at [`Theme::small_px`], and the caller decides
+/// whether the line stands at all — `marked` empty and `author` empty together
+/// mean there is nothing to draw.
+pub fn under_title(
+    cx: &mut Ctx,
+    area: Rect,
+    baseline: i32,
+    script: crate::font::Script,
+    author: &str,
+    marked: &str,
+) {
+    let theme = cx.theme;
+    cx.text.set_px(theme.small_px);
+    let counts = match marked.is_empty() {
+        true => 0,
+        false => cx.text.measure_width(marked) as i32,
+    };
+    let room = (area.w - counts - theme.gap * 2).max(1);
+    let said = cx.text.wrap_and_clamp_in(script, author, room as u32, 1);
+    cx.text.draw_in(
+        script,
+        cx.fb,
+        area.x,
+        baseline,
+        said.first().map(String::as_str).unwrap_or_default(),
+        false,
+    );
+    if counts > 0 {
+        cx.text
+            .draw(cx.fb, area.right() - counts, baseline, marked, false);
+    }
+}
+
 /// The index the last page of `count` rows opens at, `deep` rows to a page.
 /// The pages tile the list, and the last one is the short one.
 pub fn last_page_at(count: usize, deep: usize) -> usize {

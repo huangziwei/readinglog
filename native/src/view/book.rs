@@ -31,7 +31,7 @@ fn unit(book: &BookStat, s: &Strings) -> (&'static str, &'static str) {
 }
 
 /// Rows of figures the reading section lists.
-const LINES: usize = 11;
+const LINES: usize = 10;
 
 /// What a row states in place of a figure it has none of.
 const DASH: &str = "—";
@@ -259,7 +259,6 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, tab: BookTab, marks_from: us
     let lines: [(&str, String); LINES] = [
         (s.sittings, book.sittings.to_string()),
         (s.days, days_note(&book, s)),
-        (s.marks_row, cx.stats.marks_held(index).to_string()),
         (s.average_a_day, date::duration(book.per_day(from), s)),
         (
             s.average_a_sitting,

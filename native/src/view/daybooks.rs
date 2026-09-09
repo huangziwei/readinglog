@@ -282,7 +282,11 @@ fn row(cx: &mut Ctx, area: Rect, day: i64, index: usize, secs: i64) {
 
     // The block keeps to `body`, and takes the air under it where the row is
     // too short for that — never the span strip.
-    let named = !author.is_empty();
+    // The line under the title carries the author at its left and what this
+    // book was marked with **on this day** at its right — the day's own share,
+    // as the time figure over it is. The Books list states the whole book.
+    let marked = super::marks_said(cx.s(), cx.stats.marks_counted_on(index, day));
+    let named = !author.is_empty() || !marked.is_empty();
     let set = Metrics::of(cx.text, theme);
     cx.text.set_px(theme.body_px);
     let room = body.h + theme.gap;
@@ -305,17 +309,8 @@ fn row(cx: &mut Ctx, area: Rect, day: i64, index: usize, secs: i64) {
     cx.text.set_px(theme.small_px);
     if named {
         y += theme.gap / 2;
-        let clipped = cx
-            .text
-            .wrap_and_clamp_in(script, &author, words.w as u32, 1);
-        cx.text.draw_in(
-            script,
-            cx.fb,
-            words.x,
-            y,
-            clipped.first().map(String::as_str).unwrap_or_default(),
-            false,
-        );
+        let line = Rect::new(words.x, words.y, body.right() - words.x, words.h);
+        super::under_title(cx, line, y, script, &author, &marked);
     }
 
     cx.text.set_px(theme.body_px);
