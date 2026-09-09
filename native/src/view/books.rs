@@ -27,18 +27,14 @@ fn row_height(theme: &Theme) -> i32 {
     theme.row_h * 5 / 2
 }
 
-/// The strip under the rows that the page counter sits in.
-///
-/// It stands as tall as the chips that head the page: the list opens and
-/// closes on a row of controls, and a page counter set in a band of its own
-/// height reads as a strip rather than as a caption adrift under the rows.
+/// The strip under the rows that the page counter sits in,
+/// `chrome::chip_height` tall.
 fn foot_height(theme: &Theme) -> i32 {
     chrome::chip_height(theme)
 }
 
-/// The strip [`foot_height`] reserved, and the air under the content box with
-/// it: the page counter reads against the tab strip's own edge, so the band it
-/// centres in runs to that edge and not to the box's foot.
+/// The bottom [`foot_height`] of `area`, deepened by [`chrome::floor_air`].
+/// Its foot is the tab strip's top edge.
 fn foot_box(theme: &Theme, area: Rect) -> Rect {
     let high = foot_height(theme);
     Rect::new(
@@ -49,8 +45,7 @@ fn foot_box(theme: &Theme, area: Rect) -> Rect {
     )
 }
 
-/// The width of the figures column, from `figure` alone: the band under it
-/// carries the percentage.
+/// The width `figure` measures at.
 fn figures_width(cx: &mut Ctx, figure: &str) -> i32 {
     cx.text.measure_width(figure) as i32
 }
@@ -86,15 +81,14 @@ pub fn listed(
     out
 }
 
-/// Whether a shelf holds anything read through, which is what the `Finished`
-/// chip narrows to. A book the list hides answers for nothing here: a chip
-/// that opens an empty shelf is worse than no chip.
+/// Whether any [`on_show`] book passes [`BookStat::is_finished`]. The
+/// `Finished` chip stands on it.
 pub fn shelved(stats: &Stats, uncovered: bool) -> bool {
     on_show(stats, uncovered).any(|b| b.is_finished())
 }
 
-/// The books a list holds, which is every one of them until the config page
-/// hides those with no jacket.
+/// [`Stats::books`], less those failing [`BookStat::has_cover`] where
+/// `uncovered` is unset.
 fn on_show(stats: &Stats, uncovered: bool) -> impl Iterator<Item = &BookStat> {
     stats
         .books
@@ -102,9 +96,9 @@ fn on_show(stats: &Stats, uncovered: bool) -> impl Iterator<Item = &BookStat> {
         .filter(move |b| uncovered || b.has_cover())
 }
 
-/// The shelves the row draws a chip apiece for. A record read through end to
-/// end offers no `Unfinished` chip, that shelf holding nothing — unless it is
-/// the shelf showing, which the row names wherever the list stands.
+/// The shelves [`shelf_chips`] draws a chip apiece for. [`Shelf::Unfinished`]
+/// drops where every [`on_show`] book passes [`BookStat::is_finished`], and
+/// stands where `on` names it.
 pub fn shelves(stats: &Stats, on: Shelf, uncovered: bool) -> &'static [Shelf] {
     const EVERY: [Shelf; 3] = [Shelf::All, Shelf::Finished, Shelf::Unfinished];
     let read_through = on_show(stats, uncovered).all(BookStat::is_finished);
@@ -145,8 +139,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
         empty(cx, area);
         return;
     }
-    // The row stands whenever there are books: a shelf with nothing read
-    // through offers no `Finished` chip, but every shelf can be reordered.
+    // `sort_chip` stands on every shelf.
     let (head, _) = area.split_top(chrome::chip_height(theme) + theme.gap * 2);
     let sort = sort_chip(cx, head, state.sort);
     let opens = match shelved(cx.stats, cx.uncovered) {
@@ -345,12 +338,10 @@ fn bare(cx: &mut Ctx, area: Rect, said: &str) {
 fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
     let theme: &Theme = cx.theme;
     let book = &cx.stats.books[index];
-    // The row runs the full width of the page. The chips over the list stand
-    // on the page's own edges, and a jacket held in from them reads as a
-    // second margin.
+    // `art` and `figures` keep `row`'s own edges.
     let inner = row.inset_y(theme.gap);
     let (art, rest) = inner.split_left(cover::width_for(inner.h));
-    // The title stands beside the box, so an empty one says only that.
+    // `cover::note` writes into a box holding no jacket.
     if !cx.covers.draw(cx.fb, art, &book.thumbnail) {
         cover::note(cx, art);
     }
@@ -545,7 +536,7 @@ mod tests {
         assert!(shelved(&stats, true), "the Finished chip stands");
         assert!(!shelved(&stats, false), "it opens an empty shelf");
 
-        // And the other way about: hiding leaves nothing unfinished.
+        // Hiding leaves nothing unfinished.
         let mut done = shelf_of(&[100.0, 40.0]);
         done.books[0].thumbnail = "/covers/0.jpg".into();
         assert_eq!(
@@ -594,15 +585,14 @@ mod tests {
         let mut some = read.clone();
         crate::view::covered(&stats, false, &mut some);
         assert_eq!(some, [(0, 600), (2, 900)]);
-        // What the hidden book was read for is still the record's own.
+        // `stats.books[1].seconds` holds the hidden book's reading.
         assert_eq!(stats.books[1].seconds, 600);
     }
 
     #[test]
     fn furthest_over_the_unfinished_opens_on_the_nearest_to_the_end() {
         let stats = shelf_of(&[100.0, 40.0, -1.0, 100.0, 92.0]);
-        // Every book read through leads on `Furthest`, and the shelf without
-        // them opens where reading is left.
+        // `Sort::Progress` leads on the books read through.
         assert_eq!(
             listed(&stats, Shelf::All, Sort::Progress, None, true),
             [0, 3, 4, 1, 2]
@@ -651,9 +641,7 @@ mod tests {
             let box_ = chrome::content_box(&theme);
             let area = list_box(&theme, box_, true);
             let foot = foot_box(&theme, area);
-            // The band runs to the tab strip and not to the box's foot: the
-            // air `chrome::content` leaves under the list reads as part of the
-            // strip, and a counter centred short of it sits high.
+            // `foot.bottom()` is the tab strip's top edge.
             assert_eq!(
                 foot.bottom(),
                 h as i32 - theme.tabs_h,
@@ -740,8 +728,7 @@ mod tests {
         assert_eq!(over(Shelf::All), [0, 1]);
         assert_eq!(over(Shelf::Finished), [0]);
         assert_eq!(over(Shelf::Unfinished), [1]);
-        // The two shelves under a window cut the whole of it in two, which is
-        // what lets a Finished figure state the count the list holds.
+        // The two shelves under a window sum to the whole of it.
         assert_eq!(
             over(Shelf::Finished).len() + over(Shelf::Unfinished).len(),
             2

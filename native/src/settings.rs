@@ -1,20 +1,17 @@
-//! Every setting the config page holds, and the file they survive a restart
-//! in. Each has a default the device supplies or the app picks, and a line
-//! this build does not know is kept on write.
+//! `Settings`: the fields `view::config` sets, and the `key=value` file
+//! `Settings::load` and `Settings::save` carry them in.
 
 use std::path::{Path, PathBuf};
 
 use crate::lang::Lang;
 
-/// Where the choices live, beside the extension and outside the store: a
-/// setting is not a sitting, and `Store`'s `HEADER` must stay free to change
-/// with what a sitting means.
+/// The paths `Settings::load` reads and `Settings::save` writes, in order.
 const SETTINGS_PATHS: &[&str] = &[
     "/mnt/us/extensions/readinglog/settings",
     "/var/local/readinglog/settings",
 ];
 
-/// How large the text on a screen is set.
+/// The size `Theme::sized` builds a screen at.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TextSize {
     Small,
@@ -26,9 +23,8 @@ pub enum TextSize {
 impl TextSize {
     pub const ALL: [TextSize; 3] = [TextSize::Small, TextSize::Medium, TextSize::Large];
 
-    /// What it multiplies the body size by. `chrome::tabs` does not take it:
-    /// its five cells are measured at the base size, and the chrome stays put
-    /// while the content scales.
+    /// The factor `Theme::sized` multiplies `BODY_PX` by. `Theme::tab_px`
+    /// takes `BODY_PX` unscaled.
     pub fn scale(self) -> f32 {
         match self {
             TextSize::Small => 0.85,
@@ -55,12 +51,9 @@ impl TextSize {
     }
 }
 
-/// The colours a chart is drawn in. `ui::paint::Palette::for_panel` reads it
-/// only where `eink::fb::has_cfa` holds.
+/// The colours `ui::charts` draws in, one bar hue apiece: 鳶 23°, 若竹 97°,
+/// 紺 222°. `ui::paint::Palette::for_panel` reads it under `eink::fb::has_cfa`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-/// Each names one plate of Sanzo Wada's dictionary, and they stand a hue
-/// family apart: a scheme is told from the next by hue before luma, and two
-/// blues at 6° read as one scheme drawn twice.
 pub enum ColorScheme {
     /// 鳶 across the ramp, marked in 黄金.
     TobiKogane,
@@ -69,7 +62,7 @@ pub enum ColorScheme {
     /// 紺's hue across the ramp, marked at 紅's.
     #[default]
     KurenaiKon,
-    /// The greys a panel without a colour filter draws, on one that has it.
+    /// `ui::paint::Palette::GREY`.
     Grey,
 }
 
@@ -97,13 +90,13 @@ impl ColorScheme {
     }
 }
 
-/// Which of a book's two sets of figures its page states.
+/// The figures `view::book` states.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Figures {
     /// `timer.model`'s counters, `TotalWPM` and `NewTimeLeft`.
     #[default]
     Device,
-    /// The sittings `BookStat` totalled.
+    /// The sittings `BookStat` totals.
     App,
 }
 
@@ -122,7 +115,7 @@ impl Figures {
     }
 }
 
-/// Which day a week is drawn from.
+/// The day `WeekStart::column_of` puts in column 0.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WeekStart {
     #[default]
@@ -133,9 +126,8 @@ pub enum WeekStart {
 impl WeekStart {
     pub const ALL: [WeekStart; 2] = [WeekStart::Monday, WeekStart::Sunday];
 
-    /// How far to rotate a Monday-first weekday index for this start.
-    /// `date::weekday` counts from Monday, which the ISO week and the grid
-    /// both do; a Sunday-first week holds the same days in another order.
+    /// The rotation `WeekStart::column_of` and `WeekStart::day_in` apply.
+    /// `date::weekday` counts from Monday.
     pub fn shift(self) -> usize {
         match self {
             WeekStart::Monday => 0,
@@ -143,7 +135,7 @@ impl WeekStart {
         }
     }
 
-    /// The weekday `index` sits at, counting from this start.
+    /// The column `monday_first` sits in.
     pub fn column_of(self, monday_first: usize) -> usize {
         (monday_first + self.shift()) % 7
     }
@@ -169,27 +161,26 @@ impl WeekStart {
     }
 }
 
-/// Everything the config page sets.
+/// The fields `view::config` sets.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub language: Lang,
     pub week_start: WeekStart,
     pub text_size: TextSize,
-    /// The colours a chart is drawn in.
+    /// The colours `ui::charts` draws in.
     pub color_scheme: ColorScheme,
-    /// Where a book's own figures come from.
+    /// The figures `view::book` states.
     pub figures: Figures,
-    /// Whether a total counts reading on books the catalog names none of.
+    /// Whether `Stats` totals hold sittings no `BookRecord` names.
     pub show_unnamed: bool,
-    /// Whether a book no jacket can be drawn for is listed at all.
+    /// Whether `view::books::listed` keeps a book failing `BookStat::has_cover`.
     pub show_uncovered: bool,
-    /// Lines this build does not know, kept verbatim.
+    /// The lines `Settings::parse` matched no key for, held for `to_text`.
     unknown: Vec<String>,
 }
 
 impl Settings {
-    /// The defaults: the device's own language, and the week the way the ISO
-    /// calendar and the existing grid draw it.
+    /// `detected` for `language`, `Default` for every other field.
     pub fn new(detected: Lang) -> Self {
         Self {
             language: detected,
@@ -203,8 +194,8 @@ impl Settings {
         }
     }
 
-    /// What is on disk, over the defaults. A missing or unreadable file is a
-    /// config page never opened, and not an error.
+    /// The first `SETTINGS_PATHS` entry that is a file, over
+    /// [`Settings::new`]. A path naming no file yields [`Settings::new`].
     pub fn load(detected: Lang) -> Self {
         match SETTINGS_PATHS.iter().map(Path::new).find(|p| p.is_file()) {
             Some(path) => Self::load_from(path, detected),
@@ -220,8 +211,8 @@ impl Settings {
         Self::parse(&text, detected)
     }
 
-    /// `key=value` a line, `#` a comment. A value that will not read keeps the
-    /// default: one bad line must not cost every other setting.
+    /// `key=value` a line, `#` a comment. A value `of_token` reads as `None`
+    /// keeps the [`Settings::new`] default for that one field.
     pub fn parse(text: &str, detected: Lang) -> Self {
         let mut out = Self::new(detected);
         for line in text.lines() {
@@ -285,9 +276,8 @@ impl Settings {
         out
     }
 
-    /// Write to the first path whose directory exists. A device that will not
-    /// take the file keeps the setting for this run and logs the refusal:
-    /// losing a preference is not worth refusing to draw over.
+    /// Writes [`Settings::to_text`] to the first `SETTINGS_PATHS` entry whose
+    /// parent is a directory. A failed write prints to stderr.
     pub fn save(&self) {
         for path in SETTINGS_PATHS.iter().map(PathBuf::from) {
             let Some(dir) = path.parent() else { continue };
@@ -312,7 +302,7 @@ mod tests {
         let s = Settings::new(Lang::Japanese);
         assert_eq!(s.language, Lang::Japanese);
         assert_eq!(s.week_start, WeekStart::Monday);
-        // And a file that is not there is the same thing, not an error.
+        // A path naming no file.
         let missing = Settings::load_from(Path::new("/nonexistent/settings"), Lang::German);
         assert_eq!(missing.language, Lang::German);
     }
@@ -357,8 +347,7 @@ mod tests {
         let s = Settings::parse("language=e\ntext_size=large\n", Lang::English);
         assert_eq!(s.color_scheme, ColorScheme::KurenaiKon);
         assert_eq!(s.text_size, TextSize::Large, "the rest still reads");
-        // A scheme no `of_token` arm names — including the two blues the page
-        // no longer offers, which a file written on an earlier build holds.
+        // Tokens `ColorScheme::of_token` answers `None` for.
         for token in ["notacolour", "azure", "asagi"] {
             let odd = Settings::parse(&format!("color_scheme={token}\n"), Lang::English);
             assert_eq!(odd.color_scheme, ColorScheme::KurenaiKon, "{token}");
@@ -368,7 +357,7 @@ mod tests {
     #[test]
     fn the_unnamed_books_are_counted_until_the_page_says_otherwise() {
         assert!(Settings::new(Lang::English).show_unnamed);
-        // A file written before this build carries no line for it.
+        // Text with no `show_unnamed` line.
         assert!(Settings::parse("language=e\n", Lang::English).show_unnamed);
         assert!(!Settings::parse("show_unnamed=no\n", Lang::English).show_unnamed);
         assert!(Settings::parse("show_unnamed=yes\n", Lang::English).show_unnamed);
@@ -377,10 +366,10 @@ mod tests {
     #[test]
     fn a_book_with_no_jacket_is_listed_until_the_page_says_otherwise() {
         assert!(Settings::new(Lang::English).show_uncovered);
-        // A file written before this build carries no line for it.
+        // Text with no `show_uncovered` line.
         assert!(Settings::parse("language=e\n", Lang::English).show_uncovered);
         assert!(!Settings::parse("show_uncovered=no\n", Lang::English).show_uncovered);
-        // And the two rows are set apart from one another.
+        // `show_uncovered` and `show_unnamed` are separate fields.
         let hidden = Settings::parse("show_uncovered=no\n", Lang::English);
         assert!(hidden.show_unnamed, "hiding one hid the other");
     }
@@ -395,7 +384,7 @@ mod tests {
 
     #[test]
     fn a_later_build_s_setting_survives_this_one() {
-        // A downgrade must not silently drop what a newer build wrote.
+        // `to_text` reprints `future_setting=7`.
         let text = "language=d\nfuture_setting=7\n";
         let s = Settings::parse(text, Lang::English);
         assert_eq!(s.language, Lang::German);
@@ -411,8 +400,7 @@ mod tests {
 
     #[test]
     fn a_sunday_week_shows_the_same_days_in_another_order() {
-        // Monday-first indices are what `date::weekday` answers; the setting
-        // only moves which column each lands in.
+        // `date::weekday` answers the Monday-first index.
         let (mon, sun) = (WeekStart::Monday, WeekStart::Sunday);
         assert_eq!(mon.column_of(0), 0, "Monday leads a Monday week");
         assert_eq!(sun.column_of(6), 0, "Sunday leads a Sunday week");
