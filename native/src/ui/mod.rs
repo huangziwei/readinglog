@@ -1,9 +1,6 @@
-//! On-screen drawing: text rasterization, the frame a screen sits in, and the
-//! shapes a reading log is read in.
-//!
-//! Every type size and every rule here is a design pixel at
-//! [`scale::DESIGN_DPI`]; [`theme::Theme`] maps it through [`scale::Scale`] for
-//! the panel in front of it.
+//! On-screen drawing. Every type size and rule here is a design pixel at
+//! [`scale::DESIGN_DPI`], which [`theme::Theme`] maps through [`scale::Scale`]
+//! for the panel in front of it.
 
 pub mod charts;
 pub mod chrome;

@@ -325,14 +325,9 @@ fn order_for(scripts: &[Script], wanted: Script, also: &[Script]) -> Vec<usize> 
     order
 }
 
-/// The most a lookup will newly read to answer one character.
-///
-/// A band's order runs the whole directory, and the firmware ships 128 MB of
-/// faces against a device that reports tens of MB free. A character no face
-/// carries would otherwise read every one of them in a single draw. The order
-/// puts the right script first, so a glyph absent from the first few is not
-/// going to be found in a Devanagari face further down: past this the
-/// character is uncovered and draws the hollow box it would have drawn anyway.
+/// The most a lookup will newly read to answer one character. The firmware
+/// ships 128 MB of faces against tens of MB free, and a band's order puts the
+/// right script first, so past this the character draws its hollow box.
 const WALK_CAP: usize = 4;
 
 /// The most face bytes held at once, past the primary. Loading a face parses
@@ -558,13 +553,9 @@ impl FontChain {
         }
     }
 
-    /// Give faces back until `coming` bytes will fit under [`RESIDENT_CAP`],
-    /// oldest first. `keeping` is the face about to be read, which is never
-    /// given up.
-    ///
-    /// A face given back becomes `Pending` again: the next character that
-    /// wants it reads it, which is one file read against holding tens of
-    /// megabytes nothing on the page needs.
+    /// Give faces back oldest first until `coming` bytes fit under
+    /// [`RESIDENT_CAP`], never `keeping`. A face given back is `Pending`, so
+    /// the next character wanting it pays one file read.
     fn evict(&mut self, keeping: usize, coming: u64) {
         while self.resident + coming > RESIDENT_CAP {
             let oldest = self

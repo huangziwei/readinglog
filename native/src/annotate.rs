@@ -1,50 +1,6 @@
-//! The two annotation sources, joined.
-//!
-//! `.sdr`'s rare sidecar is **the roster of what exists now**;
-//! `My Clippings.txt` is **the journal of every write, ever**. Neither is a
-//! superset of the other, and each holds what the other cannot:
-//!
-//! | | the sidecar | the clippings file |
-//! | --- | --- | --- |
-//! | the words | no — anchors only | **yes**, the only copy outside the book |
-//! | the colour, a real position, the tags | **yes** | no |
-//! | a mark the reader deleted | gone, correctly | **still there** |
-//! | a book whose sidecar was wiped | gone | **still there** |
-//!
-//! ## The join
-//!
-//! `AnnotationImpl` field 3 is `created`, epoch milliseconds;
-//! `Clipping.a` fills the record's stamp with `new Date()` at append time.
-//! Both are set inside one event on `ClippingsManager`'s single-thread
-//! executor, and both are the wall clock `Session::started_at` is on, so the
-//! two meet **on the second**.
-//!
-//! The stamp is also unique down the whole file — the executor serialises the
-//! appends and no reader makes two marks in one second — so it is a strong
-//! key. It is not a guaranteed one, and [`fold`] falls back to the book when
-//! two records share a second.
-//!
-//! ## What absence means, which is not the same on the two sides
-//!
-//! [`ClippingsManager`]'s delete handler is literally `return` on 5.18 and its
-//! update handler appends a second whole record. So the file shows a
-//! mis-highlight *and* its correction, and shows bookmarks the reader cleared
-//! away. A union of the two sources draws ghosts. Hence [`State`]:
-//!
-//! - **live** — a sidecar record carries this stamp. It exists.
-//! - **retired** — the book's sidecar is [`Roster::trusted`] and no record
-//!   carries it: the reader made this mark and then deleted it. **These are
-//!   not stored.** The reader cleared a bookmark, or dragged a handle and left
-//!   the first selection behind, and neither is a mark in a book or an act to
-//!   count on a day. The state exists so a ghost can be told from a mark and
-//!   refused, not so it can be kept.
-//! - **unconfirmed** — the book has no sidecar that could have said. A `.sdr`
-//!   stripped to a bare `assets/` while the clippings file still holds that
-//!   book's marks is an ordinary state, not a corner to fold away.
-//!
-//! [`ClippingsManager`]: crate::clippings
-//! [`Roster::trusted`]: crate::sidecar::Roster::trusted
-
+//! The two annotation sources joined: the `.sdr` rare sidecar is the roster of
+//! marks that exist now, `My Clippings.txt` the journal of every write ever.
+//! Neither is a superset, and a union of them draws marks the reader deleted.
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -54,17 +10,9 @@ use crate::identify::normalise;
 use crate::sidecar::{Roster, Shelf, Survey};
 use crate::store::{BookRecord, Store};
 
-/// Characters of a body the store keeps where the body is the **book's** own
-/// words rather than the reader's.
-///
-/// A note is the reader's writing: short, theirs, and the thing a reading log
-/// must never lose, so it is kept whole. A highlight's text belongs to the
-/// book, and an unbounded copy would put a publisher's prose into
-/// `sessions.tsv` and then into every archive beside it. So there is a bound —
-/// but it is set well past what a reader actually marks, because a passage cut
-/// mid-sentence is one they cannot place. `My Clippings.txt` holds whatever
-/// runs past it, on the same device, and a screen that wants it can read it
-/// live.
+/// Characters kept of a body that is the book's own words. A note is the
+/// reader's and is kept whole; `My Clippings.txt` holds whatever runs past
+/// this, on the same device.
 pub const EXCERPT: usize = 600;
 
 /// What the ellipsis on a cut body is.
@@ -144,10 +92,8 @@ pub struct Mark {
 }
 
 impl Mark {
-    /// Where this mark falls through the book, as a fraction, from the
-    /// sidecar's own position against the book's `extent`. `None` for a mark
-    /// no sidecar placed, and for a book whose extent nothing has stated —
-    /// there is no converting a display location into one of these.
+    /// Where this mark falls through the book. `None` without a sidecar
+    /// position or a stated extent: a display location does not convert.
     pub fn through(&self, extent: i64) -> Option<f64> {
         (self.start >= 0 && extent > 0).then(|| self.start as f64 / extent as f64)
     }
@@ -169,17 +115,9 @@ impl Mark {
     }
 }
 
-/// One row of a book's marks: a passage, and the note the reader wrote on it.
-///
-/// A note is **not** filed under a highlight. `Note` carries three fields —
-/// a log, its record name and its text — and no id of anything else, and
-/// `AnnotationImpl.a` writes it its own start and end like every other kind.
-/// So a note can stand alone, and the only thing tying one to a passage is
-/// that their ranges overlap.
-///
-/// That overlap is the whole link, so it is the whole rule. Where a note
-/// carries no position — its book having no sidecar to state one — it stands
-/// on its own rather than being guessed onto a neighbour.
+/// One row of a book's marks: a passage and the note written on it. The
+/// firmware files a note under nothing, so an overlap of their ranges is the
+/// only link there is, and a note with no position stands alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Marked<'a> {
     pub mark: &'a Mark,
@@ -251,25 +189,14 @@ pub struct Merge {
     pub held: usize,
 }
 
-/// What this module joins on, as a number.
-///
-/// **Bump it with every change that would give a different set of rows over
-/// unchanged files.** A record is left alone only while the sources *and* the
-/// rules that read them both stand, so a build that changes the join reaches a
-/// device whose files have not moved.
+/// **Bump with every change that would give different rows over unchanged
+/// files**, or the new join never reaches a device whose files have not
+/// moved.
 const RULES: u32 = 5;
 
-/// What a pass has to have seen for the rows it wrote to still stand: the
-/// clippings file as it was, the sidecars as they were, and the rules it read
-/// them under.
-///
-/// The file only grows, but it can be replaced wholesale, so a length alone
-/// will not do. The sidecar half is [`crate::sidecar::survey`], which reads
-/// each sidecar's length and modification time and never its bytes: **nothing
-/// here may be a figure that only a parse can state**, or the gate has to
-/// parse the whole shelf before it can say whether the shelf is worth parsing.
-/// A pass over an unchanged gate is a walk of `documents` and a `stat` a file,
-/// and no sidecar opened at all.
+/// What a pass must have seen for the rows it wrote to still stand.
+/// **Nothing here may be a figure only a parse can state**, or the gate has to
+/// parse the whole shelf to find out whether the shelf is worth parsing.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Gate {
     /// `My Clippings.txt`'s length in bytes.
@@ -307,13 +234,9 @@ pub fn wants(store: &Store, clips: &Path, survey: &Survey) -> bool {
     store.gate != Some(gate(clips, survey))
 }
 
-/// Join the two sources and fold what they say into `store`, replacing every
-/// `a` row it holds. `records` is `My Clippings.txt` already parsed —
-/// [`crate::identify::rescue_from`] wants the same records, and the launch
-/// reads the file once for both.
-///
-/// Nothing is read while the gate stands: the rows already stored are what
-/// this pass would write again, and `clips` is opened only to be `stat`ed.
+/// Join the two sources into `store`, replacing every `a` row. `records` is
+/// `My Clippings.txt` already parsed, since the launch reads it once for here
+/// and [`crate::identify::rescue_from`]. Nothing is read while the gate holds.
 pub fn fold(
     store: &mut Store,
     clips: &Path,
@@ -452,22 +375,9 @@ fn merge(records: &[Clipping], shelf: &Shelf, books: &[BookRecord]) -> Vec<Mark>
         .collect()
 }
 
-/// The second join: within one book and one kind, pair what the stamp left
-/// over **in reading order**.
-///
-/// `created` is the **sidecar's** clock, not the reader's: it is stamped when
-/// that record was filled, and a sidecar rebuilt — by a book removed and
-/// downloaded again — restamps every one of them. The stamps then no longer
-/// meet the clippings the reader made, and the words sit in one file with the
-/// places in the other.
-///
-/// Both sides are ordered by where they fall in the book, though: the sidecar
-/// by position and the clipping by display location, which are different axes
-/// but both monotone in reading order.
-///
-/// So where a book has **the same number** of leftovers on each side, the k-th
-/// is the k-th and the pairing is forced. Where the counts differ nothing is
-/// paired: there would be a choice to make, and no ground to make it on.
+/// The second join, for a rebuilt sidecar whose restamped records no longer
+/// meet the clippings: within one book and one kind, equal counts of leftovers
+/// pair k-th to k-th in reading order, and unequal counts pair nothing.
 fn in_order(
     records: &[Clipping],
     named: &[Option<&BookRecord>],
@@ -558,13 +468,9 @@ fn one(
     mark
 }
 
-/// The sidecar record carrying `clip`'s kind and stamp, as
-/// `(the roster, the record)`.
-///
-/// A stamp is unique down the whole clippings file, so a single match settles
-/// it. Where two books hold one second between them, the book the clipping
-/// names breaks the tie, and a tie nothing breaks is left unmatched rather
-/// than guessed at.
+/// The sidecar record carrying `clip`'s kind and stamp. A stamp is unique
+/// down the file, so one match settles it; where two books share a second the
+/// named book breaks the tie, and an unbroken tie is left unmatched.
 fn matching(clip: &Clipping, held: &[Held], named: Option<&BookRecord>) -> Option<(usize, usize)> {
     if clip.at.is_empty() {
         return None;
@@ -593,13 +499,9 @@ fn matching(clip: &Clipping, held: &[Held], named: Option<&BookRecord>) -> Optio
     }
 }
 
-/// Each record's `.sdr` name to its slot: the book's path with its directory
-/// and its last suffix cut is the name of the `.sdr` beside it, and that is
-/// the one string match a roster is placed by. No counters and no heuristics
-/// — `Store::recover`'s counter match is for a class nothing else can name,
-/// which is a different job.
-///
-/// The first of a run wins, which is the record a scan down `books` reached.
+/// Each record's `.sdr` name — its path, directory and last suffix cut — to
+/// its slot, first of a run winning. One string match places a roster; the
+/// counter match in `Store::recover` is for a different job.
 fn stems(books: &[BookRecord]) -> HashMap<&str, usize> {
     let mut out = HashMap::with_capacity(books.len());
     for (at, book) in books.iter().enumerate() {
@@ -652,25 +554,9 @@ fn bounded(kind: Kind, body: &str) -> String {
     out
 }
 
-/// The rows one merge came to, deduplicated and ordered.
-///
-/// Identity, in order:
-///
-/// 1. **The stamp**, where a sidecar record carried it — the row *is* that
-///    annotation, and its identity is the sidecar's own `(start, end)`.
-/// 2. **`(title, kind, body)`** otherwise. Two identical highlights made at
-///    different times are one mark in a log, and an update writes its record
-///    a second time with the body unchanged.
-/// 3. **Never the display location.** A location is roughly 150 positions
-///    wide and distinct marks routinely share one, so keying on it merges
-///    marks that are not the same mark.
-///
-/// And one rule the two sources together add: a row the sidecar does not carry
-/// whose words a **live** row already holds is that same annotation's earlier
-/// write, not a second mark. It goes, so a day's count counts the act once.
-///
-/// The bodies are compared whole here — [`bounded`] runs after — which is what
-/// lets one passage be found inside another.
+/// The rows one merge came to, deduplicated by the sidecar's `(start, end)`
+/// where it stated one and by `(title, kind, body)` otherwise. **Never by the
+/// display location**, which is ~150 positions wide and shared by real marks.
 fn settle(mut marks: Vec<Mark>) -> Vec<Mark> {
     // Earliest first, so the row kept is the one stating when the mark was
     // made and the bodies that follow are the later words.
@@ -679,10 +565,9 @@ fn settle(mut marks: Vec<Mark>) -> Vec<Mark> {
     });
 
     let mut out: Vec<Mark> = Vec::new();
-    // Two ways back into `out`, so that neither arm below is a scan of every
-    // row held so far. `standing` is the exact arm's whole test; `under` is
-    // every row of one book and one kind, which is the only pair
-    // [`words_hold`] can be asked about.
+    // Two ways back into `out`, so neither arm scans it. `standing` is the
+    // exact arm's whole test; `under` is the only pair `words_hold` can be
+    // asked about.
     let mut standing: HashMap<(i64, Kind, i64, i64), usize> = HashMap::new();
     let mut under: HashMap<(String, Kind), Vec<usize>> = HashMap::new();
     for mark in marks {
@@ -740,23 +625,9 @@ fn settle(mut marks: Vec<Mark>) -> Vec<Mark> {
     out
 }
 
-/// Whether two rows of one book and one kind are one mark: whether either
-/// passage holds the other.
-///
-/// `ClippingsManager.d` appends a whole second record every time a handle is
-/// dragged, so a passage the reader widened once is in the file two or three
-/// times over, each copy longer than the last and each holding the one before
-/// it. That containment is what says they are one mark. The stamps do not —
-/// a revision and the next mark are both a few seconds apart — and neither
-/// does the display location, which is wide enough to hold several distinct
-/// marks.
-///
-/// Nothing shorter than containment will do: two passages that merely overlap
-/// are two passages, and a book that quotes itself would otherwise lose one.
-///
-/// The book and the kind are the caller's: [`settle`] reaches its candidates
-/// through an index on exactly that pair, so the two titles are folded once
-/// each rather than twice per comparison.
+/// Whether either passage holds the other, the book and kind being the
+/// caller's. `ClippingsManager.d` appends a whole record per handle drag, so
+/// containment — nothing weaker — is what says two rows are one mark.
 fn words_hold(a: &Mark, b: &Mark) -> bool {
     if a.body.is_empty() || b.body.is_empty() {
         return false;
@@ -1024,10 +895,9 @@ mod tests {
 
     #[test]
     fn a_passage_widened_with_no_sidecar_to_say_so_is_still_one_mark() {
-        // No `.sdr`, so nothing states which of the three the book holds. The
-        // containment does: each is inside the next, so they are one passage
-        // the reader widened twice, opened when the first was made and reading
-        // as the last says.
+        // No `.sdr` to say which of the three the book holds, so containment
+        // does: each inside the next is one passage widened twice, opened when
+        // the first was made.
         let said = [
             "The AI\u{2019}s primary job is to decrease the wage",
             "The AI\u{2019}s primary job is to decrease the wage bill",
@@ -1132,10 +1002,9 @@ mod tests {
 
     #[test]
     fn a_book_re_downloaded_keeps_the_words_its_new_sidecar_lost() {
-        // A new `.sdr` stamps `created` when it received the mark, not when
-        // the reader made it, so it no longer meets the clipping appended the
-        // first time round. One leftover on each side of one book and one
-        // kind: the pairing is forced.
+        // A new `.sdr` restamps `created`, so it no longer meets the clipping
+        // appended the first time round. One leftover each side of one book
+        // and kind, so the pairing is forced.
         let books = [book(1000, "A Book", "A Book")];
         let shelf = shelf_of(vec![roster(
             "A Book",

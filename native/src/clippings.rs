@@ -1,9 +1,6 @@
-//! `My Clippings.txt`, the one place the reader writes an annotation's words
-//! down outside the book: plain UTF-8, appended, never rewritten.
-//!
-//! A record names its book by title and author alone. What turns that into a
-//! book is [`crate::identify`], which brackets the record's stamp with a
-//! sitting; nothing here reaches the store.
+//! `My Clippings.txt`: plain UTF-8, appended, never rewritten, the only copy
+//! of an annotation's words outside the book. A record names its book by title
+//! and author alone; nothing here reaches the store.
 
 use std::path::Path;
 
@@ -15,9 +12,8 @@ pub const CLIPPINGS_FILE: &str = "/mnt/us/documents/My Clippings.txt";
 /// bundle the reader ships, and the format's one invariant.
 const SEPARATOR: &str = "==========";
 
-/// What a mark is. The twelve `annotation.personal.*` records `ReaderSDK-impl`
-/// names on 5.19, which is what a `.sdr` sidecar writes; the seven above the
-/// line are the ones that also reach `My Clippings.txt`, and
+/// The twelve `annotation.personal.*` records of 5.19, which is what a `.sdr`
+/// writes. The seven above the line also reach `My Clippings.txt`;
 /// `ClippingsManager.C` refuses the rest.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Kind {
@@ -107,13 +103,8 @@ impl Kind {
         matches!(self, Self::Note | Self::StickyNote)
     }
 
-    /// Whether this kind marks a run of the book's own text.
-    ///
-    /// The five that do are the five with words to show. A bookmark and a pin
-    /// mark a place and carry none; an article is a whole piece saved rather
-    /// than a passage picked out of one; a graphical highlight is a region of
-    /// a page; and the three handwritten kinds keep their ink elsewhere and
-    /// leave only an id here.
+    /// Whether this kind marks a run of the book's own text, which is the
+    /// five kinds with words to show.
     pub fn marks_a_passage(self) -> bool {
         matches!(
             self,
@@ -156,13 +147,9 @@ const LINE_CAP: usize = 16_384;
 /// resyncs at the next [`SEPARATOR`]. The pattern writes five.
 const RECORD_CAP: usize = 64;
 
-/// Every record in the file at `path`, in write order. Empty where there is no
-/// file to read.
-///
-/// The file is streamed a record at a time. It is written by the firmware,
-/// appended to for the life of the device and bounded by nothing, so nothing
-/// here may hold one whole — a heavy highlighter's runs to several megabytes,
-/// and this is a 512 MB device.
+/// Every record in the file at `path`, in write order, streamed one at a
+/// time. The file is bounded by nothing and runs to megabytes, so **nothing
+/// here may hold one whole**.
 pub fn read(path: &Path) -> Vec<Clipping> {
     let file = match std::fs::File::open(path) {
         Ok(file) => file,
@@ -201,12 +188,9 @@ pub fn parse(text: &str) -> Vec<Clipping> {
     frames.out
 }
 
-/// One line, without its line ending and without the byte-order marks the
-/// writer scatters through the file.
-///
-/// `Clipping.gQ` raises its BOM flag when the file is absent and never lowers
-/// it, so every entry the session that created the file appended carries one.
-/// They are stripped anywhere, not only at byte 0.
+/// One line, without its ending or its byte-order marks. `Clipping.gQ` never
+/// lowers its BOM flag once raised, so they appear anywhere in the file, not
+/// only at byte 0.
 fn tidy(line: &str) -> String {
     let line = line.strip_suffix('\n').unwrap_or(line);
     let line = line.strip_suffix('\r').unwrap_or(line);
@@ -311,11 +295,9 @@ fn one(lines: &[&str]) -> Option<Clipping> {
     })
 }
 
-/// The title and author of a head line.
-///
-/// `{0} {1,choice,0# |1#({2})}`: a book with no author writes the title, the
-/// pattern's own space and the `0#` arm's space, so **a line ending in two
-/// spaces has no author** however many brackets the title carries.
+/// The title and author of a head line. Under `{0} {1,choice,0# |1#({2})}`
+/// **a line ending in two spaces has no author**, however many brackets the
+/// title itself carries.
 fn head(line: &str) -> (String, String) {
     if line.ends_with("  ") {
         return (line.trim_end().to_string(), String::new());
@@ -342,12 +324,9 @@ fn head(line: &str) -> (String, String) {
     (line.trim_end().to_string(), String::new())
 }
 
-/// The label and the stamp tail of a label line.
-///
-/// Split at the **last** space-bar: the page arm puts a ` | ` inside the label
-/// too, and Japanese writes a bare `|` there and none after the separator. A
-/// leading `-` opens the line in every bundle but Russian, which uses an EN
-/// DASH.
+/// The label and the stamp tail, split at the **last** space-bar: the page arm
+/// puts a ` | ` inside the label too. Russian opens the line with an EN DASH
+/// where every other bundle writes `-`.
 fn split_label(line: &str) -> (&str, &str) {
     let line = line
         .trim_start()
@@ -359,12 +338,9 @@ fn split_label(line: &str) -> (&str, &str) {
     }
 }
 
-/// A fragment of `<kind>.clipping.label.pattern` that names its kind, over the
-/// eleven bundles the reader ships.
-///
-/// **No fragment occurs in another kind's pattern in any bundle**, which is
-/// what lets one flat table stand for every language. A fragment added here
-/// has to keep that true.
+/// A fragment of `<kind>.clipping.label.pattern` naming its kind, over the
+/// eleven bundles. **No fragment occurs in another kind's pattern in any
+/// bundle**, and one added here has to keep that true.
 const FRAGMENTS: [(&str, Kind); 37] = [
     // 5.19 English only: the reader ships no localised bundle at that build.
     ("underline", Kind::Underline),
@@ -421,12 +397,9 @@ fn kind(label: &str, body: &str, start: i64, end: i64) -> Kind {
     }
 }
 
-/// The page label and the location range a label carries.
-///
-/// The location is plain digits — `user.location.number` is `{0,number,###0}`,
-/// with no grouping — so the digit runs are the numbers. Where the label
-/// carries a page it also carries a bar, except in Chinese, which brackets the
-/// location instead; the run before the location stands for the page there.
+/// The page label and the location range. `user.location.number` is
+/// `{0,number,###0}` so digit runs are the numbers; a page comes with a bar
+/// except in Chinese, which brackets the location instead.
 fn locate(label: &str) -> (String, i64, i64) {
     let (page_part, loc_part) = match label.rfind('|') {
         Some(at) => (&label[..at], &label[at + 1..]),
@@ -545,15 +518,9 @@ const MONTHS: [&str; 12] = [
     "December",
 ];
 
-/// The instant a stamp tail names, as `YYYY-MM-DDTHH:MM:SS`.
-///
-/// `{4,date,full} {4,time,medium}` in the JVM's default locale, and no
-/// firmware carries non-English `FormatData` — 5.16 and 5.18 ship
-/// `FormatData_en*` alone in `rt.jar` and 5.19's runtime image has no
-/// `jdk.localedata` module. So three shapes, all English: `Wednesday, June 24,
-/// 2026`, en_GB's `Wednesday, 24 June 2026` and en_IN's `Wednesday, 24 June,
-/// 2026`. The weekday carries nothing and is skipped, and so is the bundle's
-/// own word for *Added on*.
+/// The instant a stamp tail names, as `YYYY-MM-DDTHH:MM:SS`. No firmware
+/// carries non-English `FormatData`, so `{4,date,full} {4,time,medium}` has
+/// three English shapes: `June 24, 2026`, `24 June 2026`, `24 June, 2026`.
 fn stamp(tail: &str) -> Option<String> {
     let (at, name) = MONTHS
         .iter()
@@ -599,10 +566,8 @@ mod tests {
     use super::*;
 
     /// Files the reader would have written, one per firmware and language
-    /// mix. Every body is invented.
-    ///
-    /// A no-author title line **ends in two spaces**, which is what says it
-    /// has no author: an editor that trims them breaks these tests.
+    /// mix, every body invented. A no-author title line **ends in two
+    /// spaces**, so an editor that trims them breaks these tests.
     mod fixture {
         /// 5.19 English: every kind the file can carry, the 5.19-only
         /// underline, asterisk and circle among them, and a book with
@@ -684,12 +649,9 @@ mod tests {
             ==========\r\n\
         ";
 
-        /// Every bundle whose framing a naive parser gets wrong: Russian
-        /// opens the line with an EN DASH and writes its range with one;
-        /// Dutch writes ` t/m `; Japanese leaves no space after the bar;
-        /// Chinese brackets the location instead of barring it, so its page
-        /// arm has no separator at all; Italian opens its note location arm
-        /// with a space of its own.
+        /// Every bundle whose framing a naive parser gets wrong: Russian's
+        /// EN DASH, Dutch's ` t/m `, Japanese's bare bar, Chinese's brackets
+        /// and Italian's leading space.
         pub const SEABREEZE_MIXED: &str = "\
             \u{feff}Война и мир (Лев Толстой)\r\n\
             – Ваш выделенный отрывок в месте 900–930 | Добавлено: Wednesday, August 12, 2026 в 7:45:00 AM\r\n\
@@ -738,11 +700,9 @@ mod tests {
             ==========\r\n\
         ";
 
-        /// Everything that breaks a line-counting parser: no author, an empty
-        /// bookmark body, a body carrying a paragraph break, a body carrying
-        /// the separator's own shape, a title with its own brackets both with
-        /// an author and without, both clipping-limit forms, an emoji, a tab,
-        /// and one note appended twice.
+        /// Everything that breaks a line-counting parser: no author, empty
+        /// and multi-paragraph bodies, a body shaped like the separator,
+        /// bracketed titles, both limit forms, an emoji, a tab, a repeat.
         pub const HAZARDS: &str = "\
             \u{feff}A Sideloaded Manuscript  \r\n\
             - Your Highlight on Location 10-42 | Added on Wednesday, July 1, 2026 9:00:00\u{202f}AM\r\n\

@@ -554,10 +554,9 @@ pub fn parse_sessions<'a>(
 ) -> Vec<Session> {
     // [`Awake`] reads the whole stream before the first sitting closes.
     let lines: Vec<&str> = events.into_iter().collect();
-    // Which lines are reading-timer lines, read once. Five of the readers
-    // below want one of those and nothing else, and three want anything but,
-    // so asking each of them separately is a whole-line search apiece over the
-    // same stream — the largest thing a launch reads.
+    // Which lines are reading-timer lines, read once: the readers below each
+    // want one side or the other, and asking separately is a whole-line search
+    // apiece over the largest stream a launch reads.
     let timer: Vec<bool> = lines
         .iter()
         .map(|line| crate::log::is_timer(line))

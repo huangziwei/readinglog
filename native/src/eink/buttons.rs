@@ -52,10 +52,8 @@ pub struct Buttons {
 }
 
 impl Buttons {
-    /// Opens and grabs the page-button device. `Ok(None)` where no `gpio-keys`
-    /// device exists, leaving touch as the whole of the input.
-    /// The bezel reader, or `None` where the model has no page buttons — which
-    /// is most of them, and not a fault. [`describe`] states which for the log.
+    /// Opens and grabs the page-button device. `Ok(None)` where the model has
+    /// none — most of them — leaving touch as the whole of the input.
     pub fn open() -> Result<Option<Self>> {
         let Some(path) = find_button_device()? else {
             return Ok(None);

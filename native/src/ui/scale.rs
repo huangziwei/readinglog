@@ -1,32 +1,14 @@
-//! Physical sizing.
-//!
-//! Every type size in `ui::theme` is a *design pixel*, written for a
-//! [`DESIGN_DPI`] panel; [`Scale::font`] turns one into the device pixels that
-//! set it at the same size on the page anywhere else. A reading size is a
-//! physical size, so a constant that reaches the panel unscaled is 42 % too
-//! large at 212 ppi and 80 % too large at 167.
-//!
-//! The density is read off the panel width, because that is what the X server
-//! reports and nothing on the device names the model. Every width the shipped
-//! firmware reports is in [`PANELS`], and an unknown one takes [`DESIGN_DPI`] —
-//! the density of every Kindle from the Voyage on.
+//! Physical sizing. A type size is a *design pixel* written for a
+//! [`DESIGN_DPI`] panel, and a constant reaching the panel unscaled is 42 %
+//! too large at 212 ppi. Density is read off the width; nothing names a model.
 
 /// The density every design pixel is written at: 300 ppi, the Voyage and
 /// everything after it.
 pub const DESIGN_DPI: i32 = 300;
 
 /// Panel density by framebuffer width, for the widths that are not
-/// [`DESIGN_DPI`].
-///
-/// | width | device | ppi |
-/// |:--|:--|--:|
-/// | 600 | 6″ Kindle Touch, Basic 1–2 | 167 |
-/// | 758 | 6″ Paperwhite 1–2 | 212 |
-///
-/// The rest are 300: 1072 (Voyage, Paperwhite 3–4, Basic 4), 1236 (Paperwhite
-/// 5–6, Colorsoft), 1264 (Oasis 2–3), 1860 (Scribe). The nominal 768 px
-/// Paperwhite panel is not among them: the X server reports the 758 px
-/// framebuffer, which is what a window is laid out in.
+/// [`DESIGN_DPI`]. Every other shipped width is 300; the nominal 768 px
+/// Paperwhite is not one, since the X server reports its 758 px framebuffer.
 const PANELS: &[(u32, i32)] = &[(600, 167), (758, 212)];
 
 /// What one design pixel is worth on the panel being drawn.

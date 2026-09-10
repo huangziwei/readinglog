@@ -32,12 +32,9 @@ pub fn path(dir: &Path, key: &str) -> PathBuf {
     dir.join(COVERS_DIR).join(file_name(key))
 }
 
-/// Whether `path` opens a picture [`crate::ui::cover`] can draw: a JPEG, or a
-/// PNG for whatever was dropped into the cache by hand.
-///
-/// The store's cover-art service answers a key it holds no artwork for with a
-/// 60x40 GIF, written under the `.jpg` name a jacket would have had. The name
-/// is the one thing about such a file that says JPEG.
+/// Whether `path` opens a picture [`crate::ui::cover`] can draw. The store
+/// answers a key it holds no artwork for with a 60x40 GIF under the `.jpg`
+/// name a jacket would have had, so the name proves nothing.
 pub fn drawable(path: &Path) -> bool {
     let mut head = [0u8; 8];
     std::fs::File::open(path)
@@ -46,10 +43,8 @@ pub fn drawable(path: &Path) -> bool {
         && (head.starts_with(b"\xff\xd8\xff") || head == *b"\x89PNG\r\n\x1a\n")
 }
 
-/// Copy `source` to [`path`], through a `.partial` sibling and a rename.
-///
-/// `Err` on a `source` of zero bytes or over `MAX_BYTES`, and one of
-/// `ErrorKind::InvalidData` on a `source` [`drawable`] refuses.
+/// Copy `source` to [`path`] through a `.partial` and a rename. `Err` on zero
+/// bytes or over `MAX_BYTES`, `InvalidData` on one [`drawable`] refuses.
 pub fn keep(dir: &Path, key: &str, source: &Path) -> std::io::Result<PathBuf> {
     let bytes = std::fs::metadata(source)?.len();
     if bytes == 0 || bytes > MAX_BYTES {
@@ -82,12 +77,9 @@ pub fn held(dir: &Path, key: &str) -> bool {
     std::fs::metadata(&at).is_ok_and(|m| m.len() > 0) && drawable(&at)
 }
 
-/// The files in [`THUMBNAILS_DIR`] under `dir`, by the content key each names.
-/// One `read_dir`, no file opened.
-///
-/// This reaches a book the catalog no longer states a thumbnail for: the
-/// cache holds a jacket after the row naming it is gone, so a key is enough to
-/// find one for a book the catalog cannot name at all.
+/// The files in [`THUMBNAILS_DIR`] under `dir` by the key each names, in one
+/// `read_dir`. The cache keeps a jacket after the catalog row naming it goes,
+/// so a key alone still finds one.
 pub fn cached(dir: &Path) -> HashMap<String, PathBuf> {
     let mut out = HashMap::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -103,12 +95,9 @@ pub fn cached(dir: &Path) -> HashMap<String, PathBuf> {
     out
 }
 
-/// The content key `name` states, and `None` where it states none.
-///
-/// A jacket the store's cover-art service wrote is named
-/// `thumbnail_<key>_<cdeType>_portrait.jpg`. One taken out of a book on the
-/// device is named by `mkstemp` instead — six characters that reach neither
-/// the book nor its key — and those are what this passes over.
+/// The content key `name` states. The store writes
+/// `thumbnail_<key>_<cdeType>_portrait.jpg`; a jacket taken out of a book on
+/// the device is named by `mkstemp` and reaches nothing, so it answers `None`.
 fn keyed(name: &str) -> Option<&str> {
     let rest = name
         .strip_prefix("thumbnail_")?

@@ -497,10 +497,9 @@ mod tests {
         assert_eq!(listed_marks(&stats, "port", true).len(), 2);
     }
 
-    /// A search reads `Stats::folded`, which is each body lowercased and
-    /// Han-folded once per build. It must answer exactly what folding at the
-    /// keystroke answered — Traditional against Simplified included — and a
-    /// `Stats` built without it must still come to the same rows.
+    /// `Stats::folded` must answer exactly what folding at the keystroke
+    /// answered, Traditional against Simplified included, and a `Stats` built
+    /// without it must still come to the same rows.
     #[test]
     fn the_folded_body_answers_what_folding_at_the_keystroke_answered() {
         let queries = ["port", "PORT", "", "臺灣", "台湾", "nothing here"];

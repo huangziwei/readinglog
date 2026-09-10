@@ -1,6 +1,5 @@
-//! Every size on screen, from the panel and a [`TextSize`]. Type is a physical
-//! size — see `BODY_PX` — as is everything derived from it, and the panel's
-//! density decides what that comes to in pixels. [`Theme::pad`] and
+//! Every size on screen, from the panel and a [`TextSize`]. Type is a
+//! physical size, so density decides its pixels; [`Theme::pad`] and
 //! [`Theme::gap`] alone read the panel's width.
 
 use crate::settings::TextSize;
@@ -199,10 +198,9 @@ pub(crate) mod tests {
         }
     }
 
-    /// The two 6-inch families are the same page at two densities: 758 px at
-    /// 212 ppi and 1072 px at 300 both measure about 3.6 by 4.8 inches. Every
-    /// size the theme holds must land within a hair of the same physical
-    /// measure on the two, or the density is not being read.
+    /// The two 6-inch families are one page at two densities, so every size
+    /// the theme holds must land within a hair of the same physical measure on
+    /// both, or the density is not being read.
     #[test]
     fn one_page_at_two_densities_lays_out_the_same() {
         let pw2 = Theme::for_screen(758, 1024);

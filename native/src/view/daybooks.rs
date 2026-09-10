@@ -280,11 +280,9 @@ fn row(cx: &mut Ctx, area: Rect, day: i64, index: usize, secs: i64) {
     let (words, figures) = body.split_left((body.w - column_w).max(theme.gap));
     let words = Rect::new(words.x, words.y, (words.w - theme.gap * 2).max(1), words.h);
 
-    // The block keeps to `body`, and takes the air under it where the row is
-    // too short for that — never the span strip.
-    // The line under the title carries the author at its left and what this
-    // book was marked with **on this day** at its right — the day's own share,
-    // as the time figure over it is. The Books list states the whole book.
+    // The block keeps to `body`, taking the air under it where the row is too
+    // short — never the span strip. The line under the title states the day's
+    // own share of the marks, as the figure over it does; Books states all.
     let marked = super::marks_said(cx.s(), cx.stats.marks_counted_on(index, day));
     let named = !author.is_empty() || !marked.is_empty();
     let set = Metrics::of(cx.text, theme);

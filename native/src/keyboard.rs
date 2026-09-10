@@ -58,10 +58,8 @@ fn set(prop: &str, value: &str) -> bool {
     }
 }
 
-/// How much of a `screen` px tall screen the keyboard covers, anchored to its
-/// foot and drawn the full width.
-///
-/// [`KEYMAP`] first, then [`PANELS`], then a third of `screen`.
+/// How much of a `screen` px tall screen the keyboard covers, anchored to the
+/// foot and full width: [`KEYMAP`], then [`PANELS`], then a third.
 pub fn height(screen: i32) -> i32 {
     if let Some(said) = std::fs::read_to_string(KEYMAP).ok().and_then(|said| {
         let head: String = said.chars().take(2048).collect();

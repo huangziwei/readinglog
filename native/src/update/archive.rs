@@ -228,11 +228,8 @@ pub enum Source<'a> {
 }
 
 /// Write `entries` as an archive at `at`, stored and never deflated, through a
-/// `.partial` sibling and a rename. Names are `/`-separated and taken as
-/// given.
-///
-/// The reader above is this writer's other half: what goes in comes back out
-/// of [`Archive::read`] with its checksum standing.
+/// `.partial` and a rename. What goes in comes back out of [`Archive::read`]
+/// with its checksum standing.
 pub fn write(at: &Path, entries: &[(String, Source<'_>)]) -> Result<()> {
     if let Some(dir) = at.parent() {
         fs::create_dir_all(dir)?;

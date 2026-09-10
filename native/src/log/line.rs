@@ -309,12 +309,9 @@ pub fn from_book(line: &str) -> Option<i64> {
     Some(position + i64::from(kind == "HTMLPosition"))
 }
 
-/// Map each book's per-line `EndPos` fingerprint to its [`from_book`].
-/// `pending` drops before an `OpenBook` and after a `CloseBook`.
-///
-/// Only a [`super::Family::Timer`] line states any of this — the payloads every
-/// reader below wants sit behind `Information::`, which no other process
-/// writes — so the rest are passed over on the family alone.
+/// Map each book's per-line `EndPos` fingerprint to its [`from_book`], with
+/// `pending` dropped around an open and a close. Only a timer line states any
+/// of this, so the rest are passed over on the family alone.
 pub fn frombook_map<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<(i64, i64)> {
     let mut map: Vec<(i64, i64)> = Vec::new();
     let mut pending: Option<i64> = None;

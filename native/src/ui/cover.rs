@@ -1,9 +1,6 @@
-//! Book covers, decoded from the file a `BookRecord` names.
-//!
-//! [`Covers`] holds each decode, keyed by path and by the height asked for.
-//! A box no jacket could be drawn in says what it stands for: [`titled`]
-//! where nothing else names the book, [`note`] where the title is set beside
-//! it already.
+//! Book covers, decoded from the file a `BookRecord` names and held by
+//! [`Covers`] under path and height. A box no jacket could be drawn in says
+//! what it stands for, through [`titled`] or [`note`].
 
 use std::collections::HashMap;
 
@@ -57,10 +54,9 @@ impl Covers {
         Rect::new(area.x + (area.w - w) / 2, area.y + (area.h - h) / 2, w, h)
     }
 
-    /// Draw the cover for `path` inside `area`, centred, keeping its aspect,
-    /// and answer whether one was drawn. A `path` naming nothing, or a file
-    /// that will not decode, gets a plain outlined block for [`note`] or
-    /// [`titled`] to write into.
+    /// Draw `path`'s cover centred in `area`, keeping its aspect, answering
+    /// whether one was drawn. A path naming nothing gets an outlined block for
+    /// [`note`] or [`titled`] to write into.
     pub fn draw(&mut self, fb: &mut Framebuffer, area: Rect, path: &str) -> bool {
         let key = (path.to_string(), area.h);
         let thumb = self
@@ -122,10 +118,9 @@ pub fn titled(cx: &mut Ctx, area: Rect, title: &str, script: Script) {
 /// How far [`words`] sets under the size it is given to keep a word whole.
 const KEEP_WHOLE: f32 = 0.7;
 
-/// The largest size at or under `px` that holds every word of `said` inside
-/// `room`, and no smaller than [`KEEP_WHOLE`] of it. A word is a run between
-/// spaces: Han and kana hold none, breaking between characters instead, and a
-/// title set in them keeps `px`.
+/// The largest size at or under `px` holding every word of `said` inside
+/// `room`, floored at [`KEEP_WHOLE`] of it. Han and kana have no spaces to
+/// break on, so a title set in them keeps `px`.
 fn fitting_px(text: &mut TextRenderer, script: Script, said: &str, room: i32, px: f32) -> f32 {
     let run = Script::resolve(script, said);
     let floor = px * KEEP_WHOLE;

@@ -1,25 +1,6 @@
-//! What this app writes about itself: one line a launch, under a header block
-//! restating the facts that only change when the device or the build does.
-//!
-//! Everything here goes to stderr, which the shell appends to [`LOG_PATH`].
-//! The binary reads that file for one purpose only — to see whether the header
-//! it is about to write is the one already standing — and it reads the tail,
-//! never the whole: a log outgrows the RAM that would hold it.
-//!
-//! ## Severity
-//!
-//! A line opens with [`FAILED`] or [`WARNED`] at column 0, or with no marker
-//! at all where it states a fact. Three parties keep the convention: this
-//! module, every `eprintln!` in the tree, and `readinglog.sh`, which marks a
-//! non-zero `exit=` the same way.
-//!
-//! The marker is what makes a failure findable. A bare prefix is not: `covers:`
-//! alone names both a jacket that would not copy and the count of jackets held.
-//!
-//! A failure that repeats every launch for a reason the reader cannot act on is
-//! a **count**, not a line — see [`crate::store::Store::keep_covers`]. Marking
-//! such a run loud makes the log worse, not better.
-
+//! What this app writes about itself: one line a launch under a header block
+//! restating what only changes with the device or the build. It goes to stderr,
+//! which the shell appends to [`LOG_PATH`], and only that file's tail is read.
 use std::fmt::Write as _;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -140,19 +121,9 @@ pub struct Trimmed {
     pub blocks: usize,
 }
 
-/// Cut `log` back, keeping — in this order of precedence:
-///
-/// 1. every [`FAILED`] and [`WARNED`] line, wherever it sits. They are the
-///    point of the file and no trim may drop one.
-/// 2. everything from the **previous** [`MARK`] block onward, which is the
-///    span that answers "did this start when they upgraded?".
-/// 3. failing that, everything from the last block, when two blocks are still
-///    over `ceiling`.
-///
-/// Answers `None` where the file is under `ceiling` and nothing was done. The
-/// file is streamed a line at a time and rewritten through a `.partial`: a log
-/// outgrows the RAM that would hold it, and a torn rename must cost the trim
-/// rather than the log.
+/// Cut `log` back to `ceiling`, keeping every [`FAILED`] and [`WARNED`] line
+/// wherever it sits, then as far back as the previous [`MARK`] block will fit.
+/// Streamed a line at a time: a log outgrows the RAM that would hold it.
 pub fn trim(log: &Path, ceiling: u64) -> Option<Trimmed> {
     let before = std::fs::metadata(log).ok()?.len();
     if before <= ceiling {
@@ -178,11 +149,9 @@ pub fn trim(log: &Path, ceiling: u64) -> Option<Trimmed> {
     let dropped = marks.iter().filter(|&&at| at < from).count();
     let partial = log.with_extension("partial");
     let kept = copy_kept(log, &partial, from).ok()?;
-    // This must write back through the same inode, never rename a file into
-    // place. The shell runs the binary as `2>> $LOG` and holds one descriptor
-    // on this file for the whole launch; a descriptor on an unlinked inode
-    // takes every line printed afterwards — the header block and the launch
-    // line included — nowhere.
+    // **Write back through the same inode, never rename into place.** The
+    // shell holds one `2>>` descriptor on this file for the whole launch, and
+    // an unlinked inode takes every line printed afterwards nowhere.
     if put_back(&partial, log).is_err() {
         return None;
     }
@@ -596,17 +565,9 @@ mod tests {
         );
     }
 
-    /// Every line the device layers print, and what each is.
-    ///
-    /// A device fact — the panel, the touchscreen, the bezel — is the same on
-    /// every launch of one build on one device, so it belongs in the header
-    /// block and never in the body. A line that reports one of these from the
-    /// open path is a per-launch invariant however short it is, and they add
-    /// up faster than anything else in the file.
-    ///
-    /// This pins the ones that are allowed to stand: each is an *event* —
-    /// something that happened to a running app — or a failure carrying its
-    /// own marker. Adding to this list is a decision, not an accident.
+    /// A device fact is the same on every launch of one build, so it belongs
+    /// in the header block and never in the body. Only an event or a marked
+    /// failure may print from the open path, and this list is not an accident.
     #[test]
     fn the_device_layers_state_facts_in_the_header_and_events_in_the_body() {
         const SOURCES: [(&str, &str); 3] = [

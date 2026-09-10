@@ -1,7 +1,6 @@
-//! D-Bus messages, marshalled and unmarshalled.
-//!
-//! Every alignment is counted from the head of the message. A body opens on
-//! an 8-byte boundary, and aligns the same read on its own.
+//! D-Bus messages, marshalled and unmarshalled. Every alignment counts from
+//! the head of the message; a body opens on an 8-byte boundary and aligns the
+//! same read on its own.
 
 /// The byte every message this build writes and reads opens with. libdbus
 /// marshals in the sender's own order, and every device here is little.

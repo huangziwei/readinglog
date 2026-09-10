@@ -97,10 +97,8 @@ fn fold(events: &[Event], screensaver: Atom, covered: bool, size: (u32, u32)) ->
     pump
 }
 
-/// The keysym `keycode` carries under `state`.
-///
-/// `get_keyboard_mapping` runs once per press. Keycodes 220 to 254 are
-/// rewritten between presses.
+/// The keysym `keycode` carries under `state`. `get_keyboard_mapping` runs
+/// once per press: keycodes 220 to 254 are rewritten between them.
 fn keysym_of(conn: &RustConnection, keycode: u8, state: u16) -> Option<u32> {
     let reply = conn.get_keyboard_mapping(keycode, 1).ok()?.reply().ok()?;
     // A keycode with one keysym has no shifted column.

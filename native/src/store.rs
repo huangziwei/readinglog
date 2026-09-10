@@ -610,12 +610,9 @@ impl Store {
         )
     }
 
-    /// Every `EndPos` class each counter pair was ever stated for: the
-    /// sittings carrying their own last reading of it, and the `t` rows
-    /// standing for those a record holds no sitting counter for.
-    ///
-    /// Every pair at once, so that a shelf of sidecars costs one pass over the
-    /// sittings rather than a pass per card.
+    /// Every `EndPos` class each counter pair was stated for, all pairs at
+    /// once: the sittings carrying their own last reading, and the `t` rows
+    /// standing for the classes no sitting counter reaches.
     fn classes_by_counter(&self) -> std::collections::HashMap<(i64, i64), Vec<i64>> {
         let mut out: std::collections::HashMap<(i64, i64), Vec<i64>> =
             std::collections::HashMap::new();
@@ -765,11 +762,9 @@ impl Store {
     /// records changed. A book `catalog` names has its record merged; one it
     /// stops naming keeps what it holds.
     pub fn remember(&mut self, catalog: &[Book]) -> usize {
-        // Every record this pass moved or added, counted as it happens.
-        //
-        // `was_on[i]` is whether the catalog named this record last pass. A
-        // record it stops naming has moved, which is why `moved` opens as a
-        // copy of it: a slot the loop never reaches keeps that answer.
+        // Every record this pass moved or added. `moved` opens as a copy of
+        // `was_on` so that a slot the loop never reaches counts as moved
+        // exactly when the catalog has stopped naming it.
         let was_on: Vec<bool> = self.books.iter().map(|r| r.on_device).collect();
         let mut moved = was_on.clone();
         for record in &mut self.books {
@@ -819,10 +814,9 @@ impl Store {
 
     /// Name reading the catalog cannot: `sidecars` against [`Self::classes_by_counter`].
     pub fn recover(&mut self, sidecars: &[sidecar::Counter]) -> usize {
-        // Drop a pairing whose extent a record carries under another key. The
-        // keys under one extent are gathered first because `retain` cannot
-        // read `books` while it holds `pairs`; do not reach for a clone of
-        // `books` instead, which is the whole record copied every launch.
+        // Drop a pairing whose extent a record carries under another key.
+        // `retain` cannot read `books` while it holds `pairs`, so the keys are
+        // gathered first; never a clone, which copies the whole record.
         if !self.pairs.is_empty() {
             let mut keyed: std::collections::HashMap<i64, Vec<&str>> =
                 std::collections::HashMap::new();
@@ -907,16 +901,9 @@ impl Store {
         out
     }
 
-    /// The record as the naming pass reads it, in one number.
-    ///
-    /// [`Self::name_from`] takes a witness, finds the sitting bracketing its
-    /// instant, refuses the class where a record already names it better, and
-    /// lands the claim on a record carrying that title or key. So its answer
-    /// moves only when one of three things does: the sittings' brackets, which
-    /// class each belongs to, or the records a claim could land on.
-    ///
-    /// `recover` reads the same sittings through their counters, and `pairs`,
-    /// which it also writes.
+    /// The record as the naming pass reads it, in one number: the sittings'
+    /// brackets and counters, which class each belongs to, and the records a
+    /// claim could land on. Anything the pass reads has to be taken here.
     pub fn naming_stamp(&self) -> u64 {
         let mut stamp = crate::stamp::Stamp::default();
         for s in &self.sessions {
@@ -1320,13 +1307,9 @@ impl Store {
             .and_then(|f| self.books.iter().position(|b| b.cde_key == f))
     }
 
-    /// The first record carrying `extent`, by binary search.
-    ///
-    /// [`Self::sort_books`] orders `books` on `(extent, cde_key)`, so this is
-    /// a search on the vector's own key. Records sharing an extent are
-    /// ordinary, and callers depend on the **first** of that run: hence
-    /// `partition_point`, and not `binary_search_by_key`, which answers an
-    /// arbitrary one.
+    /// The first record carrying `extent`, over the key [`Self::sort_books`]
+    /// orders on. Records share an extent routinely and callers want the
+    /// **first** of the run, so `partition_point`, never `binary_search`.
     fn slot_at(&self, extent: i64) -> Option<usize> {
         let at = self.books.partition_point(|b| b.extent < extent);
         self.books
@@ -1426,11 +1409,9 @@ impl Store {
         for (extent, file) in &other.pairs {
             self.learn_pair(*extent, file);
         }
-        // A mark the record does not hold. The gate goes: the sources on this
-        // device never stated these, and the next pass reads them again.
-        //
-        // Sort and dedup, not a membership test per mark: that is `O(M²)` with
-        // three string compares a time.
+        // A mark the record does not hold, so the gate goes and the next pass
+        // reads the sources again. Sorted and deduped, never a membership test
+        // per mark.
         let held = self.marks.len();
         self.marks.extend(other.marks.iter().cloned());
         self.sort_marks();
@@ -1802,12 +1783,7 @@ fn taken(book: &Book) -> BookRecord {
     record
 }
 
-/// Take what `book` states over what `record` holds, field by field. A cloud
-/// row states no extent and no percentage, and a record carrying either from an
-/// earlier pass keeps it.
-/// What one pass of [`Store::keep_covers`] came to. The counts are what a
-/// launch line states; the names are what a reader would have to go looking
-/// for otherwise.
+/// What one pass of [`Store::keep_covers`] came to.
 #[derive(Default)]
 pub struct Jackets {
     /// Records whose `cover` changed.
@@ -1854,11 +1830,8 @@ fn first_few(names: &[String]) -> String {
     }
 }
 
-/// Where `book`'s record sits, through an index of `cde_key` to slot.
-///
-/// The order is: a record under this key carrying this extent, then the first
-/// record under this key whatever its extent. `by_key`'s slots are in slot
-/// order, which is what makes "first" mean the slot a caller expects.
+/// Where `book`'s record sits: one under this key carrying this extent, else
+/// the first under this key whatever its extent.
 fn slot_in(
     by_key: &std::collections::HashMap<String, Vec<usize>>,
     books: &[BookRecord],
@@ -1868,15 +1841,9 @@ fn slot_in(
     if let Some(&at) = slots.iter().find(|&&at| books[at].extent == book.extent) {
         return Some(at);
     }
-    // A row stating no size must not take a record that states one.
-    //
-    // The catalog carries **two rows under one `cde_key`** for a book bought
-    // from the store and then downloaded: the purchase, with no size, no
-    // location and the marketplace's own title, and the file, with all three.
-    // Both are the same book, and the sized one states strictly more. Folding
-    // the unsized row onto the sized record writes the marketplace title over
-    // the file's, the sized row writes it back on the same pass, and the
-    // record moves every launch for ever.
+    // The catalog carries two rows under one key for a book bought and then
+    // downloaded, and the unsized one is the purchase. It must not take the
+    // record the file's row holds, or the two write over each other for ever.
     if book.extent == 0 {
         return None;
     }
@@ -1885,11 +1852,8 @@ fn slot_in(
 }
 
 /// Fold what the catalog states into `record`, answering whether anything
-/// about it moved. That answer is what [`Store::remember`] counts.
-///
-/// `on_device` is not judged here. [`Store::remember`] lowers it on every
-/// record before the pass, so whether it moved is a question about the pass
-/// and not about this record.
+/// moved. `on_device` is [`Store::remember`]'s to judge, since it lowers it on
+/// every record before the pass.
 fn merge(record: &mut BookRecord, book: &Book) -> bool {
     let mut moved = false;
     for (field, stated) in [
@@ -1932,14 +1896,9 @@ fn row(out: &mut String, args: std::fmt::Arguments) {
     out.push('\n');
 }
 
-/// Decimal places a `b` row carries for a place in a book.
-///
-/// **A record must hold no more precision than its row can write.** The
-/// catalog states `p_percentFinished` as a whole `f64`; a record keeping all
-/// of it writes six places, reads six places back, and compares unequal
-/// against the catalog on the pass after — so an unchanged shelf reports a
-/// changed record on every launch and the whole store is written to flash
-/// again. [`stored_percent`] is what keeps the two ends the same number.
+/// Decimal places a `b` row carries for a place in a book. **A record must
+/// hold no more precision than its row can write**, or it compares unequal
+/// against the catalog on the pass after and the store is rewritten for it.
 const PERCENT_PLACES: usize = 6;
 
 /// `percent` as a `b` row can hold it.
@@ -2052,21 +2011,9 @@ fn read_mark<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Mark> {
     out.state.is_in_the_book().then_some(out)
 }
 
-/// What a pass over the naming sources stood at, so that a pass finding the
-/// same again can be skipped whole.
-///
-/// The three sources are read on every launch while any class still wants a
-/// name — and a class whose book has been deleted wants one **for ever**, so
-/// a record holding one never stops reading `vocab.db`, the clippings file
-/// and every sidecar on the shelf, to name nothing, on every launch. Keeping
-/// the unnameable class is right: the book may come back and the reading
-/// relinks to it. Asking again while nothing has moved is not.
-///
-/// Everything the pass reads is here. Two of the sources are files, and a
-/// `stat` says whether either has moved. The shelf is
-/// [`crate::sidecar::Survey`], which is that walk without the parses. The
-/// record's own half is [`Store::naming_stamp`]: the classes wanting a name,
-/// the sittings that bracket them, and the records a claim could land on.
+/// What a pass over the naming sources stood at, so one finding the same again
+/// is skipped whole. **Everything the pass reads has to be here**, and none of
+/// it may be a figure only a parse can state.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Sources {
     /// `vocab.db`'s length and modification time.
@@ -2085,13 +2032,9 @@ pub struct Sources {
     pub rules: u32,
 }
 
-/// An `n` row: what the pass that wrote the `a` rows above it had seen, and
-/// the rules it read them under.
-///
-/// A row an older build wrote states one field fewer, so its `rules` lands in
-/// `dirs` and it reads as either `rules` 0 or no row at all — and both mean
-/// the same thing, that this build has not seen these sources and folds them
-/// again.
+/// An `n` row: what the pass that wrote the `a` rows above it had seen. A row
+/// an older build wrote states one field fewer and reads as `rules` 0 or as no
+/// row, both of which fold the sources again.
 fn read_gate<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Gate> {
     let mut next = || f.next().unwrap_or_default();
     Some(Gate {
@@ -2282,12 +2225,9 @@ mod tests {
         }
     }
 
-    /// `slot_at` binary-searches the key `sort_books` orders on. Most records
-    /// carry no extent at all, so a run under one value is the normal case and
-    /// the answer must be its **first**.
     /// The catalog carries two rows under one key for a bought-then-downloaded
-    /// book. Folding them both onto one record makes it move on every pass,
-    /// which rewrites the whole store to flash for nothing.
+    /// book. Folding both onto one record makes it move on every pass, which
+    /// rewrites the whole store for nothing.
     #[test]
     fn a_purchase_row_never_takes_the_record_the_file_row_holds() {
         let bought = crate::catalog::Book {
@@ -2366,6 +2306,8 @@ mod tests {
         assert_eq!(again.text(), text);
     }
 
+    /// Most records carry no extent, so a run under one value is the normal
+    /// case and `slot_at` must answer its **first**.
     #[test]
     fn a_run_of_records_under_one_extent_answers_its_first() {
         let mut store = Store::default();

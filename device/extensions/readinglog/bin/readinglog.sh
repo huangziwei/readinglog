@@ -15,11 +15,9 @@ WATCH_SECS=8
 REFILE_SECS=3
 # TRACE_LINES of /var/log/messages reach $LOG.
 TRACE_LINES=120
-# $TRACE turns the open-path tracing on: appmgr_state's properties, the
-# activeApp watch, and the /var/log/messages tail. Off unless the file is
-# there, because that tracing is the loudest thing this script writes and it
-# is only worth its bytes while a reader is reproducing an open that failed.
-# bin/trace.sh puts it there and takes it away.
+# $TRACE turns on the open-path tracing, which is the loudest thing this
+# script writes and is off unless the file is there. bin/trace.sh puts it
+# there and takes it away.
 TRACE=$EXT/trace
 tracing() { [ -e "$TRACE" ]; }
 

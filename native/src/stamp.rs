@@ -1,13 +1,6 @@
-//! A small fixed hash, for the gate values the record carries.
-//!
-//! `DefaultHasher` is SipHash with a documented promise that its output may
-//! change between Rust releases. A value written into `sessions.tsv` has to
-//! mean the same thing to the build that reads it back, so the gates use
-//! FNV-1a instead: eight lines, fixed forever, and quite strong enough for a
-//! test that only ever asks *did this move*.
-//!
-//! A collision costs a pass that was going to be skipped, or one skipped that
-//! would have found nothing new. Neither loses a row.
+//! A small fixed hash for the gate values the record carries. `DefaultHasher`
+//! may change between Rust releases and a value in `sessions.tsv` has to mean
+//! the same to the build reading it back, so FNV-1a, which is fixed forever.
 
 const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const PRIME: u64 = 0x0000_0100_0000_01b3;

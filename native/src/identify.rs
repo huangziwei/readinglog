@@ -1,68 +1,6 @@
-//! Naming a sitting's book: the four sources, in one order, and the one join
-//! they share.
-//!
-//! A sitting is keyed by its `EndPos` class, and `Store::slot_for` looks for a
-//! [`crate::store::BookRecord`] under it. Where the catalog names no such book
-//! — because it was borrowed and returned, deleted, or re-downloaded under a
-//! new content key — three more sources can, each writing the same rows the
-//! catalog does so that `slot_for` reaches them unchanged.
-//!
-//! ## The order
-//!
-//! [`crate::store::Named`] ranks them, and the ranking is what each source
-//! knows a book by:
-//!
-//! | source | names a book with | what the read costs |
-//! | --- | --- | --- |
-//! | `cc.db` | everything: title, author, jacket, content key, place | one query, made every pass anyway |
-//! | `vocab.db` | a title, an author and a content key, per word looked up | one query |
-//! | `My Clippings.txt` | a title and an author, per annotation | one file, parsed |
-//! | the `.sdr` directories | the book's own file name | a walk of `/mnt/us/documents`, opening a sidecar per book |
-//!
-//! The order is what each source knows a book by, not what its read costs: a
-//! source knows a book well exactly when the reader wrote it *with* the book's
-//! metadata in hand. The first three are milliseconds each and none of them
-//! grows with the library. The walk is last on both counts — it is the one
-//! read that grows with the shelf, and its answer is a file name.
-//!
-//! Each source is asked only while [`crate::store::Store::wants_naming`]
-//! answers for it, so a device whose catalog names everything reads none of
-//! them. A source may take a class a weaker one named, which is how a book
-//! that arrived as a file name gets its real title.
-//!
-//! ## The gate
-//!
-//! `wants_naming` alone is not enough. A class whose book was deleted wants a
-//! name **for ever** — nothing on the device can give it one until the book
-//! comes back — so a record holding one of those reads all three sources on
-//! every launch, names nothing, and does it again next launch. Keeping the
-//! class is right: that is what lets a re-downloaded book relink to its old
-//! reading. Reading the sources again while nothing has moved is not.
-//!
-//! [`gate`] is everything a pass here reads, in one row: the two files by
-//! their length and modification time, the shelf by
-//! [`crate::sidecar::survey`], and the record by
-//! [`crate::store::Store::naming_stamp`]. `Store::sources` holds what the last
-//! pass stood at, and a pass finding the same again is skipped whole — which
-//! also means the sidecars are never opened.
-//!
-//! ## The join
-//!
-//! Vocabulary lookups and clippings both carry a device-local instant, which
-//! is the clock `Session::started_at` and `ended_at` are on. So a witness
-//! bracketed by a sitting names that sitting's book, and everything after that
-//! — the floor, the unanimity, the link or the new record — is
-//! `Store::name_from`, written once. A [`Witness`] is all either source has
-//! of its own.
-//!
-//! ## The walk, and its other half
-//!
-//! The sidecar walk answers two questions at once and is read once for both.
-//! Naming a book is this module's; what the rare sidecar holds is
-//! [`crate::annotate`]'s, and it wants the walk on every pass whether or not a
-//! class here is still unnamed. [`walk`] runs it and [`rescue_from`] takes the
-//! answer, so neither caller reads `documents` twice.
-
+//! Naming a sitting's book from `vocab.db`, `My Clippings.txt` and the `.sdr`
+//! directories, where the catalog cannot. Each writes the rows the catalog
+//! writes, so `Store::slot_for` reaches them unchanged.
 use std::path::Path;
 
 use crate::clippings;
@@ -123,22 +61,15 @@ impl Rescue {
     }
 }
 
-/// Ask every source that has something to say, strongest first, and fold what
-/// they say into `store`.
-///
-/// The catalog has spoken by the time this runs: `Store::remember` is what
-/// writes the `b` rows, and only the classes it leaves unnamed are on offer
-/// here.
+/// Ask every source that has something to say, strongest first. Only the
+/// classes `Store::remember` left unnamed are on offer.
 pub fn rescue(store: &mut Store, clips: &[clippings::Clipping], shelf: &sidecar::Shelf) -> Rescue {
     rescue_from(store, Path::new(vocab::VOCAB_DB), clips, shelf)
 }
 
-/// Every sidecar under `documents`, which is the one read both this module and
-/// [`crate::annotate`] stand on.
-///
-/// `counters` is the frequent half, which only [`Store::recover`] reads: a
-/// shelf where no class wants a name has nothing to recover and does not pay
-/// for it.
+/// Every sidecar under `documents`, which both this module and
+/// [`crate::annotate`] stand on. `counters` is the frequent half, read only
+/// while a class wants a name.
 pub fn walk(documents: &Path, counters: bool) -> sidecar::Shelf {
     sidecar::read(documents, counters)
 }
@@ -147,10 +78,8 @@ pub fn walk(documents: &Path, counters: bool) -> sidecar::Shelf {
 /// wrote states a lower number, and the sources are asked again.
 pub const NAMING_RULES: u32 = 1;
 
-/// What the sources stand at now, against `survey` of the shelf.
-///
-/// [`Sources`] carries what this pass reads and nothing else, so a pass
-/// finding the same one again would write the rows already stored.
+/// What the sources stand at now. [`Sources`] carries what this pass reads
+/// and nothing else, so a pass finding the same again writes nothing new.
 pub fn gate(store: &Store, db: &Path, clips: &Path, survey: &sidecar::Survey) -> Sources {
     let (vocab_len, vocab_mtime) = stat(db);
     let (clips_len, clips_mtime) = stat(clips);
@@ -180,15 +109,9 @@ fn stat(at: &Path) -> (u64, i64) {
     )
 }
 
-/// The shelf a launch's naming and annotation passes stand on, and whether
-/// either is worth making — taken before a single sidecar is opened.
-///
-/// `None` where both gates hold: nothing under `documents`, in either file, or
-/// in the record has moved since the last pass, so neither pass can write a
-/// row it has not written already and the shelf is never parsed.
-///
-/// The `bool` is whether [`rescue_from`] is the pass to make; the caller reads
-/// [`crate::annotate::wants`] for the other, over the same [`sidecar::Survey`].
+/// Whether the naming pass and the annotation pass are worth making, taken
+/// before a sidecar is opened. `None` and `false` mean both gates hold and the
+/// shelf need not be parsed at all.
 pub fn asked(
     store: &Store,
     db: &Path,

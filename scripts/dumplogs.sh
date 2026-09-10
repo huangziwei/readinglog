@@ -33,10 +33,9 @@ STORE=$EXT/sessions.tsv
 CONFIG=$EXT/config.xml
 APP_LOG=/mnt/us/logs/readinglog.log
 
-# $TZ_PATHS lists the zone file, the symlink every firmware keeps first and
-# the two layouts it resolves through behind it. $TZ_VARS lists KINDLE_TZ's
-# file beside it. Nothing else on a Kindle states a zone: there is no zoneinfo
-# database, and /etc/TZ reads UTC on every firmware.
+# $TZ_PATHS lists the zone file: the symlink every firmware keeps, then the
+# two layouts it resolves through. Nothing else on a Kindle states a zone —
+# there is no zoneinfo database and /etc/TZ reads UTC.
 TZ_PATHS="/etc/localtime /var/local/system/tz /var/base-local/metadata/system/tz"
 TZ_VARS="/var/local/system/tzVar /var/base-local/metadata/system/tzVar"
 
@@ -142,10 +141,9 @@ target() {
     ls -l "$1" 2>/dev/null | sed -n 's/.* -> //p'
 }
 
-# footer answers whether the zone file $1 ends in an empty POSIX-TZ footer —
-# two newlines with nothing between them. Every firmware-written zone file
-# does, and musl reads that as UTC for any instant past the file's last
-# transition, where glibc reads the last transition's own offset.
+# footer answers whether the zone file $1 ends in an empty POSIX-TZ footer.
+# Every firmware-written one does, and musl reads that as UTC past the last
+# transition where glibc reads the transition's own offset.
 footer() {
     [ -f "$1" ] || { echo "no zone file"; return; }
     left=$(tail -c 2 "$1" 2>/dev/null | tr -d '\n' | wc -c)
@@ -511,9 +509,8 @@ trim_markers() {
 }
 
 # trim_app drops readinglog.log's oldest `=== ` block whole, keeping every
-# failure line that stood above the cut and never cutting below the newest two
-# blocks. A log carrying no such block gives up its oldest half instead, which
-# is what a reader who has not upgraded still sends.
+# failure line above the cut and never cutting below the newest two. A log
+# carrying no block gives up its oldest half instead.
 trim_app() {
     f=$WORK/e/readinglog.log
     [ -s "$f" ] || return 1
@@ -534,8 +531,7 @@ trim_app() {
 
 # halve takes bytes off whichever of the two is larger. They are orders of
 # magnitude apart, so taking from each in step would spend the small
-# high-signal file to save the large one: markers.log must give up days before
-# readinglog.log gives up a block.
+# high-signal file to save the large one.
 halve() {
     if [ "$(bytes "$WORK/e/markers.log")" -gt "$(bytes "$WORK/e/readinglog.log")" ]; then
         trim_markers

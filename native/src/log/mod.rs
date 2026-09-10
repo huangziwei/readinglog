@@ -34,17 +34,15 @@ pub const MARKERS: [&str; 13] = {
     ]
 };
 
-/// The two substrings that stand in for a whole group of [`MARKERS`]: every
-/// metric record and `powerd`'s own record hold [`EREADER`], and every LIPC
-/// power event holds [`LIPC`]. With [`line::TIMER_MARKER`] they cover all
-/// thirteen, which `every_marker_holds_a_probe` pins.
+/// Two substrings standing in for whole groups of [`MARKERS`]. With
+/// [`line::TIMER_MARKER`] they cover all thirteen, which
+/// `every_marker_holds_a_probe` pins.
 const EREADER: &str = "ereader_";
 const LIPC: &str = "lipc:evts:name=";
 
-/// Which family of marker a line carries, which is what says what is worth
-/// reading off it. Every line [`family`] keeps carries exactly one: the three
-/// groups come from three different processes and no line of a real log holds
-/// two.
+/// Which family of marker a line carries, and so what is worth reading off it.
+/// The three groups come from three processes and no line of a real log
+/// carries two.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Family {
     /// `ReadingTimerController`, off `cvm`: the reading counter, the book's
@@ -59,13 +57,9 @@ pub enum Family {
     Power,
 }
 
-/// The family `line` carries, and `None` for a line carrying no marker.
-///
-/// Three probes stand ahead of the exact markers, and a line holding none of
-/// them holds no marker at all, so the whole of a syslog but its markers is
-/// refused by three whole-line searches rather than thirteen. This is the
-/// hottest loop in the app: it runs on every line of every log file a launch
-/// opens.
+/// The family `line` carries, `None` for a line carrying no marker. Three
+/// probes stand ahead of the exact thirteen, which matters: this runs on every
+/// line of every log file a launch opens.
 pub fn family(line: &str) -> Option<Family> {
     if line.contains(line::TIMER_MARKER) {
         return Some(Family::Timer);
@@ -82,15 +76,9 @@ pub fn family(line: &str) -> Option<Family> {
     None
 }
 
-/// Whether `line` is a reading-timer line — [`Family::Timer`] — in one search.
-///
-/// The passes below [`source::collect_from`] read a stream [`family`] has
-/// already filtered, and over such a stream this is the whole question: the
-/// payload readers in [`mod@line`] all want `Information::`, which only `cvm`
-/// writes, and the metric and power readers test their own markers anyway.
-/// [`family`] pays for exactness against a raw syslog, where a line that
-/// merely looks like a marker has to be refused; there is nothing left to
-/// refuse here.
+/// Whether `line` is a reading-timer line, in one search. Sound only over a
+/// stream [`family`] has already filtered, where there is no lookalike left to
+/// refuse and every other reader tests its own markers.
 pub fn is_timer(line: &str) -> bool {
     line.contains(line::TIMER_MARKER)
 }

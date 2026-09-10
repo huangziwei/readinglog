@@ -101,11 +101,8 @@ fn collect_into(
     // same walk reaches.
     let books = catalog::read();
     let stated = store.remember(&books);
-    // Both gates, off a walk that opens nothing. A launch where the reader has
-    // read nothing, annotated nothing and installed nothing leaves both
-    // standing, and no sidecar is opened at all — which matters most on the
-    // record that can never satisfy `wants_naming`, because a book it holds a
-    // reading of was deleted and nothing will ever name that class again.
+    // Both gates, off a walk that opens nothing. A launch that read, marked
+    // and installed nothing leaves both standing and opens no sidecar at all.
     let clips = Path::new(clippings::CLIPPINGS_FILE);
     let documents = Path::new(sidecar::DOCUMENTS_DIR);
     let (survey, naming, marks) =

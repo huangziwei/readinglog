@@ -1,10 +1,6 @@
 //! `vocab.db`, the Vocabulary Builder's record of every word looked up while
-//! reading, read through `sqlite3` the way [`crate::catalog`] reads `cc.db`.
-//!
-//! A lookup names its book by the same two strings a clipping's head line
-//! carries — `BookMetadata.getTitle()` and `kv()` — and adds the content key
-//! and a position on the `extent` axis. What turns that into a book is
-//! [`crate::identify`]; nothing here reaches the store.
+//! reading. A lookup names its book by title and author and adds the content
+//! key and a position; nothing here reaches the store.
 
 use std::path::Path;
 
@@ -43,13 +39,9 @@ pub fn read() -> Vec<Lookup> {
     read_from(Path::new(VOCAB_DB))
 }
 
-/// [`read`] against a named file. Empty where there is no such file: asking
-/// `sqlite3` for one would make it.
-///
-/// `VocabBuilderStatus` reads a `VOCAB_BUILDER` switch out of
-/// `app_utilities.preferences`, defaulting to on. Nothing here consults it:
-/// the switch says whether *new* rows will be written, and the rows already
-/// here are evidence either way.
+/// [`read`] against a named file, empty where there is none — asking
+/// `sqlite3` for one would make it. The device's `VOCAB_BUILDER` switch gates
+/// only *new* rows, so nothing here consults it.
 pub fn read_from(db: &Path) -> Vec<Lookup> {
     if !db.exists() {
         return Vec::new();
@@ -80,13 +72,9 @@ fn parse_row(row: &str) -> Option<Lookup> {
     })
 }
 
-/// `LOOKUPS.pos` as a number on the `extent` axis.
-///
-/// `Position.oy()` is `<serialized token>:<positionId>` on KFX
-/// (`YJPosition.oy`) and the bare integer on mobi8 (`HTMLPosition.oy` is
-/// `String.valueOf`). Either way the trailing integer is the position, which
-/// is the axis `log::line::from_book` maps onto `p_contentSize` — not the
-/// display location a clipping's label carries. Negative where there is none.
+/// `LOOKUPS.pos` as a number on the `extent` axis — the trailing integer of
+/// `Position.oy()` whichever stack wrote it, and **not** the display location
+/// a clipping's label carries. Negative where there is none.
 fn position(pos: &str) -> i64 {
     pos.rsplit(':')
         .next()

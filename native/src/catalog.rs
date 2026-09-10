@@ -127,12 +127,8 @@ fn rows(db: &Path, sql: &str) -> Option<Vec<Book>> {
 }
 
 /// What `sql` answers over `db`, one string a row with [`COL`] between the
-/// columns. `who` opens whatever is printed about it.
-///
-/// `None` where `sqlite3` refused the query, which is what lets a caller drop
-/// a column the device's schema does not carry and ask again. A `sqlite3` that
-/// will not run at all answers no rows rather than none, because there is
-/// nothing to ask differently.
+/// columns. `None` where `sqlite3` refused the query, so a caller can drop a
+/// column and ask again; a `sqlite3` that will not run answers no rows.
 pub(crate) fn ask(db: &Path, sql: &str, who: &str) -> Option<Vec<String>> {
     let out = match Command::new("sqlite3")
         .arg("-separator")

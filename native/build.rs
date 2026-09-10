@@ -1,13 +1,6 @@
-//! Stamps `READINGLOG_BUILD` into the binary: the instant this crate was
-//! compiled and the commit it came from.
-//!
-//! The stamp is what tells two builds of one version apart, in a log line and
-//! in `journal`'s header block — and the block is written only when it differs
-//! from the one standing, so a stale stamp means a new build never states
-//! itself. Hence the `rerun-if-changed` lines: naming any of them replaces
-//! cargo's default of watching the whole package, so the sources are named too,
-//! and the git refs beside them, because a commit moves `HEAD` without
-//! touching a file this package holds.
+//! Stamps `READINGLOG_BUILD` — the compile instant and the commit — into the
+//! binary, which is what tells two builds of one version apart. Naming any
+//! `rerun-if-changed` replaces cargo's default, so the sources are named too.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -21,10 +14,8 @@ fn main() {
     println!("cargo:rustc-env=READINGLOG_BUILD={} {}", at(), commit());
 }
 
-/// The git files that move when the commit does: `HEAD`, and whatever ref it
-/// names. Empty outside a checkout, or where `.git` is not a directory — a
-/// worktree keeps a file there, and the stamp falls back to being right only
-/// when a source file changes.
+/// The git files that move when the commit does. Empty outside a checkout, or
+/// in a worktree, where the stamp falls back to following the sources.
 fn watched() -> Vec<PathBuf> {
     let git = Path::new("..").join(".git");
     if !git.is_dir() {

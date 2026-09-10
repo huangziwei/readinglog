@@ -247,18 +247,9 @@ pub struct Stats {
     /// Every mark the record holds, ascending by when it was made.
     /// [`BookStat::marks`] indexes into this.
     pub marks: Vec<Mark>,
-    /// Each mark's `body`, lowercased and Han-folded, at the same index, and
-    /// `None` for a mark no book here holds.
-    ///
-    /// A search folds the query once and then asks it of every mark on every
-    /// keystroke. Holding the bodies folded keeps that to a substring test:
-    /// folding at the keystroke costs two allocations and a per-character
-    /// table walk, per mark, per key pressed.
-    ///
-    /// A mark whose book is gone from the device — its title naming no record
-    /// and its class none either — is kept, so that it comes back with the
-    /// book, but no screen can reach it and nothing searches it. Those are
-    /// `None`: the row stays at its index and the folding is not done.
+    /// Each mark's `body` lowercased and Han-folded, at the same index, so a
+    /// keystroke costs a substring test and not a table walk per mark. `None`
+    /// for a mark no book here holds, which no screen can reach.
     pub folded: Vec<Option<String>>,
 }
 
@@ -406,12 +397,9 @@ impl Stats {
     /// is held in [`Self::marks`] all the same.
     fn hold_marks(&mut self, store: &Store) {
         self.marks = store.marks.clone();
-        // Both ways in, built once. A scan of `books` per mark is `O(M × B)`,
-        // and the title fallback is the common path rather than the rare one:
-        // most records carry no extent, and neither do most marks.
-        //
-        // Each holds the *first* slot under a key, which is the slot a pass
-        // over the books in order reaches.
+        // Both ways in, built once, each holding the *first* slot under a
+        // key. The title fallback is the common path, not the rare one: most
+        // records carry no extent, and neither do most marks.
         let mut by_extent: HashMap<i64, usize> = HashMap::new();
         let mut by_title: HashMap<String, usize> = HashMap::new();
         for (at, book) in self.books.iter().enumerate() {
@@ -471,11 +459,9 @@ impl Stats {
     pub fn marked_across(&self) -> Vec<Across<'_>> {
         let mut out: Vec<Across<'_>> = Vec::new();
         for book in 0..self.books.len() {
-            // `annotate::paired` hands back references out of `marks_of`'s own
-            // slice, so each row's mark is one of this book's, addressed by
-            // the slots `BookStat::marks` already holds. That is what carries
-            // `held` back — the row itself only knows its place in the list
-            // `paired` built, which is not where the mark sits.
+            // A row knows its place in the list `paired` built, which is not
+            // where the mark sits, so `held` comes off the slots
+            // `BookStat::marks` already holds.
             let slots = &self.books[book].marks;
             for (at, row) in self.marked(book).into_iter().enumerate() {
                 let held = slots
@@ -1012,10 +998,8 @@ fn credit(book: &mut BookStat, s: &Session, day: i64, secs: i64) {
     }
 }
 
-/// Take the `t` row for the class `end_position` names. A book re-copied
-/// The longest run of consecutive days with reading, and the run ending at `today`.
-///
-/// `current` accepts a last day of `today` or `today - 1`.
+/// The longest run of consecutive days with reading, and the run ending at
+/// `today`, which accepts a last day of `today` or `today - 1`.
 fn streaks(days: &[(i64, i64)], today: i64) -> (i64, i64) {
     let (mut longest, mut run) = (0, 0);
     let mut previous: Option<i64> = None;
@@ -2402,11 +2386,9 @@ pub(crate) mod tests {
         assert_eq!(gone.time_left(Figures::Device), None);
     }
 
-    /// `Figures` chooses how each sitting is measured, and a book's figure is
-    /// the sum of what it credited. The `t` row is a running total in the
-    /// book's own sidecar and is lost whenever that sidecar is rebuilt, so
-    /// **it must never stand in for that sum**: it would drop every sitting
-    /// made before the reset.
+    /// The `t` row is a running total in the book's own sidecar, lost whenever
+    /// that sidecar is rebuilt, so **it must never stand in for the sum of the
+    /// sittings**: it would drop every one made before the reset.
     #[test]
     fn a_reset_device_counter_never_shrinks_the_book() {
         let mut store = store();

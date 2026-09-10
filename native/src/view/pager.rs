@@ -1,7 +1,6 @@
-//! The pager along a page's foot: which stretch of the page is showing, and
-//! the marks that step or jump to another. A screen paged from its foot
-//! stands on this one, so the foot reads the same wherever it is met; a list
-//! paged from its own heading carries its marks there instead.
+//! The pager along a page's foot: which stretch is showing, and the marks that
+//! step or jump. Every screen paged from its foot stands on this, so the foot
+//! reads the same wherever it is met.
 
 use crate::ui::chrome;
 use crate::ui::paint::Rect;
@@ -57,10 +56,9 @@ fn between(from: i32, to: i32, reach: i32) -> i32 {
     (from + (to - from - reach) / 2).clamp(from, (to - reach).max(from))
 }
 
-/// The pager across `foot`: [`JUMP_FIRST`] and [`JUMP_LAST`] at the ends of
-/// the row, `label` in the middle, and [`STEP_BACK`] and [`STEP_ON`] each
-/// centred in the run left between the two. `open` states whether each way
-/// leads anywhere, and `ends` where each jump lands.
+/// The pager across `foot`: the two jumps at the ends, `label` in the middle,
+/// the two steps centred in what is left. `open` states whether each way leads
+/// anywhere and `ends` where each jump lands.
 pub fn draw(cx: &mut Ctx, foot: Rect, label: &str, open: [bool; 2], ends: [Hit; 2]) {
     let theme: &Theme = cx.theme;
     let reach = mark_reach(cx);

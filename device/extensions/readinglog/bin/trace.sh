@@ -1,10 +1,9 @@
 #!/bin/sh
 # bin/trace.sh — turns bin/readinglog.sh's open-path tracing on and off.
 #
-# Tracing writes appmgr_state's seven properties, a per-second activeApp watch
-# for WATCH_SECS, and TRACE_LINES of /var/log/messages every time a book is
-# opened. That is the loudest thing the extension writes, and it is worth its
-# bytes only while an open that failed is being reproduced.
+# Tracing writes appmgr_state's properties, a per-second activeApp watch and
+# TRACE_LINES of /var/log/messages on every open. It is the loudest thing the
+# extension writes and is worth its bytes only while reproducing a failure.
 #
 # The switch is the presence of $TRACE. This script flips it and says which way.
 

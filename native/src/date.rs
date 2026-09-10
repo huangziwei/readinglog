@@ -99,12 +99,8 @@ const FIRST_DAY: i64 = days_from_civil(1900, 1, 1);
 const LAST_DAY: i64 = days_from_civil(9999, 12, 31);
 
 /// An epoch second as `(day count, seconds into the day)` on the device's own
-/// clock, the way [`now`] reads the present one. `None` where it names no day.
-///
-/// `vocab::Lookup` arrives as epoch milliseconds and every other instant the
-/// crate holds is local wall clock, so this is where the two meet. The zone
-/// comes from [`crate::zone`], the same file the log's own stamps are written
-/// through; [`libc_local_of`] answers for a device keeping none this can read.
+/// clock. Every other instant the crate holds is local wall clock, so this is
+/// where the two meet, through the zone file the log's stamps come from.
 pub fn local_of(epoch: i64) -> Option<(i64, i64)> {
     local_at(epoch, crate::zone::offset_at(epoch))
 }
@@ -130,10 +126,9 @@ fn libc_local_of(epoch: i64) -> Option<(i64, i64)> {
     // SAFETY: `localtime_r` fills a caller-owned `tm` and takes the zone from
     // the process environment. No pointer outlives the call.
     unsafe {
-        // `time_t` is 32 bits on the device's target and 64 on the host, so
-        // its width is left to the call to fix. An instant too wide for it
-        // names no day rather than a wrapped one — a round trip that only
-        // narrows on one of the two targets.
+        // `time_t` is 32 bits on the device and 64 on the host, so its width
+        // is left to the call. An instant too wide names no day, never a
+        // wrapped one.
         let clock = epoch as _;
         #[allow(clippy::unnecessary_cast)]
         if clock as i64 != epoch {

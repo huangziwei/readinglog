@@ -190,11 +190,8 @@ impl Touch {
         self.forget_stroke();
     }
 
-    /// Drops `EVIOCGRAB` and sets `keyboard`; takes the grab back on a
-    /// `false`.
-    ///
-    /// `EVIOCGRAB` is exclusive against the X server. Ungrabbed,
-    /// [`Touch::next_event`] answers touches that land on the keyboard.
+    /// Drops `EVIOCGRAB` and sets `keyboard`, taking the grab back on
+    /// `false`. Ungrabbed, [`Touch::next_event`] answers keyboard touches.
     pub fn set_keyboard(&mut self, up: bool) {
         if up == self.keyboard {
             return;

@@ -1,20 +1,6 @@
-//! The zone the device's clock stands in, read out of the file the firmware
-//! writes.
-//!
-//! `/etc/localtime` is a symlink to `/var/local/system/tz`, a TZif blob the
-//! firmware generates. A Kindle ships no zoneinfo database and `/etc/TZ` reads
-//! `UTC` on every firmware, so this file is the only thing that states the
-//! offset, and it is what the firmware's own daemons resolve their clock
-//! through — `syslogd` among them, which stamps every line the store is built
-//! from.
-//!
-//! Every one of these files ends in an empty POSIX-TZ footer. Past the last
-//! transition musl reads that as UTC where glibc reads the last transition's
-//! own offset, and a firmware with no timezone picker writes one fixed
-//! transition — so on those devices every instant is past the table and
-//! `libc::localtime_r` answers UTC while the log is stamped local. Reading the
-//! file here, the way the daemons do, keeps the app on the log's own clock.
-
+//! The zone the device's clock stands in, read out of `/var/local/system/tz`.
+//! A Kindle ships no zoneinfo and `/etc/TZ` reads `UTC`, so that TZif is the
+//! only thing stating the offset `syslogd` stamps every log line with.
 use std::sync::OnceLock;
 
 /// The zone file, the symlink every firmware keeps first. `/var/local` is a
@@ -268,10 +254,9 @@ mod tests {
         days_from_civil(y, m, d) * 86_400 + h * 3600
     }
 
-    /// A version 2 TZif over `changes` — `(instant, kind)` — and `kinds` —
-    /// `(offset, dst, name)` — closed by `footer`. The 32-bit block carries
-    /// the kinds and no transitions, the way a file the firmware writes is
-    /// laid out.
+    /// A version 2 TZif over `changes` and `kinds`, closed by `footer`, laid
+    /// out the way the firmware writes one: kinds but no transitions in the
+    /// 32-bit block.
     fn tzif(changes: &[(i64, usize)], kinds: &[(i32, bool, &str)], footer: &str) -> Vec<u8> {
         // The designation blob, and where each kind's name starts in it.
         let mut names: Vec<u8> = Vec::new();

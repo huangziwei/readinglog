@@ -12,10 +12,9 @@ use crate::font::{self, Band, FontChain};
 
 const COVERAGE_THRESHOLD: u8 = 96;
 
-/// The most glyphs held at once. The key carries the size and the face as well
-/// as the character, so a CJK reader paging through marks at two sizes fills
-/// this several times over in one session, and the cache must give ground
-/// rather than grow. A miss costs one re-rasterization.
+/// The most glyphs held at once. The key carries the size and face too, so a
+/// CJK reader fills this several times in one session and the cache must give
+/// ground rather than grow. A miss costs one re-rasterization.
 const CACHE_CAP: usize = 4_096;
 
 /// How much of the cache one eviction gives up. Dropping a quarter at a time
@@ -58,12 +57,9 @@ impl TextRenderer {
         })
     }
 
-    /// The fallback chain in one short line, for the startup log: how many
-    /// faces resolved, and the one Latin is set in.
-    ///
-    /// The chain is every font file in the firmware's directory that parses,
-    /// so a count that differs from the firmware's own is the thing worth
-    /// seeing. The paths run to kilobytes and belong nowhere in the log.
+    /// The fallback chain in one line for the startup log: how many faces
+    /// resolved and the one Latin is set in. The paths run to kilobytes and
+    /// belong nowhere in a log.
     pub fn chain_summary(&self) -> String {
         let faces = self.chain.paths().count();
         let primary = self

@@ -368,21 +368,9 @@ pub fn library(last: i64, art: &Path) -> Store {
     store
 }
 
-/// What the reader marked, laid down after the seeded loop so every shot that
-/// does not draw a mark stays pixel-identical.
-///
-/// One row per case the screen has to hold: a highlight with a colour and a
-/// real position, a note in the reader's own words, one no sidecar could place
-/// so that only the display location stands, a bookmark carrying no words at
-/// all, and a book deep enough to page. Slot 1 and slot 2 are in Japanese and
-/// Han so the list is read in the script the book is set in, slot 9's passages
-/// are short and slot 5's long so both ends of the row packing stand, and most
-/// of the shelf carries nothing — a book with no marks is the ordinary case
-/// and its own picture.
-///
-/// Nothing here is [`State::Retired`]: `annotate::fold` stores no row for a
-/// mark the reader deleted, so a store holding one is a store no device
-/// writes.
+/// What the reader marked, laid down after the seeded loop so a shot drawing
+/// no mark stays pixel-identical. Nothing here is [`State::Retired`]: no
+/// device writes a store holding one.
 fn marked(store: &mut Store, last: i64) {
     /// `(slot, kind, state, through the book, the day it was made, the words)`.
     const MARKS: &[(usize, Kind, State, f64, i64, &str)] = &[

@@ -1,17 +1,6 @@
-//! `.sdr` sidecar directories: the KRDS container, `timer.model`'s counters,
-//! and the annotations the rare sidecar holds.
-//!
-//! A `.sdr` carries two sidecars per book. The **frequent** one — `.yjf` and
-//! its four siblings — is rewritten on every turn and holds `timer.model`.
-//! The **rare** one, [`RARE`], is written when an annotation is made, and
-//! holds `annotation.cache.object`: the roster of what the book still carries.
-//! [`read`] walks for both at once, because the walk is the dear part.
-//!
-//! What the rare file states and `My Clippings.txt` cannot: a real position on
-//! the `p_contentSize` axis, the colour, and — by an annotation's absence from
-//! it — that the reader deleted one. What it cannot state and the clippings
-//! file can: the words. [`crate::annotate`] joins the two.
-
+//! `.sdr` sidecar directories. Each holds a **frequent** sidecar, rewritten on
+//! every turn and carrying `timer.model`, and a **rare** one written when an
+//! annotation is made and carrying the roster of what the book still holds.
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -230,15 +219,9 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// `java.io.DataInputStream.readUTF`'s payload, which is **modified** UTF-8
-/// and not the encoding `String::from_utf8` reads.
-///
-/// Two differences, both of which a note body reaches: `U+0000` is written as
-/// `C0 80`, and anything above `U+FFFF` as a **surrogate pair** — two
-/// three-byte sequences, six bytes, never the four-byte form.
-///
-/// A lone surrogate is a character Java can hold and Rust cannot; it becomes
-/// `U+FFFD` rather than costing the file. A malformed sequence answers `None`.
+/// `readUTF`'s payload: **modified** UTF-8, not what `String::from_utf8`
+/// reads. `U+0000` is `C0 80` and anything above `U+FFFF` a surrogate pair,
+/// both of which a note body reaches. A lone surrogate becomes `U+FFFD`.
 fn modified_utf8(raw: &[u8]) -> Option<String> {
     let mut units: Vec<u16> = Vec::with_capacity(raw.len());
     let mut at = 0;
@@ -301,14 +284,9 @@ impl Store {
     }
 }
 
-/// What the sixth field of an annotation record holds. It is the one field
-/// the subclass writes, and which subclass wrote it is the record's own name.
-///
-/// Read off the 5.19 `ReaderSDK-impl` classes: the five that call
-/// `isColorSupportedDevice` write a colour, `Note` writes the text the reader
-/// typed, the three handwritten kinds write the id their ink is filed under,
-/// and `Asterisk`, `ClipArticle` and `GraphicalHighlight` write no sixth field
-/// at all.
+/// The one field an annotation record's subclass writes, which subclass being
+/// the record's own name: a colour, a note's text, the id handwriting is filed
+/// under, or nothing at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Sixth {
     Colour,
@@ -330,14 +308,9 @@ fn sixth(kind: Kind) -> Sixth {
     }
 }
 
-/// One annotation, as `AnnotationImpl.a(ReaderDataOutput)` wrote it: five
-/// fields, and the sixth its subclass adds.
-///
-/// The anchors are held verbatim. `HTMLPosition`, `MobiPosition` and
-/// `TopazPosition` write a bare integer, `YJPosition` writes
-/// `<base64>:<position>`, and `PDFPosition` writes `<page> <x> <y> <nBounds>`
-/// — so fields 1 and 2 are taken **by their place**, never by recognising
-/// which stack wrote them.
+/// One annotation as `AnnotationImpl.a` wrote it: five fields and the sixth
+/// its subclass adds. Anchors are held verbatim and taken **by their place**,
+/// since each reader stack writes a shape of its own.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Annotation {
     pub kind: Kind,
@@ -417,14 +390,9 @@ pub struct Roster {
     /// The `.sdr` directory's name without its suffix: the book's own file,
     /// which is `catalog::Book::location` with its last suffix cut.
     pub file: String,
-    /// Whether the sidecar was in a position to say what still exists: it is
-    /// there, it parses, and it names an `annotation.cache.object`.
-    ///
-    /// **An empty cache counts.** `AnnotationCacheObject.a` returns before
-    /// writing its count when nothing is left — logging *"Notes and Highlights
-    /// not found while saving annotations"* — so an empty record is the writer
-    /// stating that the book carries none, not a torn file. Only that
-    /// distinction lets an annotation's absence be read as a deletion.
+    /// Whether the sidecar could say what still exists: present, parsed, and
+    /// naming an `annotation.cache.object`. **An empty cache counts** — the
+    /// writer states none that way, and absence is only a deletion under it.
     pub trusted: bool,
     /// Every annotation it holds, in the order the trees were written.
     pub annotations: Vec<Annotation>,
@@ -440,13 +408,9 @@ pub struct Shelf {
     pub rosters: Vec<Roster>,
 }
 
-/// What a walk of `documents` says without opening a single sidecar.
-///
-/// [`read`] opens and parses two files per book — on a large shelf, thousands
-/// of reads off flash for an answer that is usually the one already stored.
-/// Every byte of that answer comes from files whose length and modification
-/// time say whether they have moved, and a walk can have both for the cost of
-/// a `stat`. Two surveys that agree stand for two identical parses.
+/// What a walk of `documents` says without opening a sidecar. Two surveys
+/// that agree stand for two identical [`read`]s, which is what lets a launch
+/// skip thousands of reads off flash.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Survey {
     /// The `.sdr` directories found.
@@ -490,17 +454,9 @@ pub fn survey(documents: &Path) -> Survey {
     }
 }
 
-/// Every sidecar under `documents`, book file present or not. Empty where
-/// `documents` does not exist; a sidecar that will not parse is printed and
-/// skipped.
-///
-/// One walk answers both halves: the walk is what costs, and
-/// [`crate::identify`] and [`crate::annotate`] each want one of them.
-///
-/// `counters` is the frequent half, which only [`crate::store::Store::recover`]
-/// reads and only while some class still wants a name. A shelf whose catalog
-/// names everything asks for it `false` and saves a file open and a parse per
-/// book.
+/// Every sidecar under `documents`, book file present or not; one that will
+/// not parse is printed and skipped. One walk answers both halves. `counters`
+/// is the frequent half, which only [`crate::store::Store::recover`] reads.
 pub fn read(documents: &Path, counters: bool) -> Shelf {
     let mut dirs = Vec::new();
     collect(documents, 0, &mut dirs);
@@ -596,12 +552,9 @@ fn open_sidecar(at: &Path) -> Option<Store> {
     }
 }
 
-/// Every annotation an `annotation.cache.object` holds.
-///
-/// The record is `writeInt(nTypes)` and then a `(type code, tree)` pair per
-/// kind, but the kind is on each record's own name, so the count and the codes
-/// are stepped over and every [`ANNOTATION_TREE`] found is read. That also
-/// reads the empty record, which carries no count at all.
+/// Every annotation an `annotation.cache.object` holds. The count and type
+/// codes are stepped over and every [`ANNOTATION_TREE`] read, which is also
+/// what reads the empty record, since that carries no count at all.
 fn annotations(cache: &Object) -> Vec<Annotation> {
     let mut out = Vec::new();
     for tree in cache.values.iter().filter_map(Value::as_object) {
@@ -653,12 +606,8 @@ fn frequent(sdr: &Path) -> Option<PathBuf> {
     found.pop().map(|(_, path)| path)
 }
 
-/// The rare sidecar inside `sdr`: the one carrying `profile`'s infix, else the
-/// one carrying any infix, else whatever is there.
-///
-/// A directory can hold two. `ReaderPermanentState.a`'s half-finished
-/// migration leaves the bare-named file beside the profile-named one, and a
-/// second reading profile writes its own. So **glob and choose**; never
+/// The rare sidecar inside `sdr`: `profile`'s infix, else any infix, else
+/// whatever is there. A directory can hold two, so **glob and choose**; never
 /// construct the name.
 fn rare(sdr: &Path, profile: Option<&str>) -> Option<PathBuf> {
     let mut found = files_in(sdr, &RARE);
@@ -730,12 +679,9 @@ fn profile_of(dirs: &[(PathBuf, String)]) -> Option<String> {
 mod tests {
     use super::*;
 
-    // Whole sidecars, as bytes, written by the firmware writers' own field
-    // order.
-    //
-    // Keep them as bytes. An encoder written in this module against this
-    // module's reader would agree with the reader whatever either does, and
-    // prove nothing about the format.
+    // Whole sidecars as bytes, in the firmware writers' own field order.
+    // **Keep them as bytes**: an encoder written here would agree with the
+    // reader whatever either did, and prove nothing about the format.
 
     /// Every kind the 5.19 writers name, one tree each.
     const KINDS: &str = concat!(
@@ -1016,10 +962,8 @@ mod tests {
         for kind in Kind::ALL {
             assert!(kinds.contains(&kind), "{kind:?} was not read");
         }
-        // The sixth field is the subclass's, and which subclass wrote it is
-        // the record's own name: a colour on the five that ask the device
-        // whether it has one, the reader's words on a note, and nothing at all
-        // on the three that write no sixth field.
+        // The sixth field per kind: a colour, the note's own words, or
+        // nothing at all.
         let of = |kind: Kind| held.iter().find(|a| a.kind == kind).expect("a record");
         assert_eq!(of(Kind::Highlight).colour, "yellow");
         assert_eq!(of(Kind::Bookmark).colour, "dark_blue");

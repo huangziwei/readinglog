@@ -1,8 +1,6 @@
-//! A lipc service, holding the properties the on-screen keyboard sets. lipc
-//! is the system D-Bus: a property set is a method call named
-//! `set<Property>Str` on `/default`, answered by a `u` status of zero.
-//!
-//! `eink::keysym` reads the keys an IME leaves to X.
+//! A lipc service holding the properties the on-screen keyboard sets. lipc is
+//! the system D-Bus: a property set is a `set<Property>Str` call on
+//! `/default`, answered by a `u` status of zero.
 
 mod wire;
 
