@@ -122,6 +122,7 @@ impl BookRecord {
     /// carries [`Self::finished`]; at or past [`Self::restart`] it is the
     /// reading that ended, and `percent` holds 0.
     fn stand_at(&mut self, percent: f64) {
+        let percent = stored_percent(percent);
         if let Some(from) = self.restart {
             if percent >= from {
                 return;
@@ -793,6 +794,9 @@ impl Store {
                     moved[i] = changed || was_on[i] != self.books[i].on_device;
                     i
                 }
+                // The purchase row beside a file row already held names no
+                // second book, and a record of its own would be one.
+                None if book.extent == 0 && by_key.contains_key(&book.cde_key) => continue,
                 None => {
                     let at = self.books.len();
                     by_key.entry(book.cde_key.clone()).or_default().push(at);
@@ -1783,7 +1787,7 @@ fn taken(book: &Book) -> BookRecord {
         author: flat(&book.author),
         thumbnail: flat(&book.thumbnail),
         language: flat(&book.language),
-        percent: book.percent,
+        percent: stored_percent(book.percent),
         on_device: book.on_device,
         cover: String::new(),
         location: flat(&book.location),
@@ -1861,11 +1865,22 @@ fn slot_in(
     book: &Book,
 ) -> Option<usize> {
     let slots = by_key.get(&book.cde_key)?;
-    if book.extent != 0
-        && let Some(&at) = slots.iter().find(|&&at| books[at].extent == book.extent)
-    {
+    if let Some(&at) = slots.iter().find(|&&at| books[at].extent == book.extent) {
         return Some(at);
     }
+    // A row stating no size must not take a record that states one.
+    //
+    // The catalog carries **two rows under one `cde_key`** for a book bought
+    // from the store and then downloaded: the purchase, with no size, no
+    // location and the marketplace's own title, and the file, with all three.
+    // Both are the same book, and the sized one states strictly more. Folding
+    // the unsized row onto the sized record writes the marketplace title over
+    // the file's, the sized row writes it back on the same pass, and the
+    // record moves every launch for ever.
+    if book.extent == 0 {
+        return None;
+    }
+    // A record made before the catalog stated a size takes the size here.
     slots.first().copied()
 }
 
@@ -1917,6 +1932,22 @@ fn row(out: &mut String, args: std::fmt::Arguments) {
     out.push('\n');
 }
 
+/// Decimal places a `b` row carries for a place in a book.
+///
+/// **A record must hold no more precision than its row can write.** The
+/// catalog states `p_percentFinished` as a whole `f64`; a record keeping all
+/// of it writes six places, reads six places back, and compares unequal
+/// against the catalog on the pass after — so an unchanged shelf reports a
+/// changed record on every launch and the whole store is written to flash
+/// again. [`stored_percent`] is what keeps the two ends the same number.
+const PERCENT_PLACES: usize = 6;
+
+/// `percent` as a `b` row can hold it.
+fn stored_percent(percent: f64) -> f64 {
+    let scale = 10f64.powi(PERCENT_PLACES as i32);
+    (percent * scale).round() / scale
+}
+
 fn write_book(out: &mut String, b: &BookRecord) {
     row(
         out,
@@ -1928,12 +1959,14 @@ fn write_book(out: &mut String, b: &BookRecord) {
             flat(&b.author),
             flat(&b.thumbnail),
             flat(&b.language),
-            format_args!("{:.6}", b.percent),
+            format_args!("{:.*}", PERCENT_PLACES, b.percent),
             u8::from(b.on_device),
             flat(&b.cover),
             flat(&b.location),
             u8::from(b.finished),
-            b.restart.map(|p| format!("{p:.6}")).unwrap_or_default(),
+            b.restart
+                .map(|p| format!("{p:.*}", PERCENT_PLACES))
+                .unwrap_or_default(),
             b.read_state,
             flat(&b.cde_type),
             u8::from(b.kept),
@@ -2252,6 +2285,87 @@ mod tests {
     /// `slot_at` binary-searches the key `sort_books` orders on. Most records
     /// carry no extent at all, so a run under one value is the normal case and
     /// the answer must be its **first**.
+    /// The catalog carries two rows under one key for a bought-then-downloaded
+    /// book. Folding them both onto one record makes it move on every pass,
+    /// which rewrites the whole store to flash for nothing.
+    #[test]
+    fn a_purchase_row_never_takes_the_record_the_file_row_holds() {
+        let bought = crate::catalog::Book {
+            extent: 0,
+            cde_key: "B00771M8JQ".into(),
+            cde_type: "EBOK".into(),
+            title: "Daijisen (Japanese Edition)".into(),
+            author: "Shogakukan".into(),
+            percent: -1.0,
+            thumbnail: String::new(),
+            language: "ja".into(),
+            location: String::new(),
+            on_device: false,
+            read_state: -1,
+            last_access: 1_406_465_985,
+        };
+        let downloaded = crate::catalog::Book {
+            extent: 75_349_739,
+            title: "Daijisen".into(),
+            percent: 0.0,
+            location: "/mnt/us/documents/Daijisen_B00771M8JQ.azw".into(),
+            on_device: true,
+            last_access: 1_782_381_327,
+            ..bought.clone()
+        };
+
+        // Either order, and the record ends the same: one book, the file's
+        // own title.
+        for catalog in [
+            vec![bought.clone(), downloaded.clone()],
+            vec![downloaded.clone(), bought.clone()],
+        ] {
+            let mut store = Store::default();
+            store.remember(&catalog);
+            assert_eq!(store.books.len(), 1, "{catalog:?}");
+            assert_eq!(store.books[0].title, "Daijisen");
+            assert_eq!(store.books[0].extent, 75_349_739);
+
+            // And a second pass over the same catalog moves nothing at all.
+            let text = store.text();
+            let mut again = Store::from_text(&text);
+            assert_eq!(again.remember(&catalog), 0, "a pass that changed nothing");
+            assert_eq!(again.text(), text);
+        }
+    }
+
+    /// A `b` row writes six decimal places. A record holding more compares
+    /// unequal against the catalog on the pass after it was written, so an
+    /// unchanged shelf reports a change on every launch.
+    #[test]
+    fn a_place_the_row_cannot_write_is_not_a_place_the_record_keeps() {
+        let book = crate::catalog::Book {
+            extent: 500_100,
+            cde_key: "B00OKPCRLG".into(),
+            cde_type: "EBOK".into(),
+            title: "A Book".into(),
+            author: String::new(),
+            percent: 6.391_478_5,
+            thumbnail: String::new(),
+            language: String::new(),
+            location: "/mnt/us/documents/a.azw".into(),
+            on_device: true,
+            read_state: -1,
+            last_access: 0,
+        };
+        let mut store = Store::default();
+        store.remember(std::slice::from_ref(&book));
+        // The record holds what the row can write, so reading the row back
+        // gives the same number.
+        let text = store.text();
+        let written = Store::from_text(&text);
+        assert_eq!(written.books[0].percent, store.books[0].percent);
+
+        let mut again = Store::from_text(&text);
+        assert_eq!(again.remember(std::slice::from_ref(&book)), 0);
+        assert_eq!(again.text(), text);
+    }
+
     #[test]
     fn a_run_of_records_under_one_extent_answers_its_first() {
         let mut store = Store::default();
