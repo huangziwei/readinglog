@@ -76,9 +76,11 @@ pub fn cde_key(line: &str) -> Option<&str> {
 const DWELL_FLOOR: f64 = 0.5;
 const DWELL_CEILING: f64 = 1.5;
 
-/// The WPM band inside which a rate is usable.
-const WPM_MIN: f64 = 0.0;
-const WPM_MAX: f64 = 500.0;
+/// The band a reading rate is usable in, as `AverageCalculator` hardcodes it
+/// on every firmware: a sample outside it is an outlier the device's own
+/// average refuses.
+const WPM_MIN: f64 = 40.0;
+const WPM_MAX: f64 = 900.0;
 
 /// What a page with no usable rate may count, in seconds.
 const WORDLESS_FLOOR: f64 = 3.0;
