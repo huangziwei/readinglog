@@ -35,13 +35,11 @@ const NAME_LINES: usize = 3;
 pub(super) struct Row {
     /// The book, by its index in `Stats::books`.
     pub book: usize,
-    /// The row's place in that book's own `Stats::marked` list, which is
-    /// where its Marks tab opens.
+    /// The row's place in the book's `Stats::marked` list, where its Marks tab opens.
     pub at: usize,
     pub mark: Mark,
     pub note: Option<Mark>,
-    /// The book's title, which stands over the row in a list running across
-    /// books.
+    /// The book's title, standing over the row in a list running across books.
     pub title: String,
     /// The book's catalog language, which picks the face the words are set in.
     pub language: String,
@@ -73,8 +71,7 @@ impl Row {
     }
 }
 
-/// How wide the rule beside a passage is, and how far the words stand clear of
-/// it.
+/// How wide the rule beside a passage is.
 fn rule_width(theme: &Theme) -> i32 {
     (theme.gap / 2).max(3)
 }
@@ -88,16 +85,23 @@ fn indent(theme: &Theme) -> i32 {
 struct Metrics {
     /// How far the label's line stands over its own baseline.
     cap: i32,
+    /// How far a line of the passage or its note stands over its own baseline.
+    body_cap: i32,
     /// The label's line.
     small: i32,
-    /// A line of the passage, which the note is set on too. Carries
-    /// [`leading`] over what the face itself asks for.
+    /// A line of the passage or its note, [`leading`] over the face's own line.
     line: i32,
 }
 
 /// What a line of a passage is opened up by over the face's own line height.
 fn leading(theme: &Theme) -> i32 {
     theme.gap
+}
+
+/// The white the rule holds over a passage's first cap and under its last
+/// baseline.
+fn air(theme: &Theme) -> i32 {
+    theme.gap * 3 / 2
 }
 
 impl Metrics {
@@ -107,15 +111,32 @@ impl Metrics {
         text.set_px(theme.body_px);
         Self {
             cap,
+            body_cap: text.cap_height() as i32,
             small,
             line: text.line_height() as i32 + leading(theme),
         }
     }
 
     /// The height `lines` of passage take, the air over them included, which
-    /// is the block `paint::mark_colour`'s rule stands beside.
+    /// the note and the label stand under. Never less than [`Metrics::ruled`].
     fn quoted(self, theme: &Theme, lines: usize) -> i32 {
-        theme.gap * 2 + lines.max(1) as i32 * self.line
+        let (from, deep) = self.ruled(theme, lines);
+        (theme.gap * 2 + lines.max(1) as i32 * self.line).max(from + deep)
+    }
+
+    /// Where the first line of the passage sets its baseline, from the head
+    /// of the block.
+    fn baseline(self, theme: &Theme) -> i32 {
+        theme.gap + air(theme) + self.body_cap
+    }
+
+    /// The rule `paint::mark_colour` draws beside those lines, as its head and
+    /// height from the head of the block. [`air`] stands over the first line's
+    /// cap and under the last line's baseline.
+    fn ruled(self, theme: &Theme, lines: usize) -> (i32, i32) {
+        let from = theme.gap;
+        let last = self.baseline(theme) + (lines.max(1) as i32 - 1) * self.line;
+        (from, last + air(theme) - from)
     }
 
     /// The height the note under a passage takes, and 0 where there is none.
@@ -352,12 +373,9 @@ pub(super) struct Layout<'a> {
     lines: usize,
     /// The width a row draws into.
     width: i32,
-    /// Whether a row states the book it was made in, over its own words: a
-    /// list running across books does, and a book's own list, standing under
-    /// that book's heading, does not.
+    /// Whether a row states the book it was made in, over its own words.
     named: bool,
-    /// The query a list is drawn against, where one names its rows. A
-    /// passage holding it past its own head opens on the line that holds it.
+    /// The query a list is drawn against, where one names its rows.
     needle: Option<&'a str>,
 }
 
@@ -405,14 +423,12 @@ fn fits(text: &mut TextRenderer, theme: &Theme, held: &[Row], at: &Layout, high:
 /// What one row's three parts wrap to, and where its passage opens.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Wrapped {
-    /// The book's name, on its own lines over the words, and empty where the
-    /// list does not state it.
+    /// The book's name on its own lines, empty where the list does not state it.
     name: Vec<String>,
     /// The lines of the passage the row shows, from [`Wrapped::opens`].
     said: Vec<String>,
     noted: Vec<String>,
-    /// The line of the whole passage the row opens on: 0 unless the query
-    /// stands further down, and one line above it where it does.
+    /// The line of the whole passage the row opens on, 0 at its head.
     opens: usize,
 }
 
@@ -568,20 +584,16 @@ pub(super) fn row(cx: &mut Ctx, area: Rect, held: &Row, at: &Layout) {
     let coloured = paint::is_coloured(&cx.palette);
     let ink = paint::mark_colour(&held.mark.colour, coloured);
     let quoted = m.quoted(theme, w.said.len());
+    let (from, deep) = m.ruled(theme, w.said.len());
     paint::fill_rgb(
         cx.fb,
-        Rect::new(
-            area.x,
-            top + theme.gap,
-            rule_width(theme),
-            (quoted - theme.gap).max(1),
-        ),
+        Rect::new(area.x, top + from, rule_width(theme), deep),
         ink,
     );
 
     // The passage, set in the book's own script.
     cx.text.set_px(theme.body_px);
-    let mut y = top + theme.gap * 2 + cx.text.cap_height() as i32;
+    let mut y = top + m.baseline(theme);
     for line in &w.said {
         if let Some(needle) = at.needle {
             wash(cx, script, x, y, line, needle);
@@ -596,7 +608,7 @@ pub(super) fn row(cx: &mut Ctx, area: Rect, held: &Row, at: &Layout) {
     }
 
     // `note` stands at `area.x`, past the rule and clear of [`indent`].
-    let mut baseline = top + quoted + theme.gap + cx.text.cap_height() as i32;
+    let mut baseline = top + quoted + theme.gap + m.body_cap;
     for line in &w.noted {
         if let Some(needle) = at.needle {
             wash(cx, script, area.x, baseline, line, needle);
@@ -781,6 +793,7 @@ mod tests {
     fn a_result_row_gives_up_a_line_rather_than_take_the_whole_page() {
         let m = Metrics {
             cap: 14,
+            body_cap: 18,
             small: 20,
             line: 26,
         };
@@ -842,10 +855,38 @@ mod tests {
     }
 
     #[test]
+    fn the_rule_holds_the_same_air_over_the_words_as_under_them() {
+        for (w, h) in PANELS {
+            let theme = Theme::for_screen(w, h);
+            // The heights a face reads at this panel's own sizes: a cap of
+            // `font::CAP` of the em, over a line a quarter taller than the em.
+            let cap_of = |px: f32| (px * crate::font::CAP) as i32;
+            let m = Metrics {
+                cap: cap_of(theme.small_px),
+                body_cap: cap_of(theme.body_px),
+                small: theme.small_px as i32,
+                line: (theme.body_px * 1.25) as i32 + leading(&theme),
+            };
+            for lines in 1..=WINDOW_LINES {
+                let (from, deep) = m.ruled(&theme, lines);
+                // The first line's cap and the last line's baseline, both
+                // where `row` sets them.
+                let first = m.baseline(&theme) - m.body_cap;
+                let last = m.baseline(&theme) + (lines as i32 - 1) * m.line;
+                assert_eq!(first - from, from + deep - last, "{w}x{h}, {lines}");
+                assert_eq!(first - from, air(&theme), "{w}x{h}, {lines}");
+                // And the rule stays inside the block the note stands under.
+                assert!(from + deep <= m.quoted(&theme, lines), "{w}x{h}");
+            }
+        }
+    }
+
+    #[test]
     fn a_row_stands_as_tall_as_the_words_it_holds() {
         // The heights `Metrics::of` reads off a face.
         let m = Metrics {
             cap: 14,
+            body_cap: 18,
             small: 20,
             line: 26,
         };
