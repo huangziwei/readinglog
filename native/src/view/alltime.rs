@@ -4,7 +4,8 @@
 
 use crate::date;
 use crate::lang::Strings;
-use crate::stats::{Fold, SITTING_BANDS, SITTING_FLOOR_SECS, SITTING_STEP_SECS};
+use crate::settings::SittingFloor;
+use crate::stats::{Fold, SITTING_BANDS, SITTING_STEP_SECS};
 use crate::ui::paint::{self, LIGHT, PALE, Rect};
 use crate::ui::theme::Theme;
 use crate::ui::{charts, chrome};
@@ -184,7 +185,10 @@ fn sittings(cx: &mut Ctx, area: Rect) {
     let s = cx.s();
     let counted = cx.stats.sitting_bands();
     let total: i64 = counted.iter().sum();
-    let names: Vec<String> = (0..SITTING_BANDS).map(|at| sitting_name(at, s)).collect();
+    let (first, floor) = (cx.stats.first_band(), cx.stats.sitting_floor);
+    let names: Vec<String> = (0..counted.len())
+        .map(|at| sitting_name(at, first, floor, s))
+        .collect();
     let busiest = counted
         .iter()
         .enumerate()
@@ -215,19 +219,21 @@ fn sittings(cx: &mut Ctx, area: Rect) {
     );
 }
 
-/// The length the band at `at` opens at, for the axis under it. The last band
-/// holds everything above its own opening, and states as much.
-fn sitting_name(at: usize, s: &Strings) -> String {
-    // The scale opens where a run first counts as reading, not at zero.
+/// The length the band at `at` opens at, for the axis under it. `at` counts
+/// from `first`, per [`crate::stats::Stats::first_band`]. The last band
+/// states a `+`.
+fn sitting_name(at: usize, first: usize, floor: SittingFloor, s: &Strings) -> String {
+    // `floor.label` names the band the scale opens on.
     if at == 0 {
-        return date::duration_tight(SITTING_FLOOR_SECS, s);
+        return floor.label(s);
     }
-    let secs = at as i64 * SITTING_STEP_SECS;
+    let band = first + at;
+    let secs = band as i64 * SITTING_STEP_SECS;
     let opens = match secs % 3600 {
         0 => format!("{}{}", secs / 3600, s.hours),
         _ => date::duration_tight(secs, s),
     };
-    match at + 1 == SITTING_BANDS {
+    match band + 1 == SITTING_BANDS {
         true => format!("{opens}+"),
         false => opens,
     }

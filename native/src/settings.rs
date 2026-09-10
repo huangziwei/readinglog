@@ -115,6 +115,66 @@ impl Figures {
     }
 }
 
+/// The shortest run `stats::Stats::build` counts as reading. A run under it
+/// carries no `Stats::sittings` entry and no total; its book keeps a row in
+/// `Stats::books`, at zero.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SittingFloor {
+    /// Every run, however short.
+    All,
+    #[default]
+    OneMinute,
+    FiveMinutes,
+    FifteenMinutes,
+}
+
+impl SittingFloor {
+    pub const ALL: [SittingFloor; 4] = [
+        SittingFloor::All,
+        SittingFloor::OneMinute,
+        SittingFloor::FiveMinutes,
+        SittingFloor::FifteenMinutes,
+    ];
+
+    /// The minutes a run must reach.
+    pub fn minutes(self) -> i64 {
+        match self {
+            SittingFloor::All => 0,
+            SittingFloor::OneMinute => 1,
+            SittingFloor::FiveMinutes => 5,
+            SittingFloor::FifteenMinutes => 15,
+        }
+    }
+
+    /// [`Self::minutes`] in seconds.
+    pub fn seconds(self) -> i64 {
+        self.minutes() * 60
+    }
+
+    /// [`Self::minutes`] and `Strings::minutes`, spaced by
+    /// `Strings::unit_space`.
+    pub fn label(self, s: &crate::lang::Strings) -> String {
+        let space = match s.unit_space {
+            true => " ",
+            false => "",
+        };
+        format!("{}{space}{}", self.minutes(), s.minutes)
+    }
+
+    fn token(self) -> &'static str {
+        match self {
+            SittingFloor::All => "all",
+            SittingFloor::OneMinute => "1m",
+            SittingFloor::FiveMinutes => "5m",
+            SittingFloor::FifteenMinutes => "15m",
+        }
+    }
+
+    fn of_token(token: &str) -> Option<Self> {
+        SittingFloor::ALL.into_iter().find(|f| f.token() == token)
+    }
+}
+
 /// The day `WeekStart::column_of` puts in column 0.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WeekStart {
@@ -197,6 +257,8 @@ pub struct Settings {
     pub color_scheme: ColorScheme,
     /// The figures `view::book` states.
     pub figures: Figures,
+    /// The shortest run `Stats::build` counts as reading.
+    pub sitting_floor: SittingFloor,
     /// Whether `Stats` totals hold sittings no `BookRecord` names.
     pub show_unnamed: bool,
     /// Whether `view::books::listed` keeps a book failing `BookStat::has_cover`.
@@ -216,6 +278,7 @@ impl Settings {
             text_size: TextSize::default(),
             color_scheme: ColorScheme::default(),
             figures: Figures::default(),
+            sitting_floor: SittingFloor::default(),
             show_unnamed: true,
             show_uncovered: true,
             scope: Scope::default(),
@@ -276,6 +339,11 @@ impl Settings {
                         out.figures = from;
                     }
                 }
+                "sitting_floor" => {
+                    if let Some(floor) = SittingFloor::of_token(value) {
+                        out.sitting_floor = floor;
+                    }
+                }
                 "show_unnamed" => out.show_unnamed = value != "no",
                 "show_uncovered" => out.show_uncovered = value != "no",
                 "scope" => {
@@ -297,6 +365,7 @@ impl Settings {
         out.push_str(&format!("text_size={}\n", self.text_size.token()));
         out.push_str(&format!("color_scheme={}\n", self.color_scheme.token()));
         out.push_str(&format!("figures={}\n", self.figures.token()));
+        out.push_str(&format!("sitting_floor={}\n", self.sitting_floor.token()));
         let yes_no = |set: bool| match set {
             true => "yes",
             false => "no",
@@ -386,6 +455,57 @@ mod tests {
         for token in ["notacolour", "azure", "asagi"] {
             let odd = Settings::parse(&format!("color_scheme={token}\n"), Lang::English);
             assert_eq!(odd.color_scheme, ColorScheme::KurenaiKon, "{token}");
+        }
+    }
+
+    #[test]
+    fn a_sitting_counts_from_a_minute_until_the_page_says_otherwise() {
+        assert_eq!(
+            Settings::new(Lang::English).sitting_floor,
+            SittingFloor::OneMinute
+        );
+        // Text with no `sitting_floor` line.
+        let old = Settings::parse("language=e\nfigures=app\n", Lang::English);
+        assert_eq!(old.sitting_floor, SittingFloor::OneMinute);
+        assert_eq!(old.figures, Figures::App, "the rest still reads");
+        // A token `of_token` answers `None` for keeps the default.
+        for token in ["", "1", "60", "none", "2m"] {
+            let odd = Settings::parse(&format!("sitting_floor={token}\n"), Lang::English);
+            assert_eq!(odd.sitting_floor, SittingFloor::OneMinute, "{token}");
+        }
+        // Every floor survives a write, on a token of its own.
+        for floor in SittingFloor::ALL {
+            let mut s = Settings::new(Lang::English);
+            s.sitting_floor = floor;
+            let back = Settings::parse(&s.to_text(), Lang::English);
+            assert_eq!(back.sitting_floor, floor, "{floor:?} did not survive");
+        }
+        let mut tokens: Vec<&str> = SittingFloor::ALL.iter().map(|f| f.token()).collect();
+        tokens.sort_unstable();
+        let count = tokens.len();
+        tokens.dedup();
+        assert_eq!(tokens.len(), count, "two floors share a token");
+    }
+
+    #[test]
+    fn the_floors_run_in_order_and_each_states_its_own_chip() {
+        let secs: Vec<i64> = SittingFloor::ALL.iter().map(|f| f.seconds()).collect();
+        assert_eq!(secs, [0, 60, 300, 900]);
+        let mut sorted = secs.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, secs, "the chips are not in order");
+        // `label` is `minutes` and `Strings::minutes`.
+        let s = Lang::English.strings();
+        let chips: Vec<String> = SittingFloor::ALL.iter().map(|f| f.label(s)).collect();
+        assert_eq!(chips, ["0m", "1m", "5m", "15m"]);
+        for lang in Lang::ALL {
+            let s = lang.strings();
+            for floor in SittingFloor::ALL {
+                assert!(
+                    floor.label(s).contains(s.minutes),
+                    "{lang:?} {floor:?} states no unit"
+                );
+            }
         }
     }
 

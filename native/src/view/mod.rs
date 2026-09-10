@@ -77,6 +77,8 @@ pub enum Hit {
     ColorScheme(crate::settings::ColorScheme),
     /// Where a book's own figures come from.
     Figures(crate::settings::Figures),
+    /// The shortest run a total counts as reading.
+    SittingFloor(crate::settings::SittingFloor),
     /// Go looking for a newer release.
     Update,
     Prev,

@@ -4,7 +4,7 @@
 
 use crate::font::Script;
 use crate::lang::Lang;
-use crate::settings::{ColorScheme, Figures, Settings, TextSize, WeekStart};
+use crate::settings::{ColorScheme, Figures, Settings, SittingFloor, TextSize, WeekStart};
 use crate::ui::chrome;
 use crate::ui::paint::Rect;
 use crate::ui::theme::Theme;
@@ -85,6 +85,7 @@ struct Section<'a> {
 /// is in the record, and what archives are on disk.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Record {
+    /// The length of `Store::sessions`, which [`Reset::Wipe`] deletes.
     pub sittings: usize,
     /// [`crate::stats::Stats::book_count`].
     pub books: usize,
@@ -97,13 +98,14 @@ pub struct Record {
 impl Record {
     /// The record and the archives beside it, ready for [`sections`].
     pub fn of(
+        store: &crate::store::Store,
         stats: &crate::stats::Stats,
         dir: &std::path::Path,
         floored: bool,
         lang: Lang,
     ) -> Record {
         Record {
-            sittings: stats.sittings.len(),
+            sittings: store.sessions.len(),
             books: stats.book_count(),
             backups: labels(&crate::backup::list(dir), lang.strings()),
             floored,
@@ -252,6 +254,21 @@ fn sections<'a>(
         apart: Some(HEAL_CHIP),
     };
 
+    let sitting_floor = Row {
+        label: s.sitting_floor_row,
+        options: SittingFloor::ALL
+            .iter()
+            .map(|floor| (floor.label(s), plain))
+            .collect(),
+        on: SittingFloor::ALL
+            .iter()
+            .position(|floor| *floor == settings.sitting_floor)
+            .unwrap_or(0),
+        hit: Box::new(|i| Hit::SittingFloor(SittingFloor::ALL[i.min(SittingFloor::ALL.len() - 1)])),
+        one_row: false,
+        apart: None,
+    };
+
     // The third chip is never filled, and stands apart: it sets nothing, it
     // reads every source of identity again to name what is unidentified.
     let unnamed = Row {
@@ -350,12 +367,17 @@ fn sections<'a>(
         },
         Section {
             heading: s.the_record,
-            lines: [Line::Set(figures), Line::Set(unnamed), Line::Set(uncovered)]
-                .into_iter()
-                .chain(recorded)
-                .chain(reset.map(Line::Set))
-                .chain(restore.map(Line::Set))
-                .collect(),
+            lines: [
+                Line::Set(figures),
+                Line::Set(sitting_floor),
+                Line::Set(unnamed),
+                Line::Set(uncovered),
+            ]
+            .into_iter()
+            .chain(recorded)
+            .chain(reset.map(Line::Set))
+            .chain(restore.map(Line::Set))
+            .collect(),
         },
         Section {
             heading: s.about,
@@ -784,6 +806,7 @@ mod tests {
             the_record(&Record::default()),
             [
                 Lang::English.strings().figures_row,
+                Lang::English.strings().sitting_floor_row,
                 Lang::English.strings().unnamed_row,
                 Lang::English.strings().uncovered_row
             ]
@@ -802,6 +825,7 @@ mod tests {
             the_record(&record),
             [
                 s.figures_row,
+                s.sitting_floor_row,
                 s.unnamed_row,
                 s.uncovered_row,
                 s.recorded_row,
@@ -823,6 +847,7 @@ mod tests {
             the_record(&kept),
             [
                 s.figures_row,
+                s.sitting_floor_row,
                 s.unnamed_row,
                 s.uncovered_row,
                 s.recorded_row,
@@ -839,6 +864,7 @@ mod tests {
             the_record(&floored),
             [
                 s.figures_row,
+                s.sitting_floor_row,
                 s.unnamed_row,
                 s.uncovered_row,
                 s.recorded_row,
@@ -859,7 +885,7 @@ mod tests {
         };
         let page = sections(Lang::English, &settings, true, &record);
         let at = page.len() - 2;
-        let archives = row(&page, at, 5);
+        let archives = row(&page, at, 6);
         assert_eq!(archives.options[0].0, Lang::English.strings().restore_logs);
         assert_eq!((archives.hit)(0), Hit::Rebuild);
         assert_eq!((archives.hit)(1), Hit::Restore(0));
@@ -867,22 +893,25 @@ mod tests {
         assert!(archives.one_row, "the run would grow without end");
     }
 
+    /// The row `label` names, wherever it sits on the page.
+    fn named_row<'a>(page: &'a [Section<'a>], label: &str) -> &'a Row<'a> {
+        page.iter()
+            .flat_map(|section| section.lines.iter())
+            .find_map(|line| match line {
+                Line::Set(row) if row.label == label => Some(row),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no row called {label}"))
+    }
+
     /// The unidentified books row of a page drawn in `lang`, whatever else the
     /// record section offers under it.
     fn unnamed_row<'a>(page: &'a [Section<'a>], lang: Lang) -> &'a Row<'a> {
-        let at = page
-            .iter()
-            .position(|section| section.heading == lang.strings().the_record)
-            .expect("the record section");
-        row(page, at, 1)
+        named_row(page, lang.strings().unnamed_row)
     }
 
     fn figures_row<'a>(page: &'a [Section<'a>], lang: Lang) -> &'a Row<'a> {
-        let at = page
-            .iter()
-            .position(|section| section.heading == lang.strings().the_record)
-            .expect("the record section");
-        row(page, at, 0)
+        named_row(page, lang.strings().figures_row)
     }
 
     #[test]
@@ -974,17 +1003,125 @@ mod tests {
     }
 
     #[test]
+    fn the_sitting_row_offers_every_floor_and_lights_the_set_one() {
+        let mut settings = Settings::new(Lang::English);
+        let empty = Record::default();
+        for floor in SittingFloor::ALL {
+            settings.sitting_floor = floor;
+            let page = sections(Lang::English, &settings, true, &empty);
+            let row = named_row(&page, Lang::English.strings().sitting_floor_row);
+            assert_eq!(row.options.len(), SittingFloor::ALL.len());
+            assert_eq!(row.apart, None, "no button stands in this run");
+            assert_eq!(
+                (row.hit)(row.on),
+                Hit::SittingFloor(floor),
+                "the lit chip is `floor`"
+            );
+            for (at, floor) in SittingFloor::ALL.iter().enumerate() {
+                assert_eq!((row.hit)(at), Hit::SittingFloor(*floor));
+            }
+        }
+    }
+
+    #[test]
+    fn every_language_states_the_floors_as_its_own_minutes() {
+        for lang in Lang::ALL {
+            let s = lang.strings();
+            assert!(!s.sitting_floor_row.is_empty(), "{lang:?}");
+            // No other row's label repeats it.
+            assert_ne!(s.sitting_floor_row, s.figures_row, "{lang:?}");
+            assert_ne!(s.sitting_floor_row, s.unnamed_row, "{lang:?}");
+            assert_ne!(s.sitting_floor_row, s.uncovered_row, "{lang:?}");
+
+            let settings = Settings::new(lang);
+            let empty = Record::default();
+            let page = sections(lang, &settings, true, &empty);
+            let row = named_row(&page, s.sitting_floor_row);
+            let chips: Vec<&str> = row.options.iter().map(|(t, _)| t.as_str()).collect();
+            for (chip, floor) in chips.iter().zip(SittingFloor::ALL) {
+                assert_eq!(*chip, floor.label(s), "{lang:?}");
+            }
+            // Every `label` reads differently.
+            let mut sorted = chips.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            assert_eq!(sorted.len(), chips.len(), "{lang:?} repeats a chip");
+        }
+    }
+
+    #[test]
+    fn the_label_column_is_not_widened_by_the_sitting_row() {
+        // `chip_column` takes the widest label on the page. 600x800 at
+        // `TextSize::Large` is the narrowest column.
+        let Ok(mut text) = crate::ui::text::TextRenderer::load(24.0) else {
+            return;
+        };
+        for lang in Lang::ALL {
+            let s = lang.strings();
+            let theme = Theme::sized(600, 800, TextSize::Large);
+            text.set_px(theme.body_px);
+            let settings = Settings::new(lang);
+            let empty = Record::default();
+            let page = sections(lang, &settings, true, &empty);
+            let widest = page
+                .iter()
+                .flat_map(|section| section.lines.iter())
+                .map(|line| line.label())
+                .filter(|label| *label != s.sitting_floor_row)
+                .map(|label| text.measure_width(label))
+                .max()
+                .unwrap_or(0);
+            let mine = text.measure_width(s.sitting_floor_row);
+            assert!(
+                mine <= widest,
+                "{lang:?}: {:?} sets {mine}px against the page's {widest}px",
+                s.sitting_floor_row
+            );
+        }
+    }
+
+    #[test]
+    fn the_record_row_states_the_file_and_not_what_the_page_counts() {
+        // `Record::sittings` counts `Store::sessions`, not `Stats::sittings`.
+        let store = crate::store::Store {
+            sessions: vec![crate::log::session::Session {
+                started_at: "2026-08-05T09:00:00".into(),
+                ended_at: "2026-08-05T09:00:30".into(),
+                end_position: 100,
+                seconds: 30,
+                ..crate::log::session::Session::default()
+            }],
+            ..crate::store::Store::default()
+        };
+        let stats = crate::stats::Stats::build(
+            &store,
+            crate::date::days_from_civil(2026, 8, 6),
+            true,
+            Figures::Device,
+            SittingFloor::OneMinute,
+        );
+        assert!(stats.sittings.is_empty(), "the skim is not counted");
+        let record = Record::of(
+            &store,
+            &stats,
+            std::path::Path::new("/nowhere"),
+            false,
+            Lang::English,
+        );
+        assert_eq!(record.sittings, 1, "but the file still holds it");
+        // `reset_row` stands where `Record::sittings` is above zero.
+        let labels = the_record(&record);
+        assert!(labels.contains(&Lang::English.strings().reset_row.to_string()));
+    }
+
+    #[test]
     fn the_covers_row_offers_the_two_values_and_no_button() {
         let mut settings = Settings::new(Lang::English);
         let empty = Record::default();
         for show in [true, false] {
             settings.show_uncovered = show;
             let page = sections(Lang::English, &settings, true, &empty);
-            let at = page
-                .iter()
-                .position(|section| section.heading == Lang::English.strings().the_record)
-                .expect("the record section");
-            let uncovered = row(&page, at, 2);
+            let uncovered = named_row(&page, Lang::English.strings().uncovered_row);
             assert_eq!(uncovered.options.len(), 2, "a button crept in");
             assert_eq!((uncovered.hit)(0), Hit::ShowUncovered(true));
             assert_eq!((uncovered.hit)(1), Hit::ShowUncovered(false));

@@ -16,7 +16,7 @@ use crate::eink::input::{Input, InputEvent};
 use crate::eink::screenshot;
 use crate::eink::touch::{SwipeDir, TouchEvent, classify_swipe};
 use crate::lang::Lang;
-use crate::settings::{Scope, Settings};
+use crate::settings::{Scope, Settings, SittingFloor};
 use crate::stats::Stats;
 use crate::ui::chrome::{self, Tab};
 use crate::ui::cover::Covers;
@@ -62,7 +62,13 @@ impl App {
         let (today, now) = date::now();
         let settings = Settings::load(Lang::detect());
         let settings_scope = settings.scope;
-        let stats = Stats::build(&store, today, settings.show_unnamed, settings.figures);
+        let stats = Stats::build(
+            &store,
+            today,
+            settings.show_unnamed,
+            settings.figures,
+            settings.sitting_floor,
+        );
         let colour = crate::eink::fb::has_cfa();
         eprintln!(
             "panel: {}",
@@ -113,6 +119,7 @@ impl App {
             self.today,
             self.settings.show_unnamed,
             self.settings.figures,
+            self.settings.sitting_floor,
         );
     }
 
@@ -136,6 +143,12 @@ impl App {
     /// Count the sittings no record names, or leave them out of every total.
     pub fn set_unnamed(&mut self, show: bool) {
         self.settings.show_unnamed = show;
+        self.rebuild();
+    }
+
+    /// Count a run of at least `floor` as reading.
+    pub fn set_sitting_floor(&mut self, floor: SittingFloor) {
+        self.settings.sitting_floor = floor;
         self.rebuild();
     }
 
@@ -381,6 +394,7 @@ impl App {
         // `backup::list` runs on the frame that draws its row.
         let record = match state.tab == Tab::Config && state.book.is_none() {
             true => view::config::Record::of(
+                &self.store,
                 &self.stats,
                 &self.dir,
                 !self.store.floor.is_empty(),
@@ -839,6 +853,17 @@ impl App {
                 self.rebuild();
                 self.settings.save();
             }
+            Hit::SittingFloor(pick) => {
+                if self.settings.sitting_floor == pick {
+                    return Action::Nothing;
+                }
+                self.settings.sitting_floor = pick;
+                // Every total on every screen comes off `stats`.
+                self.rebuild();
+                self.state.books_from = 0;
+                self.state.list_from = 0;
+                self.settings.save();
+            }
             Hit::ShowUnnamed(pick) => {
                 if self.settings.show_unnamed == pick {
                     return Action::Nothing;
@@ -1047,17 +1072,19 @@ impl App {
     /// gathered here: the dialog itself walks nothing.
     fn ask_question(&mut self, about: view::About) -> Action {
         let (jackets, archives) = crate::backup::sizes(self.dir());
+        // `Store::sessions` is what `Wipe`, `Heal` and `Retry` act on.
+        let held = self.store.sessions.len();
         let confirm = match about {
             view::About::Heal | view::About::Retry => view::Confirm {
                 about,
-                sittings: self.stats.sittings.len(),
+                sittings: held,
                 books: self.stats.book_count(),
                 bytes: 0,
                 named: String::new(),
             },
             view::About::Reset(view::Reset::Wipe(keep)) => view::Confirm {
                 about,
-                sittings: self.stats.sittings.len(),
+                sittings: held,
                 books: self.stats.book_count(),
                 // The archive's weight, or the room `covers::sweep` returns.
                 bytes: match keep {
@@ -1072,10 +1099,15 @@ impl App {
                     return Action::Nothing;
                 };
                 // `peek` once: the figures the question states. `inside` is
-                // totalled whole, whatever `show_unnamed` stands at.
+                // totalled whole.
                 let inside = crate::backup::peek(&backup.path).unwrap_or_default();
-                let held =
-                    crate::stats::Stats::build(&inside, self.today, true, self.settings.figures);
+                let held = crate::stats::Stats::build(
+                    &inside,
+                    self.today,
+                    true,
+                    self.settings.figures,
+                    SittingFloor::All,
+                );
                 view::Confirm {
                     about,
                     sittings: held.sittings.len(),
@@ -1164,10 +1196,16 @@ impl App {
         self.hold(input, OUTCOME_LINGER)
     }
 
-    /// Books read that no record names, whatever the page is set to show.
+    /// Books read that no record names, over the whole record.
     fn unnamed_books(&self) -> usize {
-        crate::stats::Stats::build(&self.store, self.today, true, self.settings.figures)
-            .unnamed_books()
+        crate::stats::Stats::build(
+            &self.store,
+            self.today,
+            true,
+            self.settings.figures,
+            SittingFloor::All,
+        )
+        .unnamed_books()
     }
 
     /// `catalog::read` through `Store::remember`, then every source that names

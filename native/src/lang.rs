@@ -333,6 +333,8 @@ pub struct Strings {
     pub heal_none: &'static str,
     /// The record section, and the row counting unnamed books.
     pub the_record: &'static str,
+    /// The row `SittingFloor::label` fills the values of.
+    pub sitting_floor_row: &'static str,
     pub unnamed_row: &'static str,
     /// Show and Hide, the two answers a row that hides something takes: the
     /// unidentified row and the covers row below it are both set with them.
@@ -591,6 +593,7 @@ const ENGLISH: Strings = Strings {
     heal_done: "{d} sitting[s] measured again.",
     heal_none: "Nothing the logs reach has changed.",
     the_record: "THE RECORD",
+    sitting_floor_row: "Count a sitting from",
     unnamed_row: "Unidentified books",
     chip_show: "Show",
     chip_hide: "Hide",
@@ -894,6 +897,7 @@ const GERMAN: Strings = Strings {
                           dann beginnt es hier von vorn.",
     unnamed_only: "{t} gelesen, auf Büchern, die der Katalog nicht benennt. Ein \
                    Buch wird gelistet, sobald das Gerät sagt, welches es ist.",
+    sitting_floor_row: "Sitzung zählt ab",
     unnamed_row: "Unbekannte Bücher",
     chip_show: "Zeigen",
     chip_hide: "Verbergen",
@@ -1135,6 +1139,7 @@ const JAPANESE: Strings = Strings {
     nothing_since_reset: "リセット後の読書はまだありません。本を開けば、ここから始まります。",
     unnamed_only: "{t}の読書がありますが、カタログが本を特定していません。\
                    端末が本を認識すると一覧に並びます。",
+    sitting_floor_row: "計時下限",
     unnamed_row: "不明な本",
     chip_show: "表示",
     chip_hide: "非表示",
@@ -1362,6 +1367,7 @@ const SIMPLIFIED: Strings = Strings {
     no_reading_yet: "还没有阅读记录。打开一本书读几页再回来——日志从首次运行当天开始。",
     nothing_since_reset: "重置后还没有阅读。打开一本书，就从这里重新开始。",
     unnamed_only: "已读 {t}，但目录未能指明是哪些书。设备识别出书名后就会列出。",
+    sitting_floor_row: "计时下限",
     unnamed_row: "未识别的书",
     chip_show: "显示",
     chip_hide: "隐藏",
@@ -1600,6 +1606,7 @@ const TRADITIONAL: Strings = Strings {
     no_reading_yet: "還沒有閱讀記錄。打開一本書讀幾頁再回來——日誌從首次執行當天開始。",
     nothing_since_reset: "重設後還沒有閱讀。打開一本書，就從這裡重新開始。",
     unnamed_only: "已讀 {t}，但目錄未能指明是哪些書。裝置辨識出書名後就會列出。",
+    sitting_floor_row: "計時下限",
     unnamed_row: "未識別的書",
     chip_show: "顯示",
     chip_hide: "隱藏",

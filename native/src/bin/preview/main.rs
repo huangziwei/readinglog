@@ -14,7 +14,7 @@ use readinglog_native::app::App;
 use readinglog_native::date;
 use readinglog_native::eink::fb::Framebuffer;
 use readinglog_native::lang::Lang;
-use readinglog_native::settings::{ColorScheme, Scope, TextSize, WeekStart};
+use readinglog_native::settings::{ColorScheme, Scope, SittingFloor, TextSize, WeekStart};
 use readinglog_native::stats::Stats;
 use readinglog_native::store::Store;
 use readinglog_native::ui::chrome::Tab;
@@ -169,6 +169,8 @@ struct Opts {
     colour: bool,
     /// Whether a total counts the sittings no record names.
     unnamed: bool,
+    /// The shortest run a total counts as reading.
+    floor: SittingFloor,
     /// Whether a list holds the books no jacket can be drawn for.
     uncovered: bool,
 }
@@ -192,6 +194,7 @@ impl Default for Opts {
             crop: None,
             hits: false,
             unnamed: true,
+            floor: SittingFloor::default(),
             uncovered: true,
         }
     }
@@ -314,6 +317,7 @@ fn open(store: &Store, opts: &Opts, w: u32, h: u32, lang: Lang, size: TextSize) 
             opts.day,
             true,
             readinglog_native::settings::Figures::Device,
+            readinglog_native::settings::SittingFloor::All,
         )
         .books
         .is_empty()
@@ -330,6 +334,7 @@ fn open(store: &Store, opts: &Opts, w: u32, h: u32, lang: Lang, size: TextSize) 
     app.set_colour(opts.colour);
     app.set_color_scheme(opts.scheme);
     app.set_unnamed(opts.unnamed);
+    app.set_sitting_floor(opts.floor);
     app.set_uncovered(opts.uncovered);
     Ok(app)
 }
@@ -355,6 +360,7 @@ fn thinned_for(shot: &Shot, opts: &Opts, art: &Path) -> Option<Store> {
                 opts.day,
                 true,
                 readinglog_native::settings::Figures::Device,
+                readinglog_native::settings::SittingFloor::All,
             )
             .books
             .last()?
@@ -814,6 +820,7 @@ fn read_args(args: impl Iterator<Item = String>) -> Result<Opts> {
             "--no-colour" => opts.colour = false,
             "--day" => opts.day = day(&value()?)?,
             "--hide-unnamed" => opts.unnamed = false,
+            "--floor" => opts.floor = floor(&value()?)?,
             "--hide-uncovered" => opts.uncovered = false,
             "--hits" => opts.hits = true,
             "--out" => opts.out = PathBuf::from(value()?),
@@ -950,6 +957,18 @@ fn week(name: &str) -> Result<WeekStart> {
         "mon" | "monday" => Ok(WeekStart::Monday),
         "sun" | "sunday" => Ok(WeekStart::Sunday),
         other => Err(anyhow!("no week start called {other} — mon or sun")),
+    }
+}
+
+fn floor(name: &str) -> Result<SittingFloor> {
+    match name {
+        "all" | "0m" => Ok(SittingFloor::All),
+        "1m" => Ok(SittingFloor::OneMinute),
+        "5m" => Ok(SittingFloor::FiveMinutes),
+        "15m" => Ok(SittingFloor::FifteenMinutes),
+        other => Err(anyhow!(
+            "no sitting floor called {other} — all, 1m, 5m, 15m"
+        )),
     }
 }
 

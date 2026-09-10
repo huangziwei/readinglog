@@ -70,10 +70,9 @@ fn collect_into(store: &mut Store, dir: &Path, on: &mut dyn FnMut(usize, usize))
             date::duration(pass.rewound, lang::Lang::English.strings()),
         );
     }
-    // The catalog speaks first: it is the cheapest to read and states the most
-    // about every book it names. `identify::rescue` then asks the three
-    // sources that can name what it left unnamed, and `annotate::fold` joins
-    // the two the same walk reaches.
+    // `catalog::read` speaks first. `identify::rescue` asks the three sources
+    // that name what it left unnamed, and `annotate::fold` joins the two the
+    // same walk reaches.
     let books = catalog::read();
     let stated = store.remember(&books);
     let shelf = identify::walk(Path::new(sidecar::DOCUMENTS_DIR));
@@ -153,7 +152,13 @@ fn dump() -> Result<()> {
     let store = collect()?;
     let (today, _) = date::now();
     let settings = settings::Settings::load(lang::Lang::detect());
-    let stats = Stats::build(&store, today, settings.show_unnamed, settings.figures);
+    let stats = Stats::build(
+        &store,
+        today,
+        settings.show_unnamed,
+        settings.figures,
+        settings.sitting_floor,
+    );
     println!(
         "{} read over {} days, {} books, streak {} (longest {})",
         date::duration(stats.total_seconds, lang::Lang::English.strings()),

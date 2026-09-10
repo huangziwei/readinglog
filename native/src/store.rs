@@ -26,6 +26,9 @@ pub(crate) const HEADER: &str = "#readinglog\t2";
 /// The percentage `BookRecord::stand_at` sets [`BookRecord::finished`] at.
 pub const FINISHED_PERCENT: f64 = 99.5;
 
+/// The shortest run [`Store::name_from`] lets a witness name a class over.
+pub const CLAIM_MIN_SECS: i64 = 60;
+
 /// What named a book record, ranked strongest first, in the order
 /// [`crate::identify::rescue`] asks the sources. A source takes a class a
 /// weaker one named; nothing takes one [`Named::Catalog`] named.
@@ -184,9 +187,8 @@ pub struct Store {
     /// The newest log line any pass has read, as `YYMMDD:HHMMSS`.
     pub mark: String,
     /// Seconds the device's clock stood ahead of UTC when [`Self::mark`] was
-    /// last written. [`Self::follow_clock`] reads it to tell a clock that has
-    /// stepped back from one that has not, and a row carrying none states no
-    /// clock to compare against.
+    /// last written, read by [`Self::follow_clock`]. A row carrying none
+    /// states no clock to compare against.
     pub mark_offset: Option<i64>,
     /// Where the record was last emptied, `YYMMDD:HHMMSS`. No pass reads under it.
     pub floor: String,
@@ -197,7 +199,7 @@ pub struct Store {
     /// stamp. Written whole by [`crate::annotate::fold`], never appended to.
     pub marks: Vec<Mark>,
     /// What the pass that wrote [`Self::marks`] saw, and `None` where no pass
-    /// has. The next pass reads nothing while this still stands.
+    /// has. The next pass reads nothing while this stands.
     pub gate: Option<Gate>,
 }
 
@@ -403,16 +405,8 @@ impl Store {
     }
 
     /// Move [`Self::mark`] and [`Self::floor`] onto the clock `offset` names,
-    /// answering the seconds they moved.
-    ///
-    /// Both are wall-clock stamps and no pass reads under them, so a clock
-    /// that steps back — a zone set west, or daylight saving ending — would
-    /// leave every line written inside the step below the mark and unread.
-    /// Pulling both back by as much as the clock moved reads that stretch
-    /// again; `absorb` replaces whatever the last pass made of it.
-    ///
-    /// A clock stepping *forward* needs nothing: the mark falls further behind
-    /// and no line is skipped.
+    /// answering the seconds they moved. A clock stepping forward moves
+    /// neither: the mark falls further behind and no line is skipped.
     pub fn follow_clock(&mut self, offset: Option<i64>) -> i64 {
         let Some(now) = offset else {
             return 0;
@@ -481,9 +475,9 @@ impl Store {
             self.learn_counter(ep, ms, words);
         }
         let mut parsed: Vec<Session> = parsed.into_iter().filter(|s| !self.barred(s)).collect();
-        // The clock this pass ran under, on the sittings it caught up with. An
-        // older one was read on some other clock and states none rather than
-        // this one — a rebuild re-reads years of them.
+        // The clock this pass ran under, on the sittings it caught up with.
+        // An older sitting states the clock of its own pass; a rebuild
+        // re-reads years of them.
         if let Some(offset) = self.mark_offset {
             let (today, _) = crate::date::now();
             for session in &mut parsed {
@@ -577,7 +571,7 @@ impl Store {
         )
     }
 
-    /// Re-measure every sitting the device's logs still reach. Answers the
+    /// Re-measure every sitting the device's logs reach. Answers the
     /// stored rows whose figures moved.
     pub fn heal(&mut self, on: &mut dyn FnMut(usize, usize)) -> usize {
         self.heal_from(
@@ -845,7 +839,7 @@ impl Store {
 
     /// Name reading the catalog cannot, from what one source witnessed. A
     /// witness names the one class bracketing its instant, over a sitting of
-    /// at least [`crate::stats::SITTING_FLOOR_SECS`]; `contested` holds the rest.
+    /// at least [`CLAIM_MIN_SECS`]; `contested` holds the rest.
     pub fn name_from(
         &mut self,
         witnesses: &[crate::identify::Witness],
@@ -866,7 +860,7 @@ impl Store {
             if witness.pos >= 0 && extent > 0 && witness.pos > extent {
                 continue;
             }
-            if seconds < crate::stats::SITTING_FLOOR_SECS
+            if seconds < CLAIM_MIN_SECS
                 || contested.contains(&extent)
                 || !self.wants(extent, key, by)
             {
@@ -1264,10 +1258,8 @@ impl Store {
         for (extent, file) in &other.pairs {
             self.learn_pair(*extent, file);
         }
-        // A mark the record does not already hold. The gate goes: the sources
-        // on this device never stated these, so the next pass has to read them
-        // again rather than stand on a count that no longer describes the
-        // record.
+        // A mark the record does not hold. The gate goes: the sources on this
+        // device never stated these, and the next pass reads them again.
         for mark in &other.marks {
             if !self.marks.contains(mark) {
                 self.marks.push(mark.clone());
@@ -1359,8 +1351,7 @@ impl Store {
     }
 
     /// The marks of one book, dropped. The gate goes with them: the sources
-    /// still hold what was taken, so the next pass must read them again rather
-    /// than stand on a count that no longer describes this record.
+    /// hold what was taken, and the next pass reads them again.
     fn drop_marks(&mut self, extent: i64) {
         let before = self.marks.len();
         self.marks.retain(|m| m.extent != extent);
@@ -1720,12 +1711,9 @@ fn read_book<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<BookRecord> {
     })
 }
 
-/// An `a` row: one annotation, as [`crate::annotate`] merged it.
-///
-/// `<at>` is the key, not the positions — see that module's own account of
-/// why. `<start>`/`<end>` are on the book's `p_contentSize` axis and
-/// `<location>` is the display location the clipping stated; **the two are
-/// different axes** and reusing one name for both is the easiest mistake here.
+/// An `a` row: one annotation, as [`crate::annotate`] merged it. `m.at` is
+/// the key. `m.start`/`m.end` are on the book's `p_contentSize` axis and
+/// `m.location` is the display location the clipping stated.
 fn write_mark(m: &Mark) -> String {
     format!(
         "a\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
@@ -1743,9 +1731,8 @@ fn write_mark(m: &Mark) -> String {
     )
 }
 
-/// An `a` row as a [`Mark`]. Two rows are dropped rather than read: one naming
-/// a kind this build does not know, which it could neither draw nor count, and
-/// one stating a mark the reader deleted, which would draw a ghost.
+/// An `a` row as a [`Mark`]. Two rows are dropped: one naming a kind this
+/// build does not know, and one whose `State` is `Retired`.
 /// [`crate::annotate::fold`] writes neither.
 fn read_mark<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Mark> {
     let mut next = || f.next().unwrap_or_default();
@@ -1790,8 +1777,6 @@ fn read_cleared<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Cleared> {
     (!out.at.is_empty()).then_some(out)
 }
 
-/// A stored `YYYY-MM-DDTHH:MM:SS` as seconds, for taking one from another.
-/// The epoch is the date module's own and only differences are ever read.
 /// How far the offset must step back before a pass follows it. Under a minute
 /// is a clock being nudged, not a zone changing.
 const CLOCK_STEP_SECS: i64 = 60;
@@ -1806,6 +1791,8 @@ fn moved(stamp: &str, by: i64) -> String {
     log_stamp(&iso).unwrap_or_else(|| stamp.to_string())
 }
 
+/// A stored `YYYY-MM-DDTHH:MM:SS` as seconds, for taking one from another.
+/// The epoch is the date module's own and only differences are ever read.
 fn instant(at: &str) -> Option<i64> {
     Some(crate::date::parse_day(crate::date::day_of(at))? * 86_400 + crate::date::secs_of(at))
 }
@@ -2118,7 +2105,7 @@ mod tests {
 
     #[test]
     fn an_a_row_stating_a_deleted_mark_is_dropped() {
-        // A record carrying one would draw a ghost.
+        // `State::Retired` names a mark the record draws no row for.
         let mut retired = one_mark();
         retired.state = State::Retired;
         let held = Store {
@@ -2798,7 +2785,7 @@ mod tests {
     #[test]
     fn a_clock_stepping_back_pulls_the_mark_and_the_floor_with_it() {
         // Berlin at +2 to Berlin at +1: the hour between 02:00 and 03:00 is
-        // written twice, and the mark would bar the second one.
+        // written twice, and `mark` bars the second one.
         let mut store = on_clock("261025:023000", Some(7200));
         assert_eq!(store.follow_clock(Some(3600)), 3600);
         assert_eq!(store.mark, "261025:013000");
@@ -3557,7 +3544,7 @@ mod tests {
         .expect("a log to read");
 
         // The row the log restates, holding an older parse's figures, and one
-        // from before the log the device still keeps.
+        // from before the log the device keeps.
         let mut store = Store {
             sessions: vec![
                 Session {
@@ -4117,14 +4104,14 @@ mod tests {
     }
 
     #[test]
-    fn a_run_too_short_to_count_as_a_sitting_carries_no_claim() {
+    fn a_run_too_brief_to_place_carries_no_claim() {
         let mut store = orphaned();
         for s in &mut store.sessions {
             s.asin = None;
         }
-        let floor = crate::stats::SITTING_FLOOR_SECS;
+        let least = CLAIM_MIN_SECS;
         store.sessions[1].ended_at = "2026-08-08T10:00:59".into();
-        store.sessions[1].seconds = floor - 1;
+        store.sessions[1].seconds = least - 1;
         assert_eq!(
             name_from(
                 &mut store,
@@ -4133,7 +4120,7 @@ mod tests {
             ),
             0,
         );
-        store.sessions[1].seconds = floor;
+        store.sessions[1].seconds = least;
         assert_eq!(
             name_from(
                 &mut store,
