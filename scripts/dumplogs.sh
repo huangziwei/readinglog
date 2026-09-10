@@ -13,13 +13,13 @@ export LC_ALL
 OUT=/mnt/us/dumplogs.zip
 # $WORK holds the entries and the deflate streams.
 WORK=/mnt/us/dumplogs.part
-# $CAP bounds $OUT. halve gives up bytes, at most $TRIMS times.
+# $CAP bounds $OUT. halve gives up bytes, at most $TRIMS times, oldest day
+# first, and report.txt says what went. Nothing bounds what is read: the device
+# already caps its own daily dumps.
 CAP=5242880
 TRIMS=8
 # $HOLD_SECS bounds hold.
 HOLD_SECS=6
-# $DAYS bounds recent by mtime.
-DAYS=14
 # report.txt names the $LARGEST largest sources by size.
 LARGEST=5
 
@@ -75,12 +75,6 @@ lines() {
 bytes() {
     [ -f "$1" ] || { echo 0; return; }
     echo $(($(wc -c < "$1")))
-}
-
-# count answers how many paths $1 names, 0 where it names none.
-count() {
-    [ -n "$1" ] || { echo 0; return; }
-    echo "$1" | wc -l
 }
 
 # meminfo answers /proc/meminfo's MemTotal and MemFree on one line.
@@ -214,15 +208,6 @@ named() {
     find "$1" -maxdepth 1 -type f -name "$2*" 2>/dev/null | sort
 }
 
-# recent narrows named to the files $DAYS covers by mtime, and answers named
-# where $DAYS covers none of them.
-recent() {
-    found=$(find "$1" -maxdepth 1 -type f -name "$2*" -mtime "-$DAYS" 2>/dev/null |
-        sort)
-    [ -n "$found" ] || found=$(named "$1" "$2")
-    echo "$found"
-}
-
 # $SOURCES are the log files to read, live first. $LIVE, $CHUNKS and $DUMPS
 # count them by source.
 SOURCES=
@@ -235,20 +220,15 @@ if [ -r "$LIVE_LOG" ]; then
 elif [ -e "$LIVE_LOG" ]; then
     say "$LIVE_LOG will not open. Run this as root."
 fi
-for chunk in $(recent "$LOG_DIR" "messages_"); do
+for chunk in $(named "$LOG_DIR" "messages_"); do
     SOURCES="$SOURCES $chunk"
     CHUNKS=$((CHUNKS + 1))
 done
-for dump in $(recent "$DUMP_DIR" "log_backup_"); do
+for dump in $(named "$DUMP_DIR" "log_backup_"); do
     SOURCES="$SOURCES $dump"
     DUMPS=$((DUMPS + 1))
 done
 TOTAL=$((LIVE + CHUNKS + DUMPS))
-
-# $OUTSIDE counts the named files $DAYS leaves out of $SOURCES.
-ALL_CHUNKS=$(count "$(named "$LOG_DIR" "messages_")")
-ALL_DUMPS=$(count "$(named "$DUMP_DIR" "log_backup_")")
-OUTSIDE=$((ALL_CHUNKS + ALL_DUMPS - CHUNKS - DUMPS))
 
 say "ReadingLog diagnostics"
 say "$TOTAL logs to read. Leave this screen up until it says done."
@@ -353,7 +333,7 @@ esac
     echo "               /etc/localtime -> ${localtime:-not a symlink}"
     echo "               ${TZ_VAR:-no tzVar}, POSIX footer $(footer "$TZ_FILE")"
     echo
-    echo "markers.log    $MARKER_LINES lines, off $LIVE live, $CHUNKS chunks, $DUMPS dumps, $DAYS days"
+    echo "markers.log    $MARKER_LINES lines, off $LIVE live, $CHUNKS chunks, $DUMPS dumps"
     echo "catalog.tsv    $(lines "$WORK/e/catalog.tsv") rows from ${CATALOG:-nowhere}"
     echo "catalog-types  type, rows, rows with no key, rows naming a file:"
     sed 's/^/    /' "$WORK/e/catalog-types.tsv" 2>/dev/null
@@ -365,7 +345,7 @@ esac
         [ -n "$said" ] && echo "               $said"
     done
     echo
-    echo "sources        $TOTAL read, $BYTES_READ bytes, $OUTSIDE more outside $DAYS days"
+    echo "sources        $TOTAL read, $BYTES_READ bytes, every log the device holds"
     echo "               the $LARGEST largest, in bytes:"
     sort -rn "$WORK/sizes" | head -n "$LARGEST" | sed 's/^/    /'
     echo

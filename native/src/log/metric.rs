@@ -72,9 +72,9 @@ pub fn cde_key(line: &str) -> Option<&str> {
     }
 }
 
-/// The band a page's dwell may run in, against what its words justify.
-const DWELL_FLOOR: f64 = 0.5;
-const DWELL_CEILING: f64 = 1.5;
+/// The band a page's open time may run in, against what its words justify.
+const PAGE_FLOOR: f64 = 0.5;
+const PAGE_CEILING: f64 = 1.5;
 
 /// The band a reading rate is usable in, as `AverageCalculator` hardcodes it
 /// on every firmware: a sample outside it is an outlier the device's own
@@ -86,17 +86,17 @@ const WPM_MAX: f64 = 900.0;
 const WORDLESS_FLOOR: f64 = 3.0;
 const WORDLESS_CEILING: f64 = 120.0;
 
-/// How much of a page's dwell counts as reading, in milliseconds. The
+/// How much of a page's open time counts as reading, in milliseconds. The
 /// device's own rule, applied verbatim.
-pub fn dwell_ms(wpm: Option<f64>, words: i64, dwell_ms: i64) -> i64 {
-    let secs = dwell_ms as f64 / 1000.0;
+pub fn page_ms(wpm: Option<f64>, words: i64, open_ms: i64) -> i64 {
+    let secs = open_ms as f64 / 1000.0;
     match wpm {
         Some(wpm) if wpm > WPM_MIN && wpm < WPM_MAX && words > 0 => {
             let expected = words as f64 / (wpm / 60.0);
-            if secs < DWELL_FLOOR * expected {
+            if secs < PAGE_FLOOR * expected {
                 0
             } else {
-                (secs.min(DWELL_CEILING * expected) * 1000.0) as i64
+                (secs.min(PAGE_CEILING * expected) * 1000.0) as i64
             }
         }
         _ if secs < WORDLESS_FLOOR => 0,
@@ -172,23 +172,23 @@ mod tests {
     #[test]
     fn a_page_read_at_about_its_own_rate_counts_whole() {
         // 200 words at 200 wpm is a 60 s page; 55 s sits inside the band.
-        assert_eq!(dwell_ms(Some(200.0), 200, 55_000), 55_000);
+        assert_eq!(page_ms(Some(200.0), 200, 55_000), 55_000);
     }
 
     #[test]
     fn a_page_skipped_past_counts_nothing_and_one_idled_on_counts_its_ceiling() {
         // Under half of the 60 s the words justify.
-        assert_eq!(dwell_ms(Some(200.0), 200, 20_000), 0);
+        assert_eq!(page_ms(Some(200.0), 200, 20_000), 0);
         // Over 1.5x it: 90 s counts of the 10 minutes.
-        assert_eq!(dwell_ms(Some(200.0), 200, 600_000), 90_000);
+        assert_eq!(page_ms(Some(200.0), 200, 600_000), 90_000);
     }
 
     #[test]
     fn a_page_with_no_rate_falls_back_to_its_own_floor_and_ceiling() {
-        assert_eq!(dwell_ms(None, 0, 2_000), 0);
-        assert_eq!(dwell_ms(None, 0, 40_000), 40_000);
-        assert_eq!(dwell_ms(None, 0, 600_000), 120_000);
+        assert_eq!(page_ms(None, 0, 2_000), 0);
+        assert_eq!(page_ms(None, 0, 40_000), 40_000);
+        assert_eq!(page_ms(None, 0, 600_000), 120_000);
         // A rate outside the band is no rate.
-        assert_eq!(dwell_ms(Some(900.0), 200, 40_000), 40_000);
+        assert_eq!(page_ms(Some(900.0), 200, 40_000), 40_000);
     }
 }

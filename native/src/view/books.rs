@@ -417,7 +417,7 @@ mod tests {
                 language: String::new(),
                 seconds: 600,
                 counted_seconds: 0,
-                dwell_seconds: 0,
+                paged_seconds: 0,
                 awake_seconds: 0,
                 sittings: 1,
                 page_turns: 0,

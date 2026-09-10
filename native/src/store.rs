@@ -2145,7 +2145,7 @@ fn write_session(out: &mut String, s: &Session) {
             num(s.time_left),
             num(s.stated_wpm),
             s.awake_seconds,
-            s.dwell_seconds,
+            s.paged_seconds,
         ),
     )
 }
@@ -2179,7 +2179,7 @@ fn read_session<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Session> {
         awake_seconds: next().parse().unwrap_or(0),
         // A row an older build wrote states none, and `Figures::App` falls
         // back to `awake_seconds` until a heal measures the sitting again.
-        dwell_seconds: next().parse().unwrap_or(0),
+        paged_seconds: next().parse().unwrap_or(0),
     })
 }
 
@@ -2690,7 +2690,7 @@ mod tests {
         store.sessions[0].time_left = Some(41_400);
         store.sessions[1].asin = None;
         store.sessions[1].progress = None;
-        store.sessions[1].measure = Measure::Dwell;
+        store.sessions[1].measure = Measure::Paged;
         store.save(&dir).expect("a written store");
 
         assert_eq!(Store::load(&dir), store);
@@ -4020,11 +4020,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The dwell is what [`crate::settings::Figures::App`] reads, so it has to
-    /// survive the row. A record an older build wrote states none, and falls
-    /// back to `awake_seconds` until a heal measures the sitting again.
+    /// [`crate::settings::Figures::App`] reads the page figure, so it has to
+    /// survive the row. A record an older build wrote states none and falls
+    /// back to `awake_seconds`, until a heal measures the sitting again.
     #[test]
-    fn an_s_row_carries_the_dwell_beside_the_counter_and_the_awake_span() {
+    fn an_s_row_carries_the_page_figure_beside_the_counter_and_the_awake_span() {
         let store = Store {
             sessions: vec![Session {
                 started_at: "2026-09-08T21:51:10".into(),
@@ -4032,7 +4032,7 @@ mod tests {
                 end_position: 1_911_890,
                 seconds: 2390,
                 awake_seconds: 6607,
-                dwell_seconds: 5964,
+                paged_seconds: 5964,
                 ..Session::default()
             }],
             ..Store::default()
@@ -4045,14 +4045,14 @@ mod tests {
             .lines()
             .map(|l| match l.strip_prefix("s\t") {
                 Some(rest) => {
-                    let cut = rest.rsplit_once('\t').expect("a dwell field").0;
+                    let cut = rest.rsplit_once('\t').expect("a paged field").0;
                     format!("s\t{cut}\n")
                 }
                 None => format!("{l}\n"),
             })
             .collect();
         let read = Store::from_text(&older);
-        assert_eq!(read.sessions[0].dwell_seconds, 0);
+        assert_eq!(read.sessions[0].paged_seconds, 0);
         assert_eq!(read.sessions[0].awake_seconds, 6607);
         assert_eq!(read.sessions[0].seconds, 2390);
     }

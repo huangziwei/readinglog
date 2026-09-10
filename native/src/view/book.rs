@@ -583,7 +583,7 @@ mod tests {
         Lang::English.strings()
     }
 
-    fn book(seconds: i64, dwell: i64, awake: i64) -> BookStat {
+    fn book(seconds: i64, paged: i64, awake: i64) -> BookStat {
         BookStat {
             extent: 1,
             cde_key: "KEY1".into(),
@@ -598,7 +598,7 @@ mod tests {
             language: String::new(),
             seconds,
             counted_seconds: 0,
-            dwell_seconds: dwell,
+            paged_seconds: paged,
             awake_seconds: awake,
             sittings: 1,
             page_turns: 0,

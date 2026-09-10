@@ -352,7 +352,7 @@ pub fn library(last: i64, art: &Path) -> Store {
             };
             let secs = (minutes * 60).min(86_399 - at);
             let measure = match rng.one_in(11) {
-                true => Measure::Dwell,
+                true => Measure::Paged,
                 false => Measure::Counted,
             };
             store.sessions.push(sitting(day, at, secs, extent, measure));

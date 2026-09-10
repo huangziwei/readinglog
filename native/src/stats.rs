@@ -41,8 +41,8 @@ pub struct BookStat {
     /// The seconds `Session` counted, whatever [`Figures`] names. `words` was
     /// counted across these and no others.
     pub counted_seconds: i64,
-    /// The parts of `seconds` carrying `Measure::Dwell` and `Measure::Awake`.
-    pub dwell_seconds: i64,
+    /// The parts of `seconds` carrying `Measure::Paged` and `Measure::Awake`.
+    pub paged_seconds: i64,
     pub awake_seconds: i64,
     pub sittings: i64,
     pub page_turns: i64,
@@ -929,7 +929,7 @@ fn fresh(extent: i64, found: &BookRecord, day: i64) -> BookStat {
         language: found.language.clone(),
         seconds: 0,
         counted_seconds: 0,
-        dwell_seconds: 0,
+        paged_seconds: 0,
         awake_seconds: 0,
         sittings: 0,
         page_turns: 0,
@@ -944,12 +944,12 @@ fn fresh(extent: i64, found: &BookRecord, day: i64) -> BookStat {
     }
 }
 
-/// The seconds one sitting states, `from` the source named: the device's own
-/// counter under [`Figures::Device`], and under [`Figures::App`] the dwell its
-/// pages credit, then the awake span, then the counter.
+/// The seconds one sitting states: the device's counter under
+/// [`Figures::Device`], and under [`Figures::App`] what its pages credit,
+/// then the awake span, then the counter.
 fn sitting_seconds(s: &Session, from: Figures) -> i64 {
     match from {
-        Figures::App if s.dwell_seconds > 0 => s.dwell_seconds,
+        Figures::App if s.paged_seconds > 0 => s.paged_seconds,
         Figures::App if s.awake_seconds > 0 => s.awake_seconds,
         _ => s.seconds,
     }
@@ -979,7 +979,7 @@ fn credit(book: &mut BookStat, s: &Session, day: i64, secs: i64) {
     book.counted_seconds += s.seconds;
     match s.measure {
         Measure::Counted => {}
-        Measure::Dwell => book.dwell_seconds += secs,
+        Measure::Paged => book.paged_seconds += secs,
         Measure::Awake => book.awake_seconds += secs,
     }
     book.sittings += 1;
@@ -1402,7 +1402,7 @@ pub(crate) mod tests {
     fn the_app_figure_takes_the_pages_over_the_time_the_screen_was_on() {
         let day = at(2026, 3, 1);
         let mut store = on_days(&[day], 40);
-        store.sessions[0].dwell_seconds = 300;
+        store.sessions[0].paged_seconds = 300;
         store.sessions[0].awake_seconds = 900;
         let counted = |store: &Store, from| {
             Stats::build(store, at(2026, 3, 2), true, from, SittingFloor::OneMinute).total_seconds
@@ -1411,7 +1411,7 @@ pub(crate) mod tests {
         assert_eq!(counted(&store, Figures::App), 300);
 
         // A sitting no `ereader_book_consume_content` record brackets.
-        store.sessions[0].dwell_seconds = 0;
+        store.sessions[0].paged_seconds = 0;
         assert_eq!(counted(&store, Figures::App), 900);
 
         // And one neither source states anything for.
