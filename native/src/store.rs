@@ -2126,7 +2126,7 @@ fn write_session(out: &mut String, s: &Session) {
     row(
         out,
         format_args!(
-            "s\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "s\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             s.started_at,
             s.ended_at,
             s.end_position,
@@ -2145,6 +2145,7 @@ fn write_session(out: &mut String, s: &Session) {
             num(s.time_left),
             num(s.stated_wpm),
             s.awake_seconds,
+            s.dwell_seconds,
         ),
     )
 }
@@ -2176,6 +2177,9 @@ fn read_session<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Session> {
         time_left: next().parse().ok(),
         stated_wpm: next().parse().ok(),
         awake_seconds: next().parse().unwrap_or(0),
+        // A row an older build wrote states none, and `Figures::App` falls
+        // back to `awake_seconds` until a heal measures the sitting again.
+        dwell_seconds: next().parse().unwrap_or(0),
     })
 }
 
@@ -4014,6 +4018,43 @@ mod tests {
         assert!(store.sessions.is_empty(), "a cleared book came back");
         assert_eq!(store.cleared.len(), 1, "the stamp came off");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The dwell is what [`crate::settings::Figures::App`] reads, so it has to
+    /// survive the row. A record an older build wrote states none, and falls
+    /// back to `awake_seconds` until a heal measures the sitting again.
+    #[test]
+    fn an_s_row_carries_the_dwell_beside_the_counter_and_the_awake_span() {
+        let store = Store {
+            sessions: vec![Session {
+                started_at: "2026-09-08T21:51:10".into(),
+                ended_at: "2026-09-08T23:41:17".into(),
+                end_position: 1_911_890,
+                seconds: 2390,
+                awake_seconds: 6607,
+                dwell_seconds: 5964,
+                ..Session::default()
+            }],
+            ..Store::default()
+        };
+        let back = Store::from_text(&store.text());
+        assert_eq!(back.sessions, store.sessions);
+
+        let older: String = store
+            .text()
+            .lines()
+            .map(|l| match l.strip_prefix("s\t") {
+                Some(rest) => {
+                    let cut = rest.rsplit_once('\t').expect("a dwell field").0;
+                    format!("s\t{cut}\n")
+                }
+                None => format!("{l}\n"),
+            })
+            .collect();
+        let read = Store::from_text(&older);
+        assert_eq!(read.sessions[0].dwell_seconds, 0);
+        assert_eq!(read.sessions[0].awake_seconds, 6607);
+        assert_eq!(read.sessions[0].seconds, 2390);
     }
 
     #[test]

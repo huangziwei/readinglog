@@ -76,6 +76,9 @@ pub struct Session {
     pub stated_wpm: Option<i64>,
     /// Seconds this run spanned, less the sleeps [`Awake`] states inside it.
     pub awake_seconds: i64,
+    /// The dwell every page of this run credits, whatever [`Measure`] won.
+    /// Zero where no `ereader_book_consume_content` record brackets a page.
+    pub dwell_seconds: i64,
     /// The book's own reading counter where this run began and where it was
     /// last seen. Both or neither: a run the device never counted has none.
     pub start_counter_ms: Option<i64>,
@@ -101,6 +104,7 @@ impl Session {
         self.hours = fresh.hours.clone();
         self.measure = fresh.measure;
         self.awake_seconds = fresh.awake_seconds;
+        self.dwell_seconds = fresh.dwell_seconds;
         self.start_counter_ms = fresh.start_counter_ms.or(self.start_counter_ms);
         self.end_counter_ms = fresh.end_counter_ms.or(self.end_counter_ms);
         self.start_words = fresh.start_words.or(self.start_words);
@@ -472,6 +476,7 @@ impl Open {
             stated_wpm: self.stated_wpm,
             tz_offset_s: None,
             awake_seconds: awake.bound(self.began.abs, self.last.abs),
+            dwell_seconds: dwell,
             start_counter_ms: self.time_lo,
             end_counter_ms: self.time_lo.map(|_| self.time_hi),
             start_words: self.words_lo,

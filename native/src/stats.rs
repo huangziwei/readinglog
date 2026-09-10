@@ -944,11 +944,12 @@ fn fresh(extent: i64, found: &BookRecord, day: i64) -> BookStat {
     }
 }
 
-/// The seconds one sitting states, `from` the source named: `seconds` under
-/// [`Figures::Device`], `awake_seconds` under [`Figures::App`]. A zero
-/// `awake_seconds` takes `seconds`.
+/// The seconds one sitting states, `from` the source named: the device's own
+/// counter under [`Figures::Device`], and under [`Figures::App`] the dwell its
+/// pages credit, then the awake span, then the counter.
 fn sitting_seconds(s: &Session, from: Figures) -> i64 {
     match from {
+        Figures::App if s.dwell_seconds > 0 => s.dwell_seconds,
         Figures::App if s.awake_seconds > 0 => s.awake_seconds,
         _ => s.seconds,
     }
@@ -1392,6 +1393,30 @@ pub(crate) mod tests {
         assert!(counted(Figures::Device).sittings.is_empty());
         assert_eq!(counted(Figures::App).sittings.len(), 1);
         assert_eq!(counted(Figures::App).total_seconds, 180);
+    }
+
+    /// A reader above the firmware's 40-900 wpm band has every sample refused,
+    /// so the counter states a fraction of the sitting. The pages are what
+    /// [`Figures::App`] stands on; the awake span is what is left without them.
+    #[test]
+    fn the_app_figure_takes_the_pages_over_the_time_the_screen_was_on() {
+        let day = at(2026, 3, 1);
+        let mut store = on_days(&[day], 40);
+        store.sessions[0].dwell_seconds = 300;
+        store.sessions[0].awake_seconds = 900;
+        let counted = |store: &Store, from| {
+            Stats::build(store, at(2026, 3, 2), true, from, SittingFloor::OneMinute).total_seconds
+        };
+        assert_eq!(counted(&store, Figures::Device), 0, "40 s is a skim");
+        assert_eq!(counted(&store, Figures::App), 300);
+
+        // A sitting no `ereader_book_consume_content` record brackets.
+        store.sessions[0].dwell_seconds = 0;
+        assert_eq!(counted(&store, Figures::App), 900);
+
+        // And one neither source states anything for.
+        store.sessions[0].awake_seconds = 0;
+        assert_eq!(counted(&store, Figures::App), 0);
     }
 
     #[test]
