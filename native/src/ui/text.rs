@@ -62,6 +62,12 @@ impl TextRenderer {
         (self.px * font::CAP).round().max(1.0) as u32
     }
 
+    /// 四分アキ at this size: a quarter of the em, to the pixel. `crate::wrap`
+    /// names the pairs it stands between.
+    fn aki_px(&self) -> u32 {
+        (self.px / 4.0).round() as u32
+    }
+
     pub fn line_height(&self) -> u32 {
         // Always the primary face's metrics, rounded up: a row keeps its height
         // whichever face draws the text, every face being scaled to the same em
@@ -79,13 +85,37 @@ impl TextRenderer {
         self.measure_width_in(font::Script::Unknown, s)
     }
 
+    /// Where [`TextRenderer::draw_in`] sets its pen to draw the character at
+    /// the byte offset `at` of `s`: the run up to there, and the 四分アキ
+    /// standing at that boundary.
+    pub fn measure_upto_in(&mut self, script: font::Script, s: &str, at: usize) -> u32 {
+        let (head, tail) = s.split_at(at);
+        let gap = match (head.chars().next_back(), tail.chars().next()) {
+            (Some(a), Some(b)) if crate::wrap::aki(a, b) => self.aki_px(),
+            _ => 0,
+        };
+        self.measure_width_in(script, head).saturating_add(gap)
+    }
+
     /// [`TextRenderer::measure_width`] for text whose language is known — see
     /// [`TextRenderer::draw_in`].
     pub fn measure_width_in(&mut self, script: font::Script, s: &str) -> u32 {
+        self.measured(script, s, self.aki_px())
+    }
+
+    /// [`TextRenderer::measure_width`] with the script boundaries set solid.
+    /// A figure and the counter after it read as one number — see
+    /// [`TextRenderer::draw_solid`].
+    pub fn measure_solid(&mut self, s: &str) -> u32 {
+        self.measured(font::Script::Unknown, s, 0)
+    }
+
+    fn measured(&mut self, script: font::Script, s: &str, quarter: u32) -> u32 {
         let run = font::Script::resolve(script, s);
         let px = self.px;
         let px_key = px.to_bits();
         let mut w = 0u32;
+        let mut prev: Option<char> = None;
         for ch in s.chars() {
             if font::is_invisible(ch) {
                 continue;
@@ -95,7 +125,11 @@ impl TextRenderer {
                 Some(glyph) => glyph.advance.round().max(0.0) as u32,
                 None => missing_advance(px),
             };
+            if prev.is_some_and(|a| crate::wrap::aki(a, ch)) {
+                w = w.saturating_add(quarter);
+            }
             w = w.saturating_add(advance);
+            prev = Some(ch);
         }
         w
     }
@@ -184,15 +218,50 @@ impl TextRenderer {
         s: &str,
         inverted: bool,
     ) -> i32 {
+        let quarter = self.aki_px();
+        self.pen(script, fb, x, y_baseline, s, inverted, quarter)
+    }
+
+    /// [`TextRenderer::draw`] with the script boundaries set solid: `1時間`
+    /// stands as one number, against the air a row of figures keeps between
+    /// two of them.
+    pub fn draw_solid(
+        &mut self,
+        fb: &mut Framebuffer,
+        x: i32,
+        y_baseline: i32,
+        s: &str,
+        inverted: bool,
+    ) -> i32 {
+        self.pen(font::Script::Unknown, fb, x, y_baseline, s, inverted, 0)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn pen(
+        &mut self,
+        script: font::Script,
+        fb: &mut Framebuffer,
+        x: i32,
+        y_baseline: i32,
+        s: &str,
+        inverted: bool,
+        quarter: u32,
+    ) -> i32 {
         let fg = if inverted { 0xFF } else { 0x00 };
         let run = font::Script::resolve(script, s);
         let px = self.px;
         let px_key = px.to_bits();
         let mut cur_x = x;
+        let quarter = quarter as i32;
+        let mut prev: Option<char> = None;
         for ch in s.chars() {
             if font::is_invisible(ch) {
                 continue;
             }
+            if prev.is_some_and(|a| crate::wrap::aki(a, ch)) {
+                cur_x += quarter;
+            }
+            prev = Some(ch);
             let band = font::band_of(ch, run);
             match self.glyph(band, ch, px, px_key) {
                 Some(glyph) => {
@@ -262,7 +331,7 @@ fn missing_advance(px: f32) -> u32 {
 }
 
 /// A hollow box standing on the baseline, for a character no face in the
-/// chain has. `STROKE` is two pixels because a hairline outline is what
+/// chain has. `STROKE` is two pixels: a hairline outline is what
 /// makes a font's own `.notdef` fall apart under [`COVERAGE_THRESHOLD`].
 fn draw_missing(fb: &mut Framebuffer, x: i32, y_baseline: i32, px: f32, fg: u8) {
     const STROKE: i32 = 2;
@@ -302,6 +371,72 @@ fn blit_threshold(
             if cov >= COVERAGE_THRESHOLD {
                 fb.put_pixel(x + col as i32, y + row as i32, fg);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A renderer over the device's own faces, where `READINGLOG_FONTS` names
+    /// their directories. `None` skips the assertions below: they measure a
+    /// device's files.
+    fn device_renderer(px: f32) -> Option<TextRenderer> {
+        std::env::var("READINGLOG_FONTS").ok()?;
+        TextRenderer::load(px).ok()
+    }
+
+    #[test]
+    fn a_run_crossing_scripts_is_charged_a_quarter_em() {
+        let Some(mut text) = device_renderer(40.0) else {
+            return;
+        };
+        let ja = font::Script::Japanese;
+        let quarter = text.aki_px();
+        assert_eq!(quarter, 10);
+        // One boundary in `本R`, two in `本R本`, and none in either half.
+        let han = text.measure_width_in(ja, "本");
+        let latin = text.measure_width_in(ja, "R");
+        assert_eq!(text.measure_width_in(ja, "本R"), han + latin + quarter);
+        assert_eq!(
+            text.measure_width_in(ja, "本R本"),
+            han * 2 + latin + quarter * 2
+        );
+        assert_eq!(text.measure_width_in(ja, "本本"), han * 2);
+        assert_eq!(text.measure_width_in(ja, "RR"), latin * 2);
+    }
+
+    #[test]
+    fn a_prefix_measures_to_the_pen_and_not_to_the_glyph_before_it() {
+        let Some(mut text) = device_renderer(40.0) else {
+            return;
+        };
+        let ja = font::Script::Japanese;
+        let (quarter, said) = (text.aki_px(), "本Rust本");
+        let han = text.measure_width_in(ja, "本");
+        let latin = text.measure_width_in(ja, "Rust");
+        // 本 is three bytes, and a run of Latin opens at 3 and closes at 7.
+        assert_eq!(text.measure_upto_in(ja, said, 0), 0);
+        assert_eq!(text.measure_upto_in(ja, said, 3), han + quarter);
+        assert_eq!(
+            text.measure_upto_in(ja, said, 7),
+            han + quarter + latin + quarter
+        );
+        // The glyph before the boundary ends a quarter em short of the pen.
+        assert_eq!(text.measure_width_in(ja, &said[..7]), han + quarter + latin);
+    }
+
+    #[test]
+    fn a_drawn_run_advances_by_what_it_measures() {
+        let Some(mut text) = device_renderer(40.0) else {
+            return;
+        };
+        let mut fb = Framebuffer::offscreen(200, 80);
+        let ja = font::Script::Japanese;
+        for said in ["本R本", "第3章", "hello", "世界"] {
+            let end = text.draw_in(ja, &mut fb, 0, 60, said, false);
+            assert_eq!(end, text.measure_width_in(ja, said) as i32, "{said}");
         }
     }
 }

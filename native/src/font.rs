@@ -166,7 +166,7 @@ fn is_kana(c: char) -> bool {
 }
 
 /// Hangul syllables, and the jamo they decompose to.
-fn is_hangul(c: char) -> bool {
+pub fn is_hangul(c: char) -> bool {
     matches!(c, '\u{1100}'..='\u{11FF}'
         | '\u{3130}'..='\u{318F}'
         | '\u{A960}'..='\u{A97F}'

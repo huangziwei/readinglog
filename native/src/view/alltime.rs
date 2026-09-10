@@ -391,7 +391,7 @@ fn fitting_px(cx: &mut Ctx, cells: &[Cell], column_w: i32) -> f32 {
         cx.text.set_px(px);
         let widest = cells
             .iter()
-            .map(|cell| cx.text.measure_width(&cell.value) as i32)
+            .map(|cell| cx.text.measure_solid(&cell.value) as i32)
             .max()
             .unwrap_or(0);
         if widest <= column_w {
@@ -419,9 +419,9 @@ fn figure(cx: &mut Ctx, box_: Rect, cell: &Cell, px: f32) {
     let script = cx.ui_script();
 
     cx.text.set_px(px);
-    let w = cx.text.measure_width(&cell.value) as i32;
+    let w = cx.text.measure_solid(&cell.value) as i32;
     cx.text
-        .draw(cx.fb, box_.x + (box_.w - w) / 2, top, &cell.value, false);
+        .draw_solid(cx.fb, box_.x + (box_.w - w) / 2, top, &cell.value, false);
 
     cx.text.set_px(theme.small_px);
     let lw = cx.text.measure_width_in(script, cell.label) as i32;

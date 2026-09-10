@@ -89,21 +89,15 @@ pub fn tabs(
 }
 
 /// The air [`content`] leaves between its foot and the tab strip: half a gap
-/// under the `theme.gap * 2` it stands in, which [`content`] adds above the
-/// box in turn.
-///
-/// The page hangs half a gap below centre because the strip draws its own rule
-/// and its own labels: the floor of the page is already marked, and reads
-/// heavier than the bare top edge for the same air. Anything set against the
-/// box's foot centres on this band as well as its own.
+/// under the `theme.gap * 2` it stands in. Anything set against the box's foot
+/// centres on this band as well as its own.
 pub fn floor_air(theme: &Theme) -> i32 {
     theme.gap * 2 - theme.gap / 2
 }
 
-/// The content box: the screen above the strip.
-///
-/// `theme.pad` either side, [`floor_air`] under the box, and what that leaves
-/// of `theme.gap * 4` over it.
+/// The content box: the screen above the strip. `theme.pad` either side,
+/// [`floor_air`] under the box, and what that leaves of `theme.gap * 4`
+/// over it.
 pub fn content(theme: &Theme, area: Rect) -> Rect {
     let (_, rest) = area.split_bottom(theme.tabs_h);
     let under = floor_air(theme);
@@ -169,7 +163,7 @@ pub fn figure_height(text: &mut TextRenderer, theme: &Theme) -> i32 {
 /// under it.
 fn figure_width(text: &mut TextRenderer, theme: &Theme, value: &str, label: &str, px: f32) -> i32 {
     text.set_px(px);
-    let value = text.measure_width(value) as i32;
+    let value = text.measure_solid(value) as i32;
     text.set_px(theme.small_px);
     value.max(text.measure_width(label) as i32)
 }
@@ -185,9 +179,9 @@ fn figure(
     px: f32,
 ) -> Rect {
     text.set_px(px);
-    let w = text.measure_width(value) as i32;
+    let w = text.measure_solid(value) as i32;
     let top = area.y + text.cap_height() as i32;
-    text.draw(fb, area.x + (area.w - w) / 2, top, value, false);
+    text.draw_solid(fb, area.x + (area.w - w) / 2, top, value, false);
 
     text.set_px(theme.small_px);
     let lw = text.measure_width(label) as i32;
@@ -293,8 +287,7 @@ pub fn row(
     text.draw(fb, area.right() - w, baseline, value, false);
 }
 
-/// Blank space either side of a chip's text, between one chip and the next,
-/// and where a run breaks, in design pixels.
+/// A chip's own blank space, in design pixels: its sides, the next chip, a break.
 const CHIP_PAD: i32 = 20;
 const CHIP_GAP: i32 = 14;
 const CHIP_BREAK: i32 = 60;
@@ -320,8 +313,7 @@ pub fn chip_height(theme: &Theme) -> i32 {
     theme.row_h * 2 / 3
 }
 
-/// One row's chips ready to measure: what each reads and in which script, and
-/// the chip the run breaks before.
+/// One row's chips: what each reads, its script, and the chip a break stands before.
 pub type Run<'a> = (Vec<(&'a str, crate::font::Script)>, Option<usize>);
 
 /// Where the second column starts on every row: from the widest label, pulled
@@ -347,12 +339,9 @@ pub fn chip_column(
     column_from(widest, &runs, width, chip_gap(theme))
 }
 
-/// [`chip_column`]'s arithmetic, over measured widths.
-///
-/// The labels have first call: a column pulled back under the widest of them
-/// draws it over the chips beside it, which German at the largest text does on
-/// two rows of this page. A run left short of space wraps instead, which
-/// `chip_layout` already does and the row's own height already allows for.
+/// [`chip_column`]'s arithmetic, over measured widths. The labels have first
+/// call: a column pulled back under the widest of them draws it over the chips
+/// beside it. `chip_layout` wraps a run left short of space.
 fn column_from(widest_label: i32, runs: &[i32], width: i32, gap: i32) -> i32 {
     let wanted = widest_label + gap * 3;
     let room = runs.iter().map(|run| width - run).min().unwrap_or(i32::MAX);
@@ -376,8 +365,8 @@ fn run_width(
     chips + gaps + broken(theme, options.len(), apart)
 }
 
-/// What a break adds to a run of `count` chips over the gap already counted.
-/// A break at neither end of the run, or none at all, adds nothing.
+/// What a break adds to a run of `count` chips, over the gap it stands in
+/// place of. A break at neither end of the run, or none at all, adds nothing.
 fn broken(theme: &Theme, count: usize, apart: Option<usize>) -> i32 {
     match apart {
         Some(at) if at > 0 && at < count => chip_break(theme) - chip_gap(theme),
@@ -437,9 +426,6 @@ pub fn setting(
     text.draw(fb, row.x, baseline, label, false);
 }
 
-/// Every option of a setting, side by side, the one in use filled and the rest
-/// outlined, at the places [`chip_layout`] put them, answering one box each.
-/// The caller must size the row from that same layout.
 /// One control: `said` centred in a 2 px outline. What the book screen's own
 /// controls and every dialog answer are drawn as.
 pub fn outlined(cx: &mut crate::view::Ctx, box_: Rect, said: &str) {
@@ -459,6 +445,9 @@ pub fn outlined(cx: &mut crate::view::Ctx, box_: Rect, said: &str) {
     );
 }
 
+/// Every option of a setting, side by side, the one in use filled and the rest
+/// outlined, at the places [`chip_layout`] put them, answering one box each.
+/// The caller sizes the row from that same layout.
 pub fn chips(
     fb: &mut Framebuffer,
     text: &mut TextRenderer,
@@ -508,7 +497,7 @@ mod tests {
             .collect()
     }
 
-    /// [`place`] on those widths, which is what a font would reach.
+    /// [`place`] on [`widths`].
     fn measured(theme: &Theme, options: &[(&str, Script)], width: i32) -> Vec<Rect> {
         place(theme, &widths(theme, options), None, width)
     }

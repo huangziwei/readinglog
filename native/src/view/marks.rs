@@ -535,9 +535,15 @@ fn wash(cx: &mut Ctx, script: Script, x: i32, baseline: i32, line: &str, needle:
     let over = (drop / 2).max(1);
     let ink = cx.palette.wash();
     for (from, to) in runs_in(line, needle) {
-        let before = cx.text.measure_width_in(script, &line[..from]) as i32;
-        let wide = cx.text.measure_width_in(script, &line[from..to]) as i32;
-        let box_ = Rect::new(x + before, baseline - cap - over, wide, cap + over + drop);
+        // Where the pen stands at the run, and where its last glyph ends.
+        let opens = cx.text.measure_upto_in(script, line, from) as i32;
+        let closes = cx.text.measure_width_in(script, &line[..to]) as i32;
+        let box_ = Rect::new(
+            x + opens,
+            baseline - cap - over,
+            closes - opens,
+            cap + over + drop,
+        );
         paint::fill_rgb(cx.fb, box_, ink);
     }
 }
