@@ -261,13 +261,19 @@ pub struct Stats {
     /// Every mark the record holds, ascending by when it was made.
     /// [`BookStat::marks`] indexes into this.
     pub marks: Vec<Mark>,
-    /// Each mark's `body`, lowercased and Han-folded, at the same index.
+    /// Each mark's `body`, lowercased and Han-folded, at the same index, and
+    /// `None` for a mark no book here holds.
     ///
     /// A search folds the query once and then asks it of every mark on every
     /// keystroke. Holding the bodies folded keeps that to a substring test:
     /// folding at the keystroke costs two allocations and a per-character
     /// table walk, per mark, per key pressed.
-    pub folded: Vec<String>,
+    ///
+    /// A mark whose book is gone from the device — its title naming no record
+    /// and its class none either — is kept, so that it comes back with the
+    /// book, but no screen can reach it and nothing searches it. Those are
+    /// `None`: the row stays at its index and the folding is not done.
+    pub folded: Vec<Option<String>>,
 }
 
 /// One row of [`Stats::marked`] and where in the record it came from, which is
@@ -303,6 +309,13 @@ impl Stats {
         };
         // One slot per book, in first-seen order; the sort comes last.
         let mut index: Vec<(i64, usize)> = Vec::new();
+        // The `t` rows by the class each stands for, built once: asking for
+        // one per sitting is a scan of every row per sitting. The first of a
+        // run wins, which is the row a scan reached.
+        let mut counters: HashMap<i64, (i64, i64)> = HashMap::with_capacity(store.counters.len());
+        for &(ep, total_ms, words) in &store.counters {
+            counters.entry(ep).or_insert((total_ms, words));
+        }
         for s in &store.sessions {
             let Some(day) = date::parse_day(date::day_of(&s.started_at)) else {
                 continue;
@@ -340,7 +353,7 @@ impl Stats {
             });
             // `hold_counter` takes the class's `t` row, credited or not.
             if let Some(slot) = at {
-                hold_counter(&mut out.books[slot], store, s.end_position);
+                hold_counter(&mut out.books[slot], &counters, s.end_position);
             }
             if !counted {
                 continue;
@@ -384,9 +397,7 @@ impl Stats {
             out.books.push(fresh(extent, record, NO_DAY));
         }
 
-        for (slot, book) in out.books.iter_mut().enumerate() {
-            book.days = distinct_days(&out.sittings, slot);
-        }
+        out.hold_days();
         out.sittings.sort_by_key(|s| (s.day, s.from_secs));
         let (longest, current) = streaks(&out.days, today);
         out.longest_streak = longest;
@@ -396,16 +407,30 @@ impl Stats {
         out
     }
 
+    /// Give each book the number of distinct days it was read on, in one pass
+    /// over the sittings. Asking book by book is a filter over every sitting
+    /// per book, which is the shelf times the reading.
+    fn hold_days(&mut self) {
+        let mut seen: Vec<(usize, i64)> = self
+            .sittings
+            .iter()
+            .filter_map(|s| Some((s.book?, s.day)))
+            .collect();
+        seen.sort_unstable();
+        seen.dedup();
+        for book in &mut self.books {
+            book.days = 0;
+        }
+        for (slot, _) in seen {
+            self.books[slot].days += 1;
+        }
+    }
+
     /// Hand every `a` row to the book it names, after `sort_books`, at the
     /// indices the screens address. A mark naming no book in [`Self::books`]
     /// is held in [`Self::marks`] all the same.
     fn hold_marks(&mut self, store: &Store) {
         self.marks = store.marks.clone();
-        self.folded = self
-            .marks
-            .iter()
-            .map(|mark| crate::hanfold::fold(&mark.body.to_lowercase()).into_owned())
-            .collect();
         // Both ways in, built once. A scan of `books` per mark is `O(M × B)`,
         // and the title fallback is the common path rather than the rare one:
         // most records carry no extent, and neither do most marks.
@@ -420,6 +445,10 @@ impl Stats {
                 .entry(crate::identify::normalise(&book.title))
                 .or_insert(at);
         }
+        // The folding comes after the handing out, so that a mark no book
+        // holds is not folded: it is searched by nothing and drawn by nothing.
+        self.folded = Vec::with_capacity(self.marks.len());
+        let mut held: Vec<(usize, usize)> = Vec::new();
         for (at, mark) in self.marks.iter().enumerate() {
             let slot = match mark.extent != 0 {
                 true => by_extent.get(&mark.extent).copied(),
@@ -430,9 +459,14 @@ impl Stats {
                     .get(&crate::identify::normalise(&mark.title))
                     .copied()
             });
+            self.folded
+                .push(slot.map(|_| crate::hanfold::fold(&mark.body.to_lowercase()).into_owned()));
             if let Some(slot) = slot {
-                self.books[slot].marks.push(at);
+                held.push((slot, at));
             }
+        }
+        for (slot, at) in held {
+            self.books[slot].marks.push(at);
         }
     }
 
@@ -1007,24 +1041,12 @@ fn credit(book: &mut BookStat, s: &Session, day: i64, secs: i64) {
 
 /// Take the `t` row for the class `end_position` names. A book re-copied
 /// stands at several classes, and the highest counter of them is its newest.
-fn hold_counter(book: &mut BookStat, store: &Store, end_position: i64) {
-    let Some((_, total_ms, words)) = store.counters.iter().find(|(ep, _, _)| *ep == end_position)
-    else {
+fn hold_counter(book: &mut BookStat, counters: &HashMap<i64, (i64, i64)>, end_position: i64) {
+    let Some((total_ms, words)) = counters.get(&end_position) else {
         return;
     };
     book.device_seconds = book.device_seconds.max(total_ms / 1000);
     book.device_words = book.device_words.max(*words);
-}
-
-fn distinct_days(sittings: &[Sitting], book: usize) -> i64 {
-    let mut days: Vec<i64> = sittings
-        .iter()
-        .filter(|s| s.book == Some(book))
-        .map(|s| s.day)
-        .collect();
-    days.sort_unstable();
-    days.dedup();
-    days.len() as i64
 }
 
 /// The longest run of consecutive days with reading, and the run ending at `today`.
@@ -1678,6 +1700,7 @@ pub(crate) mod tests {
             cleared: Vec::new(),
             marks: Vec::new(),
             gate: None,
+            sources: None,
         }
     }
 

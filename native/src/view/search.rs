@@ -79,7 +79,7 @@ pub fn listed_marks<'a>(stats: &'a Stats, query: &str, uncovered: bool) -> Vec<A
         .filter(|row| {
             // The mark's own body is folded once per `Stats::build`; a note is
             // rare enough to fold where it is asked about.
-            let body = match stats.folded.get(row.held) {
+            let body = match stats.folded.get(row.held).and_then(Option::as_deref) {
                 Some(folded) => needle.holds_folded(folded),
                 None => needle.holds(&row.mark.body),
             };
@@ -512,14 +512,14 @@ mod tests {
         held.folded = held
             .marks
             .iter()
-            .map(|m| crate::hanfold::fold(&m.body.to_lowercase()).into_owned())
+            .map(|m| Some(crate::hanfold::fold(&m.body.to_lowercase()).into_owned()))
             .collect();
 
         for (at, mark) in held.marks.iter().enumerate() {
             for query in queries {
                 let needle = Needle::of(query);
                 assert_eq!(
-                    needle.holds_folded(&held.folded[at]),
+                    needle.holds_folded(held.folded[at].as_deref().expect("a folded body")),
                     needle.holds(&mark.body),
                     "{query:?} against {:?}",
                     mark.body,

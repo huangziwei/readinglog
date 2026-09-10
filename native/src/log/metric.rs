@@ -4,6 +4,10 @@
 
 use super::line::{field_num, field_text};
 
+/// What every one of [`METRIC_MARKERS`] opens with: the `fastmetrics` record
+/// head, which is what says a line carries a JSON-ish body at all.
+pub const SCHEMA: &str = "SchemaName[ereader_";
+
 pub const METRIC_MARKERS: [&str; 8] = [
     "SchemaName[ereader_open_book]",
     "SchemaName[ereader_close_book]",
@@ -56,7 +60,10 @@ pub fn metric(line: &str) -> Option<Metric> {
 /// reading-timer lines redact. The catalog's own `p_cdeKey`; `N/A` stands
 /// for a book with no key.
 pub fn cde_key(line: &str) -> Option<&str> {
-    if !METRIC_MARKERS.iter().any(|m| line.contains(m)) {
+    // The head every one of `METRIC_MARKERS` is written under, in one search
+    // rather than eight. This runs on every line of a whole syslog and, on the
+    // stacks that state no key at all, finds nothing every time.
+    if !line.contains(SCHEMA) {
         return None;
     }
     match field_text(line, "cde_key") {
@@ -98,6 +105,15 @@ pub fn dwell_ms(wpm: Option<f64>, words: i64, dwell_ms: i64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `cde_key` stands on [`SCHEMA`] alone, which is only sound while every
+    /// marker is written under it.
+    #[test]
+    fn every_metric_marker_opens_with_the_record_head() {
+        for marker in METRIC_MARKERS {
+            assert!(marker.starts_with(SCHEMA), "{marker}");
+        }
+    }
 
     fn page(words: i64) -> String {
         format!(

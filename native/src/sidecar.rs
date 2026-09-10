@@ -440,13 +440,68 @@ pub struct Shelf {
     pub rosters: Vec<Roster>,
 }
 
+/// What a walk of `documents` says without opening a single sidecar.
+///
+/// [`read`] opens and parses two files per book — on a large shelf, thousands
+/// of reads off flash for an answer that is usually the one already stored.
+/// Every byte of that answer comes from files whose length and modification
+/// time say whether they have moved, and a walk can have both for the cost of
+/// a `stat`. Two surveys that agree stand for two identical parses.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Survey {
+    /// The `.sdr` directories found.
+    pub dirs: usize,
+    /// Over each directory's name and the length and modification time of
+    /// each sidecar in it, in walk order.
+    pub stamp: u64,
+}
+
+/// [`Survey`] of `documents`: the same walk [`read`] makes, stopping at each
+/// sidecar's metadata rather than its bytes.
+pub fn survey(documents: &Path) -> Survey {
+    let mut dirs = Vec::new();
+    collect(documents, 0, &mut dirs);
+    dirs.sort();
+    let mut stamp = crate::stamp::Stamp::default();
+    for (sdr, file) in &dirs {
+        stamp.text(file);
+        // Both halves, by name, so that a sidecar appearing or being replaced
+        // moves the stamp even where the lengths happen to match.
+        let mut found = files_in(sdr, &FREQUENT);
+        found.extend(files_in(sdr, &RARE));
+        found.sort();
+        for (name, path) in found {
+            stamp.text(&name);
+            let Ok(held) = std::fs::metadata(&path) else {
+                continue;
+            };
+            stamp.num(held.len() as i64);
+            stamp.num(
+                held.modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |d| d.as_secs() as i64),
+            );
+        }
+    }
+    Survey {
+        dirs: dirs.len(),
+        stamp: stamp.done(),
+    }
+}
+
 /// Every sidecar under `documents`, book file present or not. Empty where
 /// `documents` does not exist; a sidecar that will not parse is printed and
 /// skipped.
 ///
 /// One walk answers both halves: the walk is what costs, and
 /// [`crate::identify`] and [`crate::annotate`] each want one of them.
-pub fn read(documents: &Path) -> Shelf {
+///
+/// `counters` is the frequent half, which only [`crate::store::Store::recover`]
+/// reads and only while some class still wants a name. A shelf whose catalog
+/// names everything asks for it `false` and saves a file open and a parse per
+/// book.
+pub fn read(documents: &Path, counters: bool) -> Shelf {
     let mut dirs = Vec::new();
     collect(documents, 0, &mut dirs);
     // The profile the shelf belongs to is whichever infix most of its rare
@@ -455,7 +510,7 @@ pub fn read(documents: &Path) -> Shelf {
     let profile = profile_of(&dirs);
     let mut out = Shelf::default();
     for (sdr, file) in dirs {
-        if let Some(counter) = read_counter(&sdr, &file) {
+        if counters && let Some(counter) = read_counter(&sdr, &file) {
             out.counters.push(counter);
         }
         out.rosters
@@ -1039,7 +1094,7 @@ mod tests {
         // One folder down, and with no book file beside it: a deleted book.
         std::fs::create_dir_all(root.join("Sidle")).expect("a folder");
         lay_out(&root.join("Sidle"), "a deleted book", ".yjf", &counters);
-        let found = read(&root);
+        let found = read(&root, true);
         let names: Vec<&str> = found.counters.iter().map(|c| c.file.as_str()).collect();
         assert_eq!(names, ["a deleted book", "a-kfx-book", "a-mobi8-book"]);
         assert!(
@@ -1074,7 +1129,7 @@ mod tests {
         std::fs::write(sdr.join("book.yjr.bad_file"), fixture(EMPTY_CACHE))
             .expect("the superseded rare file");
         std::fs::write(sdr.join("book.yjr.tmp"), fixture(EMPTY_CACHE)).expect("a half-written one");
-        let found = read(&root);
+        let found = read(&root, true);
         assert_eq!(found.counters.len(), 1);
         assert_eq!(found.counters[0].total_ms, 7);
         assert_eq!(found.rosters.len(), 1);
@@ -1100,7 +1155,7 @@ mod tests {
             ".yjf",
             b"\x00\x00\x00\x00\x00\x1a\xb1\x26\x02",
         );
-        let found = read(&root);
+        let found = read(&root, true);
         assert_eq!(found.counters.len(), 1, "{found:?}");
         assert_eq!(found.counters[0].file, "good");
         let _ = std::fs::remove_dir_all(&root);
@@ -1119,7 +1174,7 @@ mod tests {
             .expect("the profile's own");
         // A second book, so the shelf's own profile is the one to prefer.
         lay_out(&root, "Another", ".yjr", &fixture(KINDS));
-        let found = read(&root);
+        let found = read(&root, true);
         let held = found
             .rosters
             .iter()
@@ -1159,7 +1214,7 @@ mod tests {
 
     #[test]
     fn a_documents_directory_that_is_not_there_is_no_sidecars() {
-        let found = read(Path::new("/nonexistent/documents"));
+        let found = read(Path::new("/nonexistent/documents"), true);
         assert!(found.counters.is_empty());
         assert!(found.rosters.is_empty());
     }

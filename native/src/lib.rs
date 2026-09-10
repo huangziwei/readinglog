@@ -27,6 +27,7 @@ pub mod open;
 pub mod orientation;
 pub mod settings;
 pub mod sidecar;
+pub mod stamp;
 pub mod stats;
 pub mod store;
 pub mod ui;

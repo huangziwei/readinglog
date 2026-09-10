@@ -15,7 +15,7 @@ use readinglog_native::stats::Stats;
 use readinglog_native::store::Store;
 use readinglog_native::{
     annotate, app, catalog, clippings, date, font, identify, journal, lang, settings, sidecar,
-    store, ui, zone,
+    store, ui, vocab, zone,
 };
 
 fn main() {
@@ -101,11 +101,44 @@ fn collect_into(
     // same walk reaches.
     let books = catalog::read();
     let stated = store.remember(&books);
-    let shelf = identify::walk(Path::new(sidecar::DOCUMENTS_DIR));
-    let rescue = identify::rescue(store, &shelf);
-    let merge = annotate::fold(store, Path::new(clippings::CLIPPINGS_FILE), &shelf);
+    // Both gates, off a walk that opens nothing. A launch where the reader has
+    // read nothing, annotated nothing and installed nothing leaves both
+    // standing, and no sidecar is opened at all — which matters most on the
+    // record that can never satisfy `wants_naming`, because a book it holds a
+    // reading of was deleted and nothing will ever name that class again.
+    let clips = Path::new(clippings::CLIPPINGS_FILE);
+    let documents = Path::new(sidecar::DOCUMENTS_DIR);
+    let (survey, naming, marks) =
+        identify::asked(store, Path::new(vocab::VOCAB_DB), clips, documents);
+    let shelf = match naming.is_some() || marks {
+        true => identify::shelf_for(store, documents, naming.is_some()),
+        false => sidecar::Shelf::default(),
+    };
+    // One read of `My Clippings.txt`, for whichever of the two passes wants
+    // it: the naming pass reads it as witnesses and the annotation pass as
+    // marks, and neither may open it for itself.
+    let wants_clips = naming.is_some() && store.wants_naming(store::Named::Clippings);
+    let records = match marks || wants_clips {
+        true => clippings::read(clips),
+        false => Vec::new(),
+    };
+    // Whether this pass moved the gate, which is a change to the record like
+    // any other: a gate written and not saved is a gate that never holds, and
+    // the sources would be read again on every launch for ever.
+    let gated = naming.is_some();
+    let rescue = naming.map(|gate| {
+        let out = identify::rescue(store, &records, &shelf);
+        // The gate as it stood *before* the pass: a pass that named something
+        // moved the record, so the next launch asks once more and settles.
+        store.sources = Some(gate);
+        out
+    });
+    let merge = match marks {
+        true => annotate::fold(store, clips, &records, &shelf, &survey),
+        false => annotate::Merge::default(),
+    };
     let jackets = store.keep_covers(dir);
-    let refreshed = stated + rescue.named() + jackets.kept;
+    let refreshed = stated + rescue.map_or(0, |r| r.named()) + jackets.kept;
     said.log = Some(format!(
         "log={}/{}l{}c{}d{}s",
         pass.lines, pass.from.live, pass.from.chunks, pass.from.dumps, pass.from.skipped,
@@ -119,7 +152,7 @@ fn collect_into(
     said.catalog = Some(format!("cat={}/{stated}", books.len()));
     said.records = Some(format!("rec={}b", store.books.len()));
     said.covers = Some(jackets.said());
-    said.identify = rescue_said(&rescue);
+    said.identify = rescue.as_ref().and_then(rescue_said);
     said.annotate = marks_said(&merge);
     // The books whose jackets the device has lost are the same ones every
     // launch, so they are named beside the count rather than a line apiece.
@@ -127,7 +160,7 @@ fn collect_into(
         eprintln!("covers: the device has lost artwork for {lost}");
     }
     // An unchanged store is left on disk unwritten.
-    if pass.added + pass.extended + refreshed == 0 && !merge.read {
+    if pass.added + pass.extended + refreshed == 0 && !merge.read && !gated {
         return said;
     }
     // A failed `save` leaves `store` drawable and unsaved.

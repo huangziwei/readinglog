@@ -81,11 +81,17 @@ pub fn log_stamp(iso: &str) -> Option<String> {
 /// field — the line's separator or a `,`. `Time` does not match inside
 /// `IntervalTime`.
 pub fn field(line: &str, name: &str) -> Option<i64> {
-    let needle = format!("{name}:");
     let bytes = line.as_bytes();
-    let at = line.match_indices(&needle).find_map(|(at, _)| {
+    // `name` and the `:` after it, matched without building the needle: this
+    // runs on every payload of every line of a whole syslog, and the string
+    // it would allocate is a constant at every call site.
+    let at = line.match_indices(name).find_map(|(at, _)| {
+        let end = at + name.len();
+        if bytes.get(end) != Some(&b':') {
+            return None;
+        }
         let before = at.checked_sub(1).map(|i| bytes[i]);
-        matches!(before, None | Some(b',') | Some(b':')).then_some(at + needle.len())
+        matches!(before, None | Some(b',') | Some(b':')).then_some(end + 1)
     })?;
     let rest = &line[at..];
     let end = rest
@@ -263,9 +269,19 @@ pub fn opened_at_counter(line: &str) -> Option<i64> {
         .map(|s| s * 1000)
 }
 
+/// Where `"<name>"` opens in `line`, quotes included, without building the
+/// quoted needle: these run once a field once a line over a whole syslog.
+fn quoted(line: &str, name: &str) -> Option<usize> {
+    let bytes = line.as_bytes();
+    line.match_indices(name).find_map(|(at, _)| {
+        let before = at.checked_sub(1).map(|i| bytes[i]);
+        (before == Some(b'"') && bytes.get(at + name.len()) == Some(&b'"')).then_some(at - 1)
+    })
+}
+
 /// Read `"<name>" : "<value>"` out of a metrics record's JSON-ish body.
 pub fn field_text<'a>(line: &'a str, name: &str) -> Option<&'a str> {
-    let at = line.find(&format!("\"{name}\""))? + name.len() + 2;
+    let at = quoted(line, name)? + name.len() + 2;
     let rest = &line[at..];
     let tail = &rest[rest.find('"')? + 1..];
     Some(&tail[..tail.find('"')?])
@@ -274,7 +290,9 @@ pub fn field_text<'a>(line: &'a str, name: &str) -> Option<&'a str> {
 /// Read `"<name>" : <number>` out of the same body. Distinct from
 /// [`field_text`], which reads past an unquoted value into the next field.
 pub fn field_num(line: &str, name: &str) -> Option<i64> {
-    let at = line.find(&format!("\"{name}\" : "))? + name.len() + 5;
+    let at = quoted(line, name).filter(|at| line[at + name.len() + 2..].starts_with(" : "))?
+        + name.len()
+        + 5;
     let rest = &line[at..];
     let end = rest
         .find(|c: char| !c.is_ascii_digit() && c != '-')
@@ -293,10 +311,17 @@ pub fn from_book(line: &str) -> Option<i64> {
 
 /// Map each book's per-line `EndPos` fingerprint to its [`from_book`].
 /// `pending` drops before an `OpenBook` and after a `CloseBook`.
+///
+/// Only a [`super::Family::Timer`] line states any of this — the payloads every
+/// reader below wants sit behind `Information::`, which no other process
+/// writes — so the rest are passed over on the family alone.
 pub fn frombook_map<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<(i64, i64)> {
     let mut map: Vec<(i64, i64)> = Vec::new();
     let mut pending: Option<i64> = None;
     for line in events {
+        if !super::is_timer(line) {
+            continue;
+        }
         if names(line, "OpenBook") {
             pending = None;
         }
@@ -320,6 +345,9 @@ pub fn frombook_map<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<(i64, 
 pub fn counter_map<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<(i64, i64, i64)> {
     let mut map: Vec<(i64, i64, i64)> = Vec::new();
     for line in events {
+        if !super::is_timer(line) {
+            continue;
+        }
         let Some(obs) = observation(line) else {
             continue;
         };

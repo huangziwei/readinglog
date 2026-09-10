@@ -221,7 +221,9 @@ fn take_events(
         }
         // `raw` carries bytes that are not UTF-8.
         let line = String::from_utf8_lossy(&raw);
-        if !super::MARKERS.iter().any(|m| line.contains(m)) {
+        // `family` is the whole cost of this loop: three probes over a line
+        // that carries no marker, rather than all thirteen.
+        if super::family(&line).is_none() {
             continue;
         }
         // A line `line_stamp` cannot read is kept.

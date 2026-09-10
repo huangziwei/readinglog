@@ -554,11 +554,19 @@ pub fn parse_sessions<'a>(
 ) -> Vec<Session> {
     // [`Awake`] reads the whole stream before the first sitting closes.
     let lines: Vec<&str> = events.into_iter().collect();
+    // Which lines are reading-timer lines, read once. Five of the readers
+    // below want one of those and nothing else, and three want anything but,
+    // so asking each of them separately is a whole-line search apiece over the
+    // same stream — the largest thing a launch reads.
+    let timer: Vec<bool> = lines
+        .iter()
+        .map(|line| crate::log::is_timer(line))
+        .collect();
     // `toc` holds the positions only ever stated as a chapter's start.
     let mut toc: Vec<i64> = Vec::new();
     let mut book: Vec<i64> = Vec::new();
-    for line in lines.iter().copied() {
-        let (t, b) = toc_and_book(line);
+    for line in lines.iter().copied().zip(&timer).filter(|(_, t)| **t) {
+        let (t, b) = toc_and_book(line.0);
         toc.extend(t);
         book.extend(b);
     }
@@ -574,10 +582,20 @@ pub fn parse_sessions<'a>(
     let read_at: Vec<i64> = lines
         .iter()
         .copied()
-        .filter(|line| metric(line).is_some() || observation(line).is_some())
-        .filter_map(|line| Some(stamp(line)?.abs))
+        .zip(&timer)
+        .filter(|(line, timer)| match timer {
+            true => observation(line).is_some(),
+            false => metric(line).is_some(),
+        })
+        .filter_map(|(line, _)| Some(stamp(line)?.abs))
         .collect();
-    let awake = Awake::from_events(lines.iter().copied()).witnessed(&read_at);
+    // Only `powerd` states a change, so the timer lines are not offered one.
+    let woke = lines
+        .iter()
+        .copied()
+        .zip(&timer)
+        .filter_map(|(line, timer)| (!timer).then_some(line));
+    let awake = Awake::from_events(woke).witnessed(&read_at);
 
     let mut out = Vec::new();
     let mut open: Option<Open> = None;
@@ -591,18 +609,18 @@ pub fn parse_sessions<'a>(
     // Records no open run reached, drained into the run that opens over them.
     let mut pending: Vec<(Moment, Metric)> = Vec::new();
 
-    for line in lines.iter().copied() {
+    for (line, &timer) in lines.iter().copied().zip(&timer) {
         let Some(now) = stamp(line) else {
             continue;
         };
         // `gapped` counts the stretch between two lines `is_state_change`
-        // rejects.
-        if !is_state_change(line) {
+        // rejects. A reading-timer line is never one of them.
+        if timer || !is_state_change(line) {
             gapped |= prev_abs.is_some_and(|prev| now.abs - prev > SESSION_GAP_SECS);
             prev_abs = Some(now.abs);
         }
 
-        if let Some(counter_ms) = opened_at_counter(line) {
+        if timer && let Some(counter_ms) = opened_at_counter(line) {
             opened = Some(Opened {
                 counter_ms,
                 at: now.clone(),
@@ -615,17 +633,20 @@ pub fn parse_sessions<'a>(
             .as_ref()
             .is_some_and(|cur| now.abs - cur.last.abs <= SESSION_GAP_SECS);
 
-        if let Some(key) = cde_key(line) {
+        if !timer && let Some(key) = cde_key(line) {
             named = Some((now.abs, key.to_string()));
             if live && let Some(cur) = open.as_mut() {
                 cur.asin = Some(key.to_string());
             }
         }
 
-        let Some(obs) = observation(line).filter(|o| chapters.binary_search(&o.position).is_err())
+        let Some(obs) = timer
+            .then(|| observation(line))
+            .flatten()
+            .filter(|o| chapters.binary_search(&o.position).is_err())
         else {
             // `pending` holds a record no open run reaches.
-            if let Some(m) = metric(line) {
+            if !timer && let Some(m) = metric(line) {
                 match open.as_mut().filter(|_| live) {
                     Some(cur) => cur.observe_metric(&now, &m, &awake),
                     None => pending.push((now.clone(), m)),

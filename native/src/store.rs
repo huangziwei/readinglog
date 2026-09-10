@@ -202,6 +202,9 @@ pub struct Store {
     /// What the pass that wrote [`Self::marks`] saw, and `None` where no pass
     /// has. The next pass reads nothing while this stands.
     pub gate: Option<Gate>,
+    /// What the last pass over the naming sources stood at, and `None` where
+    /// none has. The next pass asks nothing while this stands.
+    pub sources: Option<Sources>,
 }
 
 /// What one pass did.
@@ -300,6 +303,7 @@ impl Store {
                 Some("c") => out.cleared.extend(read_cleared(&mut f)),
                 Some("a") => out.marks.extend(read_mark(&mut f)),
                 Some("n") => out.gate = read_gate(&mut f),
+                Some("g") => out.sources = read_sources(&mut f),
                 _ => {}
             }
         }
@@ -341,50 +345,72 @@ impl Store {
     /// The record as the file holds it, which is what an archive carries and
     /// what [`Self::load`] reads back.
     pub fn text(&self) -> String {
+        // `write!` into the buffer, never a `format!` a row: a record of any
+        // size is some thousands of rows, and a row is not worth a `String` of
+        // its own.
         let mut out = String::new();
         out.push_str(HEADER);
         out.push('\n');
         if !self.mark.is_empty() {
             match self.mark_offset {
-                Some(offset) => out.push_str(&format!("m\t{}\t{offset}\n", self.mark)),
-                None => out.push_str(&format!("m\t{}\n", self.mark)),
+                Some(offset) => row(&mut out, format_args!("m\t{}\t{offset}", self.mark)),
+                None => row(&mut out, format_args!("m\t{}", self.mark)),
             }
         }
         if !self.floor.is_empty() {
-            out.push_str(&format!("f\t{}\n", self.floor));
+            row(&mut out, format_args!("f\t{}", self.floor));
         }
         for c in &self.cleared {
-            out.push_str(&format!("c\t{}\t{}\t{}\n", c.extent, flat(&c.key), c.at));
+            row(
+                &mut out,
+                format_args!("c\t{}\t{}\t{}", c.extent, flat(&c.key), c.at),
+            );
         }
         for (k, v) in &self.ends {
-            out.push_str(&format!("e\t{k}\t{v}\n"));
+            row(&mut out, format_args!("e\t{k}\t{v}"));
         }
         for (extent, key) in &self.keys {
-            out.push_str(&format!("k\t{extent}\t{}\n", flat(key)));
+            row(&mut out, format_args!("k\t{extent}\t{}", flat(key)));
         }
         for (ep, ms, words) in &self.counters {
-            out.push_str(&format!("t\t{ep}\t{ms}\t{words}\n"));
+            row(&mut out, format_args!("t\t{ep}\t{ms}\t{words}"));
         }
         for (extent, file) in &self.pairs {
-            out.push_str(&format!("ep\t{extent}\t{}\n", flat(file)));
+            row(&mut out, format_args!("ep\t{extent}\t{}", flat(file)));
         }
         for b in &self.books {
-            out.push_str(&write_book(b));
-            out.push('\n');
+            write_book(&mut out, b);
         }
         for s in &self.sessions {
-            out.push_str(&write_session(s));
-            out.push('\n');
+            write_session(&mut out, s);
         }
         if let Some(gate) = self.gate {
-            out.push_str(&format!(
-                "n\t{}\t{}\t{}\t{}\n",
-                gate.len, gate.mtime, gate.marks, gate.rules
-            ));
+            row(
+                &mut out,
+                format_args!(
+                    "n\t{}\t{}\t{}\t{}\t{}",
+                    gate.len, gate.mtime, gate.shelf, gate.dirs, gate.rules
+                ),
+            );
         }
         for m in &self.marks {
-            out.push_str(&write_mark(m));
-            out.push('\n');
+            write_mark(&mut out, m);
+        }
+        if let Some(g) = self.sources {
+            row(
+                &mut out,
+                format_args!(
+                    "g\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    g.vocab_len,
+                    g.vocab_mtime,
+                    g.clips_len,
+                    g.clips_mtime,
+                    g.shelf,
+                    g.dirs,
+                    g.record,
+                    g.rules
+                ),
+            );
         }
         out
     }
@@ -583,24 +609,31 @@ impl Store {
         )
     }
 
-    /// Every `EndPos` class this counter pair was ever stated for: the sittings
-    /// carrying their own last reading of it, and the `t` rows standing for
-    /// those a record holds no sitting counter for.
-    fn classes_at(&self, total_ms: i64, words: i64) -> Vec<i64> {
-        let mut out: Vec<i64> = self
+    /// Every `EndPos` class each counter pair was ever stated for: the
+    /// sittings carrying their own last reading of it, and the `t` rows
+    /// standing for those a record holds no sitting counter for.
+    ///
+    /// Every pair at once, so that a shelf of sidecars costs one pass over the
+    /// sittings rather than a pass per card.
+    fn classes_by_counter(&self) -> std::collections::HashMap<(i64, i64), Vec<i64>> {
+        let mut out: std::collections::HashMap<(i64, i64), Vec<i64>> =
+            std::collections::HashMap::new();
+        let stated = self
             .sessions
             .iter()
-            .filter(|s| s.end_counter_ms == Some(total_ms) && s.end_words == Some(words))
-            .map(|s| s.end_position)
+            .filter_map(|s| Some((s.end_counter_ms?, s.end_words?, s.end_position)))
             .chain(
                 self.counters
                     .iter()
-                    .filter(|(_, ms, words_)| *ms == total_ms && *words_ == words)
-                    .map(|(ep, _, _)| *ep),
-            )
-            .collect();
-        out.sort_unstable();
-        out.dedup();
+                    .map(|(ep, ms, words)| (*ms, *words, *ep)),
+            );
+        for (ms, words, ep) in stated {
+            out.entry((ms, words)).or_default().push(ep);
+        }
+        for held in out.values_mut() {
+            held.sort_unstable();
+            held.dedup();
+        }
         out
     }
 
@@ -750,7 +783,9 @@ impl Store {
             by_key.entry(record.cde_key.clone()).or_default().push(at);
         }
         // The slots `catalog` stated a `p_percentFinished` for on this pass.
-        let mut stated: Vec<usize> = Vec::new();
+        // A set, not a list: `note_progress` asks it once per sitting, and a
+        // scan there is the catalog times the reading.
+        let mut stated: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for book in catalog {
             let slot = match slot_in(&by_key, &self.books, book) {
                 Some(i) => {
@@ -767,7 +802,7 @@ impl Store {
                 }
             };
             if book.percent >= 0.0 {
-                stated.push(slot);
+                stated.insert(slot);
             }
             if book.extent != 0 && !book.cde_key.is_empty() {
                 self.learn_key(book.extent, &book.cde_key);
@@ -778,24 +813,52 @@ impl Store {
         moved.into_iter().filter(|&m| m).count()
     }
 
-    /// Name reading the catalog cannot: `sidecars` against [`Self::classes_at`].
+    /// Name reading the catalog cannot: `sidecars` against [`Self::classes_by_counter`].
     pub fn recover(&mut self, sidecars: &[sidecar::Counter]) -> usize {
-        // Drop a pairing whose extent a record carries under another key.
-        let books = self.books.clone();
-        self.pairs.retain(|(extent, file)| {
-            !books
+        // Drop a pairing whose extent a record carries under another key. The
+        // keys under one extent are gathered first because `retain` cannot
+        // read `books` while it holds `pairs`; do not reach for a clone of
+        // `books` instead, which is the whole record copied every launch.
+        if !self.pairs.is_empty() {
+            let mut keyed: std::collections::HashMap<i64, Vec<&str>> =
+                std::collections::HashMap::new();
+            for book in &self.books {
+                keyed
+                    .entry(book.extent)
+                    .or_default()
+                    .push(book.cde_key.as_str());
+            }
+            let drop: Vec<(i64, String)> = self
+                .pairs
                 .iter()
-                .any(|b| b.extent == *extent && b.cde_key != *file)
-        });
+                .filter(|(extent, file)| {
+                    keyed
+                        .get(extent)
+                        .is_some_and(|keys| keys.iter().any(|k| k != file))
+                })
+                .cloned()
+                .collect();
+            self.pairs.retain(|held| !drop.contains(held));
+        }
+        // Nothing to name and nothing left to drop.
+        if sidecars.is_empty() {
+            return 0;
+        }
+        // The classes each counter pair was ever stated for, gathered in one
+        // pass rather than a scan of every sitting and every `t` row per card.
+        let classes = self.classes_by_counter();
         let mut claims: Vec<(i64, &str)> = Vec::new();
         for card in sidecars {
             if card.total_ms == 0 {
                 continue;
             }
-            let [end_position] = self.classes_at(card.total_ms, card.words)[..] else {
+            let [end_position] = classes
+                .get(&(card.total_ms, card.words))
+                .map_or(&[][..], Vec::as_slice)
+            else {
                 continue;
             };
-            claims.push((self.extent_of(end_position), &card.file));
+            claims.push((self.extent_of(*end_position), &card.file));
         }
         let mut named = 0;
         for (i, &(extent, file)) in claims.iter().enumerate() {
@@ -838,6 +901,55 @@ impl Store {
         out.sort_unstable();
         out.dedup();
         out
+    }
+
+    /// The record as the naming pass reads it, in one number.
+    ///
+    /// [`Self::name_from`] takes a witness, finds the sitting bracketing its
+    /// instant, refuses the class where a record already names it better, and
+    /// lands the claim on a record carrying that title or key. So its answer
+    /// moves only when one of three things does: the sittings' brackets, which
+    /// class each belongs to, or the records a claim could land on.
+    ///
+    /// `recover` reads the same sittings through their counters, and `pairs`,
+    /// which it also writes.
+    pub fn naming_stamp(&self) -> u64 {
+        let mut stamp = crate::stamp::Stamp::default();
+        for s in &self.sessions {
+            stamp.text(&s.started_at);
+            stamp.text(&s.ended_at);
+            stamp.num(s.end_position);
+            stamp.num(s.seconds);
+            stamp.text(s.asin.as_deref().unwrap_or_default());
+            stamp.num(s.end_counter_ms.unwrap_or(-1));
+            stamp.num(s.end_words.unwrap_or(-1));
+        }
+        for b in &self.books {
+            stamp.num(b.extent);
+            stamp.text(&b.cde_key);
+            stamp.text(&b.title);
+            stamp.num(b.named_by as i64);
+        }
+        // `ends` is what `extent_of` reads a class through, and `keys` and
+        // `pairs` are what a claim is landed by.
+        for (k, v) in &self.ends {
+            stamp.num(*k);
+            stamp.num(*v);
+        }
+        for (k, v) in &self.keys {
+            stamp.num(*k);
+            stamp.text(v);
+        }
+        for (k, v) in &self.pairs {
+            stamp.num(*k);
+            stamp.text(v);
+        }
+        for (ep, ms, words) in &self.counters {
+            stamp.num(*ep);
+            stamp.num(*ms);
+            stamp.num(*words);
+        }
+        stamp.done()
     }
 
     /// Whether [`Self::wants`] answers `by` for any class in
@@ -1025,7 +1137,7 @@ impl Store {
     /// Give each record outside `stated` the furthest its sittings reached,
     /// where that stands past the place it holds. `%Left` fills the gap a
     /// deletion leaves and stops a page short of the end.
-    fn note_progress(&mut self, stated: &[usize]) {
+    fn note_progress(&mut self, stated: &std::collections::HashSet<usize>) {
         for i in 0..self.sessions.len() {
             let Some(progress) = self.sessions[i].progress else {
                 continue;
@@ -1374,13 +1486,14 @@ impl Store {
                 .collect(),
             books: vec![self.books[slot].clone()],
             marks: self.marks_of(self.books[slot].extent).cloned().collect(),
-            // `mark`, `floor`, the `c` rows and the gate key the record, not
-            // one book.
+            // `mark`, `floor`, the `c` rows and the two gates key the record,
+            // not one book.
             mark: String::new(),
             mark_offset: None,
             floor: String::new(),
             cleared: Vec::new(),
             gate: None,
+            sources: None,
         }
     }
 
@@ -1796,25 +1909,36 @@ fn merge(record: &mut BookRecord, book: &Book) -> bool {
     moved
 }
 
-fn write_book(b: &BookRecord) -> String {
-    format!(
-        "b\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-        b.extent,
-        flat(&b.cde_key),
-        flat(&b.title),
-        flat(&b.author),
-        flat(&b.thumbnail),
-        flat(&b.language),
-        format_args!("{:.6}", b.percent),
-        u8::from(b.on_device),
-        flat(&b.cover),
-        flat(&b.location),
-        u8::from(b.finished),
-        b.restart.map(|p| format!("{p:.6}")).unwrap_or_default(),
-        b.read_state,
-        flat(&b.cde_type),
-        u8::from(b.kept),
-        b.named_by.as_str(),
+/// Append one row and its line ending. Every writer below goes through this,
+/// so a record's rows cost the buffer they are written into and nothing else.
+fn row(out: &mut String, args: std::fmt::Arguments) {
+    use std::fmt::Write as _;
+    let _ = out.write_fmt(args);
+    out.push('\n');
+}
+
+fn write_book(out: &mut String, b: &BookRecord) {
+    row(
+        out,
+        format_args!(
+            "b\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            b.extent,
+            flat(&b.cde_key),
+            flat(&b.title),
+            flat(&b.author),
+            flat(&b.thumbnail),
+            flat(&b.language),
+            format_args!("{:.6}", b.percent),
+            u8::from(b.on_device),
+            flat(&b.cover),
+            flat(&b.location),
+            u8::from(b.finished),
+            b.restart.map(|p| format!("{p:.6}")).unwrap_or_default(),
+            b.read_state,
+            flat(&b.cde_type),
+            u8::from(b.kept),
+            b.named_by.as_str(),
+        ),
     )
 }
 
@@ -1854,20 +1978,23 @@ fn read_book<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<BookRecord> {
 /// An `a` row: one annotation, as [`crate::annotate`] merged it. `m.at` is
 /// the key. `m.start`/`m.end` are on the book's `p_contentSize` axis and
 /// `m.location` is the display location the clipping stated.
-fn write_mark(m: &Mark) -> String {
-    format!(
-        "a\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-        m.extent,
-        flat(&m.title),
-        m.kind.as_str(),
-        m.at,
-        m.state.as_str(),
-        m.start,
-        m.end,
-        m.location,
-        flat(&m.page),
-        flat(&m.colour),
-        flat(&m.body),
+fn write_mark(out: &mut String, m: &Mark) {
+    row(
+        out,
+        format_args!(
+            "a\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            m.extent,
+            flat(&m.title),
+            m.kind.as_str(),
+            m.at,
+            m.state.as_str(),
+            m.start,
+            m.end,
+            m.location,
+            flat(&m.page),
+            flat(&m.colour),
+            flat(&m.body),
+        ),
     )
 }
 
@@ -1892,16 +2019,71 @@ fn read_mark<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Mark> {
     out.state.is_in_the_book().then_some(out)
 }
 
+/// What a pass over the naming sources stood at, so that a pass finding the
+/// same again can be skipped whole.
+///
+/// The three sources are read on every launch while any class still wants a
+/// name — and a class whose book has been deleted wants one **for ever**, so
+/// a record holding one never stops reading `vocab.db`, the clippings file
+/// and every sidecar on the shelf, to name nothing, on every launch. Keeping
+/// the unnameable class is right: the book may come back and the reading
+/// relinks to it. Asking again while nothing has moved is not.
+///
+/// Everything the pass reads is here. Two of the sources are files, and a
+/// `stat` says whether either has moved. The shelf is
+/// [`crate::sidecar::Survey`], which is that walk without the parses. The
+/// record's own half is [`Store::naming_stamp`]: the classes wanting a name,
+/// the sittings that bracket them, and the records a claim could land on.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Sources {
+    /// `vocab.db`'s length and modification time.
+    pub vocab_len: u64,
+    pub vocab_mtime: i64,
+    /// `My Clippings.txt`'s length and modification time.
+    pub clips_len: u64,
+    pub clips_mtime: i64,
+    /// [`crate::sidecar::Survey::stamp`], and the directories it counted.
+    pub shelf: u64,
+    pub dirs: usize,
+    /// [`Store::naming_stamp`].
+    pub record: u64,
+    /// [`crate::identify::NAMING_RULES`] as the pass that wrote this read
+    /// them.
+    pub rules: u32,
+}
+
 /// An `n` row: what the pass that wrote the `a` rows above it had seen, and
-/// the rules it read them under. A row from a build that stated no rules reads
-/// as 0, which no build matches, so its rows are merged again.
+/// the rules it read them under.
+///
+/// A row an older build wrote states one field fewer, so its `rules` lands in
+/// `dirs` and it reads as either `rules` 0 or no row at all — and both mean
+/// the same thing, that this build has not seen these sources and folds them
+/// again.
 fn read_gate<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Gate> {
     let mut next = || f.next().unwrap_or_default();
     Some(Gate {
         len: next().trim().parse().ok()?,
         mtime: next().trim().parse().ok()?,
-        marks: next().trim().parse().ok()?,
+        shelf: next().trim().parse().ok()?,
+        dirs: next().trim().parse().ok()?,
         rules: next().trim().parse().unwrap_or(0),
+    })
+}
+
+/// A `g` row as a [`Sources`]. A row an older build wrote states fewer
+/// fields, and every one it does not state reads as zero, which no live gate
+/// can equal — so the sources are asked again, which is the safe answer.
+fn read_sources<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Sources> {
+    let mut next = || f.next().unwrap_or_default().trim().to_string();
+    Some(Sources {
+        vocab_len: next().parse().ok()?,
+        vocab_mtime: next().parse().ok()?,
+        clips_len: next().parse().ok()?,
+        clips_mtime: next().parse().ok()?,
+        shelf: next().parse().ok()?,
+        dirs: next().parse().ok()?,
+        record: next().parse().ok()?,
+        rules: next().parse().unwrap_or(0),
     })
 }
 
@@ -1963,28 +2145,31 @@ fn read_hours(text: &str) -> Vec<(u8, i64)> {
         .collect()
 }
 
-fn write_session(s: &Session) -> String {
+fn write_session(out: &mut String, s: &Session) {
     let num = |n: Option<i64>| n.map(|n| n.to_string()).unwrap_or_default();
-    format!(
-        "s\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-        s.started_at,
-        s.ended_at,
-        s.end_position,
-        s.seconds,
-        s.page_turns,
-        s.words,
-        s.measure.as_str(),
-        s.asin.as_deref().unwrap_or(""),
-        s.progress.map(|p| format!("{p:.6}")).unwrap_or_default(),
-        write_hours(&s.hours),
-        num(s.start_counter_ms),
-        num(s.end_counter_ms),
-        num(s.start_words),
-        num(s.end_words),
-        num(s.tz_offset_s),
-        num(s.time_left),
-        num(s.stated_wpm),
-        s.awake_seconds,
+    row(
+        out,
+        format_args!(
+            "s\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            s.started_at,
+            s.ended_at,
+            s.end_position,
+            s.seconds,
+            s.page_turns,
+            s.words,
+            s.measure.as_str(),
+            s.asin.as_deref().unwrap_or(""),
+            s.progress.map(|p| format!("{p:.6}")).unwrap_or_default(),
+            write_hours(&s.hours),
+            num(s.start_counter_ms),
+            num(s.end_counter_ms),
+            num(s.start_words),
+            num(s.end_words),
+            num(s.tz_offset_s),
+            num(s.time_left),
+            num(s.stated_wpm),
+            s.awake_seconds,
+        ),
     )
 }
 
@@ -2358,7 +2543,11 @@ mod tests {
     fn a_row_naming_a_kind_this_build_does_not_know_costs_only_itself() {
         let text = format!(
             "{HEADER}\na\t1\tA Book\tscribble\t2026-09-07T09:41:55\tlive\t1\t2\t3\t\t\t\n{}\n",
-            write_mark(&one_mark())
+            {
+                let mut out = String::new();
+                write_mark(&mut out, &one_mark());
+                out.trim_end().to_string()
+            }
         );
         let back = Store::from_text(&text);
         assert_eq!(back.marks, vec![one_mark()]);
@@ -2431,6 +2620,7 @@ mod tests {
             floor: String::new(),
             marks: Vec::new(),
             gate: None,
+            sources: None,
             cleared: vec![Cleared {
                 extent: 304_517,
                 key: "B00OKPCRLG".into(),
@@ -2483,6 +2673,7 @@ mod tests {
             floor: String::new(),
             marks: Vec::new(),
             gate: None,
+            sources: None,
             cleared: vec![Cleared {
                 extent: 148_207,
                 key: "B00OKPCRLG".into(),
@@ -2869,6 +3060,7 @@ mod tests {
             cleared: Vec::new(),
             marks: Vec::new(),
             gate: None,
+            sources: None,
         };
         store.sessions[0].progress = progress;
         store.remember(&[shelved(938_018, "B00OKPCRLG", "A Book", 88.0)]);
@@ -3006,6 +3198,7 @@ mod tests {
             cleared: Vec::new(),
             marks: Vec::new(),
             gate: None,
+            sources: None,
         }
     }
 
@@ -3957,6 +4150,7 @@ mod tests {
             floor: String::new(),
             marks: Vec::new(),
             gate: None,
+            sources: None,
             cleared: vec![Cleared {
                 extent: 148_207,
                 key: "B00OKPCRLG".into(),
@@ -4004,6 +4198,7 @@ mod tests {
             floor: String::new(),
             marks: Vec::new(),
             gate: None,
+            sources: None,
             cleared: vec![Cleared {
                 extent: 148_209,
                 key: String::new(),
@@ -4042,6 +4237,7 @@ mod tests {
             floor: String::new(),
             marks: Vec::new(),
             gate: None,
+            sources: None,
             cleared: vec![
                 Cleared {
                     extent: 148_207,

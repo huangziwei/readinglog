@@ -45,12 +45,13 @@
 //! [`ClippingsManager`]: crate::clippings
 //! [`Roster::trusted`]: crate::sidecar::Roster::trusted
 
+use std::collections::HashMap;
 use std::path::Path;
 
-use crate::clippings::{self, Clipping, Kind};
+use crate::clippings::{Clipping, Kind};
 use crate::date;
 use crate::identify::normalise;
-use crate::sidecar::{Roster, Shelf};
+use crate::sidecar::{Roster, Shelf, Survey};
 use crate::store::{BookRecord, Store};
 
 /// Characters of a body the store keeps where the body is the **book's** own
@@ -256,30 +257,36 @@ pub struct Merge {
 /// unchanged files.** A record is left alone only while the sources *and* the
 /// rules that read them both stand, so a build that changes the join reaches a
 /// device whose files have not moved.
-const RULES: u32 = 4;
+const RULES: u32 = 5;
 
 /// What a pass has to have seen for the rows it wrote to still stand: the
-/// clippings file as it was, as many sidecar records as there were, and the
-/// rules it read them under.
+/// clippings file as it was, the sidecars as they were, and the rules it read
+/// them under.
 ///
 /// The file only grows, but it can be replaced wholesale, so a length alone
-/// will not do. A pass over an unchanged gate is one `stat` and no read.
+/// will not do. The sidecar half is [`crate::sidecar::survey`], which reads
+/// each sidecar's length and modification time and never its bytes: **nothing
+/// here may be a figure that only a parse can state**, or the gate has to
+/// parse the whole shelf before it can say whether the shelf is worth parsing.
+/// A pass over an unchanged gate is a walk of `documents` and a `stat` a file,
+/// and no sidecar opened at all.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Gate {
     /// `My Clippings.txt`'s length in bytes.
     pub len: u64,
     /// Its modification time, epoch seconds.
     pub mtime: i64,
-    /// Annotation records across every rare sidecar, which is what says a
-    /// mark was made or deleted since.
-    pub marks: usize,
+    /// [`crate::sidecar::Survey::stamp`], which is what says a mark was made
+    /// or deleted since, and [`crate::sidecar::Survey::dirs`] beside it.
+    pub shelf: u64,
+    pub dirs: usize,
     /// [`RULES`] as the pass that wrote the rows read them. A row an older
     /// build wrote states a lower number, and is merged again.
     pub rules: u32,
 }
 
-/// The gate `clips` and `shelf` stand at now.
-pub fn gate(clips: &Path, shelf: &Shelf) -> Gate {
+/// The gate `clips` and `survey` stand at now.
+pub fn gate(clips: &Path, survey: &Survey) -> Gate {
     let stated = std::fs::metadata(clips).ok();
     Gate {
         len: stated.as_ref().map_or(0, std::fs::Metadata::len),
@@ -288,20 +295,35 @@ pub fn gate(clips: &Path, shelf: &Shelf) -> Gate {
             .and_then(|m| m.modified().ok())
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or(0, |d| d.as_secs() as i64),
-        marks: shelf.rosters.iter().map(|r| r.annotations.len()).sum(),
+        shelf: survey.stamp,
+        dirs: survey.dirs,
         rules: RULES,
     }
 }
 
+/// Whether [`fold`] would read anything: the answer [`crate::sidecar::read`]
+/// has to be paid for, taken before paying it.
+pub fn wants(store: &Store, clips: &Path, survey: &Survey) -> bool {
+    store.gate != Some(gate(clips, survey))
+}
+
 /// Join the two sources and fold what they say into `store`, replacing every
-/// `a` row it holds.
+/// `a` row it holds. `records` is `My Clippings.txt` already parsed —
+/// [`crate::identify::rescue_from`] wants the same records, and the launch
+/// reads the file once for both.
 ///
 /// Nothing is read while the gate stands: the rows already stored are what
-/// this pass would write again.
-pub fn fold(store: &mut Store, clips: &Path, shelf: &Shelf) -> Merge {
-    let now = gate(clips, shelf);
+/// this pass would write again, and `clips` is opened only to be `stat`ed.
+pub fn fold(
+    store: &mut Store,
+    clips: &Path,
+    records: &[Clipping],
+    shelf: &Shelf,
+    survey: &Survey,
+) -> Merge {
+    let now = gate(clips, survey);
     let mut out = Merge {
-        sidecars: now.marks,
+        sidecars: shelf.rosters.iter().map(|r| r.annotations.len()).sum(),
         trusted: shelf.rosters.iter().filter(|r| r.trusted).count(),
         held: store.marks.len(),
         ..Merge::default()
@@ -310,9 +332,8 @@ pub fn fold(store: &mut Store, clips: &Path, shelf: &Shelf) -> Merge {
         return out;
     }
     out.read = true;
-    let records = clippings::read(clips);
     out.clippings = records.len();
-    let marks = merge(&records, shelf, &store.books);
+    let marks = merge(records, shelf, &store.books);
     for mark in &marks {
         match mark.state {
             State::Live => out.live += 1,
@@ -344,11 +365,16 @@ struct Held<'a> {
 
 /// [`fold`]'s arithmetic, over sources already read.
 fn merge(records: &[Clipping], shelf: &Shelf, books: &[BookRecord]) -> Vec<Mark> {
+    // Both ways into `books`, built once. Reaching a record by scanning
+    // instead is a pass over every record per roster and per clipping, and the
+    // title arm folds every record's title on each of them.
+    let by_stem = stems(books);
+    let by_title = titles(books);
     let mut held: Vec<Held> = shelf
         .rosters
         .iter()
         .map(|roster| Held {
-            book: book_of(roster, books),
+            book: by_stem.get(roster.file.as_str()).map(|&at| &books[at]),
             at: roster
                 .annotations
                 .iter()
@@ -365,7 +391,11 @@ fn merge(records: &[Clipping], shelf: &Shelf, books: &[BookRecord]) -> Vec<Mark>
         .iter()
         .map(|clip| match clip.title.is_empty() {
             true => None,
-            false => by_title(&clip.title, books),
+            false => by_title
+                .get(&normalise(&clip.title))
+                .copied()
+                .flatten()
+                .map(|at| &books[at]),
         })
         .collect();
 
@@ -563,16 +593,34 @@ fn matching(clip: &Clipping, held: &[Held], named: Option<&BookRecord>) -> Optio
     }
 }
 
-/// The `b` record whose `p_location` names `roster`'s own file: the book's
-/// path with its last suffix cut is the `.sdr` directory's name.
+/// Each record's `.sdr` name to its slot: the book's path with its directory
+/// and its last suffix cut is the name of the `.sdr` beside it, and that is
+/// the one string match a roster is placed by. No counters and no heuristics
+/// — `Store::recover`'s counter match is for a class nothing else can name,
+/// which is a different job.
 ///
-/// One string match, and no counters or heuristics — `Store::recover`'s
-/// counter match is for a class nothing else can name, which is a different
-/// job.
-fn book_of<'a>(roster: &Roster, books: &'a [BookRecord]) -> Option<&'a BookRecord> {
-    books
-        .iter()
-        .find(|b| !b.location.is_empty() && stem_of(&b.location) == roster.file)
+/// The first of a run wins, which is the record a scan down `books` reached.
+fn stems(books: &[BookRecord]) -> HashMap<&str, usize> {
+    let mut out = HashMap::with_capacity(books.len());
+    for (at, book) in books.iter().enumerate() {
+        if !book.location.is_empty() {
+            out.entry(stem_of(&book.location)).or_insert(at);
+        }
+    }
+    out
+}
+
+/// Each record's title to its slot, matched the way two claims on one class
+/// are compared, and to `None` where more than one record carries it: a title
+/// two books answer to names neither.
+fn titles(books: &[BookRecord]) -> HashMap<String, Option<usize>> {
+    let mut out: HashMap<String, Option<usize>> = HashMap::with_capacity(books.len());
+    for (at, book) in books.iter().enumerate() {
+        out.entry(normalise(&book.title))
+            .and_modify(|held| *held = None)
+            .or_insert(Some(at));
+    }
+    out
 }
 
 /// A book file's path with its directory and its last suffix cut.
@@ -582,15 +630,6 @@ fn stem_of(location: &str) -> &str {
         Some((stem, _)) => stem,
         None => name,
     }
-}
-
-/// The `b` record `title` names, matched the way two claims on one class are
-/// compared. `None` where no record carries it, or more than one does.
-fn by_title<'a>(title: &str, books: &'a [BookRecord]) -> Option<&'a BookRecord> {
-    let want = normalise(title);
-    let mut found = books.iter().filter(|b| normalise(&b.title) == want);
-    let first = found.next()?;
-    found.next().is_none().then_some(first)
 }
 
 /// `created`, epoch milliseconds, as the wall clock the clippings file writes.
@@ -640,40 +679,69 @@ fn settle(mut marks: Vec<Mark>) -> Vec<Mark> {
     });
 
     let mut out: Vec<Mark> = Vec::new();
+    // Two ways back into `out`, so that neither arm below is a scan of every
+    // row held so far. `standing` is the exact arm's whole test; `under` is
+    // every row of one book and one kind, which is the only pair
+    // [`words_hold`] can be asked about.
+    let mut standing: HashMap<(i64, Kind, i64, i64), usize> = HashMap::new();
+    let mut under: HashMap<(String, Kind), Vec<usize>> = HashMap::new();
     for mark in marks {
+        let title = normalise(&mark.title);
         let at = match mark.state {
-            State::Live => out.iter().position(|held| {
-                held.state == State::Live
-                    && held.extent == mark.extent
-                    && held.kind == mark.kind
-                    && (held.start, held.end) == (mark.start, mark.end)
-                    && mark.start >= 0
-            }),
-            _ => out.iter().position(|held| words_alike(held, &mark)),
+            State::Live => (mark.start >= 0)
+                .then(|| standing.get(&(mark.extent, mark.kind, mark.start, mark.end)))
+                .flatten()
+                .copied(),
+            _ => under
+                .get(&(title.clone(), mark.kind))
+                .into_iter()
+                .flatten()
+                .copied()
+                .find(|&held| words_hold(&out[held], &mark)),
         };
         match at {
             // The row already held opened the mark; the later one only
             // restates its words, which is what the reader last wrote.
             Some(at) if !mark.body.is_empty() => out[at].body = mark.body,
             Some(_) => {}
-            None => out.push(mark),
+            None => {
+                let slot = out.len();
+                if mark.state == State::Live && mark.start >= 0 {
+                    standing
+                        .entry((mark.extent, mark.kind, mark.start, mark.end))
+                        .or_insert(slot);
+                }
+                under.entry((title, mark.kind)).or_default().push(slot);
+                out.push(mark);
+            }
         }
     }
     // A retired or unconfirmed row the sidecar's own words hold is that
-    // annotation's earlier write.
-    let live: Vec<Mark> = out
+    // annotation's earlier write. Only a row under the same book and kind can
+    // hold it, which `under` already names.
+    let keep: Vec<bool> = out
         .iter()
-        .filter(|m| m.state == State::Live && !m.body.is_empty())
-        .cloned()
+        .map(|m| {
+            m.state == State::Live
+                || m.body.is_empty()
+                || !under
+                    .get(&(normalise(&m.title), m.kind))
+                    .into_iter()
+                    .flatten()
+                    .any(|&held| {
+                        out[held].state == State::Live
+                            && !out[held].body.is_empty()
+                            && words_hold(&out[held], m)
+                    })
+        })
         .collect();
-    out.retain(|m| {
-        m.state == State::Live || m.body.is_empty() || !live.iter().any(|l| words_alike(l, m))
-    });
+    let mut keep = keep.into_iter();
+    out.retain(|_| keep.next().unwrap_or(true));
     out
 }
 
-/// Whether two rows are one mark: the same book, the same kind, and one
-/// passage holding the other.
+/// Whether two rows of one book and one kind are one mark: whether either
+/// passage holds the other.
 ///
 /// `ClippingsManager.d` appends a whole second record every time a handle is
 /// dragged, so a passage the reader widened once is in the file two or three
@@ -685,11 +753,12 @@ fn settle(mut marks: Vec<Mark>) -> Vec<Mark> {
 ///
 /// Nothing shorter than containment will do: two passages that merely overlap
 /// are two passages, and a book that quotes itself would otherwise lose one.
-fn words_alike(a: &Mark, b: &Mark) -> bool {
-    if a.kind != b.kind || a.body.is_empty() || b.body.is_empty() {
-        return false;
-    }
-    if normalise(&a.title) != normalise(&b.title) {
+///
+/// The book and the kind are the caller's: [`settle`] reaches its candidates
+/// through an index on exactly that pair, so the two titles are folded once
+/// each rather than twice per comparison.
+fn words_hold(a: &Mark, b: &Mark) -> bool {
+    if a.body.is_empty() || b.body.is_empty() {
         return false;
     }
     let (short, long) = match a.body.chars().count() <= b.body.chars().count() {
@@ -1215,13 +1284,15 @@ mod tests {
         let named = "[An Author] A Book (2011).8e24abcd";
         let books = [book(1000, "A Book", &format!("Sidle/{named}"))];
         assert_eq!(
-            book_of(&roster(named, true, Vec::new()), &books).map(|b| b.extent),
+            stems(&books).get(named).map(|&at| books[at].extent),
             Some(1000)
         );
         // The bridge is the whole stem, never a prefix of it: two copies of
         // one book differ only in the hash the reader appended.
-        let other = roster("[An Author] A Book (2011).ffffffff", true, Vec::new());
-        assert!(book_of(&other, &books).is_none());
+        assert!(
+            !stems(&books).contains_key("[An Author] A Book (2011).ffffffff"),
+            "a stem that only shares a prefix names no book"
+        );
         assert_eq!(
             stem_of("/mnt/us/documents/Sidle/A Book (2011).8e24.kfx"),
             named

@@ -1224,13 +1224,25 @@ impl App {
         let books = crate::catalog::read();
         let dir = self.dir.clone();
         let stated = self.store.remember(&books);
-        let shelf = crate::identify::walk(std::path::Path::new(crate::sidecar::DOCUMENTS_DIR));
-        let rescue = crate::identify::rescue(&mut self.store, &shelf);
-        let merge = crate::annotate::fold(
-            &mut self.store,
-            std::path::Path::new(crate::clippings::CLIPPINGS_FILE),
-            &shelf,
+        // The reader asked for this, so neither gate holds it back: both are
+        // dropped and written again from what this pass reads.
+        let clips = std::path::Path::new(crate::clippings::CLIPPINGS_FILE);
+        let documents = std::path::Path::new(crate::sidecar::DOCUMENTS_DIR);
+        self.store.sources = None;
+        self.store.gate = None;
+        let survey = crate::sidecar::survey(documents);
+        let held = crate::identify::gate(
+            &self.store,
+            std::path::Path::new(crate::vocab::VOCAB_DB),
+            clips,
+            &survey,
         );
+        let shelf = crate::identify::walk(documents, true);
+        // One read of the file, for both passes.
+        let records = crate::clippings::read(clips);
+        let rescue = crate::identify::rescue(&mut self.store, &records, &shelf);
+        self.store.sources = Some(held);
+        let merge = crate::annotate::fold(&mut self.store, clips, &records, &shelf, &survey);
         let refreshed = stated + rescue.named() + self.store.keep_covers(&dir).kept;
         eprintln!(
             "reset: {} catalog rows, {refreshed} book records refreshed, {} held",
