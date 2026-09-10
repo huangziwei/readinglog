@@ -69,4 +69,12 @@ Diagnostics, for a bug report, write /mnt/us/dumplogs.zip:
 
 scripts/dumplogs.sh is the same file, for /mnt/us/documents/ where the
 jailbreak runs scriptlets.
+
+An open that goes wrong needs the open-path trace, which is off by default
+because it is the loudest thing the extension writes. Turn it on, reproduce
+the open, turn it off again:
+
+    sh /mnt/us/extensions/readinglog/bin/trace.sh
+
+or the "Reading Log: trace an open" entry in KUAL.
 EOF

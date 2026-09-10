@@ -615,7 +615,7 @@ fn bounded(kind: Kind, body: &str) -> String {
 
 /// The rows one merge came to, deduplicated and ordered.
 ///
-/// Identity, in the order [`crate::clippings`]'s own plan sets it:
+/// Identity, in order:
 ///
 /// 1. **The stamp**, where a sidecar record carried it — the row *is* that
 ///    annotation, and its identity is the sidecar's own `(start, end)`.

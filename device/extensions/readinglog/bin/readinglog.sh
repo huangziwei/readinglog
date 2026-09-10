@@ -15,13 +15,21 @@ WATCH_SECS=8
 REFILE_SECS=3
 # TRACE_LINES of /var/log/messages reach $LOG.
 TRACE_LINES=120
+# $TRACE turns the open-path tracing on: appmgr_state's properties, the
+# activeApp watch, and the /var/log/messages tail. Off unless the file is
+# there, because that tracing is the loudest thing this script writes and it
+# is only worth its bytes while a reader is reproducing an open that failed.
+# bin/trace.sh puts it there and takes it away.
+TRACE=$EXT/trace
+tracing() { [ -e "$TRACE" ]; }
 
 if pidof readinglog >/dev/null 2>&1; then
     exit 0
 fi
 
-# appmgr_state writes each $prop to $LOG under $1.
+# appmgr_state writes each $prop to $LOG under $1, while tracing.
 appmgr_state() {
+    tracing || return 0
     echo "[$(date)] $1" >> "$LOG"
     for prop in activeApp activeView activeAppPid peekHistoryView \
                 peekAppHistory peekAppHistoryURI backButtonState; do
@@ -68,6 +76,7 @@ wait_reader() {
 # follow_open watches activeApp for $WATCH_SECS seconds, files $1 again inside
 # $REFILE_SECS, and appends /var/log/messages to $LOG.
 follow_open() {
+    tracing || return 0
     [ "$WATCH_SECS" -gt 0 ] || return 0
     (
         appmgr_state "state at exit"
@@ -141,4 +150,10 @@ appmgr_state "state at launch"
 "$EXT/bin/readinglog" 2>> "$LOG"
 # $(date) overwrites $?.
 STATUS=$?
-echo "[$(date)] exit=$STATUS" >> "$LOG"
+# A non-zero exit is the only trace of a binary that printed nothing — 127 is
+# the shell's own "not found". It is marked so a grep for failures finds it.
+if [ "$STATUS" -eq 0 ]; then
+    echo "[$(date)] exit=0" >> "$LOG"
+else
+    echo "[$(date)] !! exit=$STATUS" >> "$LOG"
+fi

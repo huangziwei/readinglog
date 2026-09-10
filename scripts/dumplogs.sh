@@ -13,7 +13,7 @@ export LC_ALL
 OUT=/mnt/us/dumplogs.zip
 # $WORK holds the entries and the deflate streams.
 WORK=/mnt/us/dumplogs.part
-# $CAP bounds $OUT. $TRIMMED gives up its oldest half, $TRIMS times.
+# $CAP bounds $OUT. halve gives up bytes, at most $TRIMS times.
 CAP=5242880
 TRIMS=8
 # $HOLD_SECS bounds hold.
@@ -97,6 +97,43 @@ exits() {
     bad=$(sed -n 's/.*exit=\([0-9][0-9]*\).*/\1/p' "$1" | grep -v '^0$' | sort -u |
         tr '\n' ' ')
     echo "$all exits${bad:+, non-zero ${bad% }}"
+}
+
+# versions answers the version span $1's `=== ` header blocks cover, and when
+# the first was stamped. Nothing where the log carries no block: a log written
+# before the blocks existed still yields the rest of the report.
+versions() {
+    [ -f "$1" ] || return
+    first=$(grep -a '^=== ' "$1" 2>/dev/null | head -n 1 | awk '{print $2}')
+    last=$(grep -a '^=== ' "$1" 2>/dev/null | tail -n 1 | awk '{print $2}')
+    at=$(grep -a '^=== ' "$1" 2>/dev/null | head -n 1 | awk '{print $3}')
+    blocks=$(grep -ac '^=== ' "$1" 2>/dev/null)
+    [ -n "$first" ] || return
+    if [ "$first" = "$last" ]; then
+        echo "version $first over $blocks blocks, first stamped $at"
+    else
+        echo "versions $first -> $last over $blocks blocks, first stamped $at"
+    fi
+}
+
+# failures answers how many lines of $1 report a failure or a warning, and the
+# most recent of them. The markers are readinglog.sh's and the binary's.
+failures() {
+    [ -f "$1" ] || return
+    n=$(grep -ac '^\(!!\|??\)' "$1" 2>/dev/null)
+    [ "${n:-0}" -gt 0 ] || { echo "no error lines"; return; }
+    last=$(grep -a '^\(!!\|??\)' "$1" 2>/dev/null | tail -n 1 | cut -c1-72)
+    echo "$n error lines, last: $last"
+}
+
+# spans answers the first and last bracketed date in $1, which readinglog.sh
+# writes and the binary does not.
+spans() {
+    [ -f "$1" ] || return
+    first=$(grep -a '^\[' "$1" 2>/dev/null | head -n 1 | sed 's/^\[\([^]]*\)\].*/\1/')
+    last=$(grep -a '^\[' "$1" 2>/dev/null | tail -n 1 | sed 's/^\[\([^]]*\)\].*/\1/')
+    [ -n "$first" ] || return
+    echo "spans $first -> $last"
 }
 
 # target answers what the symlink $1 points at, and nothing where $1 is not
@@ -324,6 +361,11 @@ esac
     sed 's/^/    /' "$WORK/e/catalog-types.tsv" 2>/dev/null
     echo "sessions.tsv   $(lines "$WORK/e/sessions.tsv") lines"
     echo "readinglog.log $(lines "$WORK/e/readinglog.log") lines, $(exits "$WORK/e/readinglog.log")"
+    for said in "$(versions "$WORK/e/readinglog.log")" \
+                "$(failures "$WORK/e/readinglog.log")" \
+                "$(spans "$WORK/e/readinglog.log")"; do
+        [ -n "$said" ] && echo "               $said"
+    done
     echo
     echo "sources        $TOTAL read, $BYTES_READ bytes, $OUTSIDE more outside $DAYS days"
     echo "               the $LARGEST largest, in bytes:"
@@ -448,35 +490,83 @@ say "packing $MARKER_LINES marker lines"
 stamp_zip
 pack || { say "nothing to write"; hold; exit 1; }
 
-# $TRIMMED names the entries halve trims.
-TRIMMED="markers.log readinglog.log"
-
-# halve keeps the newest half of each of $TRIMMED, answering how many lines
-# stand across them.
-halve() {
-    standing=0
-    for entry in $TRIMMED; do
-        [ -s "$WORK/e/$entry" ] || continue
-        keep=$(($(lines "$WORK/e/$entry") / 2))
-        if [ "$keep" -lt 1 ]; then
-            rm -f "$WORK/e/$entry"
-            continue
-        fi
-        tail -n "$keep" "$WORK/e/$entry" > "$WORK/trimmed"
-        mv "$WORK/trimmed" "$WORK/e/$entry"
-        standing=$((standing + keep))
-    done
-    echo "$standing"
+# trim_markers gives up markers.log's oldest day, which is the unit the app
+# itself reads that file by. A file that is all one day gives up its oldest
+# half instead.
+trim_markers() {
+    f=$WORK/e/markers.log
+    [ -s "$f" ] || return 1
+    rm -f "$WORK/trimmed"
+    oldest=$(head -n 1 "$f" | cut -c1-6)
+    if [ -n "$oldest" ]; then
+        grep -av "^$oldest" "$f" > "$WORK/trimmed" 2>/dev/null
+    fi
+    if [ ! -s "$WORK/trimmed" ]; then
+        keep=$(($(lines "$f") / 2))
+        [ "$keep" -ge 1 ] || return 1
+        tail -n "$keep" "$f" > "$WORK/trimmed"
+    fi
+    mv "$WORK/trimmed" "$f"
+    MARKER_TRIMS=$((MARKER_TRIMS + 1))
 }
 
+# trim_app drops readinglog.log's oldest `=== ` block whole, keeping every
+# failure line that stood above the cut and never cutting below the newest two
+# blocks. A log carrying no such block gives up its oldest half instead, which
+# is what a reader who has not upgraded still sends.
+trim_app() {
+    f=$WORK/e/readinglog.log
+    [ -s "$f" ] || return 1
+    rm -f "$WORK/trimmed"
+    blocks=$(grep -ac '^=== ' "$f" 2>/dev/null)
+    if [ "${blocks:-0}" -ge 3 ]; then
+        awk '/^=== /{seen++} seen >= 2 || /^!!/ || /^\?\?/' "$f" > "$WORK/trimmed"
+        BLOCK_TRIMS=$((BLOCK_TRIMS + 1))
+    else
+        keep=$(($(lines "$f") / 2))
+        [ "$keep" -ge 1 ] || return 1
+        tail -n "$keep" "$f" > "$WORK/trimmed"
+        APP_TRIMS=$((APP_TRIMS + 1))
+    fi
+    [ -s "$WORK/trimmed" ] || return 1
+    mv "$WORK/trimmed" "$f"
+}
+
+# halve takes bytes off whichever of the two is larger. They are orders of
+# magnitude apart, so taking from each in step would spend the small
+# high-signal file to save the large one: markers.log must give up days before
+# readinglog.log gives up a block.
+halve() {
+    if [ "$(bytes "$WORK/e/markers.log")" -gt "$(bytes "$WORK/e/readinglog.log")" ]; then
+        trim_markers
+    else
+        trim_app
+    fi
+}
+
+MARKER_TRIMS=0
+BLOCK_TRIMS=0
+APP_TRIMS=0
 left=$TRIMS
 while [ "$(bytes "$WORK/zip")" -gt "$CAP" ] && [ "$left" -gt 0 ]; do
-    standing=$(halve)
-    [ "$standing" -gt 0 ] || break
-    say "trimming to $standing lines"
+    halve || break
+    say "trimming: markers $MARKER_TRIMS, log $((BLOCK_TRIMS + APP_TRIMS))"
     pack || break
     left=$((left - 1))
 done
+
+# report.txt is written before any of this, so what was given up is said here
+# or nowhere: a maintainer must not read a trimmed log as a whole one.
+if [ $((MARKER_TRIMS + BLOCK_TRIMS + APP_TRIMS)) -gt 0 ]; then
+    {
+        echo
+        echo "trimmed        to hold $OUT under $CAP bytes:"
+        [ "$MARKER_TRIMS" -gt 0 ] && echo "    markers.log gave up $MARKER_TRIMS oldest days"
+        [ "$BLOCK_TRIMS" -gt 0 ] && echo "    readinglog.log gave up $BLOCK_TRIMS header blocks, failures kept"
+        [ "$APP_TRIMS" -gt 0 ] && echo "    readinglog.log gave up its oldest half $APP_TRIMS times (no header blocks in it)"
+    } >> "$WORK/e/report.txt"
+    pack || true
+fi
 
 # mv writes $OUT.new and renames it over $OUT.
 mv "$WORK/zip" "$OUT.new" && mv "$OUT.new" "$OUT" || {

@@ -334,7 +334,7 @@ pub fn run_into(dest: &Path, cancel: &AtomicBool, say: &dyn Fn(Doing)) -> Outcom
         }
         Err(None) => Outcome::Stopped,
         Err(Some(why)) => {
-            eprintln!("update: {why:?}");
+            eprintln!("!! update: {why:?}");
             Outcome::Failed(why)
         }
     }
@@ -346,12 +346,12 @@ pub fn available(client: &http::Client) -> Result<Release, Failure> {
     let body = client
         .text(&url, "application/vnd.github+json")
         .map_err(|e| {
-            eprintln!("update: {e}");
+            eprintln!("!! update: {e}");
             Failure::NoAnswer
         })?;
 
     let releases: Vec<ApiRelease> = serde_json::from_str(&body).map_err(|e| {
-        eprintln!("update: unreadable release list: {e}");
+        eprintln!("!! update: unreadable release list: {e}");
         Failure::NoAnswer
     })?;
 
@@ -390,7 +390,7 @@ fn fetch(
         total: None,
     });
     if let Err(e) = client.download(&release.url, &zip, cancel, &progress) {
-        eprintln!("update: {e}");
+        eprintln!("!! update: {e}");
         return Err(match e {
             http::Error::Cancelled => None,
             _ => Some(Failure::BadDownload),
@@ -410,7 +410,7 @@ fn fetch(
     match unpacked {
         Ok(written) => eprintln!("update: {written} files into {}", staging.display()),
         Err(e) => {
-            eprintln!("update: {e}");
+            eprintln!("!! update: {e}");
             let _ = fs::remove_dir_all(&staging);
             return Err(Some(Failure::BadDownload));
         }
@@ -441,14 +441,14 @@ fn beside(path: &Path, suffix: &str) -> PathBuf {
 /// ABI, that it starts, and which release the archive holds.
 fn states_version(exe: &Path, tag: &str) -> bool {
     let Ok(out) = Command::new(exe).arg("--version").output() else {
-        eprintln!("update: the staged copy would not run");
+        eprintln!("!! update: the staged copy would not run");
         return false;
     };
     let said = String::from_utf8_lossy(&out.stdout).trim().to_string();
     // [`newer`] answers false both ways on the same version.
     let same = !newer(&said, tag) && !newer(tag, &said);
     if !out.status.success() || !same {
-        eprintln!("update: staged copy says {said:?}, release says {tag:?}");
+        eprintln!("!! update: staged copy says {said:?}, release says {tag:?}");
         return false;
     }
     true
@@ -468,7 +468,7 @@ fn place(staging: &Path, dest: &Path) -> Result<(), Failure> {
             let _ = fs::create_dir_all(parent);
         }
         if !replace(&staging.join(rel), &to) {
-            eprintln!("update: {} would not go into place", rel.display());
+            eprintln!("!! update: {} would not go into place", rel.display());
             return Err(Failure::NotPlaced);
         }
     }
@@ -515,19 +515,19 @@ fn replace(from: &Path, to: &Path) -> bool {
 /// sidecar that cannot be read is not a mismatch.
 fn matches(client: &http::Client, sidecar: &str, name: &str, zip: &Path) -> bool {
     let Ok(text) = client.text(sidecar, "text/plain") else {
-        eprintln!("update: the checksum could not be read");
+        eprintln!("!! update: the checksum could not be read");
         return true;
     };
     let Some(want) = digest_from(&text, name) else {
-        eprintln!("update: the checksum names no digest for this file");
+        eprintln!("!! update: the checksum names no digest for this file");
         return true;
     };
     let Some(got) = digest_of(zip) else {
-        eprintln!("update: the download could not be read back");
+        eprintln!("!! update: the download could not be read back");
         return true;
     };
     if want != got {
-        eprintln!("update: checksum wanted {want}, got {got}");
+        eprintln!("!! update: checksum wanted {want}, got {got}");
         return false;
     }
     true

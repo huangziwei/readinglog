@@ -374,6 +374,10 @@ pub struct Strings {
     /// The restore row, and the chip offering the logs.
     pub restore_row: &'static str,
     pub restore_logs: &'static str,
+    /// What the archives beside the record take on disk, stated on the
+    /// recorded row. `{size}` is the total. They are never taken away on the
+    /// app's own account, so what is owed the reader is the figure.
+    pub n_archived: &'static str,
     /// Emptying the record, keeping an archive first. `{what}` is what goes,
     /// `{file}` the archive's name, `{size}` how large it is.
     pub wipe_ask: &'static str,
@@ -616,6 +620,7 @@ const ENGLISH: Strings = Strings {
     reset_none: "No backup",
     restore_row: "Backups",
     restore_logs: "From the logs",
+    n_archived: "{size} in backups",
     wipe_ask: "Back up, then reset?",
     wipe_note: "{what}, with every cover held, are copied into {file}, {size}. \
                 The record then starts empty from today. To bring it back, tap \
@@ -854,6 +859,7 @@ const GERMAN: Strings = Strings {
     reset_none: "Ohne Sicherung",
     restore_row: "Sicherungen",
     restore_logs: "Aus den Protokollen",
+    n_archived: "{size} in Sicherungen",
     wipe_ask: "Erst sichern, dann zurücksetzen?",
     wipe_note: "{what} werden mit allen Titelbildern nach {file} kopiert, \
                 {size}. Die Aufzeichnung beginnt dann leer ab heute. Zum \
@@ -1105,6 +1111,7 @@ const JAPANESE: Strings = Strings {
     reset_none: "保存しない",
     restore_row: "バックアップ",
     restore_logs: "ログから",
+    n_archived: "バックアップ {size}",
     wipe_ask: "保存してからリセットしますか？",
     wipe_note: "{what}と表紙をすべて {file} に保存します（{size}）。記録は今日から空で始まります。\
                 戻すときはバックアップから選んでください。",
@@ -1336,6 +1343,7 @@ const SIMPLIFIED: Strings = Strings {
     reset_none: "不备份",
     restore_row: "备份",
     restore_logs: "从日志读取",
+    n_archived: "备份占 {size}",
     wipe_ask: "先备份再重置？",
     wipe_note: "{what}和所有封面会存入 {file}（{size}）。记录随后从今天起为空。\
                 要取回，请在备份中点选。",
@@ -1575,6 +1583,7 @@ const TRADITIONAL: Strings = Strings {
     reset_none: "不備份",
     restore_row: "備份",
     restore_logs: "從日誌讀取",
+    n_archived: "備份佔 {size}",
     wipe_ask: "先備份再重設？",
     wipe_note: "{what}和所有封面會存入 {file}（{size}）。記錄隨後從今天起為空。\
                 要取回，請在備份中點選。",

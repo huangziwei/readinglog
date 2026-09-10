@@ -11,6 +11,12 @@
 			"priority": 1,
 			"action": "bin/collect.sh",
 			"exitmenu": false
+		},
+		{
+			"name": "Reading Log: trace an open",
+			"priority": 2,
+			"action": "bin/trace.sh",
+			"exitmenu": false
 		}
 	]
 }

@@ -85,7 +85,7 @@ fn fold(events: &[Event], screensaver: Atom, covered: bool, size: (u32, u32)) ->
             }
             Event::Error(e) => {
                 // A `put_image` the server rejects arrives here.
-                eprintln!("x11: WARNING request failed: {e:?}");
+                eprintln!("?? x11: request failed: {e:?}");
                 pump.repaint = true;
             }
             _ => {}
@@ -238,6 +238,9 @@ pub struct Framebuffer {
     pub var: Var,
     /// Packed RGB ([`CH`] bytes/pixel), stride `xres * CH`.
     backing: Vec<u8>,
+    /// What the surface resolved to, for the log's header block. Empty
+    /// offscreen, where there is no server to have answered.
+    said: String,
 }
 
 impl Framebuffer {
@@ -270,8 +273,8 @@ impl Framebuffer {
             .filter(|d| !d.visuals.is_empty())
             .map(|d| d.depth.to_string())
             .collect();
-        eprintln!(
-            "fb: root {xres}x{yres} depth={depth} bytes_per_pixel={bytes_per_pixel} \
+        let root_said = format!(
+            "root {xres}x{yres} depth={depth} bytes_per_pixel={bytes_per_pixel} \
              scanline_pad={scanline_pad} \
              chan=[{},{},{}] root_visual=0x{:x} depths=[{}] colour={}",
             chan[0],
@@ -340,7 +343,6 @@ impl Framebuffer {
                 std::thread::sleep(Duration::from_millis(10));
             }
         }
-        eprintln!("fb: mapped={mapped}");
 
         // `get_geometry` against the requested `xres` / `yres`.
         match conn
@@ -351,28 +353,29 @@ impl Framebuffer {
             Ok(g) if u32::from(g.width) != xres || u32::from(g.height) != yres => {
                 // `get_geometry` outranks the root read above.
                 eprintln!(
-                    "fb: window is {}x{}, root read {xres}x{yres} — drawing {}x{}",
+                    "?? fb: window is {}x{}, root read {xres}x{yres} — drawing {}x{}",
                     g.width, g.height, g.width, g.height
                 );
                 (xres, yres) = (u32::from(g.width), u32::from(g.height));
             }
-            Ok(_) => eprintln!("fb: window geometry matches root ({xres}x{yres})"),
-            Err(e) => eprintln!("fb: could not read window geometry: {e}"),
+            Ok(_) => {}
+            Err(e) => eprintln!("?? fb: could not read window geometry: {e}"),
         }
 
         // `wire_stride` follows `xres`, which `get_geometry` above sets.
         let wire_stride = wire_stride(xres as usize * bytes_per_pixel, scanline_pad);
-        eprintln!("fb: drawing {xres}x{yres}, wire_stride={wire_stride}");
 
         // `maximum_request_bytes` is the post-BIG-REQUESTS limit (~16 MB), past
         // `setup().maximum_request_length`. A 1860×2480 frame is 4.6 MB: one
         // request, uncapped.
         let max_req_bytes = conn.maximum_request_bytes().max(4096);
-        eprintln!(
-            "fb: max request {} bytes ({} rows/band at {} bpp)",
-            max_req_bytes,
+        // One line of everything the surface resolved to. Every part of it is
+        // the same on every launch of one build on one device, so it belongs
+        // in the log's header block and not in the body.
+        let said = format!(
+            "{root_said} mapped={mapped} drawing {xres}x{yres} stride={wire_stride} \
+             maxreq={max_req_bytes} ({} rows/band)",
             max_req_bytes / wire_stride.max(1),
-            bytes_per_pixel
         );
 
         // `only_if_exists` false creates the atom. [`fold`] matches no
@@ -383,7 +386,7 @@ impl Framebuffer {
             .and_then(|c| c.reply().map_err(|e| e.to_string()))
             .map(|r| r.atom)
             .unwrap_or_else(|e| {
-                eprintln!("fb: could not intern lab126_screen_saver: {e}");
+                eprintln!("?? fb: could not intern lab126_screen_saver: {e}");
                 0
             });
 
@@ -405,7 +408,13 @@ impl Framebuffer {
             }),
             var: Var { xres, yres },
             backing,
+            said,
         })
+    }
+
+    /// What the surface resolved to, for the log's header block.
+    pub fn describe(&self) -> &str {
+        &self.said
     }
 
     /// Whether `surface` holds a connection. `false` under
@@ -428,6 +437,7 @@ impl Framebuffer {
     /// [`Framebuffer::send_update`] presents nothing.
     pub fn offscreen(xres: u32, yres: u32) -> Self {
         Self {
+            said: String::new(),
             surface: None,
             var: Var { xres, yres },
             backing: vec![0xFFu8; xres as usize * yres as usize * CH],

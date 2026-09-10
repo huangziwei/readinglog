@@ -390,10 +390,10 @@ impl Settings {
             }
             match std::fs::write(&path, self.to_text()) {
                 Ok(()) => return,
-                Err(err) => eprintln!("settings: {} not written: {err}", path.display()),
+                Err(err) => eprintln!("!! settings: {} not written: {err}", path.display()),
             }
         }
-        eprintln!("settings: nowhere to write; this run keeps them");
+        eprintln!("?? settings: nowhere to write; this run keeps them");
     }
 }
 

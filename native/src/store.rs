@@ -2,6 +2,7 @@
 //! `log::source` and `catalog` into `STORE_FILE`. A sitting is written once,
 //! except one a pass finds in progress and re-measures from its own start.
 
+use std::fmt::Write as _;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -730,21 +731,39 @@ impl Store {
     /// records changed. A book `catalog` names has its record merged; one it
     /// stops naming keeps what it holds.
     pub fn remember(&mut self, catalog: &[Book]) -> usize {
-        let before = self.books.clone();
+        // Every record this pass moved or added, counted as it happens.
+        //
+        // `was_on[i]` is whether the catalog named this record last pass. A
+        // record it stops naming has moved, which is why `moved` opens as a
+        // copy of it: a slot the loop never reaches keeps that answer.
+        let was_on: Vec<bool> = self.books.iter().map(|r| r.on_device).collect();
+        let mut moved = was_on.clone();
         for record in &mut self.books {
             record.on_device = false;
+        }
+        // Every slot a `cde_key` reaches, in slot order, built once. Reaching
+        // a record by scanning instead is a pass over `books` per catalog row,
+        // which on a large shelf is the row count times the record count.
+        let mut by_key: std::collections::HashMap<String, Vec<usize>> =
+            std::collections::HashMap::new();
+        for (at, record) in self.books.iter().enumerate() {
+            by_key.entry(record.cde_key.clone()).or_default().push(at);
         }
         // The slots `catalog` stated a `p_percentFinished` for on this pass.
         let mut stated: Vec<usize> = Vec::new();
         for book in catalog {
-            let slot = match self.slot_of(book) {
+            let slot = match slot_in(&by_key, &self.books, book) {
                 Some(i) => {
-                    merge(&mut self.books[i], book);
+                    let changed = merge(&mut self.books[i], book);
+                    moved[i] = changed || was_on[i] != self.books[i].on_device;
                     i
                 }
                 None => {
+                    let at = self.books.len();
+                    by_key.entry(book.cde_key.clone()).or_default().push(at);
                     self.books.push(taken(book));
-                    self.books.len() - 1
+                    moved.push(true);
+                    at
                 }
             };
             if book.percent >= 0.0 {
@@ -756,7 +775,7 @@ impl Store {
         }
         self.note_progress(&stated);
         self.sort_books();
-        self.books.iter().filter(|r| !before.contains(r)).count()
+        moved.into_iter().filter(|&m| m).count()
     }
 
     /// Name reading the catalog cannot: `sidecars` against [`Self::classes_at`].
@@ -1037,26 +1056,46 @@ impl Store {
         out
     }
 
+    /// The record in one short line: what it holds, and how far the pass has
+    /// read. A header block states this, so it is what the store was when the
+    /// launch opened it, not what the pass left behind.
+    pub fn said(&self) -> String {
+        format!(
+            "{} s, {} b, {} a, mark {}",
+            self.sessions.len(),
+            self.books.len(),
+            self.marks.len(),
+            match self.mark.is_empty() {
+                true => "none",
+                false => self.mark.as_str(),
+            },
+        )
+    }
+
     /// Copy the jacket of each slot [`Self::shown_slots`] answers into `dir`,
     /// point its `cover` at the copy, and delete every other file there. A
     /// slot left out keeps an empty `cover`.
-    pub fn keep_covers(&mut self, dir: &Path) -> usize {
+    pub fn keep_covers(&mut self, dir: &Path) -> Jackets {
         self.keep_covers_from(dir, Path::new(covers::THUMBNAILS_DIR))
     }
 
     /// [`Self::keep_covers`] against a `thumbnails` directory. A record's
     /// `thumbnail` is taken where it names a file; `covers::cached` answers
     /// the rest under `cde_key`, read once. Neither leaves an empty `cover`.
-    pub fn keep_covers_from(&mut self, dir: &Path, thumbnails: &Path) -> usize {
+    pub fn keep_covers_from(&mut self, dir: &Path, thumbnails: &Path) -> Jackets {
         let shown = self.shown_slots();
         // A non-empty `books` under an empty `shown`: no record changes and
         // no file under `dir` is dropped.
         if shown.is_empty() && !self.books.is_empty() {
-            return 0;
+            return Jackets::default();
         }
         let mut cached: Option<std::collections::HashMap<String, PathBuf>> = None;
         let mut kept = 0;
         let mut placeholders = 0;
+        // Books whose artwork the device no longer holds. The same ones come
+        // round on every launch, so they are counted and named on one line
+        // rather than written a line each.
+        let mut lost: Vec<String> = Vec::new();
         for (slot, record) in self.books.iter_mut().enumerate() {
             if !shown.contains(&slot) {
                 kept += usize::from(!std::mem::take(&mut record.cover).is_empty());
@@ -1082,16 +1121,13 @@ impl Store {
                             false
                         }
                         Err(err) => {
-                            eprintln!("covers: {} — {err}", record.title);
+                            lost.push(format!("{} ({err})", record.title));
                             false
                         }
                     },
                     None => {
                         if !record.thumbnail.is_empty() {
-                            eprintln!(
-                                "covers: {} — nothing at {}, and the cache holds none under {}",
-                                record.title, record.thumbnail, record.cde_key
-                            );
+                            lost.push(record.title.clone());
                         }
                         false
                     }
@@ -1110,22 +1146,23 @@ impl Store {
                 kept += 1;
             }
         }
-        if placeholders > 0 {
-            eprintln!("covers: {placeholders} books the store holds no artwork for");
-        }
         let held: Vec<&str> = shown
             .iter()
             .map(|&slot| self.books[slot].cde_key.as_str())
             .collect();
         let swept = covers::sweep(dir, &held);
-        if swept > 0 {
-            eprintln!("covers: {swept} dropped, holding {}", held.len());
+        Jackets {
+            kept,
+            held: held.len(),
+            swept,
+            placeholders,
+            lost,
         }
-        kept
     }
 
     /// Where `book` sits in [`Self::books`]: under its `extent`, else its key.
     /// A `book` stating no extent reaches a record carrying one.
+    #[cfg(test)]
     fn slot_of(&self, book: &Book) -> Option<usize> {
         if book.extent != 0
             && let Some(i) = self
@@ -1148,7 +1185,7 @@ impl Store {
     /// Where [`Self::book_for`]'s answer sits in [`Self::books`].
     fn slot_for(&self, extent: i64, key: Option<&str>) -> Option<usize> {
         if extent != 0
-            && let Some(i) = self.books.iter().position(|b| b.extent == extent)
+            && let Some(i) = self.slot_at(extent)
         {
             return Some(i);
         }
@@ -1165,6 +1202,21 @@ impl Store {
         }
         self.file_at(extent)
             .and_then(|f| self.books.iter().position(|b| b.cde_key == f))
+    }
+
+    /// The first record carrying `extent`, by binary search.
+    ///
+    /// [`Self::sort_books`] orders `books` on `(extent, cde_key)`, so this is
+    /// a search on the vector's own key. Records sharing an extent are
+    /// ordinary, and callers depend on the **first** of that run: hence
+    /// `partition_point`, and not `binary_search_by_key`, which answers an
+    /// arbitrary one.
+    fn slot_at(&self, extent: i64) -> Option<usize> {
+        let at = self.books.partition_point(|b| b.extent < extent);
+        self.books
+            .get(at)
+            .filter(|b| b.extent == extent)
+            .map(|_| at)
     }
 
     /// The book file a sidecar paired `extent` with, where exactly one did.
@@ -1260,11 +1312,17 @@ impl Store {
         }
         // A mark the record does not hold. The gate goes: the sources on this
         // device never stated these, and the next pass reads them again.
-        for mark in &other.marks {
-            if !self.marks.contains(mark) {
-                self.marks.push(mark.clone());
-                self.gate = None;
-            }
+        //
+        // Sort and dedup, not a membership test per mark: that is `O(M²)` with
+        // three string compares a time.
+        let held = self.marks.len();
+        self.marks.extend(other.marks.iter().cloned());
+        self.sort_marks();
+        // Two marks equal in every field sort adjacent, so this drops exactly
+        // the ones already held.
+        self.marks.dedup_by(|a, b| a == b);
+        if self.marks.len() != held {
+            self.gate = None;
         }
         self.sort();
         self.sessions.len() - before
@@ -1630,7 +1688,82 @@ fn taken(book: &Book) -> BookRecord {
 /// Take what `book` states over what `record` holds, field by field. A cloud
 /// row states no extent and no percentage, and a record carrying either from an
 /// earlier pass keeps it.
-fn merge(record: &mut BookRecord, book: &Book) {
+/// What one pass of [`Store::keep_covers`] came to. The counts are what a
+/// launch line states; the names are what a reader would have to go looking
+/// for otherwise.
+#[derive(Default)]
+pub struct Jackets {
+    /// Records whose `cover` changed.
+    pub kept: usize,
+    /// Jackets standing under the covers directory after the sweep.
+    pub held: usize,
+    /// Files the sweep dropped, naming no shown book.
+    pub swept: usize,
+    /// Books the store holds no artwork for at all.
+    pub placeholders: usize,
+    /// Books whose artwork the device no longer holds. The same ones come
+    /// round on every launch.
+    pub lost: Vec<String>,
+}
+
+impl Jackets {
+    /// The pass on one line: what is held, what the device has lost, and what
+    /// the store never had artwork for.
+    pub fn said(&self) -> String {
+        let mut out = format!("cov={}", self.held);
+        if !self.lost.is_empty() {
+            let _ = write!(out, "-{}", self.lost.len());
+        }
+        if self.placeholders > 0 {
+            let _ = write!(out, "~{}", self.placeholders);
+        }
+        out
+    }
+
+    /// The books whose artwork is gone, named on one line.
+    pub fn lost_said(&self) -> Option<String> {
+        (!self.lost.is_empty()).then(|| first_few(&self.lost))
+    }
+}
+
+/// `names` on one line: the first few, then how many more there were. A line
+/// that stands for many is only worth writing while it stays one line.
+fn first_few(names: &[String]) -> String {
+    const SHOWN: usize = 5;
+    let head = names[..names.len().min(SHOWN)].join(", ");
+    match names.len() > SHOWN {
+        true => format!("{head}, and {} more", names.len() - SHOWN),
+        false => head,
+    }
+}
+
+/// Where `book`'s record sits, through an index of `cde_key` to slot.
+///
+/// The order is: a record under this key carrying this extent, then the first
+/// record under this key whatever its extent. `by_key`'s slots are in slot
+/// order, which is what makes "first" mean the slot a caller expects.
+fn slot_in(
+    by_key: &std::collections::HashMap<String, Vec<usize>>,
+    books: &[BookRecord],
+    book: &Book,
+) -> Option<usize> {
+    let slots = by_key.get(&book.cde_key)?;
+    if book.extent != 0
+        && let Some(&at) = slots.iter().find(|&&at| books[at].extent == book.extent)
+    {
+        return Some(at);
+    }
+    slots.first().copied()
+}
+
+/// Fold what the catalog states into `record`, answering whether anything
+/// about it moved. That answer is what [`Store::remember`] counts.
+///
+/// `on_device` is not judged here. [`Store::remember`] lowers it on every
+/// record before the pass, so whether it moved is a question about the pass
+/// and not about this record.
+fn merge(record: &mut BookRecord, book: &Book) -> bool {
+    let mut moved = false;
     for (field, stated) in [
         (&mut record.cde_key, &book.cde_key),
         (&mut record.cde_type, &book.cde_type),
@@ -1641,19 +1774,26 @@ fn merge(record: &mut BookRecord, book: &Book) {
         (&mut record.location, &book.location),
     ] {
         if !stated.is_empty() {
-            *field = flat(stated);
+            let said = flat(stated);
+            moved |= *field != said;
+            *field = said;
         }
     }
     if book.extent != 0 {
+        moved |= record.extent != book.extent;
         record.extent = book.extent;
     }
+    let before = (record.finished, record.restart, record.percent);
     record.take_mark(book.read_state);
     if book.percent >= 0.0 {
         record.stand_at(book.percent);
     }
     record.on_device |= book.on_device;
+    moved |= before != (record.finished, record.restart, record.percent);
     // `book` comes from the catalog, which outranks every other `Named`.
+    moved |= record.named_by != Named::Catalog;
     record.named_by = Named::Catalog;
+    moved
 }
 
 fn write_book(b: &BookRecord) -> String {
@@ -1882,6 +2022,104 @@ fn read_session<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Session> {
 mod tests {
     use super::*;
 
+    /// `remember` reaches a record through an index of `cde_key` to slot. It
+    /// must pick the same record a pass over `books` in order would, including
+    /// which of several under one key.
+    #[test]
+    fn the_key_index_answers_what_the_scan_answered() {
+        let mut store = Store::default();
+        for (extent, key) in [
+            (0, "shared"),
+            (900, "shared"),
+            (1500, "shared"),
+            (0, "alone"),
+            (77, "other"),
+        ] {
+            store
+                .books
+                .push(from_witness(extent, key, "An Author", key, Named::Catalog));
+        }
+        store.sort_books();
+
+        let mut by_key: std::collections::HashMap<String, Vec<usize>> =
+            std::collections::HashMap::new();
+        for (at, record) in store.books.iter().enumerate() {
+            by_key.entry(record.cde_key.clone()).or_default().push(at);
+        }
+
+        for (extent, key) in [
+            (900, "shared"),  // one of several under the key, by extent
+            (0, "shared"),    // the zero-extent one under the same key
+            (4242, "shared"), // an extent none of them carries
+            (0, "alone"),     // a key one record holds
+            (77, "other"),
+            (5, "nobody"), // a key no record holds
+        ] {
+            let book = shelved(extent, key, key, -1.0);
+            assert_eq!(
+                slot_in(&by_key, &store.books, &book),
+                store.slot_of(&book),
+                "{key} at {extent}",
+            );
+        }
+    }
+
+    /// `slot_at` binary-searches the key `sort_books` orders on. Most records
+    /// carry no extent at all, so a run under one value is the normal case and
+    /// the answer must be its **first**.
+    #[test]
+    fn a_run_of_records_under_one_extent_answers_its_first() {
+        let mut store = Store::default();
+        for (extent, key) in [
+            (0, "zeta"),
+            (0, "alpha"),
+            (0, "mid"),
+            (900, "nine"),
+            (900, "another"),
+            (1500, "one"),
+        ] {
+            store
+                .books
+                .push(from_witness(extent, key, "An Author", key, Named::Catalog));
+        }
+        store.sort_books();
+
+        for extent in [0, 900, 1500] {
+            let at = store.slot_at(extent).expect("a record under {extent}");
+            assert_eq!(store.books[at].extent, extent);
+            assert!(
+                at == 0 || store.books[at - 1].extent < extent,
+                "the first of the run, not one inside it",
+            );
+            let scanned = store.books.iter().position(|b| b.extent == extent);
+            assert_eq!(Some(at), scanned, "the same slot a scan answered");
+        }
+        assert_eq!(store.slot_at(42), None, "an extent no record carries");
+        assert_eq!(store.slot_at(2000), None, "past the end");
+    }
+
+    /// The jackets the device has lost are stated once, with names, and the
+    /// line stays a line however many there are.
+    #[test]
+    fn lost_jackets_are_named_on_one_line_however_many() {
+        let none: Vec<String> = Vec::new();
+        assert_eq!(first_few(&none), "");
+
+        let few: Vec<String> = ["A", "B"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(first_few(&few), "A, B");
+
+        let five: Vec<String> = ["A", "B", "C", "D", "E"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(first_few(&five), "A, B, C, D, E", "five still fit");
+
+        let twenty: Vec<String> = (0..20).map(|n| format!("book {n}")).collect();
+        let said = first_few(&twenty);
+        assert_eq!(said, "book 0, book 1, book 2, book 3, book 4, and 15 more");
+        assert!(!said.contains('\n'), "one line: {said}");
+    }
+
     fn session(started: &str, ended: &str, book: i64, secs: i64) -> Session {
         Session {
             started_at: started.into(),
@@ -1952,7 +2190,7 @@ mod tests {
             ..Store::default()
         };
 
-        assert_eq!(store.keep_covers_from(&dir, &cache), 2);
+        assert_eq!(store.keep_covers_from(&dir, &cache).kept, 2);
         let held = |key: &str| std::fs::read(covers::path(&dir, key)).expect("a copied cover");
         assert_eq!(
             held("B00OKPCRLG"),
@@ -2004,7 +2242,7 @@ mod tests {
         };
 
         assert_eq!(
-            store.keep_covers_from(&dir, &cache),
+            store.keep_covers_from(&dir, &cache).kept,
             1,
             "the record changed"
         );
@@ -2051,7 +2289,7 @@ mod tests {
             .into_owned();
         std::fs::write(dir.join(covers::COVERS_DIR).join("B01.partial"), b"x").unwrap();
 
-        assert_eq!(store.keep_covers(&dir), 3, "two taken, one given up");
+        assert_eq!(store.keep_covers(&dir).kept, 3, "two taken, one given up");
         assert!(covers::held(&dir, "B00OKPCRLG"), "the book a sitting names");
         assert!(covers::held(&dir, "B00CLEARED"), "the book `kept` marks");
         assert!(!covers::held(&dir, "B00NEVERRD"), "the book neither names");
@@ -2063,7 +2301,7 @@ mod tests {
         assert_eq!(left, 2, "one jacket per slot `shown_slots` answers");
 
         // `keep_covers` over the same store takes nothing and drops nothing.
-        assert_eq!(store.keep_covers(&dir), 0);
+        assert_eq!(store.keep_covers(&dir).kept, 0);
         assert!(covers::held(&dir, "B00OKPCRLG"));
     }
 
@@ -2170,7 +2408,7 @@ mod tests {
             ..Store::default()
         };
 
-        assert_eq!(store.keep_covers(&dir), 0, "no record changed");
+        assert_eq!(store.keep_covers(&dir).kept, 0, "no record changed");
         assert!(covers::held(&dir, "B00OKPCRLG"), "the jacket stands");
         assert!(!store.books[0].cover.is_empty(), "and the record names it");
     }

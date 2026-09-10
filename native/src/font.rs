@@ -325,6 +325,21 @@ fn order_for(scripts: &[Script], wanted: Script, also: &[Script]) -> Vec<usize> 
     order
 }
 
+/// The most a lookup will newly read to answer one character.
+///
+/// A band's order runs the whole directory, and the firmware ships 128 MB of
+/// faces against a device that reports tens of MB free. A character no face
+/// carries would otherwise read every one of them in a single draw. The order
+/// puts the right script first, so a glyph absent from the first few is not
+/// going to be found in a Devanagari face further down: past this the
+/// character is uncovered and draws the hollow box it would have drawn anyway.
+const WALK_CAP: usize = 4;
+
+/// The most face bytes held at once, past the primary. Loading a face parses
+/// its whole file — `STSongBold.ttf` alone is 13 MB — and a shelf crossing
+/// scripts touches several.
+const RESIDENT_CAP: u64 = 24 * 1024 * 1024;
+
 /// An ordered set of faces: the first usable candidate, read up front, plus
 /// the rest of the chain waiting on disk.
 pub struct FontChain {
@@ -335,6 +350,13 @@ pub struct FontChain {
     orders: [Vec<usize>; BANDS],
     /// Per face, the drop [`FontChain::centring`] states.
     centres: HashMap<(usize, usize), f32>,
+    /// Characters a whole walk of a band found nowhere. Walking again would
+    /// read the same faces to the same answer.
+    missing: std::collections::HashSet<(usize, char)>,
+    /// Ticks once per face reached, ordering `rest` for eviction.
+    clock: u64,
+    /// Face bytes currently held in `rest`.
+    resident: u64,
 }
 
 /// A fallback slot. [`FontChain::load`] drops a candidate it cannot read.
@@ -342,6 +364,10 @@ pub struct FontChain {
 struct Face {
     path: PathBuf,
     state: State,
+    /// What the file weighs, once it has been read.
+    bytes: u64,
+    /// When this face was last reached, on [`FontChain::clock`].
+    used: u64,
 }
 
 enum State {
@@ -383,6 +409,8 @@ impl FontChain {
                 Face {
                     path: candidate.path.clone(),
                     state: State::Pending,
+                    bytes: 0,
+                    used: 0,
                 }
             })
             .collect();
@@ -392,10 +420,14 @@ impl FontChain {
             rest,
             orders: band_orders(&scripts),
             centres: HashMap::new(),
+            missing: std::collections::HashSet::new(),
+            clock: 0,
+            resident: 0,
         })
     }
 
-    /// The chain on this device, primary first. Logged at startup.
+    /// The chain this device resolved to, primary first. What the startup log
+    /// states is the count and the first of these, never the paths.
     pub fn paths(&self) -> impl Iterator<Item = &Path> {
         std::iter::once(self.primary_path.as_path())
             .chain(self.rest.iter().map(|face| face.path.as_path()))
@@ -410,15 +442,43 @@ impl FontChain {
     /// nothing has it. The index is part of the glyph cache's key: two faces
     /// rasterize the same codepoint differently.
     pub fn face_for(&mut self, band: Band, ch: char) -> Option<usize> {
+        if self.missing.contains(&(band.slot(), ch)) {
+            return None;
+        }
         // The order is owned back for the walk: `ensure` reads faces, and the
         // orders are fixed for the life of the chain.
         let order = std::mem::take(&mut self.orders[band.slot()]);
-        let face = order
-            .iter()
-            .copied()
-            .find(|&face| self.ensure(face).is_some_and(|font| has_glyph(font, ch)));
+        // Faces already in hand are free to ask; only reading a new one counts
+        // against `WALK_CAP`.
+        let mut read = 0;
+        let mut face = None;
+        for &at in &order {
+            if !self.held(at) {
+                if read >= WALK_CAP {
+                    break;
+                }
+                read += 1;
+            }
+            if self.ensure(at).is_some_and(|font| has_glyph(font, ch)) {
+                face = Some(at);
+                break;
+            }
+        }
         self.orders[band.slot()] = order;
+        if face.is_none() {
+            self.missing.insert((band.slot(), ch));
+        }
         face
+    }
+
+    /// Whether face `index` is parsed and in hand, so asking it about a
+    /// character reads nothing.
+    fn held(&self, index: usize) -> bool {
+        index == 0
+            || self
+                .rest
+                .get(index - 1)
+                .is_some_and(|face| !matches!(face.state, State::Pending))
     }
 
     /// Face `index`, read by [`FontChain::face_for`]. `None` for a face that
@@ -467,16 +527,58 @@ impl FontChain {
         if index == 0 {
             return Some(&self.primary);
         }
-        let face = self.rest.get_mut(index - 1)?;
-        if matches!(face.state, State::Pending) {
+        if index > self.rest.len() {
+            return None;
+        }
+        self.clock += 1;
+        let now = self.clock;
+        if matches!(self.rest[index - 1].state, State::Pending) {
+            // Room is made for this face before it is read, off its size on
+            // disk: making it afterwards would leave the peak at the cap plus
+            // whatever had just been read.
+            let coming = std::fs::metadata(&self.rest[index - 1].path)
+                .map(|m| m.len())
+                .unwrap_or(0);
+            self.evict(index, coming);
+            let face = &mut self.rest[index - 1];
             face.state = match read_face(&face.path) {
-                Some(font) => State::Loaded(font),
+                Some(font) => {
+                    face.bytes = font.as_slice().len() as u64;
+                    State::Loaded(font)
+                }
                 None => State::Absent,
             };
+            self.resident += self.rest[index - 1].bytes;
         }
+        let face = &mut self.rest[index - 1];
+        face.used = now;
         match &face.state {
             State::Loaded(font) => Some(font),
             State::Pending | State::Absent => None,
+        }
+    }
+
+    /// Give faces back until `coming` bytes will fit under [`RESIDENT_CAP`],
+    /// oldest first. `keeping` is the face about to be read, which is never
+    /// given up.
+    ///
+    /// A face given back becomes `Pending` again: the next character that
+    /// wants it reads it, which is one file read against holding tens of
+    /// megabytes nothing on the page needs.
+    fn evict(&mut self, keeping: usize, coming: u64) {
+        while self.resident + coming > RESIDENT_CAP {
+            let oldest = self
+                .rest
+                .iter()
+                .enumerate()
+                .filter(|(at, face)| *at + 1 != keeping && matches!(face.state, State::Loaded(_)))
+                .min_by_key(|(_, face)| face.used)
+                .map(|(at, _)| at);
+            let Some(at) = oldest else {
+                return;
+            };
+            self.resident -= self.rest[at].bytes;
+            self.rest[at].state = State::Pending;
         }
     }
 }
@@ -545,6 +647,98 @@ fn read_face(path: &Path) -> Option<FontVec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A chain over the faces `READINGLOG_FONTS` names. `None` skips the
+    /// assertions that need one: they read real files.
+    fn chain_on_disk() -> Option<FontChain> {
+        std::env::var("READINGLOG_FONTS").ok()?;
+        FontChain::load(&discover()).ok()
+    }
+
+    /// Every band's order runs the whole directory, and the firmware ships
+    /// more font bytes than the device has RAM. A character no face carries
+    /// must not read them all to find that out.
+    #[test]
+    fn a_character_nothing_carries_does_not_read_the_whole_directory() {
+        for band in [
+            Band::Latin,
+            Band::Kana,
+            Band::Hangul,
+            Band::Han(Script::Japanese),
+            Band::Han(Script::SimplifiedChinese),
+            Band::Han(Script::TraditionalChinese),
+        ] {
+            let Some(mut chain) = chain_on_disk() else {
+                return;
+            };
+            // Private use: no face carries it.
+            assert_eq!(chain.face_for(band, '\u{E000}'), None, "{band:?}");
+            let loaded = chain
+                .rest
+                .iter()
+                .filter(|f| matches!(f.state, State::Loaded(_)))
+                .count();
+            assert!(loaded <= WALK_CAP, "{band:?} read {loaded} faces");
+            assert!(
+                chain.resident <= RESIDENT_CAP,
+                "{band:?} holds {} bytes",
+                chain.resident,
+            );
+
+            // Asked again, it reads nothing at all.
+            let before = chain.clock;
+            assert_eq!(chain.face_for(band, '\u{E000}'), None);
+            assert_eq!(chain.clock, before, "{band:?} walked a second time");
+        }
+    }
+
+    /// The bound must not cost a reader their script. Every one of these is
+    /// drawn from a face the firmware ships, and each must still resolve.
+    #[test]
+    fn the_scripts_the_device_ships_still_resolve() {
+        let Some(mut chain) = chain_on_disk() else {
+            return;
+        };
+        for (band, said) in [
+            (Band::Latin, "Reading Log"),
+            (Band::Kana, "よみもの"),
+            (Band::Han(Script::Japanese), "夢遊症候群"),
+            (Band::Han(Script::TraditionalChinese), "灰的重量"),
+            (Band::Han(Script::SimplifiedChinese), "灰的重量"),
+        ] {
+            for ch in said.chars().filter(|c| !c.is_whitespace()) {
+                assert!(
+                    chain.face_for(band, ch).is_some(),
+                    "{band:?} draws nothing for {ch:?}",
+                );
+            }
+        }
+        assert!(
+            chain.resident <= RESIDENT_CAP,
+            "holding {} bytes across every script",
+            chain.resident,
+        );
+    }
+
+    /// A face given back is read again when a character wants it, so crossing
+    /// scripts back and forth keeps drawing.
+    #[test]
+    fn a_face_given_back_is_read_again_when_it_is_wanted() {
+        let Some(mut chain) = chain_on_disk() else {
+            return;
+        };
+        let ja = Band::Han(Script::Japanese);
+        let tc = Band::Han(Script::TraditionalChinese);
+        for _ in 0..3 {
+            for ch in "夢遊症候群".chars() {
+                assert!(chain.face_for(ja, ch).is_some(), "{ch:?} in Japanese");
+            }
+            for ch in "灰的重量".chars() {
+                assert!(chain.face_for(tc, ch).is_some(), "{ch:?} in Traditional");
+            }
+            assert!(chain.resident <= RESIDENT_CAP);
+        }
+    }
 
     /// Every face on a Kindle Scribe's `/usr/java/lib/fonts`, verbatim, cut to
     /// the ones a title can reach. The full directory holds 122.

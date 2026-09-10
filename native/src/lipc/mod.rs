@@ -124,7 +124,7 @@ impl Service {
                 Err(err) if err.kind() == ErrorKind::WouldBlock => return,
                 Err(err) if err.kind() == ErrorKind::Interrupted => continue,
                 Err(err) => {
-                    eprintln!("lipc: read: {err}");
+                    eprintln!("?? lipc: read: {err}");
                     return;
                 }
             }
@@ -167,7 +167,7 @@ impl Service {
         self.serial = self.serial.wrapping_add(1).max(1);
         let serial = self.serial;
         if let Err(err) = self.sock.write_all(&said.encode(serial)) {
-            eprintln!("lipc: write {}: {err}", said.member);
+            eprintln!("?? lipc: write {}: {err}", said.member);
         }
         serial
     }

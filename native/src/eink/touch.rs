@@ -71,6 +71,8 @@ impl SwipeDir {
 const EVIOCGRAB: libc::c_int = 0x40044590;
 
 pub struct Touch {
+    /// What this reader resolved to, for the log's header block.
+    said: String,
     file: File,
     cur_x: i32,
     cur_y: i32,
@@ -102,8 +104,13 @@ pub struct Touch {
 }
 
 impl Touch {
+    /// What this reader resolved to, for the log's header block.
+    pub fn describe(&self) -> &str {
+        &self.said
+    }
+
     pub fn open(orientation: Orientation, fb_xres: u32, fb_yres: u32) -> Result<Self> {
-        let path = find_touch_device()?;
+        let (path, score) = find_touch_device()?;
         // `O_NONBLOCK` for the `poll(2)` multiplexer in `crate::eink::input`.
         let file = OpenOptions::new()
             .read(true)
@@ -113,17 +120,31 @@ impl Touch {
         // `EVIOCGRAB` takes non-NULL to grab and NULL to ungrab.
         let grab_res = unsafe { libc::ioctl(file.as_raw_fd(), EVIOCGRAB as _, 1) };
         let grabbed = grab_res == 0;
-        if grabbed {
-            eprintln!("touch: EVIOCGRAB ok — exclusive");
-        } else {
+        if !grabbed {
             let err = std::io::Error::last_os_error();
             eprintln!(
-                "touch: WARNING EVIOCGRAB failed on {} ({err}) — input is NOT exclusive; \
+                "!! touch: EVIOCGRAB failed on {} ({err}) — input is NOT exclusive; \
                  the framework will also act on these touches",
                 path.display()
             );
         }
+        // One line of what the reader resolved to. The node, the score that
+        // chose it and the grab are the same on every launch of one build on
+        // one device: they belong in the log's header block, not its body.
+        let said = format!(
+            "touch={} {} grab={}",
+            path.display(),
+            match score {
+                -1 => "alias".to_string(),
+                n => format!("score={n}"),
+            },
+            match grabbed {
+                true => "ok",
+                false => "refused",
+            },
+        );
         Ok(Self {
+            said,
             file,
             cur_x: 0,
             cur_y: 0,
@@ -402,27 +423,28 @@ const TOUCH_NAMES: [&str; 9] = [
 /// The firmware's own alias, which outranks [`pick_from_devices`].
 const TOUCH_ALIAS: &str = "/dev/input/touch";
 
-fn find_touch_device() -> Result<PathBuf> {
+/// The touchscreen node, and the score [`pick_from_devices`] gave it. The
+/// firmware's own alias scores nothing: it needed no choosing.
+fn find_touch_device() -> Result<(PathBuf, i32)> {
     if std::fs::metadata(TOUCH_ALIAS).is_ok() {
-        eprintln!("touch: using {TOUCH_ALIAS} (firmware alias)");
-        return Ok(PathBuf::from(TOUCH_ALIAS));
+        return Ok((PathBuf::from(TOUCH_ALIAS), -1));
     }
     find_touch_device_by_scan()
 }
 
 /// Rank the `eventN` nodes when no firmware alias exists (KOA2, Colorsoft).
-fn find_touch_device_by_scan() -> Result<PathBuf> {
+fn find_touch_device_by_scan() -> Result<(PathBuf, i32)> {
     let raw = std::fs::read_to_string("/proc/bus/input/devices")
         .context("read /proc/bus/input/devices")?;
     match pick_from_devices(&raw) {
-        Some(node) => Ok(PathBuf::from(format!("/dev/input/{node}"))),
+        Some((node, score)) => Ok((PathBuf::from(format!("/dev/input/{node}")), score)),
         None => bail!("no touchscreen entry in /proc/bus/input/devices"),
     }
 }
 
 /// The scan's decision, split out from the I/O. Returns the winning
 /// `eventN`.
-fn pick_from_devices(raw: &str) -> Option<String> {
+fn pick_from_devices(raw: &str) -> Option<(String, i32)> {
     // `word_bits` indexes every `B: ABS=` bitmap read below.
     let word_bits = bitmap_word_bits(raw);
 
@@ -453,8 +475,9 @@ fn pick_from_devices(raw: &str) -> Option<String> {
             continue;
         }
 
+        // A pen node is held back, not dropped: it is taken only when nothing
+        // else qualifies. Which node won is stated once, in the header block.
         if PEN_NAMES.iter().any(|needle| name.contains(needle)) {
-            eprintln!("touch: deferring /dev/input/{node} (name={name:?}) — looks like a pen");
             pen_fallback.get_or_insert((node.to_string(), name));
             continue;
         }
@@ -464,24 +487,18 @@ fn pick_from_devices(raw: &str) -> Option<String> {
         let has_mt = has_bitmap_bit(block, "B: ABS=", ABS_MT_POSITION_X as u32, word_bits);
 
         let score = i32::from(name_match) * 4 + i32::from(has_mt) * 2 + i32::from(is_direct);
-        eprintln!(
-            "touch: candidate /dev/input/{node} (name={name:?}) \
-             score={score} mt={has_mt} direct={is_direct} abs={has_abs}"
-        );
         if best.as_ref().is_none_or(|(b, _, _)| score > *b) {
             best = Some((score, node.to_string(), name));
         }
     }
 
-    if let Some((score, node, name)) = best {
-        // stderr, which `readinglog.sh` appends to its log.
-        eprintln!("touch: using /dev/input/{node} (name={name:?}, score={score})");
-        return Some(node);
+    if let Some((score, node, _name)) = best {
+        return Some((node, score));
     }
     // Nothing else qualified: a pen-named node is taken last.
     let (node, name) = pen_fallback?;
-    eprintln!("touch: using /dev/input/{node} (name={name:?}) — pen-named, but the only candidate");
-    Some(node)
+    eprintln!("?? touch: /dev/input/{node} (name={name:?}) is pen-named and the only candidate");
+    Some((node, 0))
 }
 
 /// Bit width of the bitmap words in `/proc/bus/input/devices`, from its longest
@@ -591,7 +608,9 @@ B: ABS=f000003
     #[test]
     fn scribe_picks_the_finger_panel_not_the_pen() {
         assert_eq!(
-            pick_from_devices(SCRIBE_DEVICES).as_deref(),
+            pick_from_devices(SCRIBE_DEVICES)
+                .map(|(node, _)| node)
+                .as_deref(),
             Some("event3"),
             "must pick pt_mt; picking the Wacom node freezes the device"
         );
@@ -605,7 +624,9 @@ B: ABS=f000003
             .replace("stylus-custom", "acme-input-b")
             .replace("pt_mt", "acme-input-c");
         assert_eq!(
-            pick_from_devices(&anonymised).as_deref(),
+            pick_from_devices(&anonymised)
+                .map(|(node, _)| node)
+                .as_deref(),
             Some("event3"),
             "ABS_MT axes alone should carry the decision"
         );
@@ -657,14 +678,19 @@ B: PROP=2
 B: EV=f
 B: ABS=ee18000 0
 ";
-        assert_eq!(pick_from_devices(only_pen).as_deref(), Some("event2"));
+        assert_eq!(
+            pick_from_devices(only_pen).map(|(node, _)| node).as_deref(),
+            Some("event2")
+        );
     }
 
     /// …but it stays a last resort: with a real panel present, the pen loses.
     #[test]
     fn a_pen_named_node_still_loses_to_a_real_panel() {
         assert_eq!(
-            pick_from_devices(SCRIBE_DEVICES).as_deref(),
+            pick_from_devices(SCRIBE_DEVICES)
+                .map(|(node, _)| node)
+                .as_deref(),
             Some("event3"),
             "the fallback must not promote the pen when something better exists"
         );

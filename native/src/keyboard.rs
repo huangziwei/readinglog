@@ -48,11 +48,11 @@ fn set(prop: &str, value: &str) -> bool {
     {
         Ok(status) if status.success() => true,
         Ok(status) => {
-            eprintln!("keyboard: lipc-set-prop {prop} {status}");
+            eprintln!("!! keyboard: lipc-set-prop {prop} {status}");
             false
         }
         Err(err) => {
-            eprintln!("keyboard: lipc-set-prop would not run: {err}");
+            eprintln!("!! keyboard: lipc-set-prop would not run: {err}");
             false
         }
     }

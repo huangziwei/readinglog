@@ -1,6 +1,6 @@
 //! Text rasterization over [`crate::font`]'s chain. ab_glyph coverage past
 //! 96/255 is a black pixel; an uncovered character draws a hollow box. Glyphs
-//! cache per (codepoint, px, face, band).
+//! cache per (codepoint, px, face, band), bounded at [`CACHE_CAP`].
 
 use std::collections::HashMap;
 
@@ -11,6 +11,17 @@ use crate::eink::fb::Framebuffer;
 use crate::font::{self, Band, FontChain};
 
 const COVERAGE_THRESHOLD: u8 = 96;
+
+/// The most glyphs held at once. The key carries the size and the face as well
+/// as the character, so a CJK reader paging through marks at two sizes fills
+/// this several times over in one session, and the cache must give ground
+/// rather than grow. A miss costs one re-rasterization.
+const CACHE_CAP: usize = 4_096;
+
+/// How much of the cache one eviction gives up. Dropping a quarter at a time
+/// makes the scan that finds the oldest amortize over the inserts that follow,
+/// rather than running on every insert once the cap is reached.
+const CACHE_EVICT: usize = CACHE_CAP / 4;
 
 /// One rasterized glyph. `left` runs from the pen's x, `top` from the baseline
 /// downward. A glyph with no outline keeps its advance over an empty bitmap.
@@ -23,10 +34,18 @@ struct Raster {
     coverage: Vec<u8>,
 }
 
+/// A cached glyph and when it was last drawn, on [`TextRenderer::clock`].
+struct Cached {
+    raster: Raster,
+    used: u64,
+}
+
 pub struct TextRenderer {
     chain: FontChain,
     px: f32,
-    cache: HashMap<(char, u32, usize, usize), Raster>,
+    cache: HashMap<(char, u32, usize, usize), Cached>,
+    /// Ticks once per glyph reached, ordering the cache for eviction.
+    clock: u64,
 }
 
 impl TextRenderer {
@@ -35,17 +54,26 @@ impl TextRenderer {
             chain: FontChain::load(&font::discover())?,
             px,
             cache: HashMap::new(),
+            clock: 0,
         })
     }
 
-    /// The fallback chain this device resolved to, primary first, for the
-    /// startup log — see [`FontChain::paths`].
-    pub fn chain_description(&self) -> String {
-        self.chain
+    /// The fallback chain in one short line, for the startup log: how many
+    /// faces resolved, and the one Latin is set in.
+    ///
+    /// The chain is every font file in the firmware's directory that parses,
+    /// so a count that differs from the firmware's own is the thing worth
+    /// seeing. The paths run to kilobytes and belong nowhere in the log.
+    pub fn chain_summary(&self) -> String {
+        let faces = self.chain.paths().count();
+        let primary = self
+            .chain
             .paths()
-            .map(|path| path.display().to_string())
-            .collect::<Vec<_>>()
-            .join(" -> ")
+            .next()
+            .and_then(|path| path.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        format!("{faces} faces, primary={primary}")
     }
 
     /// Set the size the next draws are at. `px` is the em, whichever face
@@ -182,13 +210,32 @@ impl TextRenderer {
     /// face in the chain has the character.
     fn glyph(&mut self, band: Band, ch: char, px: f32, px_key: u32) -> Option<&Raster> {
         let face = self.chain.face_for(band, ch)?;
-        let drop = self.chain.centring(face, band) * px;
-        let font = self.chain.font(face)?;
-        Some(
-            self.cache
-                .entry((ch, px_key, face, band.slot()))
-                .or_insert_with(|| rasterize(font, ch, px, drop)),
-        )
+        let key = (ch, px_key, face, band.slot());
+        self.clock += 1;
+        let now = self.clock;
+        if !self.cache.contains_key(&key) {
+            self.evict();
+            let drop = self.chain.centring(face, band) * px;
+            let font = self.chain.font(face)?;
+            let raster = rasterize(font, ch, px, drop);
+            self.cache.insert(key, Cached { raster, used: now });
+        }
+        let held = self.cache.get_mut(&key)?;
+        held.used = now;
+        Some(&held.raster)
+    }
+
+    /// Give up the oldest [`CACHE_EVICT`] glyphs, where the cache is full.
+    fn evict(&mut self) {
+        if self.cache.len() < CACHE_CAP {
+            return;
+        }
+        let mut ages: Vec<u64> = self.cache.values().map(|held| held.used).collect();
+        // The age of the youngest glyph that still goes: everything at or
+        // under it is given up.
+        let at = CACHE_EVICT.min(ages.len() - 1);
+        let (_, &mut oldest, _) = ages.select_nth_unstable(at);
+        self.cache.retain(|_, held| held.used > oldest);
     }
 }
 
@@ -385,6 +432,50 @@ mod tests {
     fn device_renderer(px: f32) -> Option<TextRenderer> {
         std::env::var("READINGLOG_FONTS").ok()?;
         TextRenderer::load(px).ok()
+    }
+
+    /// The cache is bounded, and what it gives up is the oldest. Drawing far
+    /// more distinct characters than it holds must not grow it without end,
+    /// and the ones still in use must survive.
+    #[test]
+    fn the_glyph_cache_is_bounded_and_gives_up_the_oldest() {
+        let Some(mut text) = device_renderer(26.0) else {
+            return;
+        };
+        let ja = font::Script::Japanese;
+        // Far past the cap, so eviction runs many times over.
+        let many: String = (0x4E00u32..0x4E00 + (CACHE_CAP as u32 * 2))
+            .filter_map(char::from_u32)
+            .collect();
+        for ch in many.chars() {
+            let _ = text.measure_width_in(ja, &ch.to_string());
+        }
+        assert!(
+            text.cache.len() <= CACHE_CAP,
+            "bounded, held {}",
+            text.cache.len()
+        );
+
+        // A character drawn now is held now, whatever came before it.
+        let recent = '\u{6771}';
+        let _ = text.measure_width_in(ja, &recent.to_string());
+        assert!(
+            text.cache.keys().any(|(ch, ..)| *ch == recent),
+            "the newest glyph is not the one evicted",
+        );
+    }
+
+    /// The chain is stated in one short line: the faces that resolved and the
+    /// one Latin is set in. The paths themselves run to kilobytes.
+    #[test]
+    fn the_summary_counts_the_chain_and_names_the_primary() {
+        let Some(text) = device_renderer(26.0) else {
+            return;
+        };
+        let said = text.chain_summary();
+        assert!(said.contains(" faces, primary="), "{said}");
+        assert!(!said.contains('/'), "no paths in the summary: {said}");
+        assert!(said.len() < 80, "one short line, not kilobytes: {said}");
     }
 
     #[test]

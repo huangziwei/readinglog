@@ -2,6 +2,7 @@
 //! redraws the whole screen and presents it in one
 //! [`Framebuffer::send_update`].
 
+use std::fmt::Write as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -69,14 +70,9 @@ impl App {
             settings.figures,
             settings.sitting_floor,
         );
+        // The header block states this; the schemes it gates are what matters
+        // here.
         let colour = crate::eink::fb::has_cfa();
-        eprintln!(
-            "panel: {}",
-            match colour {
-                true => "colour filter present, schemes offered",
-                false => "no colour filter, drawing grey",
-            }
-        );
         Self {
             theme,
             lang: settings.language,
@@ -101,15 +97,23 @@ impl App {
         }
     }
 
-    /// What the stats hold, for the launch line.
-    pub fn counted(&self, s: &crate::lang::Strings) -> String {
-        format!(
-            "{} books drawn, {} on {} unnamed, {} on no book",
-            self.stats.books.len(),
-            date::duration(self.stats.unnamed_seconds, s),
-            self.stats.unnamed_books(),
-            date::duration(self.stats.skipped_seconds, s),
-        )
+    /// What the stats hold, as the launch line's field: books drawn, then the
+    /// reading no book is named for. Seconds, because a launch line is read
+    /// against other launch lines and not by a reader.
+    pub fn drawn(&self) -> String {
+        let mut out = format!("draw={}b", self.stats.books.len());
+        if self.stats.unnamed_seconds > 0 {
+            let _ = write!(
+                out,
+                "/{}u{}s",
+                self.stats.unnamed_books(),
+                self.stats.unnamed_seconds
+            );
+        }
+        if self.stats.skipped_seconds > 0 {
+            let _ = write!(out, "/{}x", self.stats.skipped_seconds);
+        }
+        out
     }
 
     /// Total the store again, at the day and the settings held.
@@ -303,7 +307,7 @@ impl App {
                 }
                 // Every key the candidate engine does not eat arrives over X,
                 // which needs none of this.
-                Err(err) => eprintln!("lipc: {err:#} — Latin typing only"),
+                Err(err) => eprintln!("?? lipc: {err:#} — Latin typing only"),
             }
         }
         let _ = match want {
@@ -533,7 +537,10 @@ impl App {
             .join()
             .unwrap_or(Outcome::Failed(update::Failure::NotPlaced));
         let (headline, note) = outcome.banner(self.lang.strings());
-        eprintln!("update: {outcome:?}");
+        match outcome {
+            Outcome::Failed(_) => eprintln!("!! update: {outcome:?}"),
+            _ => eprintln!("update: {outcome:?}"),
+        }
         self.banner(fb, &headline, &note, "", true)?;
         self.hold(input, OUTCOME_LINGER)
     }
@@ -642,7 +649,7 @@ impl App {
                     down = None;
                     match screenshot::capture(fb) {
                         Ok(path) => eprintln!("screenshot: {}", path.display()),
-                        Err(err) => eprintln!("screenshot: {err:#}"),
+                        Err(err) => eprintln!("!! screenshot: {err:#}"),
                     }
                 }
                 // `page` carries the orientation standing before this read; a
@@ -698,7 +705,7 @@ impl App {
         ) {
             Ok(()) => Action::Quit,
             Err(err) => {
-                eprintln!("open: {} would not be asked for: {err:#}", book.location);
+                eprintln!("!! open: {} would not be asked for: {err:#}", book.location);
                 Action::Nothing
             }
         }
@@ -721,7 +728,7 @@ impl App {
             .store
             .save(std::path::Path::new(crate::store::STORE_DIR))
         {
-            eprintln!("finished: the mark did not reach the store: {err:#}");
+            eprintln!("!! finished: the mark did not reach the store: {err:#}");
         }
         Action::Redraw
     }
@@ -771,7 +778,7 @@ impl App {
                     .store
                     .save(std::path::Path::new(crate::store::STORE_DIR))
                 {
-                    eprintln!("restart: the record did not reach the store: {err:#}");
+                    eprintln!("!! restart: the record did not reach the store: {err:#}");
                 }
             }
         }
@@ -1064,7 +1071,7 @@ impl App {
     /// Write the record, printing `what` and the error on a failed write.
     fn store_it(&self, what: &str) {
         if let Err(err) = self.store.save(self.dir()) {
-            eprintln!("{what}: the record did not reach the store: {err:#}");
+            eprintln!("!! {what}: the record did not reach the store: {err:#}");
         }
     }
 
@@ -1087,8 +1094,10 @@ impl App {
                 sittings: held,
                 books: self.stats.book_count(),
                 // The archive's weight, or the room `covers::sweep` returns.
+                // The record's size comes off the file: serializing the store
+                // for its length is one `format!` per row, under a tap.
                 bytes: match keep {
-                    true => jackets + self.store.text().len() as u64,
+                    true => jackets + record_bytes(self.dir()),
                     false => jackets,
                 },
                 named: crate::backup::name(crate::backup::Kind::Record, &self.store.mark),
@@ -1222,7 +1231,7 @@ impl App {
             std::path::Path::new(crate::clippings::CLIPPINGS_FILE),
             &shelf,
         );
-        let refreshed = stated + rescue.named() + self.store.keep_covers(&dir);
+        let refreshed = stated + rescue.named() + self.store.keep_covers(&dir).kept;
         eprintln!(
             "reset: {} catalog rows, {refreshed} book records refreshed, {} held",
             books.len(),
@@ -1248,7 +1257,7 @@ impl App {
             Ok(None) => {}
             // `reset` writes the archive first and leaves `store` on a failure.
             Err(err) => {
-                eprintln!("reset: nothing was reset — {err}");
+                eprintln!("!! reset: nothing was reset — {err}");
             }
         }
     }
@@ -1283,7 +1292,7 @@ impl App {
                 if taken.whole {
                     match std::fs::remove_file(&path) {
                         Ok(()) => eprintln!("restore: {} is now in the record", path.display()),
-                        Err(err) => eprintln!("restore: {} stands — {err}", path.display()),
+                        Err(err) => eprintln!("!! restore: {} stands — {err}", path.display()),
                     }
                 } else {
                     eprintln!(
@@ -1292,7 +1301,7 @@ impl App {
                     );
                 }
             }
-            Err(err) => eprintln!("restore: {} would not open — {err}", path.display()),
+            Err(err) => eprintln!("!! restore: {} would not open — {err}", path.display()),
         }
     }
 
@@ -1339,7 +1348,7 @@ impl App {
         let (extent, key) = (book.extent, book.cde_key.clone());
         let one = self.store.one_book(extent, &key);
         if let Err(err) = crate::backup::keep_book(self.dir(), &one, &self.store.mark.clone()) {
-            eprintln!("clear: nothing was cleared — {err}");
+            eprintln!("!! clear: nothing was cleared — {err}");
             return Action::Redraw;
         }
         let went = match forget {
@@ -1562,4 +1571,12 @@ impl Drop for App {
             crate::keyboard::close();
         }
     }
+}
+
+/// What the record takes on disk, read off the file. Zero where there is none
+/// to read, which is what a store never saved weighs.
+fn record_bytes(dir: &std::path::Path) -> u64 {
+    std::fs::metadata(crate::store::Store::file(dir))
+        .map(|m| m.len())
+        .unwrap_or(0)
 }

@@ -91,6 +91,9 @@ pub struct Record {
     pub books: usize,
     /// One label per archive, newest first, as its chip reads.
     pub backups: Vec<String>,
+    /// What the archives take on disk, together. The app never takes one away
+    /// on its own account, so the reader is owed the figure.
+    pub archived: u64,
     /// Whether the record stands on a floor, which is what offers the logs.
     pub floored: bool,
 }
@@ -108,6 +111,7 @@ impl Record {
             sittings: store.sessions.len(),
             books: stats.book_count(),
             backups: labels(&crate::backup::list(dir), lang.strings()),
+            archived: crate::backup::sizes(dir).1,
             floored,
         }
     }
@@ -314,11 +318,21 @@ fn sections<'a>(
     // `recorded` states the record `reset` and `restore` below act on.
     let recorded = (record.sittings > 0).then(|| Line::Says {
         label: s.recorded_row,
-        value: format!(
-            "{} · {}",
-            crate::lang::counted(s.n_sittings, record.sittings as i64),
-            crate::lang::counted(s.n_books, record.books as i64)
-        ),
+        value: {
+            let mut said = format!(
+                "{} · {}",
+                crate::lang::counted(s.n_sittings, record.sittings as i64),
+                crate::lang::counted(s.n_books, record.books as i64)
+            );
+            // The archives sit beside the record and grow without end. What
+            // they take is stated here, on the row the reset controls read
+            // against, and taking them away stays the reader's own act.
+            if record.archived > 0 {
+                said.push_str(" · ");
+                said.push_str(&s.n_archived.replace("{size}", &bytes(record.archived)));
+            }
+            said
+        },
     });
 
     let reset = (record.sittings > 0).then(|| Row {
@@ -841,6 +855,7 @@ mod tests {
             sittings: 12,
             books: 3,
             backups: vec!["Sep 6".into()],
+            archived: 0,
             floored: false,
         };
         assert_eq!(
@@ -857,6 +872,7 @@ mod tests {
         );
         let floored = Record {
             backups: Vec::new(),
+            archived: 0,
             floored: true,
             ..kept
         };
@@ -881,6 +897,7 @@ mod tests {
             sittings: 12,
             books: 3,
             backups: vec!["Sep 6".into(), "Aug 30".into()],
+            archived: 0,
             floored: true,
         };
         let page = sections(Lang::English, &settings, true, &record);

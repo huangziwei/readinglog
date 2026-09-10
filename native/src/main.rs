@@ -14,17 +14,30 @@ use readinglog_native::orientation::Orientation;
 use readinglog_native::stats::Stats;
 use readinglog_native::store::Store;
 use readinglog_native::{
-    annotate, app, catalog, clippings, date, font, identify, lang, settings, sidecar, store, ui,
-    zone,
+    annotate, app, catalog, clippings, date, font, identify, journal, lang, settings, sidecar,
+    store, ui, zone,
 };
 
 fn main() {
     let mode = std::env::args().nth(1).unwrap_or_default();
-    if mode != "--version" {
+    // `show` states the version inside its header block, under the panel and
+    // font facts that only it knows. The modes that draw nothing have no such
+    // block, so they say it on a line of their own.
+    if matches!(mode.as_str(), "--collect" | "--dump") {
         eprintln!(
             "build: {} {}",
             readinglog_native::update::VERSION,
             readinglog_native::update::BUILD
+        );
+    }
+    // Before anything is written: the log is ours, and bounding it is ours to
+    // do. `--dump` and `--version` write nothing and leave it alone.
+    if matches!(mode.as_str(), "--collect" | "")
+        && let Some(cut) = journal::trim(Path::new(journal::LOG_PATH), journal::CEILING)
+    {
+        eprintln!(
+            "log: trimmed {} B to {} B, {} blocks",
+            cut.before, cut.after, cut.blocks
         );
     }
     let result = match mode.as_str() {
@@ -33,8 +46,15 @@ fn main() {
         "--version" => version(),
         _ => show(),
     };
+    // A launch that dies before `show` states its header block would sit under
+    // the previous build's block and be read as that build's. The failure
+    // names its own.
     if let Err(err) = result {
-        eprintln!("readinglog: {err:#}");
+        eprintln!(
+            "!! readinglog: {err:#} — build {} {}",
+            readinglog_native::update::VERSION,
+            readinglog_native::update::BUILD,
+        );
         std::process::exit(1);
     }
 }
@@ -53,17 +73,23 @@ fn version() -> Result<()> {
 fn collect() -> Result<Store> {
     let dir = Path::new(store::STORE_DIR);
     let mut store = Store::open(dir);
-    collect_into(&mut store, dir, &mut |_, _| {});
+    let said = collect_into(&mut store, dir, &mut |_, _| {});
+    said.state(&journal::stamp_now(), journal::Mode::Collect);
     Ok(store)
 }
 
 /// [`collect`] over a loaded `store`, reporting log files opened and log files
 /// to open.
-fn collect_into(store: &mut Store, dir: &Path, on: &mut dyn FnMut(usize, usize)) {
-    eprintln!("zone: {}", zone::describe(date::epoch_now()));
+fn collect_into(
+    store: &mut Store,
+    dir: &Path,
+    on: &mut dyn FnMut(usize, usize),
+) -> journal::Launch {
+    let mut said = journal::Launch::default();
     let pass = store.update(on);
     // A clock that stepped back left the stretch it stepped over below the
-    // mark; the pass pulled the mark back and read that stretch again.
+    // mark; the pass pulled the mark back and read that stretch again. Rare
+    // enough to be worth its own line when it happens.
     if pass.rewound > 0 {
         eprintln!(
             "clock: the device stepped back {}, and the log was read again from there",
@@ -78,73 +104,61 @@ fn collect_into(store: &mut Store, dir: &Path, on: &mut dyn FnMut(usize, usize))
     let shelf = identify::walk(Path::new(sidecar::DOCUMENTS_DIR));
     let rescue = identify::rescue(store, &shelf);
     let merge = annotate::fold(store, Path::new(clippings::CLIPPINGS_FILE), &shelf);
-    let refreshed = stated + rescue.named() + store.keep_covers(dir);
-    eprintln!(
-        "collect: {} lines (live {}, chunks {}, dumps {}, skipped {}) \
-         -> {} added, {} extended, {} sittings held",
-        pass.lines,
-        pass.from.live,
-        pass.from.chunks,
-        pass.from.dumps,
-        pass.from.skipped,
+    let jackets = store.keep_covers(dir);
+    let refreshed = stated + rescue.named() + jackets.kept;
+    said.log = Some(format!(
+        "log={}/{}l{}c{}d{}s",
+        pass.lines, pass.from.live, pass.from.chunks, pass.from.dumps, pass.from.skipped,
+    ));
+    said.sittings = Some(format!(
+        "s=+{}~{}/{}",
         pass.added,
         pass.extended,
-        store.sessions.len(),
-    );
-    eprintln!(
-        "catalog: {} rows from {}; {stated} book records refreshed, {} held",
-        books.len(),
-        catalog::path().map_or("nowhere".into(), |p| p.display().to_string()),
-        store.books.len(),
-    );
-    report(&rescue);
-    report_marks(&merge);
+        store.sessions.len()
+    ));
+    said.catalog = Some(format!("cat={}/{stated}", books.len()));
+    said.records = Some(format!("rec={}b", store.books.len()));
+    said.covers = Some(jackets.said());
+    said.identify = rescue_said(&rescue);
+    said.annotate = marks_said(&merge);
+    // The books whose jackets the device has lost are the same ones every
+    // launch, so they are named beside the count rather than a line apiece.
+    if let Some(lost) = jackets.lost_said() {
+        eprintln!("covers: the device has lost artwork for {lost}");
+    }
     // An unchanged store is left on disk unwritten.
     if pass.added + pass.extended + refreshed == 0 && !merge.read {
-        return;
+        return said;
     }
     // A failed `save` leaves `store` drawable and unsaved.
     if let Err(err) = store.save(dir) {
-        eprintln!("collect: could not write the store: {err}");
+        eprintln!("!! collect: the record did not reach the store: {err}");
     }
+    said
 }
 
 /// What the sources that name a book the catalog cannot came to, one line, and
 /// nothing at all where the catalog left them nothing to do.
-fn report(rescue: &identify::Rescue) {
+fn rescue_said(rescue: &identify::Rescue) -> Option<String> {
     if rescue.lookups + rescue.clippings + rescue.sidecars == 0 {
-        return;
+        return None;
     }
-    eprintln!(
-        "identify: {} lookups -> {}, {} clippings -> {}, {} sidecars -> {}; \
-         {} classes still name no book, {} of them holding two",
-        rescue.lookups,
-        rescue.by_vocab,
-        rescue.clippings,
-        rescue.by_clippings,
-        rescue.sidecars,
-        rescue.by_sidecars,
-        rescue.unnamed,
-        rescue.contested,
-    );
+    Some(format!(
+        "id={}v{}c{}s/{}?{}",
+        rescue.by_vocab, rescue.by_clippings, rescue.by_sidecars, rescue.unnamed, rescue.contested,
+    ))
 }
 
 /// What the two annotation sources came to, one line, and nothing at all where
 /// the gate held and neither was read.
-fn report_marks(merge: &annotate::Merge) {
+fn marks_said(merge: &annotate::Merge) -> Option<String> {
     if !merge.read {
-        return;
+        return None;
     }
-    eprintln!(
-        "annotate: {} clippings, {} sidecar records over {} books that could say; \
-         {} live, {} retired, {} unconfirmed",
-        merge.clippings,
-        merge.sidecars,
-        merge.trusted,
-        merge.live,
-        merge.retired,
-        merge.unconfirmed,
-    );
+    Some(format!(
+        "ann={}c{}s/{}L{}r{}?",
+        merge.clippings, merge.sidecars, merge.live, merge.retired, merge.unconfirmed,
+    ))
 }
 
 /// The store as text, one sitting a line.
@@ -201,11 +215,18 @@ fn show() -> Result<()> {
     let orientation = Orientation::detect();
     let touch =
         Touch::open(orientation, fb.var.xres, fb.var.yres).context("open the touchscreen")?;
-    // `Buttons::open` grabs the bezel before the first draw.
+    // Taken before `touch` is handed to `Input`, for the header block below.
+    let input_said = touch.describe().to_string();
+    // `Buttons::open` grabs the bezel before the first draw. A model with no
+    // page buttons answers `None`, which the header block states.
     let buttons = Buttons::open().unwrap_or_else(|err| {
-        eprintln!("buttons: {err:#} — running touch-only");
+        eprintln!("?? buttons: {err:#} — running touch-only");
         None
     });
+    let input_said = format!(
+        "{input_said} {}",
+        readinglog_native::eink::buttons::describe(buttons.as_ref())
+    );
     let mut input = Input::new(touch, buttons);
     input.set_orientation(orientation);
 
@@ -213,15 +234,31 @@ fn show() -> Result<()> {
     let dir = Path::new(store::STORE_DIR);
     let mut store = Store::open(dir);
     let theme = ui::theme::Theme::for_screen(fb.var.xres, fb.var.yres);
-    eprintln!(
-        "panel: {}x{} at {} ppi, body {} px",
-        fb.var.xres,
-        fb.var.yres,
-        theme.dpi(),
-        theme.body_px,
-    );
     let mut text = ui::text::TextRenderer::load(theme.body_px)?;
-    eprintln!("fonts: {}", text.chain_description());
+    // The facts that only change when the build, the panel or the clock does.
+    // A block identical to the one already standing is not written again.
+    journal::Header {
+        version: readinglog_native::update::VERSION,
+        build: readinglog_native::update::BUILD,
+        arch: std::env::consts::ARCH,
+        panel: format!(
+            "{}x{} at {} ppi, body {} px, {}",
+            fb.var.xres,
+            fb.var.yres,
+            theme.dpi(),
+            theme.body_px,
+            match readinglog_native::eink::fb::has_cfa() {
+                true => "colour filter present",
+                false => "no colour filter",
+            },
+        ),
+        surface: fb.describe().to_string(),
+        input: input_said,
+        fonts: text.chain_summary(),
+        store: store.said(),
+        zone: zone::describe(date::epoch_now()),
+    }
+    .state(Path::new(journal::LOG_PATH));
     // `splash` draws before `App` and detects for itself.
     let splash_lang = lang::Lang::detect();
     let note = ui::splash::note(&store.mark, splash_lang.strings());
@@ -235,17 +272,18 @@ fn show() -> Result<()> {
     )?;
 
     let mut painted = 0;
-    collect_into(&mut store, dir, &mut |done, total| {
+    let mut said = collect_into(&mut store, dir, &mut |done, total| {
         if done == painted {
             return;
         }
         painted = done;
         let step = ui::splash::step(splash_lang.strings().step_logs, done, total);
-        let said = launching(script, &note, &step);
-        let _ = ui::splash::show(&mut fb, &mut text, &theme, &said, false);
+        let step_said = launching(script, &note, &step);
+        let _ = ui::splash::show(&mut fb, &mut text, &theme, &step_said, false);
     });
 
     let mut app = app::App::new(store, theme, text);
-    eprintln!("stats: {}", app.counted(lang::Lang::English.strings()));
+    said.drawn = Some(app.drawn());
+    said.state(&journal::stamp_now(), journal::Mode::Run);
     app.run(&mut fb, &mut input)
 }

@@ -202,7 +202,7 @@ impl Default for Opts {
 
 fn main() {
     if let Err(err) = run() {
-        eprintln!("preview: {err:#}");
+        eprintln!("!! preview: {err:#}");
         std::process::exit(1);
     }
 }

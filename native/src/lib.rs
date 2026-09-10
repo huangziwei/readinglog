@@ -16,6 +16,7 @@ pub mod eink;
 pub mod font;
 pub mod hanfold;
 pub mod identify;
+pub mod journal;
 pub mod keyboard;
 pub mod lang;
 pub mod lipc;

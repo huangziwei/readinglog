@@ -145,14 +145,14 @@ pub(crate) fn ask(db: &Path, sql: &str, who: &str) -> Option<Vec<String>> {
     {
         Ok(out) => out,
         Err(err) => {
-            eprintln!("{who}: sqlite3 would not run: {err}");
+            eprintln!("!! {who}: sqlite3 would not run: {err}");
             return Some(Vec::new());
         }
     };
     // `sqlite3` writes a refused query to stderr.
     let complaint = String::from_utf8_lossy(&out.stderr);
     if !complaint.trim().is_empty() {
-        eprintln!("{who}: sqlite3 {}: {}", db.display(), complaint.trim());
+        eprintln!("!! {who}: sqlite3 {}: {}", db.display(), complaint.trim());
         return None;
     }
     Some(

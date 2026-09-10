@@ -148,39 +148,139 @@ pub struct Clipping {
     pub body: String,
 }
 
+/// The most one line may take. A clipping's body is a passage from a book, not
+/// a file, and anything past this is a torn write rather than a record.
+const LINE_CAP: usize = 16_384;
+
+/// The most lines one record may hold before it is given up and the read
+/// resyncs at the next [`SEPARATOR`]. The pattern writes five.
+const RECORD_CAP: usize = 64;
+
 /// Every record in the file at `path`, in write order. Empty where there is no
 /// file to read.
+///
+/// The file is streamed a record at a time. It is written by the firmware,
+/// appended to for the life of the device and bounded by nothing, so nothing
+/// here may hold one whole — a heavy highlighter's runs to several megabytes,
+/// and this is a 512 MB device.
 pub fn read(path: &Path) -> Vec<Clipping> {
-    match std::fs::read(path) {
-        Ok(bytes) => parse(&String::from_utf8_lossy(&bytes)),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
         Err(err) => {
-            eprintln!("clippings: {} — {err}", path.display());
-            Vec::new()
+            eprintln!("!! clippings: {} — {err}", path.display());
+            return Vec::new();
         }
+    };
+    let mut reader = std::io::BufReader::new(file);
+    let mut frames = Frames::default();
+    let mut raw = Vec::new();
+    loop {
+        raw.clear();
+        match read_capped(&mut reader, &mut raw) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(err) => {
+                eprintln!("!! clippings: {} — {err}", path.display());
+                break;
+            }
+        }
+        frames.take(tidy(&String::from_utf8_lossy(&raw)));
     }
+    // Whatever the last record holds ran past the last separator: a torn write.
+    frames.out
 }
 
 /// Every record `text` frames. A record that will not parse is dropped and the
 /// rest are kept: one torn write must never cost the file.
 pub fn parse(text: &str) -> Vec<Clipping> {
-    // `Clipping.gQ` raises its BOM flag when the file is absent and never
-    // lowers it, so every entry the session that created the file appended
-    // carries one. Strip them anywhere, not only at byte 0.
-    let text = text.replace('\u{FEFF}', "");
-    let mut out = Vec::new();
-    let mut record: Vec<&str> = Vec::new();
+    let mut frames = Frames::default();
     for line in text.lines() {
-        let line = line.strip_suffix('\r').unwrap_or(line);
-        if line == SEPARATOR {
-            out.extend(one(&record));
-            record.clear();
-            continue;
-        }
-        record.push(line);
+        frames.take(tidy(line));
     }
-    // Whatever `record` still holds ran past the last separator: a torn write.
-    out
+    frames.out
+}
+
+/// One line, without its line ending and without the byte-order marks the
+/// writer scatters through the file.
+///
+/// `Clipping.gQ` raises its BOM flag when the file is absent and never lowers
+/// it, so every entry the session that created the file appended carries one.
+/// They are stripped anywhere, not only at byte 0.
+fn tidy(line: &str) -> String {
+    let line = line.strip_suffix('\n').unwrap_or(line);
+    let line = line.strip_suffix('\r').unwrap_or(line);
+    match line.contains('\u{FEFF}') {
+        true => line.replace('\u{FEFF}', ""),
+        false => line.to_string(),
+    }
+}
+
+/// Records assembled out of lines, however the lines arrive: [`read`] streams
+/// them off a file and [`parse`] walks text already in hand.
+#[derive(Default)]
+struct Frames {
+    out: Vec<Clipping>,
+    record: Vec<String>,
+    /// A record ran past [`RECORD_CAP`]. Everything up to the next
+    /// [`SEPARATOR`] is given up, so the record after it opens clean — a tear
+    /// must cost the record it is in and not the one that follows.
+    resync: bool,
+}
+
+impl Frames {
+    /// Hand one line over, closing the record where the line is a separator.
+    fn take(&mut self, line: String) {
+        if line == SEPARATOR {
+            if !self.resync {
+                let held: Vec<&str> = self.record.iter().map(String::as_str).collect();
+                self.out.extend(one(&held));
+            }
+            self.record.clear();
+            self.resync = false;
+            return;
+        }
+        if self.resync {
+            return;
+        }
+        // A record that never closes is a torn write, and holding it would let
+        // one grow to the size of the file.
+        if self.record.len() >= RECORD_CAP {
+            self.record.clear();
+            self.resync = true;
+            return;
+        }
+        self.record.push(line);
+    }
+}
+
+/// One line into `out`, at most [`LINE_CAP`] bytes of it, answering the bytes
+/// the line took. The rest of an over-long line is stepped over, not held.
+fn read_capped(reader: &mut impl std::io::BufRead, out: &mut Vec<u8>) -> std::io::Result<usize> {
+    let mut took = 0usize;
+    loop {
+        let available = match reader.fill_buf() {
+            Ok(buf) => buf,
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(err) => return Err(err),
+        };
+        if available.is_empty() {
+            return Ok(took);
+        }
+        let (used, done) = match available.iter().position(|&b| b == b'\n') {
+            Some(i) => (i + 1, true),
+            None => (available.len(), false),
+        };
+        if out.len() < LINE_CAP {
+            let room = LINE_CAP - out.len();
+            out.extend_from_slice(&available[..used.min(room)]);
+        }
+        reader.consume(used);
+        took += used;
+        if done {
+            return Ok(took);
+        }
+    }
 }
 
 /// One record's lines as a [`Clipping`]. `None` where there are fewer than the
@@ -866,6 +966,61 @@ mod tests {
         // en_IN: the day before the month, a comma after it, and midnight as
         // `12:32:25 AM`.
         assert_eq!(got[12].at, "2026-07-07T00:32:25");
+    }
+
+    /// `read` streams the file and `parse` walks text already in hand. They
+    /// must come to the same records, or a device and a test disagree.
+    #[test]
+    fn the_streamed_read_and_the_parse_agree() {
+        let dir = std::env::temp_dir().join("readinglog-clippings-agree");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let at = dir.join("My Clippings.txt");
+
+        let bom = '\u{FEFF}';
+        let mut text = String::new();
+        for n in 0..50 {
+            text.push(bom);
+            text.push_str(&format!("A Book {n} (An Author)\r\n"));
+            text.push_str(&format!(
+                "- Your Highlight on page {n} | location 100-200 | Added on Monday, 9 June 2025 12:00:00\r\n"
+            ));
+            text.push_str("\r\n");
+            text.push_str(&format!("The words of passage {n}.\r\n"));
+            text.push_str("==========\r\n");
+        }
+        std::fs::write(&at, &text).unwrap();
+
+        let streamed = read(&at);
+        let walked = parse(&text);
+        assert_eq!(streamed.len(), 50, "every record read");
+        assert_eq!(streamed.len(), walked.len());
+        for (a, b) in streamed.iter().zip(walked.iter()) {
+            assert_eq!(a.title, b.title);
+            assert_eq!(a.body, b.body);
+            assert_eq!(a.at, b.at);
+            assert_eq!(a.kind, b.kind);
+        }
+        assert!(!streamed[0].title.contains(bom), "BOMs stripped");
+    }
+
+    /// A run of lines that never closes must not build one record the size of
+    /// the file. It is given up, and the record after the next separator still
+    /// reads: a tear costs the record it is in, never the one that follows.
+    #[test]
+    fn a_record_that_never_closes_is_given_up_and_the_next_one_reads() {
+        let mut text = "a line that closes nothing\n".repeat(RECORD_CAP * 4);
+        text.push_str("==========\n");
+        text.push_str("A Book (An Author)\n");
+        text.push_str(
+            "- Your Bookmark on page 1 | location 5 | Added on Monday, 9 June 2025 12:00:00\n",
+        );
+        text.push_str("\n\n==========\n");
+
+        let got = parse(&text);
+        assert_eq!(got.len(), 1, "the torn run gave nothing, the record read");
+        assert_eq!(got[0].title, "A Book");
+        assert_eq!(got[0].kind, Kind::Bookmark);
     }
 
     #[test]

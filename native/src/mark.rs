@@ -38,7 +38,7 @@ fn hash(cde_key: &str, cde_type: &str, read: bool) -> Option<String> {
 /// answering whether `lipc-hash-prop` ran and exited clean.
 pub fn set(cde_key: &str, cde_type: &str, read: bool) -> bool {
     let Some(said) = hash(cde_key, cde_type, read) else {
-        eprintln!("mark: {cde_key} {cde_type} carries a character the property cannot take");
+        eprintln!("!! mark: {cde_key} {cde_type} carries a character the property cannot take");
         return false;
     };
     let mut child = match Command::new("lipc-hash-prop")
@@ -50,23 +50,23 @@ pub fn set(cde_key: &str, cde_type: &str, read: bool) -> bool {
     {
         Ok(child) => child,
         Err(err) => {
-            eprintln!("mark: lipc-hash-prop would not run: {err}");
+            eprintln!("!! mark: lipc-hash-prop would not run: {err}");
             return false;
         }
     };
     if let Some(stdin) = child.stdin.as_mut()
         && let Err(err) = stdin.write_all(said.as_bytes())
     {
-        eprintln!("mark: {PROPERTY} took no value: {err}");
+        eprintln!("!! mark: {PROPERTY} took no value: {err}");
     }
     match child.wait() {
         Ok(status) if status.success() => true,
         Ok(status) => {
-            eprintln!("mark: lipc-hash-prop {status}");
+            eprintln!("!! mark: lipc-hash-prop {status}");
             false
         }
         Err(err) => {
-            eprintln!("mark: lipc-hash-prop did not finish: {err}");
+            eprintln!("!! mark: lipc-hash-prop did not finish: {err}");
             false
         }
     }

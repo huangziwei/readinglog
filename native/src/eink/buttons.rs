@@ -38,6 +38,8 @@ impl PageButton {
 }
 
 pub struct Buttons {
+    /// The node this reader took, for the log's header block.
+    node: String,
     file: File,
     /// Whether `EVIOCGRAB` is held.
     grabbed: bool,
@@ -52,9 +54,10 @@ pub struct Buttons {
 impl Buttons {
     /// Opens and grabs the page-button device. `Ok(None)` where no `gpio-keys`
     /// device exists, leaving touch as the whole of the input.
+    /// The bezel reader, or `None` where the model has no page buttons — which
+    /// is most of them, and not a fault. [`describe`] states which for the log.
     pub fn open() -> Result<Option<Self>> {
         let Some(path) = find_button_device()? else {
-            eprintln!("buttons: no gpio-keys device — running touch-only");
             return Ok(None);
         };
         let file = OpenOptions::new()
@@ -62,8 +65,8 @@ impl Buttons {
             .open(&path)
             .with_context(|| format!("open {}", path.display()))?;
         let grabbed = unsafe { libc::ioctl(file.as_raw_fd(), EVIOCGRAB as _, 1) } == 0;
-        eprintln!("buttons: using {} (grabbed {grabbed})", path.display());
         Ok(Some(Self {
+            node: path.display().to_string(),
             file,
             grabbed,
             exclusive: grabbed,
@@ -175,9 +178,34 @@ fn find_button_device() -> Result<Option<PathBuf>> {
     Ok(None)
 }
 
+/// What the bezel resolved to, for the log's header block. A model with no
+/// page buttons is the common case and says so plainly: it is a fact about the
+/// device, not something the reader can act on.
+pub fn describe(held: Option<&Buttons>) -> String {
+    match held {
+        None => "buttons=none".to_string(),
+        Some(buttons) => format!(
+            "buttons={} grab={}",
+            buttons.node,
+            match buttons.grabbed {
+                true => "ok",
+                false => "refused",
+            },
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::PageButton;
+    use super::{PageButton, describe};
+
+    /// Most models have no page buttons. That is a fact about the device, not
+    /// a fault the reader can act on, so it is a word in the header block and
+    /// never a line in the body.
+    #[test]
+    fn a_model_with_no_page_buttons_says_so_as_a_fact() {
+        assert_eq!(describe(None), "buttons=none");
+    }
 
     /// `Next` steps forward and `Prev` back.
     #[test]

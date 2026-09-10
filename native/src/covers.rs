@@ -131,7 +131,7 @@ pub fn sweep(dir: &Path, keys: &[&str]) -> usize {
         }
         match std::fs::remove_file(entry.path()) {
             Ok(()) => gone += 1,
-            Err(err) => eprintln!("covers: {} — {err}", entry.path().display()),
+            Err(err) => eprintln!("!! covers: {} — {err}", entry.path().display()),
         }
     }
     gone

@@ -2,6 +2,8 @@
 //! through `Store::extent_of`, is the catalog's `p_contentSize`, which a
 //! [`BookRecord`] is keyed by.
 
+use std::collections::HashMap;
+
 use crate::annotate::Mark;
 use crate::clippings::Kind;
 use crate::date;
@@ -259,6 +261,13 @@ pub struct Stats {
     /// Every mark the record holds, ascending by when it was made.
     /// [`BookStat::marks`] indexes into this.
     pub marks: Vec<Mark>,
+    /// Each mark's `body`, lowercased and Han-folded, at the same index.
+    ///
+    /// A search folds the query once and then asks it of every mark on every
+    /// keystroke. Holding the bodies folded keeps that to a substring test:
+    /// folding at the keystroke costs two allocations and a per-character
+    /// table walk, per mark, per key pressed.
+    pub folded: Vec<String>,
 }
 
 /// One row of [`Stats::marked`] and where in the record it came from, which is
@@ -270,6 +279,8 @@ pub struct Across<'a> {
     /// The row's place in that book's own [`Stats::marked`] list, which is
     /// where the Marks tab opens.
     pub at: usize,
+    /// Where the mark sits in [`Stats::marks`], and so in [`Stats::folded`].
+    pub held: usize,
     pub mark: &'a Mark,
     /// The note written on it, as [`crate::annotate::Marked`] pairs them.
     pub note: Option<&'a Mark>,
@@ -390,26 +401,35 @@ impl Stats {
     /// is held in [`Self::marks`] all the same.
     fn hold_marks(&mut self, store: &Store) {
         self.marks = store.marks.clone();
-        // The extent is the key; a record reached by `cde_key` alone carries
-        // none, and `title` stands in.
-        let by_title: Vec<(String, usize)> = self
-            .books
+        self.folded = self
+            .marks
             .iter()
-            .enumerate()
-            .map(|(at, b)| (crate::identify::normalise(&b.title), at))
+            .map(|mark| crate::hanfold::fold(&mark.body.to_lowercase()).into_owned())
             .collect();
+        // Both ways in, built once. A scan of `books` per mark is `O(M × B)`,
+        // and the title fallback is the common path rather than the rare one:
+        // most records carry no extent, and neither do most marks.
+        //
+        // Each holds the *first* slot under a key, which is the slot a pass
+        // over the books in order reaches.
+        let mut by_extent: HashMap<i64, usize> = HashMap::new();
+        let mut by_title: HashMap<String, usize> = HashMap::new();
+        for (at, book) in self.books.iter().enumerate() {
+            by_extent.entry(book.extent).or_insert(at);
+            by_title
+                .entry(crate::identify::normalise(&book.title))
+                .or_insert(at);
+        }
         for (at, mark) in self.marks.iter().enumerate() {
-            let slot = self
-                .books
-                .iter()
-                .position(|b| mark.extent != 0 && b.extent == mark.extent)
-                .or_else(|| {
-                    let want = crate::identify::normalise(&mark.title);
-                    by_title
-                        .iter()
-                        .find(|(title, _)| *title == want)
-                        .map(|(_, at)| *at)
-                });
+            let slot = match mark.extent != 0 {
+                true => by_extent.get(&mark.extent).copied(),
+                false => None,
+            }
+            .or_else(|| {
+                by_title
+                    .get(&crate::identify::normalise(&mark.title))
+                    .copied()
+            });
             if let Some(slot) = slot {
                 self.books[slot].marks.push(at);
             }
@@ -442,12 +462,24 @@ impl Stats {
     pub fn marked_across(&self) -> Vec<Across<'_>> {
         let mut out: Vec<Across<'_>> = Vec::new();
         for book in 0..self.books.len() {
-            for (at, held) in self.marked(book).into_iter().enumerate() {
+            // `annotate::paired` hands back references out of `marks_of`'s own
+            // slice, so each row's mark is one of this book's, addressed by
+            // the slots `BookStat::marks` already holds. That is what carries
+            // `held` back — the row itself only knows its place in the list
+            // `paired` built, which is not where the mark sits.
+            let slots = &self.books[book].marks;
+            for (at, row) in self.marked(book).into_iter().enumerate() {
+                let held = slots
+                    .iter()
+                    .copied()
+                    .find(|&i| self.marks.get(i).is_some_and(|m| std::ptr::eq(m, row.mark)))
+                    .unwrap_or(usize::MAX);
                 out.push(Across {
                     book,
                     at,
-                    mark: held.mark,
-                    note: held.note,
+                    held,
+                    mark: row.mark,
+                    note: row.note,
                 });
             }
         }

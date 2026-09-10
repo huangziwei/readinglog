@@ -58,6 +58,13 @@ impl Needle {
         let body = body.to_lowercase();
         body.contains(&self.said) || hanfold::fold(&body).contains(&self.folded)
     }
+
+    /// Whether a body already lowercased and folded — [`Stats::folded`] holds
+    /// one per mark — holds it. Same answer as [`Self::holds`], without the
+    /// allocation and the per-character walk that one pays on every keystroke.
+    pub(super) fn holds_folded(&self, folded: &str) -> bool {
+        self.said.is_empty() || folded.contains(&self.folded)
+    }
 }
 
 /// The marks `query` names, across every book, most recently marked first:
@@ -70,7 +77,13 @@ pub fn listed_marks<'a>(stats: &'a Stats, query: &str, uncovered: bool) -> Vec<A
         .into_iter()
         .filter(|row| uncovered || stats.books.get(row.book).is_some_and(BookStat::has_cover))
         .filter(|row| {
-            needle.holds(&row.mark.body) || row.note.is_some_and(|n| needle.holds(&n.body))
+            // The mark's own body is folded once per `Stats::build`; a note is
+            // rare enough to fold where it is asked about.
+            let body = match stats.folded.get(row.held) {
+                Some(folded) => needle.holds_folded(folded),
+                None => needle.holds(&row.mark.body),
+            };
+            body || row.note.is_some_and(|n| needle.holds(&n.body))
         })
         .collect()
 }
@@ -482,5 +495,49 @@ mod tests {
         stats.books[1].thumbnail.clear();
         assert_eq!(listed_marks(&stats, "port", false).len(), 1);
         assert_eq!(listed_marks(&stats, "port", true).len(), 2);
+    }
+
+    /// A search reads `Stats::folded`, which is each body lowercased and
+    /// Han-folded once per build. It must answer exactly what folding at the
+    /// keystroke answered — Traditional against Simplified included — and a
+    /// `Stats` built without it must still come to the same rows.
+    #[test]
+    fn the_folded_body_answers_what_folding_at_the_keystroke_answered() {
+        let queries = ["port", "PORT", "", "臺灣", "台湾", "nothing here"];
+
+        let bare = marked_shelf();
+        assert!(bare.folded.is_empty(), "the fixture holds no folded bodies");
+
+        let mut held = marked_shelf();
+        held.folded = held
+            .marks
+            .iter()
+            .map(|m| crate::hanfold::fold(&m.body.to_lowercase()).into_owned())
+            .collect();
+
+        for (at, mark) in held.marks.iter().enumerate() {
+            for query in queries {
+                let needle = Needle::of(query);
+                assert_eq!(
+                    needle.holds_folded(&held.folded[at]),
+                    needle.holds(&mark.body),
+                    "{query:?} against {:?}",
+                    mark.body,
+                );
+            }
+        }
+
+        // The fast path and the fallback name the same marks.
+        for query in queries {
+            let with: Vec<usize> = listed_marks(&held, query, true)
+                .iter()
+                .map(|r| r.held)
+                .collect();
+            let without: Vec<usize> = listed_marks(&bare, query, true)
+                .iter()
+                .map(|r| r.held)
+                .collect();
+            assert_eq!(with, without, "{query:?}");
+        }
     }
 }

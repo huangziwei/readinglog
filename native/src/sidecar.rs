@@ -528,14 +528,14 @@ fn open_sidecar(at: &Path) -> Option<Store> {
     let bytes = match std::fs::read(at) {
         Ok(bytes) => bytes,
         Err(err) => {
-            eprintln!("sidecar: {} — {err}", at.display());
+            eprintln!("!! sidecar: {} — {err}", at.display());
             return None;
         }
     };
     match Store::parse(&bytes) {
         Ok(store) => Some(store),
         Err(err) => {
-            eprintln!("sidecar: {} — {err}", at.display());
+            eprintln!("!! sidecar: {} — {err}", at.display());
             None
         }
     }
