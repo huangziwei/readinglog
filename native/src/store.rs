@@ -2126,7 +2126,7 @@ fn write_session(out: &mut String, s: &Session) {
     row(
         out,
         format_args!(
-            "s\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "s\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             s.started_at,
             s.ended_at,
             s.end_position,
@@ -2146,6 +2146,7 @@ fn write_session(out: &mut String, s: &Session) {
             num(s.stated_wpm),
             s.awake_seconds,
             s.paged_seconds,
+            s.paged_words,
         ),
     )
 }
@@ -2177,9 +2178,10 @@ fn read_session<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Session> {
         time_left: next().parse().ok(),
         stated_wpm: next().parse().ok(),
         awake_seconds: next().parse().unwrap_or(0),
-        // A row an older build wrote states none, and `Figures::App` falls
-        // back to `awake_seconds` until a heal measures the sitting again.
+        // A row an older build wrote states neither, and `Figures::App` falls
+        // back until a heal measures the sitting again.
         paged_seconds: next().parse().unwrap_or(0),
+        paged_words: next().parse().unwrap_or(0),
     })
 }
 
@@ -4045,7 +4047,9 @@ mod tests {
             .lines()
             .map(|l| match l.strip_prefix("s\t") {
                 Some(rest) => {
+                    // The two fields a build before v0.3.3 never wrote.
                     let cut = rest.rsplit_once('\t').expect("a paged field").0;
+                    let cut = cut.rsplit_once('\t').expect("a paged field").0;
                     format!("s\t{cut}\n")
                 }
                 None => format!("{l}\n"),
@@ -4053,6 +4057,7 @@ mod tests {
             .collect();
         let read = Store::from_text(&older);
         assert_eq!(read.sessions[0].paged_seconds, 0);
+        assert_eq!(read.sessions[0].paged_words, 0);
         assert_eq!(read.sessions[0].awake_seconds, 6607);
         assert_eq!(read.sessions[0].seconds, 2390);
     }

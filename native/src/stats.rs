@@ -38,8 +38,8 @@ pub struct BookStat {
     /// `BookRecord::finished`.
     pub finished: bool,
     pub seconds: i64,
-    /// The seconds `Session` counted, whatever [`Figures`] names. `words` was
-    /// counted across these and no others.
+    /// The seconds `Session` counted, whatever [`Figures`] names. Under
+    /// [`Figures::Device`] `words` was counted across these and no others.
     pub counted_seconds: i64,
     /// The parts of `seconds` carrying `Measure::Paged` and `Measure::Awake`.
     pub paged_seconds: i64,
@@ -161,15 +161,18 @@ impl BookStat {
         Some((read as f64 * (100.0 - self.percent) / self.percent) as i64)
     }
 
-    /// Words a minute over this book: `stated_wpm`, else `words` over
-    /// `counted_seconds`. Both sides come off one counter, and
-    /// `awake_seconds` never divides them.
+    /// Words a minute: `stated_wpm` under [`Figures::Device`], else this
+    /// mode's own words over this mode's own seconds. The two sides always
+    /// come from one source, never the pages over the counter.
     pub fn wpm(&self, from: Figures) -> Option<i64> {
         if let (Figures::Device, Some(stated)) = (from, self.stated_wpm) {
             return Some(stated);
         }
-        let (words, read) = (self.words, self.counted_seconds);
-        (words > 0 && read > 0).then(|| words * 60 / read)
+        let read = match from {
+            Figures::App => self.seconds,
+            Figures::Device => self.counted_seconds,
+        };
+        (self.words > 0 && read > 0).then(|| self.words * 60 / read)
     }
 }
 
@@ -291,6 +294,7 @@ impl Stats {
                 continue;
             };
             let secs = sitting_seconds(s, from);
+            let words = sitting_words(s, from);
             let counted = secs >= floor.seconds();
             // `found.extent` where the store has a record, else `raw`.
             let raw = store.extent_of(s.end_position);
@@ -325,7 +329,7 @@ impl Stats {
                 continue;
             }
             match at {
-                Some(slot) => credit(&mut out.books[slot], s, day, secs),
+                Some(slot) => credit(&mut out.books[slot], s, day, secs, words),
                 None if !unnamed => continue,
                 None => out.unnamed_seconds += secs,
             }
@@ -343,7 +347,7 @@ impl Stats {
             });
             out.total_seconds += secs;
             out.total_turns += s.page_turns;
-            out.total_words += s.words;
+            out.total_words += words;
             match out.days.binary_search_by_key(&day, |(d, _)| *d) {
                 Ok(i) => out.days[i].1 += secs,
                 Err(i) => out.days.insert(i, (day, secs)),
@@ -955,6 +959,14 @@ fn sitting_seconds(s: &Session, from: Figures) -> i64 {
     }
 }
 
+/// The words one sitting states, from the same source its seconds came from.
+fn sitting_words(s: &Session, from: Figures) -> i64 {
+    match from {
+        Figures::App if s.paged_words > 0 => s.paged_words,
+        _ => s.words,
+    }
+}
+
 /// `hours`, which sum to `sum`, rescaled to sum to `target`: each entry in
 /// proportion, and the division's remainder to the busiest.
 fn hours_at(hours: &[(u8, i64)], sum: i64, target: i64) -> Vec<(u8, i64)> {
@@ -974,7 +986,7 @@ fn hours_at(hours: &[(u8, i64)], sum: i64, target: i64) -> Vec<(u8, i64)> {
     out
 }
 
-fn credit(book: &mut BookStat, s: &Session, day: i64, secs: i64) {
+fn credit(book: &mut BookStat, s: &Session, day: i64, secs: i64, words: i64) {
     book.seconds += secs;
     book.counted_seconds += s.seconds;
     match s.measure {
@@ -984,7 +996,7 @@ fn credit(book: &mut BookStat, s: &Session, day: i64, secs: i64) {
     }
     book.sittings += 1;
     book.page_turns += s.page_turns;
-    book.words += s.words;
+    book.words += words;
     // [`NO_DAY`] takes `day` whole.
     book.first_day = match book.first_day {
         NO_DAY => day,
@@ -1395,9 +1407,8 @@ pub(crate) mod tests {
         assert_eq!(counted(Figures::App).total_seconds, 180);
     }
 
-    /// A reader above the firmware's 40-900 wpm band has every sample refused,
-    /// so the counter states a fraction of the sitting. The pages are what
-    /// [`Figures::App`] stands on; the awake span is what is left without them.
+    /// The pages are what [`Figures::App`] stands on; the awake span is what is
+    /// left without them.
     #[test]
     fn the_app_figure_takes_the_pages_over_the_time_the_screen_was_on() {
         let day = at(2026, 3, 1);
@@ -1417,6 +1428,33 @@ pub(crate) mod tests {
         // And one neither source states anything for.
         store.sessions[0].awake_seconds = 0;
         assert_eq!(counted(&store, Figures::App), 0);
+    }
+
+    #[test]
+    fn the_app_words_come_off_the_pages_and_the_rate_divides_by_app_seconds() {
+        let day = at(2026, 3, 1);
+        let mut store = on_days(&[day], 600);
+        store.books.push(crate::store::BookRecord {
+            extent: 100,
+            title: "A Book".into(),
+            ..Default::default()
+        });
+        store.sessions[0].words = 1_000;
+        store.sessions[0].paged_words = 3_000;
+        store.sessions[0].paged_seconds = 600;
+        let built = |store: &Store, from| {
+            Stats::build(store, at(2026, 3, 2), true, from, SittingFloor::OneMinute)
+        };
+        let device = built(&store, Figures::Device);
+        let app = built(&store, Figures::App);
+        assert_eq!(device.total_words, 1_000);
+        assert_eq!(app.total_words, 3_000, "the pages, not the counter");
+        assert_eq!(device.books[0].wpm(Figures::Device), Some(100));
+        assert_eq!(app.books[0].wpm(Figures::App), Some(300));
+
+        // A sitting whose pages state nothing keeps the counter's words.
+        store.sessions[0].paged_words = 0;
+        assert_eq!(built(&store, Figures::App).total_words, 1_000);
     }
 
     #[test]
@@ -2476,17 +2514,18 @@ pub(crate) mod tests {
                 .seconds
         };
         assert_eq!(at(&app), at(&device) * 3 / 2);
-        // The rate divides `words` by `counted_seconds` under either
-        // [`Figures`]; `awake_seconds` never reaches it.
-        let rate = |s: &Stats| {
+        // Each mode divides its own words by its own seconds. These sittings
+        // state no page words, so App reads the counter's words over a span
+        // half again as long, and the rate is two thirds of the device's.
+        let rate = |s: &Stats, from| {
             s.books
                 .iter()
                 .find(|b| b.extent == 148_209)
                 .unwrap()
-                .wpm(Figures::App)
+                .wpm(from)
         };
-        assert_eq!(rate(&app), rate(&device));
-        assert_eq!(rate(&app), Some(30));
+        assert_eq!(rate(&device, Figures::Device), Some(30));
+        assert_eq!(rate(&app, Figures::App), Some(20));
         // The hours keep the shape of the run and sum to the new figure.
         for sitting in &app.sittings {
             let summed: i64 = sitting.hours.iter().map(|(_, s)| s).sum();

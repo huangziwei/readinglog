@@ -72,36 +72,37 @@ pub fn cde_key(line: &str) -> Option<&str> {
     }
 }
 
-/// The band a page's open time may run in, against what its words justify.
-const PAGE_FLOOR: f64 = 0.5;
+/// A page open for less than this is navigation, not reading, whatever its
+/// words say.
+const FLOOR_SECS: f64 = 3.0;
+
+/// A page may credit this many times what its words justify, never less than
+/// [`CAP_SECS`]: a page of one word and a diagram would buy nothing.
 const PAGE_CEILING: f64 = 1.5;
 
-/// The band a reading rate is usable in, as `AverageCalculator` hardcodes it
-/// on every firmware: a sample outside it is an outlier the device's own
-/// average refuses.
-const WPM_MIN: f64 = 40.0;
-const WPM_MAX: f64 = 900.0;
+/// The ceiling where the words or the rate justify less.
+/// `PageHeuristicsImpl` holds this, [`PAGE_CEILING`] and [`FLOOR_SECS`].
+const CAP_SECS: f64 = 120.0;
 
-/// What a page with no usable rate may count, in seconds.
-const WORDLESS_FLOOR: f64 = 3.0;
-const WORDLESS_CEILING: f64 = 120.0;
+/// A derived rate under this is not real, and would buy a page a ceiling of
+/// many minutes. The firmware's matching upper bound is not applied here.
+const WPM_MIN: f64 = 40.0;
 
 /// How much of a page's open time counts as reading, in milliseconds. The
-/// device's own rule, applied verbatim.
+/// floor is flat and never scales with the rate: the firmware caps that rate
+/// at 900, and a faster reader would have every page refused.
 pub fn page_ms(wpm: Option<f64>, words: i64, open_ms: i64) -> i64 {
     let secs = open_ms as f64 / 1000.0;
-    match wpm {
-        Some(wpm) if wpm > WPM_MIN && wpm < WPM_MAX && words > 0 => {
-            let expected = words as f64 / (wpm / 60.0);
-            if secs < PAGE_FLOOR * expected {
-                0
-            } else {
-                (secs.min(PAGE_CEILING * expected) * 1000.0) as i64
-            }
-        }
-        _ if secs < WORDLESS_FLOOR => 0,
-        _ => (secs.min(WORDLESS_CEILING) * 1000.0) as i64,
+    if secs < FLOOR_SECS {
+        return 0;
     }
+    let ceiling = match wpm {
+        Some(wpm) if wpm > WPM_MIN && words > 0 => {
+            (PAGE_CEILING * (words as f64 / (wpm / 60.0))).max(CAP_SECS)
+        }
+        _ => CAP_SECS,
+    };
+    (secs.min(ceiling) * 1000.0) as i64
 }
 
 #[cfg(test)]
@@ -176,19 +177,35 @@ mod tests {
     }
 
     #[test]
-    fn a_page_skipped_past_counts_nothing_and_one_idled_on_counts_its_ceiling() {
-        // Under half of the 60 s the words justify.
-        assert_eq!(page_ms(Some(200.0), 200, 20_000), 0);
-        // Over 1.5x it: 90 s counts of the 10 minutes.
-        assert_eq!(page_ms(Some(200.0), 200, 600_000), 90_000);
+    fn a_page_idled_on_counts_only_its_ceiling() {
+        // 600 words at 200 wpm is a 3-minute page; 1.5x it is 4m30s, and that
+        // is what counts of the ten minutes it stood open.
+        assert_eq!(page_ms(Some(200.0), 600, 600_000), 270_000);
     }
 
     #[test]
-    fn a_page_with_no_rate_falls_back_to_its_own_floor_and_ceiling() {
+    fn a_page_of_one_word_is_not_held_to_what_one_word_justifies() {
+        // 1.5x what one word justifies at 200 wpm is under half a second.
+        assert_eq!(page_ms(Some(200.0), 1, 300_000), 120_000);
+        assert_eq!(page_ms(Some(200.0), 200, 600_000), 120_000);
+    }
+
+    #[test]
+    fn a_page_read_far_faster_than_its_stated_rate_still_counts() {
+        // 200 words at 200 wpm is a 60 s page; 20 s is three times that rate.
+        assert_eq!(page_ms(Some(200.0), 200, 20_000), 20_000);
+        // And a page swiped past counts nothing, rate or no rate.
+        assert_eq!(page_ms(Some(200.0), 200, 2_000), 0);
         assert_eq!(page_ms(None, 0, 2_000), 0);
+    }
+
+    #[test]
+    fn a_page_with_no_rate_falls_back_to_its_own_cap() {
         assert_eq!(page_ms(None, 0, 40_000), 40_000);
         assert_eq!(page_ms(None, 0, 600_000), 120_000);
-        // A rate outside the band is no rate.
-        assert_eq!(page_ms(Some(900.0), 200, 40_000), 40_000);
+        // A rate the firmware would refuse for being too fast is used here.
+        assert_eq!(page_ms(Some(1800.0), 200, 40_000), 40_000);
+        // One too slow to be real is not: 250 words at 10 wpm is 25 minutes.
+        assert_eq!(page_ms(Some(10.0), 250, 600_000), 120_000);
     }
 }

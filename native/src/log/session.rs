@@ -80,6 +80,10 @@ pub struct Session {
     /// Seconds this run's pages credit, whatever [`Measure`] won. Zero where
     /// no `ereader_book_consume_content` record brackets a page.
     pub paged_seconds: i64,
+    /// The words on those pages. `TotalWords` counts only the intervals the
+    /// firmware's rate band accepted, so on a faster reader `Session::words`
+    /// states a fraction of these.
+    pub paged_words: i64,
     /// The book's own reading counter where this run began and where it was
     /// last seen. Both or neither: a run the device never counted has none.
     pub start_counter_ms: Option<i64>,
@@ -106,6 +110,7 @@ impl Session {
         self.measure = fresh.measure;
         self.awake_seconds = fresh.awake_seconds;
         self.paged_seconds = fresh.paged_seconds;
+        self.paged_words = fresh.paged_words;
         self.start_counter_ms = fresh.start_counter_ms.or(self.start_counter_ms);
         self.end_counter_ms = fresh.end_counter_ms.or(self.end_counter_ms);
         self.start_words = fresh.start_words.or(self.start_words);
@@ -352,17 +357,13 @@ impl Open {
                     .take()
                     .filter(|(from, _)| now.abs - from.abs <= SESSION_GAP_SECS)
                 {
-                    let elapsed = (now.abs - from.abs) * 1000;
-                    // `elapsed` is the awake seconds inside the interval, or its
-                    // whole width where [`Awake`] names none.
-                    let elapsed = match awake.is_empty() {
-                        true => elapsed,
-                        false => awake.between(from.abs, now.abs) * 1000,
-                    };
+                    // Not `Awake::between`: `powerd` saying nothing over a
+                    // stretch is not `powerd` saying the device slept.
+                    let elapsed = awake.bound(from.abs, now.abs) * 1000;
                     let counts = page_ms(self.wpm(), from_words, elapsed);
                     self.paged_total_ms += counts;
-                    // A page flipped past faster than its words justify counts
-                    // no time, and its words are not read either.
+                    // A page under the floor counts no time, and its words
+                    // are not read either.
                     if counts > 0 {
                         self.metric_words += from_words;
                     }
@@ -478,6 +479,7 @@ impl Open {
             tz_offset_s: None,
             awake_seconds: awake.bound(self.began.abs, self.last.abs),
             paged_seconds: paged,
+            paged_words: self.metric_words,
             start_counter_ms: self.time_lo,
             end_counter_ms: self.time_lo.map(|_| self.time_hi),
             start_words: self.words_lo,
