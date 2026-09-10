@@ -57,10 +57,6 @@ pub struct BookStat {
     pub stated_time_left: Option<i64>,
     /// The rate it stated at the same moment, off `Session::stated_wpm`.
     pub stated_wpm: Option<i64>,
-    /// `Store::counters` for this book, cumulative over its whole life. Zero
-    /// where no `t` row names it.
-    pub device_seconds: i64,
-    pub device_words: i64,
     /// Where this book's marks sit in [`Stats::marks`], in the order they were
     /// made. [`Stats::marks_of`] is the way in.
     pub marks: Vec<usize>,
@@ -136,21 +132,16 @@ impl BookStat {
         }
     }
 
-    /// This book's reading, `from` the source named. `device_seconds` at zero
-    /// falls back to `seconds`.
-    pub fn read_seconds(&self, from: Figures) -> i64 {
-        match from {
-            Figures::Device if self.device_seconds > 0 => self.device_seconds,
-            _ => self.seconds,
-        }
+    /// This book's reading, which `from` has already chosen the measure of:
+    /// `Stats::build` credits each sitting through `sitting_seconds`, and the
+    /// sum of those is the whole of what this book was read for.
+    pub fn read_seconds(&self, _from: Figures) -> i64 {
+        self.seconds
     }
 
     /// [`Self::read_seconds`] for the word counter.
-    pub fn words_read(&self, from: Figures) -> i64 {
-        match from {
-            Figures::Device if self.device_words > 0 => self.device_words,
-            _ => self.words,
-        }
+    pub fn words_read(&self, _from: Figures) -> i64 {
+        self.words
     }
 
     /// Seconds left to read: `stated_time_left`, else `percent` and the reading
@@ -177,12 +168,7 @@ impl BookStat {
         if let (Figures::Device, Some(stated)) = (from, self.stated_wpm) {
             return Some(stated);
         }
-        let (words, read) = match from {
-            Figures::Device if self.device_words > 0 && self.device_seconds > 0 => {
-                (self.device_words, self.device_seconds)
-            }
-            _ => (self.words, self.counted_seconds),
-        };
+        let (words, read) = (self.words, self.counted_seconds);
         (words > 0 && read > 0).then(|| words * 60 / read)
     }
 }
@@ -309,13 +295,6 @@ impl Stats {
         };
         // One slot per book, in first-seen order; the sort comes last.
         let mut index: Vec<(i64, usize)> = Vec::new();
-        // The `t` rows by the class each stands for, built once: asking for
-        // one per sitting is a scan of every row per sitting. The first of a
-        // run wins, which is the row a scan reached.
-        let mut counters: HashMap<i64, (i64, i64)> = HashMap::with_capacity(store.counters.len());
-        for &(ep, total_ms, words) in &store.counters {
-            counters.entry(ep).or_insert((total_ms, words));
-        }
         for s in &store.sessions {
             let Some(day) = date::parse_day(date::day_of(&s.started_at)) else {
                 continue;
@@ -351,10 +330,6 @@ impl Stats {
                     }
                 }
             });
-            // `hold_counter` takes the class's `t` row, credited or not.
-            if let Some(slot) = at {
-                hold_counter(&mut out.books[slot], &counters, s.end_position);
-            }
             if !counted {
                 continue;
             }
@@ -979,8 +954,6 @@ fn fresh(extent: i64, found: &BookRecord, day: i64) -> BookStat {
         last_secs: 0,
         stated_time_left: None,
         stated_wpm: None,
-        device_seconds: 0,
-        device_words: 0,
         marks: Vec::new(),
     }
 }
@@ -1040,15 +1013,6 @@ fn credit(book: &mut BookStat, s: &Session, day: i64, secs: i64) {
 }
 
 /// Take the `t` row for the class `end_position` names. A book re-copied
-/// stands at several classes, and the highest counter of them is its newest.
-fn hold_counter(book: &mut BookStat, counters: &HashMap<i64, (i64, i64)>, end_position: i64) {
-    let Some((total_ms, words)) = counters.get(&end_position) else {
-        return;
-    };
-    book.device_seconds = book.device_seconds.max(total_ms / 1000);
-    book.device_words = book.device_words.max(*words);
-}
-
 /// The longest run of consecutive days with reading, and the run ending at `today`.
 ///
 /// `current` accepts a last day of `today` or `today - 1`.
@@ -2438,11 +2402,17 @@ pub(crate) mod tests {
         assert_eq!(gone.time_left(Figures::Device), None);
     }
 
+    /// `Figures` chooses how each sitting is measured, and a book's figure is
+    /// the sum of what it credited. The `t` row is a running total in the
+    /// book's own sidecar and is lost whenever that sidecar is rebuilt, so
+    /// **it must never stand in for that sum**: it would drop every sitting
+    /// made before the reset.
     #[test]
-    fn a_book_states_the_device_s_own_counters_or_the_sittings_measured() {
+    fn a_reset_device_counter_never_shrinks_the_book() {
         let mut store = store();
-        // `store.counters` for this book, past the 3600 s of its sittings.
-        store.counters = vec![(148_207, 9_000_000, 30_000)];
+        // A third of the 3600 s the sittings credit, as a counter reset in the
+        // middle of the book would read.
+        store.counters = vec![(148_207, 1_200_000, 500)];
         for s in store.sessions.iter_mut() {
             s.stated_wpm = Some(240);
         }
@@ -2455,14 +2425,16 @@ pub(crate) mod tests {
         );
         let bible = stats.books.iter().find(|b| b.extent == 148_209).unwrap();
 
-        assert_eq!(bible.read_seconds(Figures::Device), 9_000);
-        assert_eq!(bible.words_read(Figures::Device), 30_000);
-        assert_eq!(bible.wpm(Figures::Device), Some(240));
-        // 3600 s over three sittings of 600 words each.
+        // 3600 s over three sittings of 600 words each, whatever the `t` row.
+        assert_eq!(bible.read_seconds(Figures::Device), 3_600);
+        assert_eq!(bible.words_read(Figures::Device), 1_800);
+        assert_eq!(bible.per_sitting(Figures::Device), 1_200);
         assert_eq!(bible.read_seconds(Figures::App), 3_600);
         assert_eq!(bible.words_read(Figures::App), 1_800);
-        assert_eq!(bible.per_sitting(Figures::App), 1_200);
-        assert_eq!(bible.per_sitting(Figures::Device), 3_000);
+
+        // The rate is still the device's own where it stated one: that comes
+        // off the newest sitting, not off a total.
+        assert_eq!(bible.wpm(Figures::Device), Some(240));
         assert_eq!(bible.wpm(Figures::App), Some(30));
     }
 
@@ -2537,7 +2509,6 @@ pub(crate) mod tests {
             SittingFloor::All,
         );
         let bible = stats.books.iter().find(|b| b.extent == 148_209).unwrap();
-        assert_eq!(bible.device_seconds, 0);
         assert_eq!(bible.read_seconds(Figures::Device), bible.seconds);
     }
 

@@ -609,8 +609,6 @@ mod tests {
             last_secs: 0,
             stated_time_left: None,
             stated_wpm: None,
-            device_seconds: 0,
-            device_words: 0,
             marks: Vec::new(),
         }
     }
