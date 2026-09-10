@@ -211,6 +211,11 @@ pub struct Observation {
     /// The book's running reading counter, in milliseconds.
     pub total_ms: Option<i64>,
     pub words: Option<i64>,
+    /// How long this one page stood, in milliseconds. Stated on every turn
+    /// line, including the ones `SkipAvgReason` keeps out of `total_ms`.
+    pub interval_ms: Option<i64>,
+    /// The words on the page `interval_ms` measured.
+    pub interval_words: Option<i64>,
     pub page_turn: bool,
     pub closes: bool,
 }
@@ -245,6 +250,8 @@ pub fn observation(line: &str) -> Option<Observation> {
         position: end_position(chosen)?,
         total_ms: field(chosen, "TotalTime"),
         words: field(chosen, "TotalWords"),
+        interval_ms: field(chosen, "IntervalTime"),
+        interval_words: field(chosen, "IntervalWords"),
         page_turn,
         closes,
     })

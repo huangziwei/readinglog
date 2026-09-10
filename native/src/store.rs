@@ -763,16 +763,16 @@ impl Store {
     /// stops naming keeps what it holds.
     pub fn remember(&mut self, catalog: &[Book]) -> usize {
         // Every record this pass moved or added. `moved` opens as a copy of
-        // `was_on` so that a slot the loop never reaches counts as moved
-        // exactly when the catalog has stopped naming it.
+        // `was_on` marks a slot the loop never reaches as moved exactly when
+        // the catalog stops naming it.
         let was_on: Vec<bool> = self.books.iter().map(|r| r.on_device).collect();
         let mut moved = was_on.clone();
         for record in &mut self.books {
             record.on_device = false;
         }
         // Every slot a `cde_key` reaches, in slot order, built once. Reaching
-        // a record by scanning instead is a pass over `books` per catalog row,
-        // which on a large shelf is the row count times the record count.
+        // A scan for a record is a pass over `books` per catalog row: on a
+        // large shelf, the row count times the record count.
         let mut by_key: std::collections::HashMap<String, Vec<usize>> =
             std::collections::HashMap::new();
         for (at, record) in self.books.iter().enumerate() {
@@ -789,8 +789,8 @@ impl Store {
                     moved[i] = changed || was_on[i] != self.books[i].on_device;
                     i
                 }
-                // The purchase row beside a file row already held names no
-                // second book, and a record of its own would be one.
+                // The purchase row beside a file row in `by_key` names no
+                // second book.
                 None if book.extent == 0 && by_key.contains_key(&book.cde_key) => continue,
                 None => {
                     let at = self.books.len();
@@ -843,7 +843,7 @@ impl Store {
             return 0;
         }
         // The classes each counter pair was ever stated for, gathered in one
-        // pass rather than a scan of every sitting and every `t` row per card.
+        // pass, against a scan of every sitting and every `t` row per card.
         let classes = self.classes_by_counter();
         let mut claims: Vec<(i64, &str)> = Vec::new();
         for card in sidecars {
@@ -1195,9 +1195,8 @@ impl Store {
         let mut cached: Option<std::collections::HashMap<String, PathBuf>> = None;
         let mut kept = 0;
         let mut placeholders = 0;
-        // Books whose artwork the device no longer holds. The same ones come
-        // round on every launch, so they are counted and named on one line
-        // rather than written a line each.
+        // Books whose artwork the device does not hold. The same ones come
+        // round on every launch, counted and named on one line.
         let mut lost: Vec<String> = Vec::new();
         for (slot, record) in self.books.iter_mut().enumerate() {
             if !shown.contains(&slot) {
@@ -1416,7 +1415,7 @@ impl Store {
         self.marks.extend(other.marks.iter().cloned());
         self.sort_marks();
         // Two marks equal in every field sort adjacent, so this drops exactly
-        // the ones already held.
+        // the ones `self.marks` holds.
         self.marks.dedup_by(|a, b| a == b);
         if self.marks.len() != held {
             self.gate = None;
@@ -1794,7 +1793,7 @@ pub struct Jackets {
     pub swept: usize,
     /// Books the store holds no artwork for at all.
     pub placeholders: usize,
-    /// Books whose artwork the device no longer holds. The same ones come
+    /// Books whose artwork the device does not hold. The same ones come
     /// round on every launch.
     pub lost: Vec<String>,
 }
@@ -2126,7 +2125,7 @@ fn write_session(out: &mut String, s: &Session) {
     row(
         out,
         format_args!(
-            "s\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "s\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             s.started_at,
             s.ended_at,
             s.end_position,
@@ -2147,6 +2146,8 @@ fn write_session(out: &mut String, s: &Session) {
             s.awake_seconds,
             s.paged_seconds,
             s.paged_words,
+            s.timed_seconds,
+            s.timed_words,
         ),
     )
 }
@@ -2182,6 +2183,8 @@ fn read_session<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Session> {
         // back until a heal measures the sitting again.
         paged_seconds: next().parse().unwrap_or(0),
         paged_words: next().parse().unwrap_or(0),
+        timed_seconds: next().parse().unwrap_or(0),
+        timed_words: next().parse().unwrap_or(0),
     })
 }
 
@@ -2190,7 +2193,7 @@ mod tests {
     use super::*;
 
     /// `remember` reaches a record through an index of `cde_key` to slot. It
-    /// must pick the same record a pass over `books` in order would, including
+    /// must pick the same record a pass over `books` in order picks, including
     /// which of several under one key.
     #[test]
     fn the_key_index_answers_what_the_scan_answered() {
@@ -4047,9 +4050,10 @@ mod tests {
             .lines()
             .map(|l| match l.strip_prefix("s\t") {
                 Some(rest) => {
-                    // The two fields a build before v0.3.3 never wrote.
-                    let cut = rest.rsplit_once('\t').expect("a paged field").0;
-                    let cut = cut.rsplit_once('\t').expect("a paged field").0;
+                    // The four fields a build before v0.3.4 never wrote.
+                    let cut = (0..4).fold(rest, |r, _| {
+                        r.rsplit_once('\t').expect("a page or interval field").0
+                    });
                     format!("s\t{cut}\n")
                 }
                 None => format!("{l}\n"),
@@ -4058,6 +4062,8 @@ mod tests {
         let read = Store::from_text(&older);
         assert_eq!(read.sessions[0].paged_seconds, 0);
         assert_eq!(read.sessions[0].paged_words, 0);
+        assert_eq!(read.sessions[0].timed_seconds, 0);
+        assert_eq!(read.sessions[0].timed_words, 0);
         assert_eq!(read.sessions[0].awake_seconds, 6607);
         assert_eq!(read.sessions[0].seconds, 2390);
     }

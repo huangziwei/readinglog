@@ -24,8 +24,9 @@ pub const METRIC_MARKERS: [&str; 8] = [
 /// track.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Metric {
-    /// `ereader_book_consume_content`: a page, with the words on it.
-    Page { words: i64 },
+    /// `ereader_book_consume_content`: a page, with the words on it and where
+    /// it began. A redraw repeats `start`; a record stating none reads -1.
+    Page { words: i64, start: i64 },
     /// A forward turn.
     Forward,
     /// A backward turn, which advances no reading.
@@ -39,6 +40,7 @@ pub fn metric(line: &str) -> Option<Metric> {
     if line.contains(METRIC_MARKERS[2]) {
         return Some(Metric::Page {
             words: field_num(line, "words_count").unwrap_or(0),
+            start: field_num(line, "start_position").unwrap_or(-1),
         });
     }
     if line.contains(METRIC_MARKERS[1]) {
@@ -60,9 +62,7 @@ pub fn metric(line: &str) -> Option<Metric> {
 /// reading-timer lines redact. The catalog's own `p_cdeKey`; `N/A` stands
 /// for a book with no key.
 pub fn cde_key(line: &str) -> Option<&str> {
-    // The head every one of `METRIC_MARKERS` is written under, in one search
-    // rather than eight. This runs on every line of a whole syslog and, on the
-    // stacks that state no key at all, finds nothing every time.
+    // `SCHEMA` heads every one of `METRIC_MARKERS`, in one search.
     if !line.contains(SCHEMA) {
         return None;
     }
@@ -70,39 +70,6 @@ pub fn cde_key(line: &str) -> Option<&str> {
         Some(k) if !k.is_empty() && k != "N/A" => Some(k),
         _ => None,
     }
-}
-
-/// A page open for less than this is navigation, not reading, whatever its
-/// words say.
-const FLOOR_SECS: f64 = 3.0;
-
-/// A page may credit this many times what its words justify, never less than
-/// [`CAP_SECS`]: a page of one word and a diagram would buy nothing.
-const PAGE_CEILING: f64 = 1.5;
-
-/// The ceiling where the words or the rate justify less.
-/// `PageHeuristicsImpl` holds this, [`PAGE_CEILING`] and [`FLOOR_SECS`].
-const CAP_SECS: f64 = 120.0;
-
-/// A derived rate under this is not real, and would buy a page a ceiling of
-/// many minutes. The firmware's matching upper bound is not applied here.
-const WPM_MIN: f64 = 40.0;
-
-/// How much of a page's open time counts as reading, in milliseconds. The
-/// floor is flat and never scales with the rate: the firmware caps that rate
-/// at 900, and a faster reader would have every page refused.
-pub fn page_ms(wpm: Option<f64>, words: i64, open_ms: i64) -> i64 {
-    let secs = open_ms as f64 / 1000.0;
-    if secs < FLOOR_SECS {
-        return 0;
-    }
-    let ceiling = match wpm {
-        Some(wpm) if wpm > WPM_MIN && words > 0 => {
-            (PAGE_CEILING * (words as f64 / (wpm / 60.0))).max(CAP_SECS)
-        }
-        _ => CAP_SECS,
-    };
-    (secs.min(ceiling) * 1000.0) as i64
 }
 
 #[cfg(test)]
@@ -135,14 +102,26 @@ mod tests {
     const NO_KEY: &str = r#"260814:112035 fastmetrics[9842]: D fastmetrics: Emitting a new record. SchemaName[ereader_reader_latency_ops], Fields[{ 	"cde_key" : "N/A", 	"op_name" : "OpenBook" } ]. :"#;
 
     #[test]
-    fn a_page_record_carries_the_words_on_it() {
-        assert_eq!(metric(&page(217)), Some(Metric::Page { words: 217 }));
-        // A fixed-layout page states none, and zero is the answer, not absence.
-        assert_eq!(metric(&page(0)), Some(Metric::Page { words: 0 }));
+    fn a_page_record_carries_the_words_on_it_and_where_it_began() {
+        let read = |w| metric(&page(w));
+        assert_eq!(
+            read(217),
+            Some(Metric::Page {
+                words: 217,
+                start: 3227
+            })
+        );
+        // `words_count` of a fixed-layout page.
+        assert_eq!(
+            read(0),
+            Some(Metric::Page {
+                words: 0,
+                start: 3227
+            })
+        );
     }
 
-    /// Two schemas carry a turn, one per reader stack, and a device that writes
-    /// one writes none of the other.
+    /// [`Metric::Forward`] and [`Metric::Back`] off either turn schema.
     #[test]
     fn a_turn_reads_its_direction_off_the_action_on_either_stack() {
         assert_eq!(metric(TURN), Some(Metric::Forward));
@@ -168,44 +147,5 @@ mod tests {
             cde_key("260814:112035 cvm[1]: I cde_key not a record"),
             None
         );
-    }
-
-    #[test]
-    fn a_page_read_at_about_its_own_rate_counts_whole() {
-        // 200 words at 200 wpm is a 60 s page; 55 s sits inside the band.
-        assert_eq!(page_ms(Some(200.0), 200, 55_000), 55_000);
-    }
-
-    #[test]
-    fn a_page_idled_on_counts_only_its_ceiling() {
-        // 600 words at 200 wpm is a 3-minute page; 1.5x it is 4m30s, and that
-        // is what counts of the ten minutes it stood open.
-        assert_eq!(page_ms(Some(200.0), 600, 600_000), 270_000);
-    }
-
-    #[test]
-    fn a_page_of_one_word_is_not_held_to_what_one_word_justifies() {
-        // 1.5x what one word justifies at 200 wpm is under half a second.
-        assert_eq!(page_ms(Some(200.0), 1, 300_000), 120_000);
-        assert_eq!(page_ms(Some(200.0), 200, 600_000), 120_000);
-    }
-
-    #[test]
-    fn a_page_read_far_faster_than_its_stated_rate_still_counts() {
-        // 200 words at 200 wpm is a 60 s page; 20 s is three times that rate.
-        assert_eq!(page_ms(Some(200.0), 200, 20_000), 20_000);
-        // And a page swiped past counts nothing, rate or no rate.
-        assert_eq!(page_ms(Some(200.0), 200, 2_000), 0);
-        assert_eq!(page_ms(None, 0, 2_000), 0);
-    }
-
-    #[test]
-    fn a_page_with_no_rate_falls_back_to_its_own_cap() {
-        assert_eq!(page_ms(None, 0, 40_000), 40_000);
-        assert_eq!(page_ms(None, 0, 600_000), 120_000);
-        // A rate the firmware would refuse for being too fast is used here.
-        assert_eq!(page_ms(Some(1800.0), 200, 40_000), 40_000);
-        // One too slow to be real is not: 250 words at 10 wpm is 25 minutes.
-        assert_eq!(page_ms(Some(10.0), 250, 600_000), 120_000);
     }
 }

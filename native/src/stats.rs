@@ -132,9 +132,8 @@ impl BookStat {
         }
     }
 
-    /// This book's reading, which `from` has already chosen the measure of:
-    /// `Stats::build` credits each sitting through `sitting_seconds`, and the
-    /// sum of those is the whole of what this book was read for.
+    /// This book's reading: `Stats::build` credits each sitting through
+    /// `sitting_seconds`, and the sum of those is this field.
     pub fn read_seconds(&self, _from: Figures) -> i64 {
         self.seconds
     }
@@ -412,8 +411,8 @@ impl Stats {
                 .entry(crate::identify::normalise(&book.title))
                 .or_insert(at);
         }
-        // The folding comes after the handing out, so that a mark no book
-        // holds is not folded: it is searched by nothing and drawn by nothing.
+        // The folding comes after the handing out. A mark no book holds is
+        // not folded.
         self.folded = Vec::with_capacity(self.marks.len());
         let mut held: Vec<(usize, usize)> = Vec::new();
         for (at, mark) in self.marks.iter().enumerate() {
@@ -465,7 +464,7 @@ impl Stats {
         for book in 0..self.books.len() {
             // A row knows its place in the list `paired` built, which is not
             // where the mark sits, so `held` comes off the slots
-            // `BookStat::marks` already holds.
+            // The slots `BookStat::marks` holds.
             let slots = &self.books[book].marks;
             for (at, row) in self.marked(book).into_iter().enumerate() {
                 let held = slots
@@ -953,8 +952,8 @@ fn fresh(extent: i64, found: &BookRecord, day: i64) -> BookStat {
 /// then the awake span, then the counter.
 fn sitting_seconds(s: &Session, from: Figures) -> i64 {
     match from {
+        Figures::App if s.timed_seconds > 0 => s.timed_seconds,
         Figures::App if s.paged_seconds > 0 => s.paged_seconds,
-        Figures::App if s.awake_seconds > 0 => s.awake_seconds,
         _ => s.seconds,
     }
 }
@@ -962,6 +961,7 @@ fn sitting_seconds(s: &Session, from: Figures) -> i64 {
 /// The words one sitting states, from the same source its seconds came from.
 fn sitting_words(s: &Session, from: Figures) -> i64 {
     match from {
+        Figures::App if s.timed_words > 0 => s.timed_words,
         Figures::App if s.paged_words > 0 => s.paged_words,
         _ => s.words,
     }
@@ -990,7 +990,7 @@ fn credit(book: &mut BookStat, s: &Session, day: i64, secs: i64, words: i64) {
     book.seconds += secs;
     book.counted_seconds += s.seconds;
     match s.measure {
-        Measure::Counted => {}
+        Measure::Counted | Measure::Timed => {}
         Measure::Paged => book.paged_seconds += secs,
         Measure::Awake => book.awake_seconds += secs,
     }
@@ -1395,11 +1395,11 @@ pub(crate) mod tests {
 
     #[test]
     fn the_floor_reads_the_clock_the_figures_are_taken_from() {
-        // Forty counted seconds, three minutes awake: under [Device] this is
-        // a skim, under [App] it is a sitting.
+        // Forty counted seconds, three minutes the turn lines credit: under
+        // [Device] this is a skim, under [App] it is a sitting.
         let day = at(2026, 3, 1);
         let mut store = on_days(&[day], 40);
-        store.sessions[0].awake_seconds = 180;
+        store.sessions[0].timed_seconds = 180;
         let counted =
             |from| Stats::build(&store, at(2026, 3, 2), true, from, SittingFloor::OneMinute);
         assert!(counted(Figures::Device).sittings.is_empty());
@@ -1407,26 +1407,26 @@ pub(crate) mod tests {
         assert_eq!(counted(Figures::App).total_seconds, 180);
     }
 
-    /// The pages are what [`Figures::App`] stands on; the awake span is what is
-    /// left without them.
+    /// The turn lines are what [`Figures::App`] stands on; the pages are what
+    /// is left without them.
     #[test]
-    fn the_app_figure_takes_the_pages_over_the_time_the_screen_was_on() {
+    fn the_app_figure_takes_the_turn_lines_over_the_pages() {
         let day = at(2026, 3, 1);
         let mut store = on_days(&[day], 40);
-        store.sessions[0].paged_seconds = 300;
-        store.sessions[0].awake_seconds = 900;
+        store.sessions[0].timed_seconds = 300;
+        store.sessions[0].paged_seconds = 900;
         let counted = |store: &Store, from| {
             Stats::build(store, at(2026, 3, 2), true, from, SittingFloor::OneMinute).total_seconds
         };
         assert_eq!(counted(&store, Figures::Device), 0, "40 s is a skim");
         assert_eq!(counted(&store, Figures::App), 300);
 
-        // A sitting no `ereader_book_consume_content` record brackets.
-        store.sessions[0].paged_seconds = 0;
+        // A sitting whose stack writes no turn line.
+        store.sessions[0].timed_seconds = 0;
         assert_eq!(counted(&store, Figures::App), 900);
 
         // And one neither source states anything for.
-        store.sessions[0].awake_seconds = 0;
+        store.sessions[0].paged_seconds = 0;
         assert_eq!(counted(&store, Figures::App), 0);
     }
 
@@ -2451,12 +2451,12 @@ pub(crate) mod tests {
 
     /// The `t` row is a running total in the book's own sidecar, lost whenever
     /// that sidecar is rebuilt, so **it must never stand in for the sum of the
-    /// sittings**: it would drop every one made before the reset.
+    /// sittings**: that drops every one made before the reset.
     #[test]
     fn a_reset_device_counter_never_shrinks_the_book() {
         let mut store = store();
-        // A third of the 3600 s the sittings credit, as a counter reset in the
-        // middle of the book would read.
+        // A third of the 3600 s the sittings credit: a counter reset in the
+        // middle of the book.
         store.counters = vec![(148_207, 1_200_000, 500)];
         for s in store.sessions.iter_mut() {
             s.stated_wpm = Some(240);
@@ -2477,18 +2477,18 @@ pub(crate) mod tests {
         assert_eq!(bible.read_seconds(Figures::App), 3_600);
         assert_eq!(bible.words_read(Figures::App), 1_800);
 
-        // The rate is still the device's own where it stated one: that comes
-        // off the newest sitting, not off a total.
+        // The device's own rate where it stated one, off the newest sitting
+        // and not off a total.
         assert_eq!(bible.wpm(Figures::Device), Some(240));
         assert_eq!(bible.wpm(Figures::App), Some(30));
     }
 
     #[test]
-    fn under_app_a_sitting_states_the_wall_clock_the_power_events_witnessed() {
+    fn under_app_a_sitting_states_what_its_turn_lines_credit() {
         let mut store = store();
-        // 1800 s of `seconds` under 2700 s of `awake_seconds`.
+        // 1800 s of `seconds` under 2700 s of `timed_seconds`.
         for s in store.sessions.iter_mut() {
-            s.awake_seconds = s.seconds * 3 / 2;
+            s.timed_seconds = s.seconds * 3 / 2;
         }
         let device = Stats::build(
             &store,
@@ -2531,9 +2531,9 @@ pub(crate) mod tests {
             let summed: i64 = sitting.hours.iter().map(|(_, s)| s).sum();
             assert_eq!(summed, sitting.seconds);
         }
-        // An `awake_seconds` of 0 keeps `Session::seconds`.
+        // A run whose turn lines credit nothing keeps `Session::seconds`.
         for s in store.sessions.iter_mut() {
-            s.awake_seconds = 0;
+            s.timed_seconds = 0;
         }
         let bare = Stats::build(
             &store,

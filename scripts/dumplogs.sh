@@ -3,8 +3,8 @@
 # Author: _hzw
 
 # scripts/dumplogs.sh — writes $OUT: the $WORK/markers lines of every log in
-# $SOURCES, the $COLUMNS rows of $CATALOG, $STORE, $APP_LOG and the zone file
-# $TZ_PATHS names.
+# $SOURCES, the $COLUMNS rows of $CATALOG, the tables of $FREETIME_DB, $STORE,
+# $APP_LOG and the zone file $TZ_PATHS names.
 
 # LC_ALL=C orders markers.log by byte and takes lines that are not UTF-8.
 LC_ALL=C
@@ -14,8 +14,7 @@ OUT=/mnt/us/dumplogs.zip
 # $WORK holds the entries and the deflate streams.
 WORK=/mnt/us/dumplogs.part
 # $CAP bounds $OUT. halve gives up bytes, at most $TRIMS times, oldest day
-# first, and report.txt says what went. Nothing bounds what is read: the device
-# already caps its own daily dumps.
+# first, and report.txt says what went. Nothing bounds what $SOURCES reads.
 CAP=5242880
 TRIMS=8
 # $HOLD_SECS bounds hold.
@@ -34,17 +33,25 @@ CONFIG=$EXT/config.xml
 APP_LOG=/mnt/us/logs/readinglog.log
 
 # $TZ_PATHS lists the zone file: the symlink every firmware keeps, then the
-# two layouts it resolves through. Nothing else on a Kindle states a zone —
-# there is no zoneinfo database and /etc/TZ reads UTC.
+# two layouts it resolves through.
 TZ_PATHS="/etc/localtime /var/local/system/tz /var/base-local/metadata/system/tz"
 TZ_VARS="/var/local/system/tzVar /var/base-local/metadata/system/tzVar"
+
+# $POWERD_DIR holds one kdb record a file, each reading `RG002`, a length,
+# `<DATA>`, then the value. $POWERD_KEYS are the seconds of idle before the
+# screensaver takes the screen, then the seconds before the device suspends.
+POWERD_DIR=/etc/kdb.src/platform/system/daemon/powerd
+POWERD_KEYS="t1_timeout t2_timeout"
+
+# $FREETIME_DB holds per-day and per-book `timeread` in seconds, keyed by
+# `accessdate` and by `asin`.
+FREETIME_DB=/mnt/us/system/freetime/freetime.db
 
 # $CATALOG_PATHS lists the catalog paths, newest firmware first.
 CATALOG_PATHS="/var/base-local/metadata/cc.db /var/local/metadata/cc.db /var/local/cc.db"
 
 # $SKIP_TYPES lists the p_cdeType values that name something other than
-# reading. It must hold whatever `catalog::SKIP_TYPES` holds: catalog.tsv is
-# read as the rows the app itself sees.
+# reading. It holds whatever `catalog::SKIP_TYPES` holds.
 SKIP_TYPES="'AUDI'"
 
 # $COLUMNS and $FROM select the Entries rows sqlite3 writes to catalog.tsv.
@@ -59,8 +66,7 @@ FROM="from Entries
       and (p_cdeType is null or p_cdeType not in ($SKIP_TYPES))"
 
 # $CENSUS counts every Entries row by p_cdeType, whatever $FROM does with it,
-# and with it the rows carrying no key and the rows naming a file. It tells a
-# row the app never asked for apart from a row the catalog does not hold.
+# and with it the rows carrying no key and the rows naming a file.
 CENSUS="select coalesce(p_cdeType, '(null)'), count(*),
     sum(p_cdeKey is null or p_cdeKey = ''),
     sum(p_location is not null and p_location <> '')
@@ -93,8 +99,7 @@ exits() {
 }
 
 # versions answers the version span $1's `=== ` header blocks cover, and when
-# the first was stamped. Nothing where the log carries no block: a log written
-# before the blocks existed still yields the rest of the report.
+# the first was stamped. Nothing where $1 carries no block.
 versions() {
     [ -f "$1" ] || return
     first=$(grep -a '^=== ' "$1" 2>/dev/null | head -n 1 | awk '{print $2}')
@@ -109,8 +114,8 @@ versions() {
     fi
 }
 
-# failures answers how many lines of $1 report a failure or a warning, and the
-# most recent of them. The markers are readinglog.sh's and the binary's.
+# failures answers how many lines of $1 open with `!!` or `??`, and the most
+# recent of them.
 failures() {
     [ -f "$1" ] || return
     n=$(grep -ac '^\(!!\|??\)' "$1" 2>/dev/null)
@@ -119,8 +124,7 @@ failures() {
     echo "$n error lines, last: $last"
 }
 
-# spans answers the first and last bracketed date in $1, which readinglog.sh
-# writes and the binary does not.
+# spans answers the first and last bracketed date in $1.
 spans() {
     [ -f "$1" ] || return
     first=$(grep -a '^\[' "$1" 2>/dev/null | head -n 1 | sed 's/^\[\([^]]*\)\].*/\1/')
@@ -136,8 +140,6 @@ target() {
 }
 
 # footer answers whether the zone file $1 ends in an empty POSIX-TZ footer.
-# Every firmware-written one does, and musl reads that as UTC past the last
-# transition where glibc reads the transition's own offset.
 footer() {
     [ -f "$1" ] || { echo "no zone file"; return; }
     left=$(tail -c 2 "$1" 2>/dev/null | tr -d '\n' | wc -c)
@@ -145,6 +147,22 @@ footer() {
     0) echo "empty" ;;
     *) echo "present" ;;
     esac
+}
+
+# kdb answers the value of the kdb record $1, which is whatever follows its
+# `<DATA>` line, and nothing where the file does not open.
+kdb() {
+    [ -r "$1" ] || return
+    sed -n '/<DATA>/,$p' "$1" 2>/dev/null | tail -n +2 | tr -d '\n'
+}
+
+# timeouts answers the $POWERD_KEYS records under $POWERD_DIR, one a line, and
+# says so where the directory is not there.
+timeouts() {
+    [ -d "$POWERD_DIR" ] || { echo "no $POWERD_DIR"; return; }
+    for key in $POWERD_KEYS; do
+        printf '%s %s\n' "$key" "$(kdb "$POWERD_DIR/$key")"
+    done
 }
 
 # say writes "$*" to standard error, a line at a time.
@@ -193,14 +211,20 @@ gzipped() {
     head -c 2 "$1" 2>/dev/null | grep -qaF -f "$WORK/magic"
 }
 
-# keep_markers appends the $WORK/markers lines of $1 to $WORK/raw, through
+# keep_markers writes the $WORK/markers lines of $1 to standard output, through
 # `gzip -dc` where gzipped answers yes.
 keep_markers() {
     if gzipped "$1"; then
         gzip -dc "$1" 2>/dev/null | grep -aF -f "$WORK/markers"
     else
         grep -aF -f "$WORK/markers" -- "$1" 2>/dev/null
-    fi >> "$WORK/raw"
+    fi
+}
+
+# held answers how many lines of $1 carry $2, and 0 where none do.
+held() {
+    n=$(grep -acF -- "$2" "$1" 2>/dev/null)
+    echo $((n))
 }
 
 # named lists the files in $1 whose name starts with $2, oldest first.
@@ -234,7 +258,9 @@ say "ReadingLog diagnostics"
 say "$TOTAL logs to read. Leave this screen up until it says done."
 say ""
 
-# $WORK/sizes holds one `bytes<tab>path` row per source; $BYTES_READ sums them.
+# $WORK/sizes holds one `bytes<tab>lines<tab>timer<tab>path` row per source;
+# $BYTES_READ sums the bytes. markers.log is sorted and de-duplicated across
+# every source, and names none of them; $WORK/sizes counts each one apart.
 : > "$WORK/raw"
 : > "$WORK/sizes"
 BYTES_READ=0
@@ -244,11 +270,16 @@ for source in $SOURCES; do
     say "log $read_so_far of $TOTAL"
     size=$(bytes "$source")
     BYTES_READ=$((BYTES_READ + size))
-    printf '%s\t%s\n' "$size" "$source" >> "$WORK/sizes"
-    keep_markers "$source"
+    keep_markers "$source" > "$WORK/one"
+    printf '%s\t%s\t%s\t%s\n' \
+        "$size" "$(lines "$WORK/one")" \
+        "$(held "$WORK/one" ReadingTimerController)" "$source" >> "$WORK/sizes"
+    cat "$WORK/one" >> "$WORK/raw"
 done
+rm -f "$WORK/one"
 
-# $WORK/raw lines open with `YYMMDD:HHMMSS`; `sort -u` orders on it.
+# $WORK/raw lines open with `YYMMDD:HHMMSS`. `sort -u` keys on the whole line,
+# and lines sharing a second come out alphabetically.
 say "ordering $(lines "$WORK/raw") lines"
 sort -u "$WORK/raw" > "$WORK/e/markers.log"
 rm -f "$WORK/raw"
@@ -275,14 +306,34 @@ if [ -n "$CATALOG" ] && command -v sqlite3 >/dev/null 2>&1; then
         > "$WORK/e/catalog-types.tsv" 2>/dev/null
 fi
 
+say "reading the scorecard"
+
+# freetime-schema.sql is every `create table` $FREETIME_DB holds and
+# freetime-<table>.tsv the rows of each. sqlite_master names both the tables
+# and the column order the TSVs carry.
+FREETIME_TABLES=
+if [ -r "$FREETIME_DB" ] && command -v sqlite3 >/dev/null 2>&1; then
+    sqlite3 "$FREETIME_DB" \
+        "select sql || ';' from sqlite_master
+         where type = 'table' and sql is not null order by name" \
+        > "$WORK/e/freetime-schema.sql" 2>/dev/null
+    FREETIME_TABLES=$(sqlite3 "$FREETIME_DB" \
+        "select name from sqlite_master
+         where type = 'table' and name not like 'sqlite_%' order by name" \
+        2>/dev/null)
+    for table in $FREETIME_TABLES; do
+        sqlite3 -separator "	" "$FREETIME_DB" "select * from '$table'" \
+            > "$WORK/e/freetime-$table.tsv" 2>/dev/null
+    done
+fi
+
 [ -f "$STORE" ] && cp "$STORE" "$WORK/e/sessions.tsv"
 [ -f "$APP_LOG" ] && cp "$APP_LOG" "$WORK/e/readinglog.log"
 
 say "reading the clock"
 
 # $TZ_FILE is the first of $TZ_PATHS that opens, $TZ_VAR the KINDLE_TZ line
-# beside it. The file itself travels in the zip: it is small, and it is the
-# only thing that says what offset the device stands on.
+# beside it. $TZ_FILE is copied into $WORK/e as localtime.tzif.
 TZ_FILE=
 for path in $TZ_PATHS; do
     [ -f "$path" ] || continue
@@ -297,9 +348,8 @@ for path in $TZ_VARS; do
 done
 [ -n "$TZ_FILE" ] && cp "$TZ_FILE" "$WORK/e/localtime.tzif"
 
-# $LOG_NOW is syslogd's own wall clock, off the newest line it wrote, and
-# $LOG_FROM where that line came from. It is the clock every stored sitting is
-# stamped on, so `date` and it must agree.
+# $LOG_NOW is the `YYMMDD:HHMMSS` of the newest line in $LIVE_LOG, and
+# $LOG_FROM the file it came from. report.txt prints it beside `date`.
 LOG_FROM=$LIVE_LOG
 LOG_NOW=$(tail -n 1 "$LIVE_LOG" 2>/dev/null | cut -c 1-13)
 case "$LOG_NOW" in
@@ -345,14 +395,50 @@ esac
         [ -n "$said" ] && echo "               $said"
     done
     echo
+    echo "powerd         the idle timeouts every sleep in the log is measured"
+    echo "               against, in seconds, out of $POWERD_DIR;"
+    echo "               a page interval past t1_timeout is idle, not reading:"
+    timeouts | sed 's/^/    /'
+    echo
+    echo "freetime.db    the reading-data aggregator's own store, a pipeline"
+    echo "               separate from the reading timer: its band is 0-500 and"
+    echo "               it credits a clipped real elapsed time where the timer"
+    echo "               credits an out-of-band page nothing. $FREETIME_DB"
+    if [ -n "$FREETIME_TABLES" ]; then
+        echo "               table, rows:"
+        for table in $FREETIME_TABLES; do
+            printf '    %s\t%s\n' "$table" "$(lines "$WORK/e/freetime-$table.tsv")"
+        done
+        echo "               freetime-schema.sql names the columns, in order."
+    elif [ -r "$FREETIME_DB" ]; then
+        echo "               present, but sqlite3 did not read it"
+    else
+        echo "               not on this device"
+    fi
+    echo
     echo "sources        $TOTAL read, $BYTES_READ bytes, every log the device holds"
     echo "               the $LARGEST largest, in bytes:"
-    sort -rn "$WORK/sizes" | head -n "$LARGEST" | sed 's/^/    /'
+    sort -rn "$WORK/sizes" | head -n "$LARGEST" | cut -f1,4 | sed 's/^/    /'
+    echo
+    echo "               every source, live first then chunks and dumps oldest"
+    echo "               first — bytes, marker lines, timer lines, path. This is"
+    echo "               the only record of which file a line came from:"
+    echo "               markers.log is sorted and de-duplicated across all $TOTAL."
+    sed 's/^/    /' "$WORK/sizes"
     echo
     echo "localtime.tzif is the zone file above, byte for byte."
     echo
-    echo "markers.log holds the log lines carrying one of these and no others:"
-    sed 's/^/    /' "$WORK/markers"
+    echo "markers.log lines sharing a second are alphabetical, not as written:"
+    echo "    CloseBook lands ahead of PreviousPage. Anything reading two lines"
+    echo "    in order must group by second first."
+    echo
+    echo "markers.log holds the log lines carrying one of these and no others,"
+    echo "with the lines of markers.log each one accounts for. A marker reading 0"
+    echo "is one this firmware never writes, not one this reader never triggered:"
+    while IFS= read -r marker; do
+        [ -n "$marker" ] || continue
+        printf '    %7s  %s\n' "$(held "$WORK/e/markers.log" "$marker")" "$marker"
+    done < "$WORK/markers"
 } > "$WORK/e/report.txt"
 
 # ------------------------------------------------------------------ $WORK/zip
@@ -468,9 +554,8 @@ say "packing $MARKER_LINES marker lines"
 stamp_zip
 pack || { say "nothing to write"; hold; exit 1; }
 
-# trim_markers gives up markers.log's oldest day, which is the unit the app
-# itself reads that file by. A file that is all one day gives up its oldest
-# half instead.
+# trim_markers gives up markers.log's oldest `YYMMDD` day. A file holding one
+# day gives up its oldest half.
 trim_markers() {
     f=$WORK/e/markers.log
     [ -s "$f" ] || return 1
@@ -490,7 +575,7 @@ trim_markers() {
 
 # trim_app drops readinglog.log's oldest `=== ` block whole, keeping every
 # failure line above the cut and never cutting below the newest two. A log
-# carrying no block gives up its oldest half instead.
+# carrying no block gives up its oldest half.
 trim_app() {
     f=$WORK/e/readinglog.log
     [ -s "$f" ] || return 1
@@ -509,9 +594,7 @@ trim_app() {
     mv "$WORK/trimmed" "$f"
 }
 
-# halve takes bytes off whichever of the two is larger. They are orders of
-# magnitude apart, so taking from each in step would spend the small
-# high-signal file to save the large one.
+# halve takes bytes off whichever of the two is larger.
 halve() {
     if [ "$(bytes "$WORK/e/markers.log")" -gt "$(bytes "$WORK/e/readinglog.log")" ]; then
         trim_markers
@@ -531,8 +614,7 @@ while [ "$(bytes "$WORK/zip")" -gt "$CAP" ] && [ "$left" -gt 0 ]; do
     left=$((left - 1))
 done
 
-# report.txt is written before any of this, so what was given up is said here
-# or nowhere: a maintainer must not read a trimmed log as a whole one.
+# $WORK/e/report.txt is written above this point; halve appends what it gave up.
 if [ $((MARKER_TRIMS + BLOCK_TRIMS + APP_TRIMS)) -gt 0 ]; then
     {
         echo
