@@ -4,7 +4,7 @@
 
 use super::line;
 use super::line::{
-    Moment, Observation, end_position, observation, opened_at_counter, payloads, stamp,
+    Moment, Observation, Skip, end_position, observation, opened_at_counter, payloads, stamp,
     toc_and_book,
 };
 use super::metric::{Metric, cde_key, metric};
@@ -16,30 +16,70 @@ pub const SESSION_GAP_SECS: i64 = 30 * 60;
 /// How far a session's opening counter may outrun the wall clock.
 const SEED_SLACK_SECS: i64 = 60;
 
-/// The longest a page may stand awake and count.
-const IDLE_SECS: i64 = 600;
+/// The words a minute past which a page is left out of `TotalTime`. One Han
+/// character counts as one word.
+const RATE_MAX: f64 = 900.0;
 
-/// The least a page must stand to count.
-const FLOOR_SECS: i64 = 3;
+/// The least a page must stand to count, in seconds, and the most it counts
+/// however long it stood.
+const PAGE_FLOOR_SECS: i64 = 3;
+const PAGE_CAP_SECS: i64 = 120;
 
-/// The most a page counts whose words vouch for none of its standing time.
-const CAP_SECS: i64 = 120;
+/// A page's words a minute, in the `f64` steps the log's `IntervalWPM` prints.
+fn page_rate(words: i64, standing_ms: i64) -> f64 {
+    words as f64 / (standing_ms as f64 / 1000.0) * 60.0
+}
 
-/// The rate at which a page's words stop vouching for the time it stood.
-const WPM_MIN: i64 = 40;
+/// What one turn line's page contributes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Credit {
+    /// Milliseconds and words the page added to `TotalTime` and `TotalWords`.
+    counted_ms: i64,
+    counted_words: i64,
+    /// Milliseconds of a page left out for a rate over [`RATE_MAX`].
+    refused_ms: i64,
+}
 
-/// How much of `standing_ms` counts as reading, in milliseconds: nothing under
-/// [`FLOOR_SECS`], the whole of it where `words` reach [`WPM_MIN`], and
-/// [`CAP_SECS`] at most where they do not.
-fn credited_ms(standing_ms: i64, words: i64) -> i64 {
-    let secs = standing_ms / 1000;
-    if secs < FLOOR_SECS {
-        return 0;
+impl Credit {
+    /// Milliseconds the page contributes to [`Measure::Timed`]. `counted_ms`
+    /// and `refused_ms` are never both set.
+    fn timed_ms(self) -> i64 {
+        self.counted_ms + self.refused_ms
     }
-    // `words` a minute against `WPM_MIN`, both sides multiplied out.
-    match words * 60_000 >= WPM_MIN * standing_ms {
-        true => standing_ms,
-        false => secs.min(CAP_SECS) * 1000,
+}
+
+/// Read one turn line's page. A page left out for any other reason contributes
+/// nothing.
+fn credits(obs: &Observation) -> Credit {
+    let Some(standing_ms) = obs.interval_ms.filter(|ms| *ms > 0) else {
+        return Credit::default();
+    };
+    // A line stating no `TotalTime` states an interval and no counter that
+    // interval reached.
+    if obs.total_ms.is_none() {
+        return Credit::default();
+    }
+    let words = obs.interval_words.unwrap_or(0).max(0);
+    match obs.skipped {
+        // A close states an interval `TotalTime` never takes.
+        None if !obs.closes => Credit {
+            counted_ms: standing_ms,
+            counted_words: words,
+            refused_ms: 0,
+        },
+        Some(Skip::Rate) if page_rate(words, standing_ms) > RATE_MAX => Credit {
+            refused_ms: standing_ms,
+            ..Credit::default()
+        },
+        _ => Credit::default(),
+    }
+}
+
+/// How much of a page's standing time counts, in seconds.
+fn paged_secs(standing_secs: i64) -> i64 {
+    match standing_secs {
+        secs if secs < PAGE_FLOOR_SECS => 0,
+        secs => secs.min(PAGE_CAP_SECS),
     }
 }
 
@@ -49,8 +89,8 @@ pub enum Measure {
     /// The span of the device's own `TotalTime` counter.
     #[default]
     Counted,
-    /// What each turn line's `IntervalTime` credits, including the lines
-    /// `SkipAvgReason` keeps out of `TotalTime`.
+    /// What `TotalTime` credits, plus the pages left out for a rate over
+    /// [`RATE_MAX`].
     Timed,
     /// How long each `ereader_book_consume_content` page was open.
     Paged,
@@ -108,7 +148,7 @@ pub struct Session {
     /// `TotalWPM`, in whole words a minute.
     pub stated_wpm: Option<i64>,
     /// Seconds this run's turn lines credit, each page's own `IntervalTime`
-    /// through [`credited_ms`]. Zero where no turn line states an interval.
+    /// through [`credits`]. Zero where no turn line states an interval.
     pub timed_seconds: i64,
     /// The words on the pages that credited time, off `IntervalWords`.
     pub timed_words: i64,
@@ -117,9 +157,8 @@ pub struct Session {
     /// Seconds this run's pages credit, whatever [`Measure`] won. Zero where
     /// no `ereader_book_consume_content` record brackets a page.
     pub paged_seconds: i64,
-    /// The words on those pages. `TotalWords` counts only the intervals the
-    /// firmware's rate band accepted, so on a faster reader `Session::words`
-    /// states a fraction of these.
+    /// The words on those pages. `TotalWords` counts only the intervals inside
+    /// [40, 900], and `Session::words` states those alone.
     pub paged_words: i64,
     /// The book's own reading counter where this run began and where it was
     /// last seen. Both or neither: a run the device never counted has none.
@@ -195,6 +234,9 @@ struct Start {
     /// The word counter at that same instant, where it is known.
     words: Option<i64>,
     at: Moment,
+    /// Milliseconds of the page open across this instant that the run before
+    /// it took. A midnight falls inside a page; an open does not.
+    credited_ms: i64,
 }
 
 /// The highest `(EndPos, TotalTime, TotalWords)` each book was logged at.
@@ -243,6 +285,7 @@ impl Opened {
                 counter_ms: Some(self.counter_ms),
                 words: counters.words_at(obs.position, self.counter_ms),
                 at: self.at,
+                credited_ms: 0,
             })
     }
 
@@ -255,6 +298,7 @@ impl Opened {
             counter_ms: None,
             words: None,
             at: self.at.clone(),
+            credited_ms: 0,
         })
     }
 }
@@ -282,8 +326,10 @@ struct Open {
     /// Words off the pages that counted. A fixed-layout page has none.
     metric_words: i64,
     /// Whether an `OpenBook` vouched this run, making the first observation's
-    /// `IntervalTime` a measure of this run and not of what came before.
+    /// `IntervalTime` this run's own.
     vouched: bool,
+    /// Milliseconds of this run's first page the run before it took.
+    credited_before: i64,
     /// How many observations this run has folded in.
     seen: i64,
     /// Milliseconds the turn lines credit, and the words beside them.
@@ -310,6 +356,7 @@ impl Open {
     /// the floor.
     fn new(end_position: i64, now: &Moment, start: Option<Start>) -> Self {
         let vouched = start.is_some();
+        let credited_before = start.as_ref().map_or(0, |s| s.credited_ms);
         let (time_lo, words_lo, from) = match start {
             Some(s) => (s.counter_ms, s.words, s.at),
             None => (None, None, now.clone()),
@@ -333,6 +380,7 @@ impl Open {
             metric_turns: 0,
             metric_words: 0,
             vouched,
+            credited_before,
             seen: 0,
             interval_total_ms: 0,
             interval_words: 0,
@@ -375,34 +423,45 @@ impl Open {
     }
 
     fn observe(&mut self, now: &Moment, obs: &Observation) {
+        // The first observation of a run no `OpenBook` vouched measures the
+        // page before the run. The counter it states opens the run.
+        self.seen += 1;
+        let credit = match self.seen == 1 && !self.vouched {
+            true => Credit::default(),
+            false => credits(obs),
+        };
+        // A midnight inside this page left its earlier share with the run it
+        // cut, and this run takes the rest.
+        let timed = match self.seen {
+            1 => (credit.timed_ms() - self.credited_before).max(0),
+            _ => credit.timed_ms(),
+        };
+        // `TotalTime` and `TotalWords` hold this page. A run without a floor
+        // takes one a page under the readings stated here.
+        if let (None, Some(t)) = (self.time_lo, obs.total_ms) {
+            self.time_lo = Some(t - credit.counted_ms);
+            self.time_hi = t - credit.counted_ms;
+            self.last_time = Some(t - credit.counted_ms);
+        }
+        if let (None, Some(w)) = (self.words_lo, obs.words) {
+            self.words_lo = Some(w - credit.counted_words);
+            self.words_hi = w - credit.counted_words;
+            self.last_words = Some(w - credit.counted_words);
+        }
         if let (Some(from), Some(to)) = (self.last_time, obs.total_ms) {
             Self::credit(&mut self.hours_ms, self.last.secs, now.secs, to - from);
+        }
+        // `IntervalTime` stands on its own line, apart from `total_ms`, which a
+        // refused line repeats unchanged.
+        if timed > 0 {
+            self.interval_total_ms += timed;
+            self.interval_words += obs.interval_words.unwrap_or(0).max(0);
+            Self::credit(&mut self.interval_hours_ms, self.last.secs, now.secs, timed);
         }
         self.ended_at = now.at.clone();
         self.last = now.clone();
         if obs.page_turn {
             self.page_turns += 1;
-        }
-        // `IntervalTime` stands on its own line, apart from `total_ms`, which a
-        // `SkipAvgReason` line repeats unchanged. The first observation of a
-        // run no `OpenBook` vouched measures the page before the run.
-        self.seen += 1;
-        let first_unvouched = self.seen == 1 && !self.vouched;
-        let interval_words = obs.interval_words.unwrap_or(0).max(0);
-        if let Some(counts) = obs
-            .interval_ms
-            .filter(|_| !first_unvouched)
-            .map(|ms| credited_ms(ms, interval_words))
-            .filter(|ms| *ms > 0)
-        {
-            self.interval_total_ms += counts;
-            self.interval_words += interval_words;
-            Self::credit(
-                &mut self.interval_hours_ms,
-                self.last.secs,
-                now.secs,
-                counts,
-            );
         }
         if let Some(t) = obs.total_ms {
             self.time_lo = Some(self.time_lo.map_or(t, |lo| lo.min(t)));
@@ -418,7 +477,7 @@ impl Open {
     }
 
     /// Fold one `fastmetrics` record into the run. `Metric::Page` closes the
-    /// interval the page before it opened and [`page_ms`] says how much
+    /// interval the page before it opened and [`paged_secs`] says how much
     /// counts; neither `last` nor `ended_at` moves.
     fn observe_metric(&mut self, now: &Moment, m: &Metric, awake: &Awake) {
         match m {
@@ -428,15 +487,11 @@ impl Open {
             Metric::Page { words, start } => {
                 if let Some((from, from_words, from_start)) = self.open_page.take() {
                     // `Awake::bound`: the interval less the sleeps it states.
-                    let awake_secs = awake.bound(from.abs, now.abs);
-                    let counts = match awake_secs > IDLE_SECS {
-                        true => 0,
-                        false => credited_ms(awake_secs * 1000, from_words),
-                    };
+                    let counts = paged_secs(awake.bound(from.abs, now.abs)) * 1000;
                     self.paged_total_ms += counts;
-                    // A page under the floor counts no time, and its words are
-                    // not read either. A redraw repeats `start` and its words
-                    // stand on the screen the record before it already counted.
+                    // A page under the floor counts no time and no words. A
+                    // redraw repeats `start`, and its words stand on the screen
+                    // the record before it counted.
                     let redraw = *start >= 0 && *start == from_start;
                     if counts > 0 && !redraw {
                         self.metric_words += from_words;
@@ -463,6 +518,7 @@ impl Open {
         };
         let elapsed = now.abs - self.last.abs;
         let before = now.abs - now.secs - self.last.abs;
+        let credit = credits(obs);
         Some(Break::Midnight(Start {
             counter_ms: Some(from + share(to - from, elapsed, before)),
             words: self
@@ -475,6 +531,7 @@ impl Open {
                 abs: now.abs - now.secs,
                 at: format!("{}T00:00:00", now.day),
             },
+            credited_ms: share(credit.timed_ms(), elapsed, before),
         }))
     }
 
@@ -492,6 +549,17 @@ impl Open {
                 self.last.secs,
                 86_400,
                 at_boundary - from,
+            );
+        }
+        // The share of the page open across the boundary that stood this side
+        // of it. The run after this one takes the rest.
+        if boundary.credited_ms > 0 {
+            self.interval_total_ms += boundary.credited_ms;
+            Self::credit(
+                &mut self.interval_hours_ms,
+                self.last.secs,
+                86_400,
+                boundary.credited_ms,
             );
         }
         self.time_hi = self.time_hi.max(at_boundary);
@@ -632,9 +700,7 @@ pub fn parse_sessions<'a>(
 ) -> Vec<Session> {
     // [`Awake`] reads the whole stream before the first sitting closes.
     let lines: Vec<&str> = events.into_iter().collect();
-    // Which lines are reading-timer lines, read once: the readers below each
-    // want one side or the other, and asking separately is a whole-line search
-    // apiece over the largest stream a launch reads.
+    // Which lines are reading-timer lines, read once.
     let timer: Vec<bool> = lines
         .iter()
         .map(|line| crate::log::is_timer(line))
@@ -666,7 +732,7 @@ pub fn parse_sessions<'a>(
         })
         .filter_map(|(line, _)| Some(stamp(line)?.abs))
         .collect();
-    // Only `powerd` states a change, so the timer lines are not offered one.
+    // Only `powerd` states a change; the timer lines are not offered one.
     let woke = lines
         .iter()
         .copied()
@@ -892,7 +958,9 @@ mod tests {
         assert_eq!(out[0].seconds, 22);
         assert_eq!(out[0].end_position, 19_886_489);
         assert_eq!(out[0].page_turns, 2);
-        assert_eq!(out[0].words, 172);
+        // The open states no word counter. The run floors at 1905 less the 12
+        // words of the page that brought it: 2077 - 1893.
+        assert_eq!(out[0].words, 184);
         assert_eq!(out[0].measure, Measure::Counted);
         assert_eq!(out[0].started_at, "2026-09-06T19:24:01");
         assert_eq!(out[0].ended_at, "2026-09-06T19:24:25");
@@ -1362,39 +1430,163 @@ mod tests {
         assert_eq!(out[1].started_at, "2026-08-07T12:00:05");
     }
 
+    /// A turn line stating `words` on a page that stood `ms`, refused for
+    /// `skipped`.
+    fn turn(ms: i64, words: i64, skipped: Option<Skip>) -> Observation {
+        Observation {
+            position: 148_207,
+            total_ms: Some(7_390_020),
+            words: Some(49_583),
+            interval_ms: Some(ms),
+            interval_words: Some(words),
+            skipped,
+            page_turn: true,
+            closes: false,
+        }
+    }
+
+    /// The page the device counted: `(ms, words)` against `Credit`.
+    fn counted(ms: i64, words: i64) -> Credit {
+        Credit {
+            counted_ms: ms,
+            counted_words: words,
+            refused_ms: 0,
+        }
+    }
+
+    /// The page it refused for rate, whose words it counted nowhere.
+    fn refused(ms: i64) -> Credit {
+        Credit {
+            refused_ms: ms,
+            ..Credit::default()
+        }
+    }
+
+    #[test]
+    fn a_page_the_device_counted_counts_the_whole_of_its_interval() {
+        // 3 words in 4 s and one page standing an hour both count whole.
+        assert_eq!(
+            credits(&turn(3_600_000, 900, None)),
+            counted(3_600_000, 900)
+        );
+        assert_eq!(credits(&turn(4_000, 3, None)), counted(4_000, 3));
+    }
+
+    /// 346 Han characters in 8.85 s reads 2,345 a minute, over [`RATE_MAX`].
+    #[test]
+    fn a_page_refused_for_reading_too_fast_counts_the_whole_of_its_interval() {
+        assert_eq!(credits(&turn(8_850, 346, Some(Skip::Rate))), refused(8_850));
+        // 69 words in 4.6 s is 900 in whole arithmetic, a hair over it in `f64`.
+        assert!(page_rate(69, 4_600) > RATE_MAX);
+        assert_eq!(credits(&turn(4_600, 69, Some(Skip::Rate))), refused(4_600));
+    }
+
+    #[test]
+    fn a_page_refused_for_standing_too_long_counts_nothing() {
+        // 3 words in 10 minutes is 0.5 a minute, under the band's floor.
+        assert_eq!(
+            credits(&turn(600_000, 3, Some(Skip::Rate))),
+            Credit::default()
+        );
+        assert_eq!(
+            credits(&turn(600_000, 0, Some(Skip::Rate))),
+            Credit::default()
+        );
+    }
+
+    #[test]
+    fn a_page_refused_on_the_event_alone_counts_nothing() {
+        // A backward turn, at whatever rate.
+        assert_eq!(
+            credits(&turn(8_850, 346, Some(Skip::Event))),
+            Credit::default()
+        );
+        assert_eq!(
+            credits(&turn(60_000, 200, Some(Skip::Event))),
+            Credit::default()
+        );
+    }
+
+    #[test]
+    fn a_close_counts_nothing_though_it_states_an_interval() {
+        let mut close = turn(91_293, 187, None);
+        close.closes = true;
+        assert_eq!(credits(&close), Credit::default());
+    }
+
+    /// A line of an untimed book states `IntervalTime` and no `TotalTime`.
+    #[test]
+    fn a_page_of_a_book_the_timer_never_counted_counts_nothing() {
+        let mut untimed = turn(2_141, 0, None);
+        untimed.total_ms = None;
+        untimed.words = None;
+        assert_eq!(credits(&untimed), Credit::default());
+    }
+
     #[test]
     fn a_page_between_the_floor_and_the_cap_counts_whole() {
-        // `words` 0: [`FLOOR_SECS`] and [`CAP_SECS`] decide.
-        assert_eq!(credited_ms(3_000, 0), 3_000);
-        assert_eq!(credited_ms(55_000, 0), 55_000);
-        assert_eq!(credited_ms(120_000, 0), 120_000);
+        assert_eq!(paged_secs(3), 3);
+        assert_eq!(paged_secs(55), 55);
+        assert_eq!(paged_secs(120), 120);
     }
 
     #[test]
     fn a_page_standing_past_the_cap_counts_the_cap() {
-        assert_eq!(credited_ms(600_000, 0), 120_000);
-        // 80 words over 230 s is 21 a minute: the words vouch for none of it.
-        assert_eq!(credited_ms(230_000, 80), 120_000);
+        assert_eq!(paged_secs(600), 120);
+        assert_eq!(paged_secs(86_400), 120);
     }
 
     #[test]
     fn a_page_swiped_past_counts_nothing() {
-        assert_eq!(credited_ms(2_999, 0), 0);
-        assert_eq!(credited_ms(0, 0), 0);
-        // Under [`FLOOR_SECS`] whatever `words` states.
-        assert_eq!(credited_ms(500, 100), 0);
+        assert_eq!(paged_secs(2), 0);
+        assert_eq!(paged_secs(0), 0);
     }
 
-    /// Past [`FLOOR_SECS`], a page whose words reach [`WPM_MIN`] counts whole.
+    /// A turn on `yymmdd` at `hhmmss`, its page having stood `interval_ms` to
+    /// bring the book's counter to `total_ms`.
+    fn dated_page(yymmdd: &str, hhmmss: &str, total_ms: i64, interval_ms: i64) -> String {
+        format!(
+            "{yymmdd}:{hhmmss} cvm[6144]: I ReadingTimerController:Information::NextPage,\
+             Verdict:Processed,PageStartPos:YJPosition: AfQJAAAAAAAA:54205,\
+             IntervalTime:{interval_ms},IntervalWords:320,TotalTime:{total_ms},TotalWords:49583,\
+             CurrentPos:YJPosition: AfQJAAAAAAAA:54205,\
+             EndPos:YJPosition: AbcVAAAPAAAA:148207,PosLeft:94002,%Left:0.645;"
+        )
+    }
+
+    /// The counter a run opens at sits one page under the first it is told.
     #[test]
-    fn a_page_its_words_vouch_for_counts_whole() {
-        // 214 words over 257 s is 50 a minute, over [`WPM_MIN`].
-        assert_eq!(credited_ms(257_000, 214), 257_000);
-        // Exactly `WPM_MIN`: 40 words in 60 s.
-        assert_eq!(credited_ms(60_000, 40), 60_000);
-        // A hair under [`WPM_MIN`]: [`CAP_SECS`] takes it.
-        assert_eq!(credited_ms(60_001, 40), 60_000);
-        assert_eq!(credited_ms(600_000, 399), 120_000);
+    fn a_run_counts_the_page_that_brought_it_its_first_counter() {
+        let lines = [
+            open_book("101500"),
+            // No counter: the open starts the run without vouching one.
+            position("101501"),
+            page("101540", 7_390_020),
+            page("101620", 7_429_910),
+        ];
+        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        assert_eq!(out.len(), 1);
+        // Both pages stood 39.89 s, and both are the run's.
+        assert_eq!(out[0].seconds, 79);
+        assert_eq!(out[0].timed_seconds, 79);
+    }
+
+    /// A page open across midnight is split between the two days in proportion,
+    /// and the two figures split it the same way.
+    #[test]
+    fn a_page_open_across_midnight_falls_half_in_each_day() {
+        let lines = [
+            dated_page("260807", "235900", 7_000_000, 20_000),
+            dated_page("260807", "235940", 7_040_000, 40_000),
+            dated_page("260808", "000020", 7_080_000, 40_000),
+        ];
+        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        assert_eq!(out.len(), 2);
+        // 40 s stood wholly on the 7th, then 40 s split 20/20 over midnight.
+        assert_eq!((out[0].seconds, out[0].timed_seconds), (60, 60));
+        assert_eq!((out[1].seconds, out[1].timed_seconds), (20, 20));
+        assert_eq!(out[0].hours, vec![(23, 60)]);
+        assert_eq!(out[1].hours, vec![(0, 20)]);
     }
 
     #[test]

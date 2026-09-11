@@ -50,9 +50,8 @@ pub fn stamp(line: &str) -> Option<Moment> {
     })
 }
 
-/// The `YYMMDD:HHMMSS` a line begins with, or `None`. The form a watermark
-/// travels in: log prefixes and dump filenames are both this shape, and every
-/// comparison is string ordering with no date arithmetic.
+/// The `YYMMDD:HHMMSS` a line begins with, or `None`. Log prefixes and dump
+/// filenames share this shape and compare as strings.
 pub fn line_stamp(line: &str) -> Option<&str> {
     stamp(line).map(|_| &line[..13])
 }
@@ -82,9 +81,7 @@ pub fn log_stamp(iso: &str) -> Option<String> {
 /// `IntervalTime`.
 pub fn field(line: &str, name: &str) -> Option<i64> {
     let bytes = line.as_bytes();
-    // `name` and the `:` after it, matched without building the needle: this
-    // runs on every payload of every line of a whole syslog, and the string
-    // it would allocate is a constant at every call site.
+    // `name` and the `:` after it, matched without building the needle.
     let at = line.match_indices(name).find_map(|(at, _)| {
         let end = at + name.len();
         if bytes.get(end) != Some(&b':') {
@@ -101,8 +98,8 @@ pub fn field(line: &str, name: &str) -> Option<i64> {
 }
 
 /// The payloads a line carries, each `<Event>,<fields>` with the event name
-/// possibly missing. Fields must be read from one payload: reading across pairs
-/// one event's counter with another's book.
+/// possibly missing. One payload's counter stands beside that payload's book
+/// and no other.
 pub fn payloads(line: &str) -> impl Iterator<Item = &str> {
     line.split_once("Information::")
         .map_or("", |(_, rest)| rest)
@@ -203,6 +200,36 @@ pub fn names(line: &str, event: &str) -> bool {
     })
 }
 
+/// Why a page was left out of `TotalTime`, off the `SkipAvgReason` a refused
+/// line carries. A line carrying none states the `IntervalTime` that advanced
+/// `TotalTime`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Skip {
+    /// `Sample out of range`: the page's words a minute fell outside [40, 900].
+    Rate,
+    /// Every other reason, `RTC_PrevPage` and `RTC_Close`: a backward turn and
+    /// a close, at whatever rate.
+    Event,
+}
+
+impl Skip {
+    /// Read a stated reason. `Sample out of range` alone is [`Self::Rate`].
+    fn read(reason: &str) -> Self {
+        match reason {
+            "Sample out of range" => Self::Rate,
+            _ => Self::Event,
+        }
+    }
+}
+
+/// The text a payload states for `name`, up to the `,` or `;` ending it.
+/// `name` carries its own `:` and starts a field.
+fn stated_text<'a>(payload: &'a str, name: &'static str) -> Option<&'a str> {
+    let at = fields(payload, name).next()?;
+    let rest = &payload[at..];
+    Some(&rest[..rest.find([',', ';']).unwrap_or(rest.len())])
+}
+
 /// What one line says about the book it is on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Observation {
@@ -212,17 +239,19 @@ pub struct Observation {
     pub total_ms: Option<i64>,
     pub words: Option<i64>,
     /// How long this one page stood, in milliseconds. Stated on every turn
-    /// line, including the ones `SkipAvgReason` keeps out of `total_ms`.
+    /// line, including the ones [`Skip`] keeps out of `total_ms`.
     pub interval_ms: Option<i64>,
     /// The words on the page `interval_ms` measured.
     pub interval_words: Option<i64>,
+    /// Why this page was left out of `total_ms`, where it was.
+    pub skipped: Option<Skip>,
     pub page_turn: bool,
     pub closes: bool,
 }
 
 /// Read a line as an observation of some book's reading counter, or `None`. A
-/// line qualifies on what it carries — a counter beside an end position — not
-/// on a named event, which a mangled payload loses while keeping its fields.
+/// line qualifies on what it carries: a counter beside an end position. A
+/// mangled payload keeps its fields and loses its event name.
 pub fn observation(line: &str) -> Option<Observation> {
     let page_turn = names(line, "NextPage");
     let closes = names(line, "CloseBook");
@@ -252,6 +281,7 @@ pub fn observation(line: &str) -> Option<Observation> {
         words: field(chosen, "TotalWords"),
         interval_ms: field(chosen, "IntervalTime"),
         interval_words: field(chosen, "IntervalWords"),
+        skipped: stated_text(chosen, "SkipAvgReason:").map(Skip::read),
         page_turn,
         closes,
     })
@@ -277,7 +307,7 @@ pub fn opened_at_counter(line: &str) -> Option<i64> {
 }
 
 /// Where `"<name>"` opens in `line`, quotes included, without building the
-/// quoted needle: these run once a field once a line over a whole syslog.
+/// quoted needle.
 fn quoted(line: &str, name: &str) -> Option<usize> {
     let bytes = line.as_bytes();
     line.match_indices(name).find_map(|(at, _)| {
@@ -294,8 +324,8 @@ pub fn field_text<'a>(line: &'a str, name: &str) -> Option<&'a str> {
     Some(&tail[..tail.find('"')?])
 }
 
-/// Read `"<name>" : <number>` out of the same body. Distinct from
-/// [`field_text`], which reads past an unquoted value into the next field.
+/// Read `"<name>" : <number>` out of the same body. [`field_text`] reads past
+/// an unquoted value into the next field.
 pub fn field_num(line: &str, name: &str) -> Option<i64> {
     let at = quoted(line, name).filter(|at| line[at + name.len() + 2..].starts_with(" : "))?
         + name.len()
@@ -318,7 +348,7 @@ pub fn from_book(line: &str) -> Option<i64> {
 
 /// Map each book's per-line `EndPos` fingerprint to its [`from_book`], with
 /// `pending` dropped around an open and a close. Only a timer line states any
-/// of this, so the rest are passed over on the family alone.
+/// of this; the rest are passed over on the family alone.
 pub fn frombook_map<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<(i64, i64)> {
     let mut map: Vec<(i64, i64)> = Vec::new();
     let mut pending: Option<i64> = None;
