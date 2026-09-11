@@ -4,7 +4,7 @@
 
 use super::line;
 use super::line::{
-    Moment, Observation, Skip, end_position, observation, opened_at_counter, payloads, stamp,
+    Moment, Observation, end_position, observation, opened_at_counter, payloads, stamp,
     toc_and_book,
 };
 use super::metric::{Metric, cde_key, metric};
@@ -16,9 +16,9 @@ pub const SESSION_GAP_SECS: i64 = 30 * 60;
 /// How far a session's opening counter may outrun the wall clock.
 const SEED_SLACK_SECS: i64 = 60;
 
-/// The words a minute past which a page is left out of `TotalTime`. One Han
-/// character counts as one word.
-const RATE_MAX: f64 = 900.0;
+/// The words a minute under which a page stood longer than its words account
+/// for. `TotalTime` holds a page to [40, 900]; only the floor is kept here.
+const RATE_MIN: f64 = 40.0;
 
 /// The least a page must stand to count, in seconds, and the most it counts
 /// however long it stood.
@@ -36,7 +36,8 @@ struct Credit {
     /// Milliseconds and words the page added to `TotalTime` and `TotalWords`.
     counted_ms: i64,
     counted_words: i64,
-    /// Milliseconds of a page left out for a rate over [`RATE_MAX`].
+    /// Milliseconds of a page left out of `TotalTime` whose rate reaches
+    /// [`RATE_MIN`].
     refused_ms: i64,
 }
 
@@ -48,8 +49,8 @@ impl Credit {
     }
 }
 
-/// Read one turn line's page. A page left out for any other reason contributes
-/// nothing.
+/// Read one turn line's page. A page left out of `TotalTime` counts whenever
+/// its own rate reaches [`RATE_MIN`], whatever the event and however fast.
 fn credits(obs: &Observation) -> Credit {
     let Some(standing_ms) = obs.interval_ms.filter(|ms| *ms > 0) else {
         return Credit::default();
@@ -60,18 +61,20 @@ fn credits(obs: &Observation) -> Credit {
         return Credit::default();
     }
     let words = obs.interval_words.unwrap_or(0).max(0);
-    match obs.skipped {
-        // A close states an interval `TotalTime` never takes.
-        None if !obs.closes => Credit {
+    // A close states an interval `TotalTime` never takes.
+    if !obs.refused && !obs.closes {
+        return Credit {
             counted_ms: standing_ms,
             counted_words: words,
             refused_ms: 0,
-        },
-        Some(Skip::Rate) if page_rate(words, standing_ms) > RATE_MAX => Credit {
+        };
+    }
+    match page_rate(words, standing_ms) >= RATE_MIN {
+        true => Credit {
             refused_ms: standing_ms,
             ..Credit::default()
         },
-        _ => Credit::default(),
+        false => Credit::default(),
     }
 }
 
@@ -89,8 +92,8 @@ pub enum Measure {
     /// The span of the device's own `TotalTime` counter.
     #[default]
     Counted,
-    /// What `TotalTime` credits, plus the pages left out for a rate over
-    /// [`RATE_MAX`].
+    /// What `TotalTime` credits, plus the pages left out of it whose own rate
+    /// reaches [`RATE_MIN`].
     Timed,
     /// How long each `ereader_book_consume_content` page was open.
     Paged,
@@ -1430,16 +1433,16 @@ mod tests {
         assert_eq!(out[1].started_at, "2026-08-07T12:00:05");
     }
 
-    /// A turn line stating `words` on a page that stood `ms`, refused for
-    /// `skipped`.
-    fn turn(ms: i64, words: i64, skipped: Option<Skip>) -> Observation {
+    /// A turn line stating `words` on a page that stood `ms`, carrying a
+    /// `SkipAvgReason` where `refused`.
+    fn turn(ms: i64, words: i64, refused: bool) -> Observation {
         Observation {
             position: 148_207,
             total_ms: Some(7_390_020),
             words: Some(49_583),
             interval_ms: Some(ms),
             interval_words: Some(words),
-            skipped,
+            refused,
             page_turn: true,
             closes: false,
         }
@@ -1466,58 +1469,54 @@ mod tests {
     fn a_page_the_device_counted_counts_the_whole_of_its_interval() {
         // 3 words in 4 s and one page standing an hour both count whole.
         assert_eq!(
-            credits(&turn(3_600_000, 900, None)),
+            credits(&turn(3_600_000, 900, false)),
             counted(3_600_000, 900)
         );
-        assert_eq!(credits(&turn(4_000, 3, None)), counted(4_000, 3));
+        assert_eq!(credits(&turn(4_000, 3, false)), counted(4_000, 3));
     }
 
-    /// 346 Han characters in 8.85 s reads 2,345 a minute, over [`RATE_MAX`].
+    /// 346 Han characters in 8.85 s reads 2,345 a minute. No ceiling stands
+    /// between that page and [`Measure::Timed`].
     #[test]
     fn a_page_refused_for_reading_too_fast_counts_the_whole_of_its_interval() {
-        assert_eq!(credits(&turn(8_850, 346, Some(Skip::Rate))), refused(8_850));
-        // 69 words in 4.6 s is 900 in whole arithmetic, a hair over it in `f64`.
-        assert!(page_rate(69, 4_600) > RATE_MAX);
-        assert_eq!(credits(&turn(4_600, 69, Some(Skip::Rate))), refused(4_600));
+        assert_eq!(credits(&turn(8_850, 346, true)), refused(8_850));
+        assert_eq!(credits(&turn(100, 400, true)), refused(100));
     }
 
     #[test]
     fn a_page_refused_for_standing_too_long_counts_nothing() {
-        // 3 words in 10 minutes is 0.5 a minute, under the band's floor.
-        assert_eq!(
-            credits(&turn(600_000, 3, Some(Skip::Rate))),
-            Credit::default()
-        );
-        assert_eq!(
-            credits(&turn(600_000, 0, Some(Skip::Rate))),
-            Credit::default()
-        );
+        // 3 words in 10 minutes is 0.5 a minute, under [`RATE_MIN`].
+        assert_eq!(credits(&turn(600_000, 3, true)), Credit::default());
+        assert_eq!(credits(&turn(600_000, 0, true)), Credit::default());
+        // 40 words in 60 s is [`RATE_MIN`] exactly, and counts.
+        assert_eq!(credits(&turn(60_000, 40, true)), refused(60_000));
     }
 
+    /// A backward turn and a close carry `SkipAvgReason` whatever their rate.
+    /// Their own rate decides, as it does on a forward turn.
     #[test]
-    fn a_page_refused_on_the_event_alone_counts_nothing() {
-        // A backward turn, at whatever rate.
-        assert_eq!(
-            credits(&turn(8_850, 346, Some(Skip::Event))),
-            Credit::default()
-        );
-        assert_eq!(
-            credits(&turn(60_000, 200, Some(Skip::Event))),
-            Credit::default()
-        );
+    fn a_page_refused_on_the_event_alone_counts_on_its_rate() {
+        // 346 words in 8.85 s, and 200 in 60 s: both reach [`RATE_MIN`].
+        assert_eq!(credits(&turn(8_850, 346, true)), refused(8_850));
+        assert_eq!(credits(&turn(60_000, 200, true)), refused(60_000));
+        // 300 words over 888 s is 20 a minute: a book left open at a close.
+        let mut idle = turn(888_000, 300, true);
+        idle.closes = true;
+        assert_eq!(credits(&idle), Credit::default());
     }
 
+    /// A close states an interval `TotalTime` never takes, reason or none.
     #[test]
-    fn a_close_counts_nothing_though_it_states_an_interval() {
-        let mut close = turn(91_293, 187, None);
+    fn a_close_stating_no_reason_counts_on_its_rate_too() {
+        let mut close = turn(91_293, 187, false);
         close.closes = true;
-        assert_eq!(credits(&close), Credit::default());
+        assert_eq!(credits(&close), refused(91_293));
     }
 
     /// A line of an untimed book states `IntervalTime` and no `TotalTime`.
     #[test]
     fn a_page_of_a_book_the_timer_never_counted_counts_nothing() {
-        let mut untimed = turn(2_141, 0, None);
+        let mut untimed = turn(2_141, 0, false);
         untimed.total_ms = None;
         untimed.words = None;
         assert_eq!(credits(&untimed), Credit::default());

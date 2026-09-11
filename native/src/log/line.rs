@@ -200,36 +200,6 @@ pub fn names(line: &str, event: &str) -> bool {
     })
 }
 
-/// Why a page was left out of `TotalTime`, off the `SkipAvgReason` a refused
-/// line carries. A line carrying none states the `IntervalTime` that advanced
-/// `TotalTime`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Skip {
-    /// `Sample out of range`: the page's words a minute fell outside [40, 900].
-    Rate,
-    /// Every other reason, `RTC_PrevPage` and `RTC_Close`: a backward turn and
-    /// a close, at whatever rate.
-    Event,
-}
-
-impl Skip {
-    /// Read a stated reason. `Sample out of range` alone is [`Self::Rate`].
-    fn read(reason: &str) -> Self {
-        match reason {
-            "Sample out of range" => Self::Rate,
-            _ => Self::Event,
-        }
-    }
-}
-
-/// The text a payload states for `name`, up to the `,` or `;` ending it.
-/// `name` carries its own `:` and starts a field.
-fn stated_text<'a>(payload: &'a str, name: &'static str) -> Option<&'a str> {
-    let at = fields(payload, name).next()?;
-    let rest = &payload[at..];
-    Some(&rest[..rest.find([',', ';']).unwrap_or(rest.len())])
-}
-
 /// What one line says about the book it is on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Observation {
@@ -239,12 +209,14 @@ pub struct Observation {
     pub total_ms: Option<i64>,
     pub words: Option<i64>,
     /// How long this one page stood, in milliseconds. Stated on every turn
-    /// line, including the ones [`Skip`] keeps out of `total_ms`.
+    /// line, including the ones `refused` keeps out of `total_ms`.
     pub interval_ms: Option<i64>,
     /// The words on the page `interval_ms` measured.
     pub interval_words: Option<i64>,
-    /// Why this page was left out of `total_ms`, where it was.
-    pub skipped: Option<Skip>,
+    /// Whether the line carries a `SkipAvgReason`, keeping `interval_ms` out of
+    /// `total_ms`. Three reasons occur: `Sample out of range` for a rate
+    /// outside [40, 900], `RTC_PrevPage` and `RTC_Close` for the event alone.
+    pub refused: bool,
     pub page_turn: bool,
     pub closes: bool,
 }
@@ -281,7 +253,7 @@ pub fn observation(line: &str) -> Option<Observation> {
         words: field(chosen, "TotalWords"),
         interval_ms: field(chosen, "IntervalTime"),
         interval_words: field(chosen, "IntervalWords"),
-        skipped: stated_text(chosen, "SkipAvgReason:").map(Skip::read),
+        refused: fields(chosen, "SkipAvgReason:").next().is_some(),
         page_turn,
         closes,
     })
