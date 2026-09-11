@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use crate::annotate::{Gate, Mark, State};
 use crate::catalog::Book;
 use crate::clippings::Kind;
+use crate::clock::Clock;
 use crate::covers;
 use crate::log::line::{line_stamp, log_stamp};
 use crate::log::session::{Measure, SESSION_GAP_SECS, Session};
@@ -176,6 +177,9 @@ pub struct Cleared {
 pub struct Store {
     /// Ascending by `started_at`, with `end_position` a sitting's identity.
     pub sessions: Vec<Session>,
+    /// The clocks the device has been seen standing on, which is what places
+    /// an instant a source states as a true epoch rather than a wall clock.
+    pub clock: Clock,
     /// `EndPos → BookEndPosition.FromBook`, ascending by key.
     pub ends: Vec<(i64, i64)>,
     /// Every book `catalog` has named, ascending by `extent` then `cde_key`.
@@ -259,6 +263,9 @@ impl Store {
     /// The rows of `text`, one arm per row type.
     fn parse(text: &str) -> Self {
         let mut out = Self::default();
+        // Folded in whole at the end: `Clock` sorts and collapses, and a row
+        // taken alone would be compared against a half-read record.
+        let mut seen: Vec<(i64, i64)> = Vec::new();
         for line in text.lines() {
             let mut f = line.split('\t');
             match f.next() {
@@ -266,6 +273,14 @@ impl Store {
                 Some("m") => {
                     out.mark = f.next().unwrap_or_default().to_string();
                     out.mark_offset = f.next().and_then(|o| o.parse().ok());
+                }
+                Some("z") => {
+                    if let (Some(Ok(epoch)), Some(Ok(offset))) = (
+                        f.next().map(str::parse::<i64>),
+                        f.next().map(str::parse::<i64>),
+                    ) {
+                        seen.push((epoch, offset));
+                    }
                 }
                 Some("f") => out.floor = f.next().unwrap_or_default().to_string(),
                 Some("e") => {
@@ -308,6 +323,7 @@ impl Store {
                 _ => {}
             }
         }
+        out.clock.observe(seen);
         out.sort();
         out.migrate();
         out
@@ -357,6 +373,9 @@ impl Store {
                 Some(offset) => row(&mut out, format_args!("m\t{}\t{offset}", self.mark)),
                 None => row(&mut out, format_args!("m\t{}", self.mark)),
             }
+        }
+        for (epoch, offset) in self.clock.rows() {
+            row(&mut out, format_args!("z\t{epoch}\t{offset}"));
         }
         if !self.floor.is_empty() {
             row(&mut out, format_args!("f\t{}", self.floor));
@@ -432,13 +451,14 @@ impl Store {
         self.marks.iter().filter(move |m| m.extent == extent)
     }
 
-    /// Move [`Self::mark`] and [`Self::floor`] onto the clock `offset` names,
-    /// answering the seconds they moved. A clock stepping forward moves
-    /// neither: the mark falls further behind and no line is skipped.
-    pub fn follow_clock(&mut self, offset: Option<i64>) -> i64 {
+    /// Move [`Self::mark`] and [`Self::floor`] onto the clock `offset` names at
+    /// `at`, answering the seconds they moved, and write that clock into
+    /// [`Self::clock`]. A clock stepping forward moves neither and skips no line.
+    pub fn follow_clock(&mut self, at: i64, offset: Option<i64>) -> i64 {
         let Some(now) = offset else {
             return 0;
         };
+        self.clock.learn(at, now);
         // A record holding no offset states no clock to compare against; from
         // here it is read as the one the mark stands on.
         let Some(held) = self.mark_offset.replace(now) else {
@@ -568,7 +588,8 @@ impl Store {
 
     /// Read the log and fold it in, reporting files opened and files to open.
     pub fn update(&mut self, on: &mut dyn FnMut(usize, usize)) -> Pass {
-        let rewound = self.follow_clock(crate::zone::offset_at(crate::date::epoch_now()));
+        let now = crate::date::epoch_now();
+        let rewound = self.follow_clock(now, crate::zone::offset_at(now));
         let from = self.read_from();
         let got = source::collect_from(
             Path::new(source::LIVE_LOG),
@@ -1470,6 +1491,9 @@ impl Store {
                 .collect(),
             books: vec![self.books[slot].clone()],
             marks: self.marks_of(self.books[slot].extent).cloned().collect(),
+            // The clocks the device stood on are the record's, not one book's,
+            // but the marks carried out state instants placed on them.
+            clock: self.clock.clone(),
             // `mark`, `floor`, the `c` rows and the two gates key the record,
             // not one book.
             mark: String::new(),
@@ -2691,6 +2715,7 @@ mod tests {
                 key: "B00OKPCRLG".into(),
                 at: "260808:120000".into(),
             }],
+            clock: Clock::default(),
         };
         store.sessions[0].time_left = Some(41_400);
         store.sessions[1].asin = None;
@@ -2744,6 +2769,7 @@ mod tests {
                 key: "B00OKPCRLG".into(),
                 at: "260808:120000".into(),
             }],
+            clock: Clock::default(),
         };
         store.save(&dir).expect("a written store");
         let text = std::fs::read_to_string(Store::file(&dir)).expect("a store to stamp");
@@ -3126,6 +3152,7 @@ mod tests {
             marks: Vec::new(),
             gate: None,
             sources: None,
+            clock: Clock::default(),
         };
         store.sessions[0].progress = progress;
         store.remember(&[shelved(938_018, "B00OKPCRLG", "A Book", 88.0)]);
@@ -3264,7 +3291,35 @@ mod tests {
             marks: Vec::new(),
             gate: None,
             sources: None,
+            clock: Clock::default(),
         }
+    }
+
+    /// The instant a pass ran at. Nothing below turns on its value.
+    const NOW: i64 = 1_788_951_701;
+
+    #[test]
+    fn the_clocks_the_device_stood_on_round_trip_through_the_file() {
+        let dir = scratch("clocks");
+        let mut store = on_clock("260911:115340", Some(7200));
+        // A fortnight four hours east, between two stretches at home.
+        store.clock.observe(vec![
+            (1_786_000_000, 7200),
+            (1_787_600_000, 21_600),
+            (1_788_900_000, 7200),
+        ]);
+        store.save(&dir).expect("a record");
+        let read = Store::load(&dir);
+        assert_eq!(read.clock, store.clock);
+        assert_eq!(read.clock.offsets(), vec![7200, 21_600]);
+        assert_eq!(read.clock.offset_at(1_787_700_000), Some(21_600));
+        // A record an older build wrote carries no `z` row at all.
+        let older = Store::from_text(
+            "#readinglog
+m	260911:115340	7200
+",
+        );
+        assert!(older.clock.is_empty());
     }
 
     /// A record marked at `mark` under `offset`, with the same stamp as its
@@ -3283,14 +3338,14 @@ mod tests {
         // Berlin at +2 to Berlin at +1: the hour between 02:00 and 03:00 is
         // written twice, and `mark` bars the second one.
         let mut store = on_clock("261025:023000", Some(7200));
-        assert_eq!(store.follow_clock(Some(3600)), 3600);
+        assert_eq!(store.follow_clock(NOW, Some(3600)), 3600);
         assert_eq!(store.mark, "261025:013000");
         assert_eq!(store.floor, "261025:013000");
         assert_eq!(store.mark_offset, Some(3600));
 
         // +8 home to +1, across a day boundary.
         let mut far = on_clock("261102:043000", Some(8 * 3600));
-        assert_eq!(far.follow_clock(Some(3600)), 7 * 3600);
+        assert_eq!(far.follow_clock(NOW, Some(3600)), 7 * 3600);
         assert_eq!(far.mark, "261101:213000");
     }
 
@@ -3298,14 +3353,14 @@ mod tests {
     fn a_clock_that_has_not_stepped_back_moves_nothing() {
         // Forward: the mark falls further behind, which skips no line.
         let mut ahead = on_clock("260909:130922", Some(7200));
-        assert_eq!(ahead.follow_clock(Some(8 * 3600)), 0);
+        assert_eq!(ahead.follow_clock(NOW, Some(8 * 3600)), 0);
         assert_eq!(ahead.mark, "260909:130922");
         assert_eq!(ahead.mark_offset, Some(8 * 3600));
 
         // The same offset, and a step under a minute, are not a zone changing.
         let mut same = on_clock("260909:130922", Some(7200));
-        assert_eq!(same.follow_clock(Some(7200)), 0);
-        assert_eq!(same.follow_clock(Some(7170)), 0);
+        assert_eq!(same.follow_clock(NOW, Some(7200)), 0);
+        assert_eq!(same.follow_clock(NOW, Some(7170)), 0);
         assert_eq!(same.mark, "260909:130922");
     }
 
@@ -3313,13 +3368,13 @@ mod tests {
     fn a_record_with_no_offset_takes_one_and_stands_still() {
         // Nothing to compare against.
         let mut fresh = on_clock("260909:130922", None);
-        assert_eq!(fresh.follow_clock(Some(7260)), 0);
+        assert_eq!(fresh.follow_clock(NOW, Some(7260)), 0);
         assert_eq!(fresh.mark, "260909:130922");
         assert_eq!(fresh.mark_offset, Some(7260));
 
         // A device stating no zone at all leaves the record as it stands.
         let mut blind = on_clock("260909:130922", Some(7200));
-        assert_eq!(blind.follow_clock(None), 0);
+        assert_eq!(blind.follow_clock(NOW, None), 0);
         assert_eq!(blind.mark_offset, Some(7200));
     }
 

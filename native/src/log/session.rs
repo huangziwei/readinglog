@@ -13,6 +13,11 @@ use super::power::{Awake, is_state_change};
 /// The gap between two reader events that cuts a session.
 pub const SESSION_GAP_SECS: i64 = 30 * 60;
 
+/// How far the wall clock may step back inside a run before the run is cut.
+/// The clock only moves backwards when the device changes zone, and a run
+/// spanning that would book one clock hour twice.
+const CLOCK_BACK_SECS: i64 = 60;
+
 /// How far a session's opening counter may outrun the wall clock.
 const SEED_SLACK_SECS: i64 = 60;
 
@@ -629,6 +634,11 @@ impl Open {
     }
 }
 
+/// Whether the wall clock moved further than one run may hold.
+fn stepped(now: i64, prev: i64) -> bool {
+    now - prev > SESSION_GAP_SECS || prev - now > CLOCK_BACK_SECS
+}
+
 /// Book `advance_ms` against the clock hours the device was awake in. `from`
 /// and `to` bracket an interval a page was open across; the advance splits
 /// between [`Awake`]'s stretches in it, or takes the whole where it names none.
@@ -762,7 +772,7 @@ pub fn parse_sessions<'a>(
         // `gapped` counts the stretch between two lines `is_state_change`
         // rejects. A reading-timer line is never one of them.
         if timer || !is_state_change(line) {
-            gapped |= prev_abs.is_some_and(|prev| now.abs - prev > SESSION_GAP_SECS);
+            gapped |= prev_abs.is_some_and(|prev| stepped(now.abs, prev));
             prev_abs = Some(now.abs);
         }
 
@@ -777,7 +787,7 @@ pub fn parse_sessions<'a>(
         // observation. A record beyond it waits for the next run.
         let live = open
             .as_ref()
-            .is_some_and(|cur| now.abs - cur.last.abs <= SESSION_GAP_SECS);
+            .is_some_and(|cur| !stepped(now.abs, cur.last.abs));
 
         if !timer && let Some(key) = cde_key(line) {
             named = Some((now.abs, key.to_string()));
@@ -1586,6 +1596,31 @@ mod tests {
         assert_eq!((out[1].seconds, out[1].timed_seconds), (20, 20));
         assert_eq!(out[0].hours, vec![(23, 60)]);
         assert_eq!(out[1].hours, vec![(0, 20)]);
+    }
+
+    /// The clock steps back mid-run, which is a device changing zone. The run
+    /// is cut there and the lines past the step open a new one, so neither
+    /// sitting books a clock hour it did not run in.
+    #[test]
+    fn a_clock_stepping_back_mid_run_cuts_the_run() {
+        let lines = [
+            dated_page("260924", "104500", 7_000_000, 20_000),
+            dated_page("260924", "104540", 7_040_000, 40_000),
+            // +06:00 to +02:00 on landing: 10:46 becomes 06:46.
+            dated_page("260924", "064620", 7_080_000, 40_000),
+            dated_page("260924", "064700", 7_120_000, 40_000),
+        ];
+        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        assert_eq!(out.len(), 2, "one sitting either side of the step");
+        assert_eq!(out[0].started_at, "2026-09-24T10:45:00");
+        assert_eq!(out[0].ended_at, "2026-09-24T10:45:40");
+        assert_eq!(out[0].hours, vec![(10, 40)]);
+        assert_eq!(out[1].started_at, "2026-09-24T06:46:20");
+        assert_eq!(
+            out[1].hours,
+            vec![(6, 40)],
+            "and nothing in the hour it left"
+        );
     }
 
     #[test]

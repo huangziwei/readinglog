@@ -4,6 +4,8 @@
 
 use std::path::Path;
 
+use crate::clock::Clock;
+
 /// The database, one for the whole device. `VBSqlConstants.DATABASE_PATH`,
 /// the same literal on 5.16, 5.18 and 5.19.
 pub const VOCAB_DB: &str = "/mnt/us/system/vocabulary/vocab.db";
@@ -35,24 +37,26 @@ pub struct Lookup {
 }
 
 /// Every lookup the device holds. Empty where there is no database.
-pub fn read() -> Vec<Lookup> {
-    read_from(Path::new(VOCAB_DB))
+pub fn read(clock: &Clock) -> Vec<Lookup> {
+    read_from(Path::new(VOCAB_DB), clock)
 }
 
 /// [`read`] against a named file, empty where there is none — asking
 /// `sqlite3` for one would make it. The device's `VOCAB_BUILDER` switch gates
 /// only *new* rows, so nothing here consults it.
-pub fn read_from(db: &Path) -> Vec<Lookup> {
+pub fn read_from(db: &Path, clock: &Clock) -> Vec<Lookup> {
     if !db.exists() {
         return Vec::new();
     }
     let Some(rows) = crate::catalog::ask(db, QUERY, "vocab") else {
         return Vec::new();
     };
-    rows.iter().filter_map(|row| parse_row(row)).collect()
+    rows.iter()
+        .filter_map(|row| parse_row(row, clock))
+        .collect()
 }
 
-fn parse_row(row: &str) -> Option<Lookup> {
+fn parse_row(row: &str, clock: &Clock) -> Option<Lookup> {
     let mut f = row.split(crate::catalog::COL);
     let mut next = || f.next().unwrap_or_default();
     let title = next().to_string();
@@ -64,7 +68,7 @@ fn parse_row(row: &str) -> Option<Lookup> {
     let pos = position(next());
     let ms: i64 = next().trim().parse().ok()?;
     Some(Lookup {
-        at: stamp(ms),
+        at: stamp(clock, ms),
         title,
         author,
         key,
@@ -83,13 +87,10 @@ fn position(pos: &str) -> i64 {
 }
 
 /// `LOOKUPS.timestamp` — `new Date().getTime()`, epoch milliseconds — as the
-/// device-local `YYYY-MM-DDTHH:MM:SS` a sitting is stored under. Empty where
-/// the clock will not break the value down.
-fn stamp(ms: i64) -> String {
-    match crate::date::local_of(ms.div_euclid(1_000)) {
-        Some((days, secs)) => crate::date::stamp(days, secs),
-        None => String::new(),
-    }
+/// `YYYY-MM-DDTHH:MM:SS` a sitting is stored under. On the clock the device
+/// stood on **then**: `Store::name_from` brackets this inside a sitting.
+fn stamp(clock: &Clock, ms: i64) -> String {
+    crate::clock::stamp(clock, ms.div_euclid(1_000))
 }
 
 #[cfg(test)]
@@ -136,7 +137,7 @@ mod tests {
     #[test]
     fn a_lookup_carries_its_books_title_key_and_a_position() {
         let db = fixture("read");
-        let got = read_from(&db);
+        let got = read_from(&db, &Clock::default());
         // The orphan names no `BOOK_INFO` row, so the join drops it.
         assert_eq!(got.len(), 3, "a lookup with no book was kept");
         assert_eq!(got[0].title, "A Book");
@@ -152,7 +153,7 @@ mod tests {
     #[test]
     fn a_timestamp_reads_as_the_local_wall_clock_a_sitting_is_stored_under() {
         let db = fixture("stamp");
-        let got = read_from(&db);
+        let got = read_from(&db, &Clock::default());
         // The zone is the device's, so only the shape is fixed here.
         assert_eq!(got[0].at.len(), 19);
         assert_eq!(&got[0].at[4..5], "-");
@@ -171,7 +172,7 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         let db = dir.join("vocab.db");
         std::fs::write(&db, b"not a database").expect("a written file");
-        assert!(read_from(&db).is_empty());
+        assert!(read_from(&db, &Clock::default()).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -181,7 +182,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         let db = dir.join("vocab.db");
-        assert!(read_from(&db).is_empty());
+        assert!(read_from(&db, &Clock::default()).is_empty());
         assert!(!db.exists(), "a device file was made to read it");
         let _ = std::fs::remove_dir_all(&dir);
     }

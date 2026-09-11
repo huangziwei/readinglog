@@ -146,7 +146,7 @@ pub fn rescue_from(
     let mut contested: Vec<i64> = Vec::new();
 
     if store.wants_naming(Named::Vocab) {
-        let lookups = vocab::read_from(db);
+        let lookups = vocab::read_from(db, &store.clock);
         out.lookups = lookups.len();
         let said: Vec<Witness> = lookups.iter().map(witness_of_lookup).collect();
         out.by_vocab = store.name_from(&said, Named::Vocab, &mut contested);

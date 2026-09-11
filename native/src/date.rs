@@ -1,6 +1,6 @@
-//! Proleptic Gregorian date arithmetic on a day count from 1970-01-01: a real
-//! calendar to reject a stamp naming no day, a day number that survives
-//! midnight, a weekday, and month lengths for the calendar grid.
+//! Proleptic Gregorian date arithmetic on a day count from 1970-01-01. Every
+//! instant the crate stores is device-local wall clock with no zone on it, so a
+//! day the clock moved on holds 23 or 25 hours of it.
 
 use crate::lang::Strings;
 use crate::settings::WeekStart;
@@ -107,7 +107,7 @@ pub fn local_of(epoch: i64) -> Option<(i64, i64)> {
 
 /// [`local_of`] with the zone already read, which is where the arithmetic is.
 /// An `offset` of `None` is a device keeping no zone file this can read.
-fn local_at(epoch: i64, offset: Option<i64>) -> Option<(i64, i64)> {
+pub fn local_at(epoch: i64, offset: Option<i64>) -> Option<(i64, i64)> {
     let (days, secs) = match offset {
         Some(offset) => {
             let local = epoch.checked_add(offset)?;

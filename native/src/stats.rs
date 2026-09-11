@@ -1035,6 +1035,7 @@ fn streaks(days: &[(i64, i64)], today: i64) -> (i64, i64) {
 pub(crate) mod tests {
     use super::*;
     use crate::catalog::Book;
+    use crate::clock::Clock;
 
     /// The opening of a JPEG, which is all [`jacket`] reads of one.
     const JPEG: &[u8] = b"\xff\xd8\xff\xe0\x00\x10JFIF\0";
@@ -1712,6 +1713,7 @@ pub(crate) mod tests {
             marks: Vec::new(),
             gate: None,
             sources: None,
+            clock: Clock::default(),
         }
     }
 

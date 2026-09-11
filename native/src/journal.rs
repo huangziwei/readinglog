@@ -133,9 +133,8 @@ pub fn trim(log: &Path, ceiling: u64) -> Option<Trimmed> {
     // Where to cut from: the previous block, or the last one where keeping two
     // would leave the file over the ceiling anyway.
     let from = match marks.len() {
-        // No header block to cut on: a log written by a build before they
-        // existed, which is every log standing at the moment one arrives. The
-        // newest `ceiling` bytes are kept, from a line boundary.
+        // No header block to cut on: the newest `ceiling` bytes are kept,
+        // from a line boundary.
         0 => by_bytes,
         1 => marks[0],
         _ => {

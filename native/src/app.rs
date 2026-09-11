@@ -1246,6 +1246,10 @@ impl App {
         let shelf = crate::identify::walk(documents, true);
         // One read of the file, for both passes.
         let records = crate::clippings::read(clips);
+        // Measured before either pass places an instant on a clock.
+        self.store
+            .clock
+            .observe(crate::annotate::clocks_seen(&records, &shelf));
         let rescue = crate::identify::rescue(&mut self.store, &records, &shelf);
         self.store.sources = Some(held);
         let merge = crate::annotate::fold(&mut self.store, clips, &records, &shelf, &survey);

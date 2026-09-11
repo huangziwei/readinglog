@@ -10,6 +10,7 @@ pub mod app;
 pub mod backup;
 pub mod catalog;
 pub mod clippings;
+pub mod clock;
 pub mod covers;
 pub mod date;
 pub mod eink;

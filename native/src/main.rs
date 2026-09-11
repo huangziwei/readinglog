@@ -123,6 +123,21 @@ fn collect_into(
     // any other: a gate written and not saved is a gate that never holds, and
     // the sources would be read again on every launch for ever.
     let gated = naming.is_some();
+    // Measured before either pass: both place a true instant on the device's
+    // own clock, and this is what says which clock that was.
+    if store.clock.observe(annotate::clocks_seen(&records, &shelf)) {
+        let held: Vec<String> = store
+            .clock
+            .offsets()
+            .iter()
+            .map(|o| zone::hhmm(*o))
+            .collect();
+        eprintln!(
+            "clock: {} seen, {}",
+            store.clock.rows().len(),
+            held.join(" ")
+        );
+    }
     let rescue = naming.map(|gate| {
         let out = identify::rescue(store, &records, &shelf);
         // The gate as it stood *before* the pass: a pass that named something

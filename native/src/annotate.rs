@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::clippings::{Clipping, Kind};
+use crate::clock::{self, Clock};
 use crate::date;
 use crate::identify::normalise;
 use crate::sidecar::{Roster, Shelf, Survey};
@@ -192,7 +193,7 @@ pub struct Merge {
 /// **Bump with every change that would give different rows over unchanged
 /// files**, or the new join never reaches a device whose files have not
 /// moved.
-const RULES: u32 = 5;
+const RULES: u32 = 6;
 
 /// What a pass must have seen for the rows it wrote to still stand.
 /// **Nothing here may be a figure only a parse can state**, or the gate has to
@@ -256,7 +257,7 @@ pub fn fold(
     }
     out.read = true;
     out.clippings = records.len();
-    let marks = merge(records, shelf, &store.books);
+    let marks = merged(records, shelf, &store.books, &store.clock);
     for mark in &marks {
         match mark.state {
             State::Live => out.live += 1,
@@ -281,13 +282,36 @@ struct Held<'a> {
     roster: &'a Roster,
     /// The `b` record this roster's book has, where a `p_location` names it.
     book: Option<&'a BookRecord>,
-    /// `created` as the wall clock the clippings file writes, one per record.
-    at: Vec<String>,
+    /// `created` as epoch seconds, one per record: the side that has to be
+    /// placed on a clock before the clippings file's wall clock can meet it.
+    created: Vec<i64>,
+    /// The offset a pair settled on, per record, and `None` for one no
+    /// clipping claimed.
+    offset: Vec<Option<i64>>,
     claimed: Vec<bool>,
 }
 
+impl Held<'_> {
+    /// The wall clock record `i` is read on: the offset its own pair settled
+    /// on, else the best the record and the zone file can offer.
+    fn at(&self, i: usize, clock: &Clock, offsets: &[i64]) -> String {
+        let epoch = self.created[i];
+        match self.offset[i] {
+            Some(offset) => date::local_at(epoch, Some(offset))
+                .map(|(d, s)| date::stamp(d, s))
+                .unwrap_or_default(),
+            None => match offsets.first() {
+                Some(offset) if clock.is_empty() => date::local_at(epoch, Some(*offset))
+                    .map(|(d, s)| date::stamp(d, s))
+                    .unwrap_or_default(),
+                _ => clock::stamp(clock, epoch),
+            },
+        }
+    }
+}
+
 /// [`fold`]'s arithmetic, over sources already read.
-fn merge(records: &[Clipping], shelf: &Shelf, books: &[BookRecord]) -> Vec<Mark> {
+fn merged(records: &[Clipping], shelf: &Shelf, books: &[BookRecord], clock: &Clock) -> Vec<Mark> {
     // Both ways into `books`, built once. Reaching a record by scanning
     // instead is a pass over every record per roster and per clipping, and the
     // title arm folds every record's title on each of them.
@@ -298,15 +322,25 @@ fn merge(records: &[Clipping], shelf: &Shelf, books: &[BookRecord]) -> Vec<Mark>
         .iter()
         .map(|roster| Held {
             book: by_stem.get(roster.file.as_str()).map(|&at| &books[at]),
-            at: roster
+            created: roster
                 .annotations
                 .iter()
-                .map(|a| stamp_of(a.created))
+                .map(|a| a.created.div_euclid(1_000))
                 .collect(),
+            offset: vec![None; roster.annotations.len()],
             claimed: vec![false; roster.annotations.len()],
             roster,
         })
         .collect();
+
+    // The record's own clocks first, then the zone file standing now, which is
+    // all a device with no annotations to measure has.
+    let mut offsets = clock.offsets();
+    if let Some(now) = crate::zone::offset_at(date::epoch_now())
+        && !offsets.contains(&now)
+    {
+        offsets.push(now);
+    }
 
     // The book each clipping names, read once: the second join needs it as
     // much as the first.
@@ -325,11 +359,12 @@ fn merge(records: &[Clipping], shelf: &Shelf, books: &[BookRecord]) -> Vec<Mark>
     // The stamp first, which is exact wherever it holds.
     let mut paired: Vec<Option<(usize, usize)>> = Vec::with_capacity(records.len());
     for (clip, named) in records.iter().zip(&named) {
-        let found = matching(clip, &held, *named);
-        if let Some((at, i)) = found {
+        let found = matching(clip, &held, *named, &offsets);
+        if let Some((at, i, offset)) = found {
             held[at].claimed[i] = true;
+            held[at].offset[i] = Some(offset);
         }
-        paired.push(found);
+        paired.push(found.map(|(at, i, _)| (at, i)));
     }
     in_order(records, &named, &mut held, &mut paired);
 
@@ -352,7 +387,7 @@ fn merge(records: &[Clipping], shelf: &Shelf, books: &[BookRecord]) -> Vec<Mark>
                     .map(|b| b.title.clone())
                     .unwrap_or_else(|| at.roster.file.clone()),
                 kind: annotation.kind,
-                at: at.at[i].clone(),
+                at: at.at(i, clock, &offsets),
                 state: State::Live,
                 start: annotation.start_position().unwrap_or(-1),
                 end: annotation.end_position().unwrap_or(-1),
@@ -468,35 +503,127 @@ fn one(
     mark
 }
 
-/// The sidecar record carrying `clip`'s kind and stamp. A stamp is unique
-/// down the file, so one match settles it; where two books share a second the
-/// named book breaks the tie, and an unbroken tie is left unmatched.
-fn matching(clip: &Clipping, held: &[Held], named: Option<&BookRecord>) -> Option<(usize, usize)> {
-    if clip.at.is_empty() {
-        return None;
-    }
-    let found: Vec<(usize, usize)> = held
-        .iter()
-        .enumerate()
-        .flat_map(|(at, h)| {
-            h.roster
-                .annotations
-                .iter()
-                .enumerate()
-                .filter(move |(i, a)| !h.claimed[*i] && a.kind == clip.kind && h.at[*i] == clip.at)
-                .map(move |(i, _)| (at, i))
-        })
-        .collect();
-    match found.as_slice() {
-        [] => None,
-        [one] => Some(*one),
-        several => several
+/// The sidecar record carrying `clip`'s kind and instant, and which of
+/// `offsets` placed it there. A stamp is unique down the file, so one match
+/// settles it; a tie the named book cannot break is left unmatched.
+fn matching(
+    clip: &Clipping,
+    held: &[Held],
+    named: Option<&BookRecord>,
+    offsets: &[i64],
+) -> Option<(usize, usize, i64)> {
+    let wall = instant(&clip.at)?;
+    for offset in offsets {
+        let found: Vec<(usize, usize)> = held
             .iter()
-            .find(|(at, _)| {
-                held[*at].book.map(|b| b.extent) == named.map(|b| b.extent) && named.is_some()
+            .enumerate()
+            .flat_map(|(at, h)| {
+                h.roster
+                    .annotations
+                    .iter()
+                    .enumerate()
+                    .filter(move |(i, a)| {
+                        !h.claimed[*i] && a.kind == clip.kind && h.created[*i] + offset == wall
+                    })
+                    .map(move |(i, _)| (at, i))
             })
-            .copied(),
+            .collect();
+        let settled = match found.as_slice() {
+            [] => continue,
+            [one] => Some(*one),
+            several => several
+                .iter()
+                .find(|(at, _)| {
+                    held[*at].book.map(|b| b.extent) == named.map(|b| b.extent) && named.is_some()
+                })
+                .copied(),
+        };
+        if let Some((at, i)) = settled {
+            return Some((at, i, *offset));
+        }
     }
+    None
+}
+
+/// A `YYYY-MM-DDTHH:MM:SS` as seconds, the axis a wall clock and a placed
+/// epoch are compared on.
+fn instant(at: &str) -> Option<i64> {
+    let day = date::parse_day(date::day_of(at))?;
+    Some(day * 86_400 + date::secs_of(at))
+}
+
+/// The offsets the device stood on, measured off the one instant it wrote
+/// twice: `My Clippings.txt` in wall clock, the rare sidecar in epoch
+/// milliseconds. Best-supported first, and never below [`SUPPORT`].
+fn offsets_seen(records: &[Clipping], shelf: &Shelf) -> Vec<i64> {
+    // The file's instants by kind, ascending, so one record reads only the
+    // clippings a clock could reach — never the whole file.
+    let mut by_kind: HashMap<Kind, Vec<i64>> = HashMap::new();
+    for clip in records {
+        if let Some(at) = instant(&clip.at) {
+            by_kind.entry(clip.kind).or_default().push(at);
+        }
+    }
+    for found in by_kind.values_mut() {
+        found.sort_unstable();
+    }
+    let mut count: HashMap<i64, usize> = HashMap::new();
+    for roster in &shelf.rosters {
+        for record in &roster.annotations {
+            let created = record.created.div_euclid(1_000);
+            let Some(found) = by_kind.get(&record.kind) else {
+                continue;
+            };
+            let from = found.partition_point(|at| *at < created - clock::BOUND_SECS);
+            let to = found.partition_point(|at| *at <= created + clock::BOUND_SECS);
+            for at in &found[from..to] {
+                let offset = at - created;
+                if clock::plausible(offset) {
+                    *count.entry(offset).or_default() += 1;
+                }
+            }
+        }
+    }
+    let mut out: Vec<(i64, usize)> = count.into_iter().filter(|(_, n)| *n >= SUPPORT).collect();
+    // Most-supported first, and the larger offset first on a tie so the order
+    // is the same on every device.
+    out.sort_by(|a, b| b.1.cmp(&a.1).then(b.0.cmp(&a.0)));
+    out.into_iter().map(|(offset, _)| offset).collect()
+}
+
+/// How many records a difference must stand for before it is read as a clock.
+const SUPPORT: usize = 2;
+
+/// `(instant, offset)` per record the two files agree about. Must run before
+/// any pass that places a true epoch on the device's clock, [`merged`]
+/// included.
+pub fn clocks_seen(records: &[Clipping], shelf: &Shelf) -> Vec<(i64, i64)> {
+    let offsets = offsets_seen(records, shelf);
+    if offsets.is_empty() {
+        return Vec::new();
+    }
+    // A second holds one clipping: `ClippingsManager` appends on one thread.
+    let mut by_instant: HashMap<(Kind, i64), ()> = HashMap::new();
+    for clip in records {
+        if let Some(at) = instant(&clip.at) {
+            by_instant.insert((clip.kind, at), ());
+        }
+    }
+    let mut out = Vec::new();
+    for roster in &shelf.rosters {
+        for record in &roster.annotations {
+            let created = record.created.div_euclid(1_000);
+            // The best-supported clock that lands this record on a write the
+            // file holds. A record no clock places states nothing.
+            if let Some(offset) = offsets
+                .iter()
+                .find(|offset| by_instant.contains_key(&(record.kind, created + *offset)))
+            {
+                out.push((created, *offset));
+            }
+        }
+    }
+    out
 }
 
 /// Each record's `.sdr` name — its path, directory and last suffix cut — to
@@ -531,15 +658,6 @@ fn stem_of(location: &str) -> &str {
     match name.rsplit_once('.') {
         Some((stem, _)) => stem,
         None => name,
-    }
-}
-
-/// `created`, epoch milliseconds, as the wall clock the clippings file writes.
-/// Empty where it names no day this can place.
-fn stamp_of(created: i64) -> String {
-    match date::local_of(created.div_euclid(1_000)) {
-        Some((day, secs)) => date::stamp(day, secs),
-        None => String::new(),
     }
 }
 
@@ -642,6 +760,14 @@ fn words_hold(a: &Mark, b: &Mark) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [`merged`] with the clocks these two files state, answering marks alone.
+    fn merge(records: &[Clipping], shelf: &Shelf, books: &[BookRecord]) -> Vec<Mark> {
+        let mut clock = Clock::default();
+        clock.observe(clocks_seen(records, shelf));
+        merged(records, shelf, books, &clock)
+    }
+
     use crate::sidecar::Annotation;
 
     /// A `b` record for a book on the device.
@@ -694,7 +820,7 @@ mod tests {
     fn created(at: &str) -> i64 {
         let day = date::parse_day(date::day_of(at)).expect("a day");
         let local = day * 86_400 + date::secs_of(at);
-        // `stamp_of` reads the zone back off the same offset.
+        // The merge measures the offset back off this same difference.
         let offset = crate::zone::offset_at(local).unwrap_or_else(|| {
             let (d, s) = date::local_of(0).unwrap_or((0, 0));
             d * 86_400 + s
