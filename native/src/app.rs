@@ -156,6 +156,12 @@ impl App {
         self.rebuild();
     }
 
+    /// Take every figure from `from`, and total again.
+    pub fn set_figures(&mut self, from: crate::settings::Figures) {
+        self.settings.figures = from;
+        self.rebuild();
+    }
+
     /// List the books no jacket can be drawn for, or leave them off the lists.
     pub fn set_uncovered(&mut self, show: bool) {
         self.settings.show_uncovered = show;

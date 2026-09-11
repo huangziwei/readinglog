@@ -14,7 +14,7 @@ use readinglog_native::app::App;
 use readinglog_native::date;
 use readinglog_native::eink::fb::Framebuffer;
 use readinglog_native::lang::Lang;
-use readinglog_native::settings::{ColorScheme, Scope, SittingFloor, TextSize, WeekStart};
+use readinglog_native::settings::{ColorScheme, Figures, Scope, SittingFloor, TextSize, WeekStart};
 use readinglog_native::stats::Stats;
 use readinglog_native::store::Store;
 use readinglog_native::ui::chrome::Tab;
@@ -171,6 +171,8 @@ struct Opts {
     unnamed: bool,
     /// The shortest run a total counts as reading.
     floor: SittingFloor,
+    /// Which of the two sets every figure is taken from.
+    figures: Figures,
     /// Whether a list holds the books no jacket can be drawn for.
     uncovered: bool,
 }
@@ -195,6 +197,7 @@ impl Default for Opts {
             hits: false,
             unnamed: true,
             floor: SittingFloor::default(),
+            figures: Figures::default(),
             uncovered: true,
         }
     }
@@ -316,7 +319,7 @@ fn open(store: &Store, opts: &Opts, w: u32, h: u32, lang: Lang, size: TextSize) 
             store,
             opts.day,
             true,
-            readinglog_native::settings::Figures::Device,
+            Figures::Device,
             readinglog_native::settings::SittingFloor::All,
         )
         .books
@@ -335,6 +338,7 @@ fn open(store: &Store, opts: &Opts, w: u32, h: u32, lang: Lang, size: TextSize) 
     app.set_color_scheme(opts.scheme);
     app.set_unnamed(opts.unnamed);
     app.set_sitting_floor(opts.floor);
+    app.set_figures(opts.figures);
     app.set_uncovered(opts.uncovered);
     Ok(app)
 }
@@ -359,7 +363,7 @@ fn thinned_for(shot: &Shot, opts: &Opts, art: &Path) -> Option<Store> {
                 &store,
                 opts.day,
                 true,
-                readinglog_native::settings::Figures::Device,
+                Figures::Device,
                 readinglog_native::settings::SittingFloor::All,
             )
             .books
@@ -821,6 +825,7 @@ fn read_args(args: impl Iterator<Item = String>) -> Result<Opts> {
             "--day" => opts.day = day(&value()?)?,
             "--hide-unnamed" => opts.unnamed = false,
             "--floor" => opts.floor = floor(&value()?)?,
+            "--figures" => opts.figures = figures(&value()?)?,
             "--hide-uncovered" => opts.uncovered = false,
             "--hits" => opts.hits = true,
             "--out" => opts.out = PathBuf::from(value()?),
@@ -957,6 +962,14 @@ fn week(name: &str) -> Result<WeekStart> {
         "mon" | "monday" => Ok(WeekStart::Monday),
         "sun" | "sunday" => Ok(WeekStart::Sunday),
         other => Err(anyhow!("no week start called {other} — mon or sun")),
+    }
+}
+
+fn figures(name: &str) -> Result<Figures> {
+    match name {
+        "device" => Ok(Figures::Device),
+        "app" => Ok(Figures::App),
+        other => Err(anyhow!("no figures called {other} — device, app")),
     }
 }
 
