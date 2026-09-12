@@ -13,3 +13,4 @@ artifacts/
 .github/assets/calendar.png
 # Written by hand: the host path READINGLOG_FONTS takes.
 /preview.env
+/ref
