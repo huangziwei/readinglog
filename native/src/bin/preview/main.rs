@@ -427,8 +427,8 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
     let Some((_, tab)) = SCREENS.iter().find(|(name, _)| *name == shot.name) else {
         return Err(anyhow!("no screen or sketch called {}", shot.name));
     };
-    // `book:<index>`, `book:<index>:marks` for the book's other page, and
-    // `book:<index>:<question>` with one up over it.
+    // `book:<index>`, `book:<index>:graphs` and `book:<index>:marks` for the
+    // book's other pages, and `book:<index>:<question>` with one up over it.
     let (book, asking, page, from, find) = match shot.name.as_str() {
         "book" => {
             let of = shot.of.as_deref().unwrap_or("0");
@@ -437,6 +437,7 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
                 // `marks` opens the list at its head; `marks:<n>` `n` rows down,
                 // which is where the pager's own second page starts.
                 Some((at, "marks")) => (at, None, BookTab::Marks, 0, None),
+                Some((at, "graphs")) => (at, None, BookTab::Graphs, 0, None),
                 // `find` puts a field over the book's own passages, and
                 // `find:<of>` reads what a `search:<of>` shot reads.
                 Some((at, page)) if page == "find" || page.starts_with("find:") => (
@@ -889,6 +890,10 @@ fn everything() -> Vec<Shot> {
         "books:windowprogress",
         "books:windowempty",
         "book",
+        // `book:1` is the shelf slot `fixture::RESTARTED` reads twice.
+        "book:1:graphs",
+        "book:2:graphs",
+        "book:5:graphs",
         "book:5:marks",
         "book:8:marks",
         "book:8:marks:5",

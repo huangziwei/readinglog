@@ -9,12 +9,9 @@ use crate::ui::chrome;
 use crate::ui::cover;
 use crate::ui::paint::{self, INK, LIGHT, Rect};
 use crate::ui::text::TextRenderer;
-use crate::ui::{charts, theme::Theme};
+use crate::ui::theme::Theme;
 
-use super::{Ask, BookTab, Ctx, Hit, Search, State, band, books, marks, search};
-
-/// The most columns the strip along the bottom is cut into.
-const SPAN_COLUMNS: i64 = 30;
+use super::{Ask, BookTab, Ctx, Hit, Search, State, band, book_graphs, books, marks, search};
 
 /// Lines a title takes before the rest of it is ellipsized.
 const TITLE_LINES: usize = 2;
@@ -142,14 +139,11 @@ fn open_box(theme: &Theme, band: Rect) -> Rect {
 
 /// The box the jacket is drawn in and the column of words beside it. `art`
 /// takes `placed`'s width at `top`'s left edge and height; the words run from
-/// `art`'s right edge to `top`'s, on `placed`'s own top and foot.
+/// `art`'s right edge to `top`'s, over `top`'s own depth.
 fn cover_and_words(theme: &Theme, top: Rect, placed: Rect) -> (Rect, Rect) {
     let art = Rect::new(top.x, top.y, placed.w, top.h);
     let x = art.right() + theme.gap * 2;
-    (
-        art,
-        Rect::new(x, placed.y, (top.right() - x).max(1), placed.h),
-    )
+    (art, Rect::new(x, top.y, (top.right() - x).max(1), top.h))
 }
 
 /// The height the heading draws into: the cover, the progress under it, and
@@ -190,28 +184,38 @@ fn search_button(cx: &mut Ctx, area: Rect) -> Rect {
     pages_box(theme, area)
 }
 
-/// The book's two pages as a segmented control, each its own hit box, in the
-/// shape `rhythm::picker` gives the spans. `BookTab::Marks` carries `marked`,
-/// the count of passages the book is marked on.
+/// The book's three pages as a segmented control, each its own hit box and an
+/// equal cell, in the shape `rhythm::picker` gives the spans. `BookTab::Marks`
+/// carries `marked`; every label sets at the one size that fits its cell.
 fn picker(cx: &mut Ctx, area: Rect, on: BookTab, marked: usize) {
     let theme: &Theme = cx.theme;
     let cells = area.columns(BookTab::ALL.len() as i32, 0);
-    cx.text.set_px(theme.body_px);
-    let baseline = area.center_y() + cx.text.cap_height() as i32 / 2;
     let script = cx.ui_script();
-    for (tab, cell) in BookTab::ALL.iter().zip(cells) {
+    let labels: Vec<String> = BookTab::ALL
+        .iter()
+        .map(|tab| match tab {
+            BookTab::Marks => format!("{} ({marked})", tab.label(cx.lang)),
+            _ => tab.label(cx.lang).to_string(),
+        })
+        .collect();
+    let room = (cells[0].w - chrome::chip_pad(theme)).max(1);
+    let said: Vec<&str> = labels.iter().map(String::as_str).collect();
+    let floor = theme.body_px * chrome::SHRINK_FLOOR;
+    let px = chrome::shrink_to_fit(theme.body_px, floor, &said, &|_| room, |px, line| {
+        cx.text.set_px(px);
+        cx.text.measure_width_in(script, line) as i32
+    });
+    cx.text.set_px(px);
+    let baseline = area.center_y() + cx.text.cap_height() as i32 / 2;
+    for ((tab, label), cell) in BookTab::ALL.iter().zip(&labels).zip(cells) {
         let lit = *tab == on;
         match lit {
             true => paint::fill(cx.fb, cell, INK),
             false => paint::stroke(cx.fb, cell, LIGHT, 1),
         }
-        let label = match tab {
-            BookTab::Marks => format!("{} ({marked})", tab.label(cx.lang)),
-            BookTab::Statistics => tab.label(cx.lang).to_string(),
-        };
-        // A label wider than its cell is cut there, never over its neighbour.
-        let room = (cell.w - chrome::chip_pad(theme)).max(1) as u32;
-        let label = cx.text.wrap_and_clamp_in(script, &label, room, 1);
+        // A label wider than its cell at the floor size is cut there, never
+        // over its neighbour.
+        let label = cx.text.wrap_and_clamp_in(script, label, room as u32, 1);
         let label = label.first().map(String::as_str).unwrap_or_default();
         let w = cx.text.measure_width_in(script, label) as i32;
         cx.text.draw_in(
@@ -248,11 +252,13 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
     }
     let cells = search_button(cx, head);
     picker(cx, cells, tab, cx.stats.marks_held(index));
-    // `BookTab::Marks` takes the whole box under the head row. The cover, the
-    // headline figures, the bar and the controls are `BookTab::Statistics`'s.
-    if tab == BookTab::Marks {
-        marks::draw(cx, area, index, state.marks_from, None);
-        return;
+    // `BookTab::Marks` and `BookTab::Graphs` take the whole box under the head
+    // row. The cover, the headline figures, the bar and the controls are
+    // `BookTab::Statistics`'s.
+    match tab {
+        BookTab::Marks => return marks::draw(cx, area, index, state.marks_from, None),
+        BookTab::Graphs => return book_graphs::draw(cx, area, index),
+        BookTab::Statistics => {}
     }
     let (head, rest) = area.split_top(heading_height(cx.text, theme, ui, &book, s) + air);
     heading(
@@ -262,13 +268,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
         index,
     );
 
-    let head_h = chrome::section_height(cx.text, theme);
-    // `facts` takes [`LINES`] line heights; `chart` takes what `rest` has left.
-    cx.text.set_px(theme.body_px);
-    let deep = head_h + air + cx.text.line_height() as i32 * LINES as i32;
-    let (facts, chart) = rest.split_top(deep.min(rest.h));
-    let facts = Rect::new(facts.x, facts.y, facts.w, (facts.h - air).max(1));
-    let inner = chrome::section(cx.fb, cx.text, theme, facts, s.the_reading);
+    let inner = chrome::section(cx.fb, cx.text, theme, rest, s.the_reading);
 
     // [`figures`] states the other three.
     let from = cx.figures;
@@ -292,39 +292,13 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
         (s.finished_on, finished_note(&book, s)),
         (s.on_the_device, where_note(&book, s)),
     ];
-    let rows = inner.rows(lines.len() as i32, 0);
+    // A row stands `theme.row_h` tall, as `config`'s do, and the rows share
+    // what the section leaves them where it leaves them less than that.
+    let deep = (theme.row_h * lines.len() as i32).min(inner.h);
+    let rows = Rect::new(inner.x, inner.y, inner.w, deep).rows(lines.len() as i32, 0);
     for ((key, value), row) in lines.iter().zip(&rows) {
         chrome::row(cx.fb, cx.text, theme, *row, key, value);
     }
-
-    // A `chart` shallower than its heading and a row draws no column, and a
-    // book with no sitting has none to draw.
-    if chart.h < head_h + theme.row_h || book.sittings == 0 {
-        return;
-    }
-
-    // The strip is anchored on the book's own stretch of days and never on
-    // `cx.today`: a book put down in the spring states its reading, not an
-    // empty summer.
-    let (opened, closed) = (book.first_day, book.last_day);
-    let span = (closed - opened + 1).max(1);
-    // The dates are the axis's to state; two short days in the heading name no
-    // year, and a book read across one then reads as a fortnight.
-    let named = crate::lang::counted(s.the_journey, span);
-    let inner = chrome::section(cx.fb, cx.text, theme, chart, &named);
-    let (series, each) = journey(cx, index, opened, closed);
-    charts::columns(
-        cx.fb,
-        cx.text,
-        theme,
-        cx.palette,
-        inner,
-        &series,
-        move |at| date::short_day(opened + at as i64 * each, s),
-        &|secs| super::alltime::duration_rows(secs, s),
-        (series.len() / 4).max(1),
-        None,
-    );
 }
 
 /// The query over one book's passages, across the whole head row. The
@@ -332,20 +306,6 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
 fn field(cx: &mut Ctx, head: Rect, open: &Search) {
     let hint = cx.s().search_hint_marks;
     search::field(cx, head, &open.query, &open.preedit, hint);
-}
-
-/// The seconds read in each column of the strip, and the days one column
-/// covers. A book read over [`SPAN_COLUMNS`] days or fewer gets a column each.
-fn journey(cx: &Ctx, index: usize, opened: i64, closed: i64) -> (Vec<i64>, i64) {
-    let span = (closed - opened + 1).max(1);
-    let each = (span + SPAN_COLUMNS - 1) / SPAN_COLUMNS;
-    let columns = ((span + each - 1) / each).max(1) as usize;
-    let mut series = vec![0i64; columns];
-    for (day, secs) in cx.stats.book_days(index) {
-        let at = ((day - opened) / each).clamp(0, columns as i64 - 1) as usize;
-        series[at] += secs;
-    }
-    (series, each)
 }
 
 /// The cover, the title beside it, the progress bar under both, and the
@@ -581,6 +541,54 @@ mod tests {
 
     fn en() -> &'static Strings {
         Lang::English.strings()
+    }
+
+    /// A label's width as a share of the size it is set at, standing in for a
+    /// font: every character 0.62 em.
+    fn stub_width(px: f32, said: &str) -> i32 {
+        (said.chars().count() as f32 * px * 0.62).round() as i32
+    }
+
+    /// The head row's three labels never reach the floor `chrome` shrinks to,
+    /// in any language, on any panel, at any text size. `wrap_and_clamp_in`
+    /// cuts a label that does, taking its own words off.
+    #[test]
+    fn the_three_tabs_fit_their_cells_in_every_language() {
+        for (w, h) in PANELS {
+            for size in crate::settings::TextSize::ALL {
+                let theme = Theme::sized(w, h, size);
+                let cells = pages_box(&theme, chrome::content_box(&theme))
+                    .columns(BookTab::ALL.len() as i32, 0);
+                let room = (cells[0].w - chrome::chip_pad(&theme)).max(1);
+                for lang in Lang::ALL {
+                    // The longest count the strip ever carries.
+                    let said: Vec<String> = BookTab::ALL
+                        .iter()
+                        .map(|tab| match tab {
+                            BookTab::Marks => format!("{} (999)", tab.label(lang)),
+                            _ => tab.label(lang).to_string(),
+                        })
+                        .collect();
+                    let lines: Vec<&str> = said.iter().map(String::as_str).collect();
+                    let floor = theme.body_px * chrome::SHRINK_FLOOR;
+                    let px =
+                        chrome::shrink_to_fit(theme.body_px, floor, &lines, &|_| room, |px, l| {
+                            stub_width(px, l)
+                        });
+                    assert!(
+                        px > floor,
+                        "{w}x{h} {size:?} {lang:?}: {px} px at the floor"
+                    );
+                    for label in &lines {
+                        let wide = stub_width(px, label);
+                        assert!(
+                            wide <= room,
+                            "{w}x{h} {size:?} {lang:?}: `{label}` {wide} in {room}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     fn book(seconds: i64, paged: i64, awake: i64) -> BookStat {
@@ -827,7 +835,9 @@ mod tests {
             assert_eq!(art.w, placed.w, "{w}x{h}: the box is wider than the cover");
             assert_eq!(words.x, art.right() + theme.gap * 2);
             assert_eq!(words.right(), top.right(), "{w}x{h}: the words fall short");
-            assert_eq!((words.y, words.h), (placed.y, placed.h));
+            // The words keep the block's own depth, whatever the jacket's is:
+            // a small jacket never shortens the column beside it.
+            assert_eq!((words.y, words.h), (top.y, top.h), "{w}x{h}");
             // Every pixel the jacket is narrower than its slot by is the
             // words'.
             assert_eq!(words.w, top.w - narrow - theme.gap * 2);

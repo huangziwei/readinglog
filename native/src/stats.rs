@@ -615,6 +615,34 @@ impl Stats {
         out
     }
 
+    /// Where one book stood as each of its sittings ended, in the order they
+    /// happened: the day, and the place as a whole per cent. A sitting the
+    /// device stated no place for is left out.
+    pub fn book_places(&self, book: usize) -> Vec<(i64, i64)> {
+        let mut out: Vec<((i64, i64), f64)> = self
+            .sittings
+            .iter()
+            .filter(|s| s.book == Some(book))
+            .filter_map(|s| Some(((s.day, s.to_secs), s.progress?)))
+            .collect();
+        out.sort_by_key(|(at, _)| *at);
+        out.into_iter()
+            .map(|((day, _), p)| (day, whole_per_cent((p * 100.0).clamp(0.0, 100.0))))
+            .collect()
+    }
+
+    /// One book's reading cut by the clock hour it happened in, as
+    /// [`Stats::hours_over`] cuts a span of days.
+    pub fn book_hours(&self, book: usize) -> [i64; 24] {
+        let mut out = [0i64; 24];
+        for sitting in self.sittings.iter().filter(|s| s.book == Some(book)) {
+            for (hour, secs) in &sitting.hours {
+                out[(*hour as usize).min(23)] += secs;
+            }
+        }
+        out
+    }
+
     /// Seconds read of each book over a span of days, longest first. A sitting
     /// no record names carries no book and is left out: these need not add up
     /// to [`Stats::day_seconds`] over the same days.
@@ -2475,8 +2503,8 @@ pub(crate) mod tests {
     }
 
     /// The `t` row is a running total in the book's own sidecar, lost whenever
-    /// that sidecar is rebuilt, so **it must never stand in for the sum of the
-    /// sittings**: that drops every one made before the reset.
+    /// that sidecar is rebuilt. It never stands in for the sum of the
+    /// sittings: that drops every one made before the reset.
     #[test]
     fn a_reset_device_counter_never_shrinks_the_book() {
         let mut store = store();

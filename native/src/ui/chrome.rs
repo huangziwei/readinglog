@@ -115,6 +115,37 @@ pub fn content_box(theme: &Theme) -> Rect {
     content(theme, theme.screen)
 }
 
+/// How far under the size it opens at type may be set to fit its room.
+pub const SHRINK_FLOOR: f32 = 0.6;
+
+/// The largest size at or under `opening` that sets every line of `said`
+/// inside the room it stands in, never under `floor`. `room` answers the width
+/// the line at that index has; `width` measures a line at a size.
+pub fn shrink_to_fit(
+    opening: f32,
+    floor: f32,
+    said: &[&str],
+    room: &dyn Fn(usize) -> i32,
+    mut width: impl FnMut(f32, &str) -> i32,
+) -> f32 {
+    let mut px = opening;
+    while px > floor {
+        // The line furthest over the room it stands in settles the step.
+        let tightest = said
+            .iter()
+            .enumerate()
+            .map(|(at, line)| room(at) as f32 / width(px, line).max(1) as f32)
+            .fold(f32::INFINITY, f32::min);
+        if tightest >= 1.0 {
+            break;
+        }
+        // A width is near enough proportional to `px` to land in one step; the
+        // pixel taken off it settles the rounding.
+        px = (px * tightest).min(px - 1.0).max(floor);
+    }
+    px
+}
+
 /// A section heading with a rule under it, and the box left below.
 pub fn section(
     fb: &mut Framebuffer,

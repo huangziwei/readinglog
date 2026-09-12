@@ -5,6 +5,7 @@
 pub mod alltime;
 pub mod band;
 pub mod book;
+pub mod book_graphs;
 pub mod books;
 pub mod config;
 pub mod daybooks;
@@ -33,7 +34,7 @@ pub enum Hit {
     Day(i64),
     /// A book, by its index in [`Stats::books`].
     Book(usize),
-    /// One of the open book's own two tabs.
+    /// One of the open book's own three tabs.
     BookTab(BookTab),
     /// Where the open book's list of marks opens, as an index into it.
     MarksPage(usize),
@@ -242,24 +243,27 @@ pub enum Ask {
     Clear,
 }
 
-/// The two pages a book's own screen holds, as its picker states them.
+/// The three pages a book's own screen holds, as its picker states them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BookTab {
-    /// What the reading came to: the figures and the journey.
+    /// What the reading came to, as figures and rows.
     #[default]
     Statistics,
+    /// The reading drawn: the place, the journey and the clock.
+    Graphs,
     /// The book's marked passages, most recent first.
     Marks,
 }
 
 impl BookTab {
-    pub const ALL: [BookTab; 2] = [BookTab::Statistics, BookTab::Marks];
+    pub const ALL: [BookTab; 3] = [BookTab::Statistics, BookTab::Graphs, BookTab::Marks];
 
     /// What this page is called, in the interface's own language.
     pub fn label(self, lang: Lang) -> &'static str {
         let s = lang.strings();
         match self {
             BookTab::Statistics => s.statistics,
+            BookTab::Graphs => s.graphs_tab,
             BookTab::Marks => s.marks_tab,
         }
     }

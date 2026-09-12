@@ -129,7 +129,14 @@ fn trends(cx: &mut Ctx, area: Rect) {
 
 /// One fold under its own heading: the name, what one turn of the cycle
 /// averages, and the fullest bucket.
-fn band(cx: &mut Ctx, area: Rect, name: &str, fold: &Fold, axis: &[String], every: usize) {
+pub(super) fn band(
+    cx: &mut Ctx,
+    area: Rect,
+    name: &str,
+    fold: &Fold,
+    axis: &[String],
+    every: usize,
+) {
     let theme: &Theme = cx.theme;
     let s = cx.s();
     let short = format!("{name} · {}", date::duration(fold.each, s));
@@ -156,6 +163,7 @@ fn band(cx: &mut Ctx, area: Rect, name: &str, fold: &Fold, axis: &[String], ever
         &|secs| duration_rows(secs, s),
         every,
         fold.busiest,
+        None,
     );
 }
 
@@ -216,6 +224,7 @@ fn sittings(cx: &mut Ctx, area: Rect) {
         },
         6,
         busiest,
+        None,
     );
 }
 

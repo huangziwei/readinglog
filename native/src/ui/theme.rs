@@ -1,6 +1,5 @@
-//! Every size on screen, from the panel and a [`TextSize`]. Type is a
-//! physical size, so density decides its pixels; [`Theme::pad`] and
-//! [`Theme::gap`] alone read the panel's width.
+//! Every size on screen, from the panel and a [`TextSize`]. Each one is a
+//! share of the panel's own width, through [`Scale`].
 
 use crate::settings::TextSize;
 
@@ -115,57 +114,56 @@ pub(crate) mod tests {
     fn every_panel_gets_a_readable_body_size() {
         for (w, h) in PANELS {
             let t = Theme::for_screen(w, h);
-            assert!(t.body_px >= 20.0, "{w}x{h} body {}", t.body_px);
+            assert!(t.body_px >= 18.0, "{w}x{h} body {}", t.body_px);
             assert!(t.small_px < t.body_px);
             assert!(t.head_px > t.body_px);
             assert!(t.display_px > t.head_px);
         }
     }
 
+    /// Every length of the theme holds the same share of the panel it is drawn
+    /// on: one design at six sizes.
     #[test]
-    fn type_is_the_same_size_on_every_panel_of_one_density() {
-        // These panels are all 300 ppi, and a size in pixels is a size on
-        // the page.
+    fn every_length_is_one_share_of_every_panel() {
         let reference = Theme::for_screen(1264, 1680);
-        for (w, h) in FULL {
+        let share = |v: f32, t: &Theme| v / t.screen.w as f32;
+        for (w, h) in PANELS {
             let t = Theme::for_screen(w, h);
             for (name, got, want) in [
                 ("display", t.display_px, reference.display_px),
                 ("head", t.head_px, reference.head_px),
                 ("body", t.body_px, reference.body_px),
                 ("small", t.small_px, reference.small_px),
+                ("row_h", t.row_h as f32, reference.row_h as f32),
+                ("tabs_h", t.tabs_h as f32, reference.tabs_h as f32),
+                ("pad", t.pad as f32, reference.pad as f32),
+                ("gap", t.gap as f32, reference.gap as f32),
             ] {
-                assert_eq!(got, want, "{name} differs at {w}x{h}");
+                let (got, want) = (share(got, &t), share(want, &reference));
+                // One device pixel of rounding, as a share of this panel.
+                let slack = 1.5 / t.screen.w as f32;
+                assert!(
+                    (got - want).abs() < slack,
+                    "{name} at {w}x{h}: {got} against {want}"
+                );
             }
-            // The rows type sits in are fixed with it; the taller panel fits
-            // more of them.
-            assert_eq!(t.row_h, reference.row_h, "row_h differs at {w}x{h}");
-            assert_eq!(t.tabs_h, reference.tabs_h, "tabs_h differs at {w}x{h}");
         }
-        assert!(
-            Theme::for_screen(1860, 2480).screen.h / reference.row_h
-                > reference.screen.h / reference.row_h,
-            "a taller panel must fit more rows"
-        );
     }
 
-    /// A line of body text covers the same stretch of paper on a 167 ppi
-    /// panel as on a 300 ppi one.
+    /// The panels of one width draw one page, whatever their density.
     #[test]
-    fn a_body_line_is_one_size_on_the_page_at_every_density() {
+    fn type_is_the_same_size_on_every_panel_of_one_width() {
         let reference = Theme::for_screen(1264, 1680);
-        let want = reference.body_px / reference.dpi() as f32;
-        for (w, h) in PANELS {
+        for (w, h) in FULL {
             let t = Theme::for_screen(w, h);
-            let inches = t.body_px / t.dpi() as f32;
-            assert!(
-                (inches - want).abs() < 0.005,
-                "{w}x{h}: a body line is {inches}″ against {want}″"
-            );
+            let by = t.screen.w as f32 / reference.screen.w as f32;
+            assert_eq!(t.body_px, (reference.body_px * by).round(), "{w}x{h}");
         }
-        // And the pixels it comes to fall with the density.
-        assert_eq!(Theme::for_screen(758, 1024).body_px, 27.0);
-        assert_eq!(Theme::for_screen(600, 800).body_px, 21.0);
+        // The pixels a body line comes to, panel by panel.
+        assert_eq!(Theme::for_screen(1264, 1680).body_px, 38.0);
+        assert_eq!(Theme::for_screen(758, 1024).body_px, 23.0);
+        assert_eq!(Theme::for_screen(600, 800).body_px, 18.0);
+        assert_eq!(Theme::for_screen(1860, 2480).body_px, 56.0);
     }
 
     /// A rule is physical too, and never rounds away.
@@ -198,9 +196,9 @@ pub(crate) mod tests {
         }
     }
 
-    /// The two 6-inch families are one page at two densities, so every size
-    /// the theme holds must land within a hair of the same physical measure on
-    /// both, or the density is not being read.
+    /// The Paperwhite 2 and the Voyage are both 3.6 inches across. Their
+    /// widths carry the same share, which lands every size the theme holds
+    /// within a hair of one physical measure on both.
     #[test]
     fn one_page_at_two_densities_lays_out_the_same() {
         let pw2 = Theme::for_screen(758, 1024);

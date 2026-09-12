@@ -17,8 +17,8 @@ pub const DAYS: i64 = 1150;
 const MARKED: usize = 7;
 
 /// The [`SHELF`] slots the device holds no jacket for: a Latin title, a Han
-/// one, and a title too long for the box it stands in, so what a cover box
-/// says without a cover is drawn in every shape it takes.
+/// one, and a title too long for the box it stands in: what a cover box says
+/// without a cover is drawn in every shape it takes.
 const UNJACKETED: [usize; 3] = [3, 6, 7];
 
 /// A book on the shelf, and the stretch of days it was read over.
@@ -368,9 +368,9 @@ pub fn library(last: i64, art: &Path) -> Store {
     store
 }
 
-/// What the reader marked, laid down after the seeded loop so a shot drawing
-/// no mark stays pixel-identical. Nothing here is [`State::Retired`]: no
-/// device writes a store holding one.
+/// The marks `store` holds, laid down after the seeded loop: a shot drawing no
+/// mark stays pixel-identical. Nothing here is [`State::Retired`]: no device
+/// writes a store holding one.
 fn marked(store: &mut Store, last: i64) {
     /// `(slot, kind, state, through the book, the day it was made, the words)`.
     const MARKS: &[(usize, Kind, State, f64, i64, &str)] = &[
@@ -382,8 +382,8 @@ fn marked(store: &mut Store, last: i64) {
             86,
             "The road remembers every cart that ever crossed it, and forgives none of them.",
         ),
-        // A note the reader wrote on the passage above: its own range sits
-        // inside that one, which is the only thing tying the two together.
+        // A note on the passage above: its own range sits inside that one,
+        // the only thing tying the two together.
         (
             0,
             Kind::Note,
@@ -564,7 +564,7 @@ fn marked(store: &mut Store, last: i64) {
             141,
             "There is no word in the harbour dialect for a journey that ends where it began, and no shortage of them.",
         ),
-        // Slot 13 is read on the last day drawn, so the day's own list states
+        // Slot 13 is read on the last day drawn, and the day's own list states
         // what was marked on it.
         (
             13,
@@ -591,8 +591,8 @@ fn marked(store: &mut Store, last: i64) {
             "Rests are counted, not waited out.",
         ),
         // Slot 9's passages are all short on purpose. A row is as tall as its
-        // own words, so this book's page holds far more rows than slot 5's
-        // long ones: keep both, and keep these short.
+        // own words: this book's page holds far more rows than slot 5's long
+        // ones. Keep both, and keep these short.
         (
             9,
             Kind::Highlight,
@@ -700,9 +700,13 @@ fn marked(store: &mut Store, last: i64) {
     store.marks.sort_by(|a, b| a.at.cmp(&b.at));
 }
 
+/// The [`SHELF`] slot [`climb`] reads twice: its places climb, drop to the
+/// front of the book and climb again.
+const RESTARTED: usize = 12;
+
 /// Give each sitting the place its book stood at as it ended: an even climb
 /// over that book's own sittings, ending at the record's `percent`. A sitting
-/// [`ghosts`] left names no book and keeps `None`.
+/// [`ghosts`] left names no book and keeps `None`; [`RESTARTED`] climbs twice.
 fn climb(store: &mut Store) {
     for slot in 0..store.books.len() {
         let (extent, percent) = (store.books[slot].extent, store.books[slot].percent);
@@ -713,8 +717,13 @@ fn climb(store: &mut Store) {
             .filter(|&i| store.sessions[i].end_position == extent)
             .collect();
         let count = at.len() as f64;
+        let over = match slot == RESTARTED {
+            true => (count / 2.0).ceil().max(1.0),
+            false => count,
+        };
         for (n, i) in at.iter().enumerate() {
-            store.sessions[*i].progress = Some(percent / 100.0 * (n as f64 + 1.0) / count);
+            let step = (n as f64 % over) + 1.0;
+            store.sessions[*i].progress = Some((percent / 100.0 * step / over).min(1.0));
         }
     }
 }

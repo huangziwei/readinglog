@@ -271,11 +271,17 @@ pub struct Strings {
     pub no: &'static str,
     /// A book's own reading, start to finish. `{d}` is filled by [`counted`].
     pub the_journey: &'static str,
+    /// Where a book stood as each of its sittings ended, and which hour of the
+    /// day it was read in. `{d}` is filled by [`counted`]; the clock names its
+    /// fullest hour after `most`.
+    pub the_place: &'static str,
+    pub the_clock: &'static str,
     pub read: &'static str,
     pub left: &'static str,
-    /// The book screen's two tabs, each set in half the strip. `marks_tab`
-    /// carries a count after it and holds one word.
+    /// The book screen's three tabs, each set in a third of the strip.
+    /// `marks_tab` carries a count after it and holds one word.
     pub statistics: &'static str,
+    pub graphs_tab: &'static str,
     pub marks_tab: &'static str,
     /// What stands over the marks for a book carrying none.
     pub marks_none: &'static str,
@@ -561,7 +567,10 @@ const ENGLISH: Strings = Strings {
     yes: "yes",
     no: "no",
     the_journey: "THE JOURNEY · {d} DAY[S]",
+    the_place: "THE PLACE · {d} SITTING[S]",
+    the_clock: "THE CLOCK",
     statistics: "Statistics",
+    graphs_tab: "Graphs",
     marks_tab: "Highlights",
     marks_none: "Nothing marked in this book yet.",
     n_highlights: "{d} highlight[s]",
@@ -815,7 +824,10 @@ const GERMAN: Strings = Strings {
     yes: "ja",
     no: "nein",
     the_journey: "DER VERLAUF · {d} TAG[E]",
+    the_place: "DIE STELLE · {d} SITZUNG[EN]",
+    the_clock: "DIE UHRZEIT",
     statistics: "Statistik",
+    graphs_tab: "Grafiken",
     marks_tab: "Markierungen",
     marks_none: "In diesem Buch ist noch nichts markiert.",
     n_highlights: "{d} Markierung[en]",
@@ -1067,7 +1079,10 @@ const JAPANESE: Strings = Strings {
     yes: "あり",
     no: "なし",
     the_journey: "読書の歩み · {d}日",
+    the_place: "読書の到達点 · {d}回",
+    the_clock: "時間帯",
     statistics: "統計",
+    graphs_tab: "グラフ",
     marks_tab: "ハイライト",
     marks_none: "この本にはまだ何も記されていません。",
     n_highlights: "ハイライト{d}",
@@ -1299,7 +1314,10 @@ const SIMPLIFIED: Strings = Strings {
     yes: "是",
     no: "否",
     the_journey: "阅读历程 · {d}天",
+    the_place: "阅读进度 · {d}次",
+    the_clock: "时段",
     statistics: "统计",
+    graphs_tab: "图表",
     marks_tab: "标注",
     marks_none: "这本书还没有任何标记。",
     n_highlights: "标注{d}",
@@ -1539,7 +1557,10 @@ const TRADITIONAL: Strings = Strings {
     yes: "是",
     no: "否",
     the_journey: "閱讀歷程 · {d}天",
+    the_place: "閱讀進度 · {d}次",
+    the_clock: "時段",
     statistics: "統計",
+    graphs_tab: "圖表",
     marks_tab: "標註",
     marks_none: "這本書還沒有任何標記。",
     n_highlights: "標註{d}",

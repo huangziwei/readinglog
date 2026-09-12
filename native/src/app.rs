@@ -98,8 +98,7 @@ impl App {
     }
 
     /// What the stats hold, as the launch line's field: books drawn, then the
-    /// reading no book is named for. Seconds, because a launch line is read
-    /// against other launch lines and not by a reader.
+    /// reading no book is named for, in seconds.
     pub fn drawn(&self) -> String {
         let mut out = format!("draw={}b", self.stats.books.len());
         if self.stats.unnamed_seconds > 0 {
@@ -1230,8 +1229,8 @@ impl App {
         let books = crate::catalog::read();
         let dir = self.dir.clone();
         let stated = self.store.remember(&books);
-        // The reader asked for this, so neither gate holds it back: both are
-        // dropped and written again from what this pass reads.
+        // Neither gate holds this pass back: both are dropped and written
+        // again from what it reads.
         let clips = std::path::Path::new(crate::clippings::CLIPPINGS_FILE);
         let documents = std::path::Path::new(crate::sidecar::DOCUMENTS_DIR);
         self.store.sources = None;
@@ -1396,9 +1395,9 @@ impl App {
         self.paged(page.step())
     }
 
-    /// One step across the open book: `BookTab::Statistics`, then each page
-    /// of `view::marks::pages` in turn. A step off either end answers
-    /// `Action::Nothing`.
+    /// One step across the open book: `BookTab::Statistics`, `BookTab::Graphs`,
+    /// then each page of `view::marks::pages` in turn. A step off either end
+    /// answers `Action::Nothing`.
     fn through_book(&mut self, book: usize, by: i64) -> Action {
         let area = chrome::content_box(&self.theme);
         let (_, rest) = area.split_top(view::book::picker_height(&self.theme));
@@ -1410,10 +1409,17 @@ impl App {
         let forward = by > 0;
         match self.state.book_tab {
             view::BookTab::Statistics if forward => {
-                self.state.go_in_book(view::BookTab::Marks);
+                self.state.go_in_book(view::BookTab::Graphs);
                 Action::Redraw
             }
             view::BookTab::Statistics => Action::Nothing,
+            view::BookTab::Graphs => {
+                self.state.go_in_book(match forward {
+                    true => view::BookTab::Marks,
+                    false => view::BookTab::Statistics,
+                });
+                Action::Redraw
+            }
             view::BookTab::Marks => {
                 let page = opens
                     .iter()
@@ -1422,9 +1428,9 @@ impl App {
                 let next = match forward {
                     true => page + 1,
                     false => match page {
-                        // The head of the list steps back onto the statistics.
+                        // The head of the list steps back onto the graphs.
                         0 => {
-                            self.state.go_in_book(view::BookTab::Statistics);
+                            self.state.go_in_book(view::BookTab::Graphs);
                             return Action::Redraw;
                         }
                         _ => page - 1,

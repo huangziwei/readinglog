@@ -7,6 +7,7 @@ use crate::eink::fb::Framebuffer;
 use crate::lang::Strings;
 use crate::settings::WeekStart;
 
+use super::chrome;
 use super::paint::{self, DARK, INK, LIGHT, PALE, Palette, Rect};
 use super::text::TextRenderer;
 use super::theme::Theme;
@@ -250,7 +251,7 @@ pub type Figure<'a> = &'a dyn Fn(i64) -> Vec<String>;
 
 /// A row of columns, one per entry in `values`, each carrying its own figure.
 /// `every` names one bucket of the axis in that many, and the last always;
-/// `highlight` marks the fullest bar drawn.
+/// `highlight` marks the fullest bar drawn; `ceiling` is [`scale`]'s.
 #[allow(clippy::too_many_arguments)]
 pub fn columns(
     fb: &mut Framebuffer,
@@ -263,6 +264,7 @@ pub fn columns(
     figure: Figure,
     every: usize,
     highlight: Option<usize>,
+    ceiling: Option<i64>,
 ) {
     if values.is_empty() {
         return;
@@ -270,7 +272,7 @@ pub fn columns(
     text.set_px(theme.small_px);
     let line = text.line_height() as i32;
     let (band, foot) = area.split_top((area.h - line - theme.gap / 2).max(1));
-    let max = values.iter().copied().max().unwrap_or(0).max(1);
+    let max = scale(values, ceiling);
     let gap = match values.len() > 16 {
         true => 2,
         false => theme.gap / 2,
@@ -298,44 +300,84 @@ pub fn columns(
     );
     let cells = plot.columns(values.len() as i32, gap);
     paint::hline(fb, plot.x, plot.bottom(), plot.w, LIGHT, 1);
-    for (at, (value, cell)) in values.iter().zip(&cells).enumerate() {
-        let h = (plot.h as i64 * value / max) as i32;
-        let bar = Rect::new(
-            cell.x + (cell.w - cut.bar_w) / 2,
-            cell.bottom() - h,
-            cut.bar_w,
-            h,
-        );
-        if h > 0 {
+    let bars: Vec<Rect> = values
+        .iter()
+        .zip(&cells)
+        .map(|(value, cell)| {
+            let h = (plot.h as i64 * value / max) as i32;
+            Rect::new(
+                cell.x + (cell.w - cut.bar_w) / 2,
+                cell.bottom() - h,
+                cut.bar_w,
+                h,
+            )
+        })
+        .collect();
+    for (at, bar) in bars.iter().enumerate() {
+        if bar.h > 0 {
             let ink = match highlight == Some(at) {
                 true => palette.mark,
                 false => palette.bar(),
             };
-            paint::fill_rgb(fb, bar, ink);
+            paint::fill_rgb(fb, *bar, ink);
         }
+    }
+    // The figures come after every bar of the row: one reaching over its own
+    // cell stands on its neighbours, never under them.
+    for (at, bar) in bars.iter().enumerate() {
         if !set.said[at].is_empty() {
-            draw_figure(fb, text, theme, bar, &set.said[at], set.px, set.inside[at]);
+            draw_figure(fb, text, theme, band, *bar, &set, at);
         }
     }
 
-    // The axis is named from the right: the last bucket states itself, and an
-    // earlier name gives way where the two run together.
-    let mut marks: Vec<usize> = (0..values.len()).step_by(every.max(1)).collect();
-    if marks.last() != Some(&(values.len() - 1)) {
-        marks.push(values.len() - 1);
-    }
     text.set_px(theme.small_px);
+    let stated = named(&cells, every, theme.gap, &axis, &mut |said| {
+        text.measure_width(said) as i32
+    });
+    for (x, name) in stated {
+        text.draw(fb, x, foot.y + line, &name, false);
+    }
+}
+
+/// The value a full-height bar stands for: `ceiling`, or the tallest of
+/// `values` where `ceiling` is `None`. A value over `ceiling` raises it.
+fn scale(values: &[i64], ceiling: Option<i64>) -> i64 {
+    let top = values.iter().copied().max().unwrap_or(0);
+    ceiling.unwrap_or(top).max(top).max(1)
+}
+
+/// What the axis states and where, taken from the right: one of `cells` in
+/// `every` and the last always, less a name the cell to its right states and a
+/// name reaching within `gap` of it. `width` measures a name.
+fn named(
+    cells: &[Rect],
+    every: usize,
+    gap: i32,
+    axis: &dyn Fn(usize) -> String,
+    width: &mut dyn FnMut(&str) -> i32,
+) -> Vec<(i32, String)> {
+    let Some(last) = cells.len().checked_sub(1) else {
+        return Vec::new();
+    };
+    let mut marks: Vec<usize> = (0..cells.len()).step_by(every.max(1)).collect();
+    if marks.last() != Some(&last) {
+        marks.push(last);
+    }
+    // A name centred on the first or the last cell keeps inside the row.
+    let (left, right) = (cells[0].x, cells[last].right());
+    let mut out: Vec<(i32, String)> = Vec::new();
     let mut reach = i32::MAX;
     for at in marks.into_iter().rev() {
         let name = axis(at);
-        let w = text.measure_width(&name) as i32;
-        let x = cells[at].x + (cells[at].w - w) / 2;
-        if x + w + theme.gap > reach {
+        let w = width(&name);
+        let x = (cells[at].x + (cells[at].w - w) / 2).clamp(left, (right - w).max(left));
+        if out.last().is_some_and(|(_, last)| *last == name) || x + w + gap > reach {
             continue;
         }
-        text.draw(fb, x, foot.y + line, &name, false);
         reach = x;
+        out.push((x, name));
     }
+    out
 }
 
 /// The room a row of columns is cut to: the height the bars are drawn into,
@@ -360,11 +402,28 @@ struct Figures {
     px: f32,
     /// The air at the head of the band a figure over the tallest bar stands in.
     head: i32,
+    /// How many cells one figure of the row spreads over. A row stating every
+    /// bar spreads over one.
+    #[cfg_attr(not(test), allow(dead_code))]
+    step: usize,
 }
 
-/// Where a row of columns sets its figures and at what size. A bar with the
-/// height for its figure holds it; a shorter bar has it over its head, fitted
-/// to the cell. One figure too wide sets the whole row over the bars.
+impl Figures {
+    /// A row stating nothing.
+    fn none(bars: usize, px: f32) -> Self {
+        Figures {
+            said: vec![Vec::new(); bars],
+            inside: vec![false; bars],
+            px,
+            head: 0,
+            step: 1,
+        }
+    }
+}
+
+/// Where a row of columns sets its figures and at what size: inside each bar
+/// that has the height for one, over its head where not, at the one size every
+/// figure fits its [`rooms`] at. A row too tight for that goes to [`thinned`].
 fn settle(
     theme: &Theme,
     values: &[i64],
@@ -397,22 +456,16 @@ fn settle(
             })
             .unzip()
     };
-    // A figure inside a bar keeps the bar's own edges clear; one over a bar
-    // has the cell, less the air standing between one cell and the next.
-    let (bar, cell) = (cut.bar_w - theme.gap / 2, cut.cell_w - cut.gap);
-
     let (said, inside) = placed(cut.h);
-    let room = |at: usize| match inside[at] {
-        true => bar,
-        false => cell,
-    };
-    let (px, fits) = sized(theme, &said, &room, width);
+    let room = rooms(theme, cut, &said, &inside);
+    let (px, fits) = sized(theme, &said, &|at| room[at], width);
     if fits {
         return Figures {
             said,
             inside,
             px,
             head: 0,
+            step: 1,
         };
     }
 
@@ -420,19 +473,113 @@ fn settle(
     // the air the head of the band keeps.
     let lines = rows.iter().map(Vec::len).max().unwrap_or(0) as i32;
     let head = cut.line * lines + inset(theme) / 2;
-    let (said, _) = placed(cut.h - head);
-    let (px, fits) = sized(theme, &said, &|_| cell, width);
-    Figures {
-        said: match fits {
-            true => said,
-            false => vec![Vec::new(); values.len()],
-        },
-        inside: vec![false; values.len()],
-        px,
-        head: match fits {
-            true => head,
-            false => 0,
-        },
+    let (flat, _) = placed(cut.h - head);
+    let over = vec![false; values.len()];
+    let room = rooms(theme, cut, &flat, &over);
+    let (px, fits) = sized(theme, &flat, &|at| room[at], width);
+    if fits {
+        return Figures {
+            said: flat,
+            inside: over,
+            px,
+            head,
+            step: 1,
+        };
+    }
+
+    thinned(theme, values, max, cut, &rows, width)
+        .unwrap_or_else(|| Figures::none(values.len(), px))
+}
+
+/// The figures spread evenly across the row, as many as the width carries: the
+/// first and last bar always state theirs, and the ones between them thin out
+/// a step at a time until what is stated fits the room the skipped cells leave.
+fn thinned(
+    theme: &Theme,
+    values: &[i64],
+    max: i64,
+    cut: &Cut,
+    rows: &[Vec<String>],
+    width: &mut dyn FnMut(f32, &str) -> i32,
+) -> Option<Figures> {
+    let bars = values.len();
+    if bars < 2 {
+        return None;
+    }
+    let lines = rows.iter().map(Vec::len).max().unwrap_or(0) as i32;
+    let head = cut.line * lines + inset(theme) / 2;
+    let plot = cut.h - head;
+    // From every bar but one down to the two ends alone.
+    for stating in (2..bars).rev() {
+        let marks = spread(bars, stating);
+        let said: Vec<Vec<String>> = rows
+            .iter()
+            .enumerate()
+            .map(|(at, lines)| match marks.contains(&at) {
+                true => lines.clone(),
+                false => Vec::new(),
+            })
+            .collect();
+        // A stated figure has its own cell and the skipped ones beside it; the
+        // closest pair of them settles the room for the whole row.
+        let step = marks
+            .windows(2)
+            .map(|pair| pair[1] - pair[0])
+            .min()
+            .unwrap_or(1);
+        if step < 2 {
+            continue;
+        }
+        let room = cut.cell_w * step as i32 - cut.gap;
+        let (px, fits) = sized(theme, &said, &|_| room, width);
+        // Every stated figure has the air over its own bar to stand in.
+        let stands = values.iter().enumerate().all(|(at, value)| {
+            let h = (plot as i64 * value / max) as i32;
+            said[at].is_empty() || clears(theme, cut.h - h, cut.line, said[at].len())
+        });
+        if fits && stands {
+            return Some(Figures {
+                said,
+                inside: vec![false; bars],
+                px,
+                head,
+                step,
+            });
+        }
+    }
+    None
+}
+
+/// The width each figure of the row has: a figure `inside` its bar has the
+/// bar's own, and one over a bar the run of cells reaching to the nearest
+/// figure either side of it.
+fn rooms(theme: &Theme, cut: &Cut, said: &[Vec<String>], inside: &[bool]) -> Vec<i32> {
+    let stated: Vec<usize> = (0..said.len()).filter(|at| !said[*at].is_empty()).collect();
+    said.iter()
+        .enumerate()
+        .map(|(at, lines)| {
+            if lines.is_empty() {
+                return cut.cell_w;
+            }
+            if inside[at] {
+                return cut.bar_w - theme.gap / 2;
+            }
+            let before = stated.iter().rev().find(|o| **o < at).map(|o| at - o);
+            let after = stated.iter().find(|o| **o > at).map(|o| o - at);
+            let near = before.into_iter().chain(after).min().unwrap_or(said.len());
+            cut.cell_w * near as i32 - cut.gap
+        })
+        .collect()
+}
+
+/// `stating` marks spread evenly over `bars`, the first and the last included.
+fn spread(bars: usize, stating: usize) -> Vec<usize> {
+    match stating {
+        0 => Vec::new(),
+        1 => vec![0],
+        _ => (0..stating)
+            .map(|at| at * (bars - 1) / (stating - 1))
+            .collect(),
     }
 }
 
@@ -479,36 +626,27 @@ fn bar_width(theme: &Theme, cell_w: i32) -> i32 {
 }
 
 /// The largest size at or under [`Theme::small_px`] that sets every line of
-/// every figure inside the `room` it stands in, floored where type stops being
-/// readable. `width` measures a string at a size.
+/// every figure inside the `room` its own bar leaves. `width` measures a
+/// string at a size.
 fn figure_px(
     theme: &Theme,
     said: &[Vec<String>],
     room: &dyn Fn(usize) -> i32,
-    mut width: impl FnMut(f32, &str) -> i32,
+    width: impl FnMut(f32, &str) -> i32,
 ) -> f32 {
+    // Each bar's lines carry its own index into `room`.
+    let (lines, at): (Vec<&str>, Vec<usize>) = said
+        .iter()
+        .enumerate()
+        .flat_map(|(bar, lines)| lines.iter().map(move |line| (line.as_str(), bar)))
+        .unzip();
     let floor = theme.small_px * FIGURE_FLOOR;
-    let mut px = theme.small_px;
-    while px > floor {
-        // The line furthest over the room it stands in settles the step.
-        let tightest = said
-            .iter()
-            .enumerate()
-            .flat_map(|(at, lines)| lines.iter().map(move |line| (at, line)))
-            .map(|(at, line)| room(at) as f32 / width(px, line).max(1) as f32)
-            .fold(f32::INFINITY, f32::min);
-        if tightest >= 1.0 {
-            break;
-        }
-        // A width is near enough proportional to `px` to land in one step; the
-        // pixel taken off it settles the rounding.
-        px = (px * tightest).min(px - 1.0).max(floor);
-    }
-    px
+    chrome::shrink_to_fit(theme.small_px, floor, &lines, &|i| room(at[i]), width)
 }
 
-/// How far under [`Theme::small_px`] a figure may be set.
-const FIGURE_FLOOR: f32 = 0.6;
+/// How far under [`Theme::small_px`] a figure may be set. A figure gives up
+/// size a long way before it gives up being on the page at all.
+const FIGURE_FLOOR: f32 = 0.45;
 
 /// Whether every figure of `said` measures within the `room` it stands in. A
 /// row failing this states no figure at all.
@@ -522,18 +660,20 @@ fn all_fit(
         .all(|(at, lines)| lines.iter().all(|line| width(line) <= room(at)))
 }
 
-/// `said` at the head of `bar` where `inside`, white on the bar's own ink. A
-/// figure not `inside` stands over the bar's head in the page's own ink.
+/// The figure bar `at` carries, centred on the bar: at its head where it
+/// stands inside, white on the bar's own ink, and over its head in the page's
+/// own ink where not. A figure wider than its bar keeps inside `band`.
 fn draw_figure(
     fb: &mut Framebuffer,
     text: &mut TextRenderer,
     theme: &Theme,
+    band: Rect,
     bar: Rect,
-    said: &[String],
-    px: f32,
-    inside: bool,
+    set: &Figures,
+    at: usize,
 ) {
-    text.set_px(px);
+    let (said, inside) = (&set.said[at], set.inside[at]);
+    text.set_px(set.px);
     let line = text.line_height() as i32;
     let cap = text.cap_height() as i32;
     let mut baseline = match inside {
@@ -542,7 +682,8 @@ fn draw_figure(
     };
     for row in said {
         let w = text.measure_width(row) as i32;
-        text.draw(fb, bar.x + (bar.w - w) / 2, baseline, row, inside);
+        let x = (bar.x + (bar.w - w) / 2).clamp(band.x, (band.right() - w).max(band.x));
+        text.draw(fb, x, baseline, row, inside);
         baseline += line;
     }
 }
@@ -675,11 +816,16 @@ mod tests {
             0 => Vec::new(),
             n => vec![n.to_string()],
         };
+        static PLACE: fn(i64) -> Vec<String> = |at| vec![format!("{at}%")];
         vec![
             ((0..24).map(|at| at * 300).collect(), &SPAN as Figure),
             ((0..7).map(|at| 3600 + at * 900).collect(), &SPAN),
             ((0..12).map(|at| 40 * 3600 + at * 3600).collect(), &SPAN),
             ((0..25).map(|at| (260 >> at).max(1)).collect(), &COUNTED),
+            // A book's place, one bar a sitting: the densest row drawn, and
+            // the only one whose length the record decides.
+            ((0..32).map(|at| at * 3).collect(), &PLACE),
+            ((0..60).map(|at| at + 20).collect(), &PLACE),
         ]
     }
 
@@ -705,34 +851,54 @@ mod tests {
                     };
                     let max = *values.iter().max().expect("a bar");
                     let set = settle(&theme, &values, max, &cut, figure, &mut stub_width);
-                    // A row states every figure where one cell holds the
-                    // widest of them at the smallest size type is set at.
+                    // A cell holding the widest figure of the row at the
+                    // smallest size type is set at states every one of them.
                     let floor = theme.small_px * FIGURE_FLOOR;
-                    let stated = values
+                    let every = values
                         .iter()
                         .flat_map(|value| figure(*value))
                         .all(|said| stub_width(floor, &said) <= cut.cell_w - gap);
                     let bars = values.len();
+                    let wide = |at: usize| {
+                        set.said[at]
+                            .iter()
+                            .map(|said| stub_width(set.px, said))
+                            .max()
+                            .unwrap_or(0)
+                    };
+                    // No two figures of the row run into each other, and one
+                    // inside its bar keeps the bar's own edges clear.
+                    let mut reach: Option<i32> = None;
                     for (at, value) in values.iter().enumerate() {
                         // An empty bucket draws no bar and states no figure.
-                        assert_eq!(
-                            set.said[at].is_empty(),
-                            *value == 0 || !stated,
-                            "{w}x{h}, {bars} bars {deep} deep: bar {at} of {value}"
-                        );
-                        // A figure keeps inside the room it stands in: its own
-                        // bar, or the cell over the bar's head.
-                        let room = match set.inside[at] {
-                            true => cut.bar_w - theme.gap / 2,
-                            false => cut.cell_w - cut.gap,
-                        };
-                        for said in &set.said[at] {
-                            let wide = stub_width(set.px, said);
-                            assert!(
-                                wide <= room,
-                                "{w}x{h}, {bars} bars: `{said}` is {wide} px in {room}"
+                        if every {
+                            assert_eq!(
+                                set.said[at].is_empty(),
+                                figure(*value).is_empty(),
+                                "{w}x{h}, {bars} bars {deep} deep: bar {at} of {value}"
                             );
                         }
+                        if set.said[at].is_empty() {
+                            continue;
+                        }
+                        if set.inside[at] {
+                            let bar = cut.bar_w - theme.gap / 2;
+                            assert!(
+                                wide(at) <= bar,
+                                "{w}x{h}, {bars} bars: bar {at} holds {} px in {bar}",
+                                wide(at)
+                            );
+                            continue;
+                        }
+                        let centre = at as i32 * cut.cell_w + cut.cell_w / 2;
+                        let left = centre - wide(at) / 2;
+                        if let Some(edge) = reach {
+                            assert!(
+                                left >= edge,
+                                "{w}x{h}, {bars} bars: figure {at} opens at {left}, past {edge}"
+                            );
+                        }
+                        reach = Some(centre + wide(at) / 2 + cut.gap);
                     }
                 }
             }
@@ -979,6 +1145,128 @@ mod tests {
             for (_, b) in &cells[i + 1..] {
                 assert!(a != b, "{a:?}");
             }
+        }
+    }
+
+    #[test]
+    fn a_row_too_dense_to_state_every_figure_thins_them_evenly() {
+        for (w, h, bars) in [(1264u32, 1680u32, 60usize), (600, 800, 40)] {
+            let theme = Theme::for_screen(w, h);
+            let line = (theme.small_px * 1.2) as i32;
+            let values: Vec<i64> = (1..=bars as i64).map(|at| at + 20).collect();
+            let figure: Figure = &|at| vec![format!("{at}%")];
+            let band = Rect::new(0, 0, chrome::content_box(&theme).w, theme.row_h * 3);
+            let cell_w = band.columns(bars as i32, 2)[0].w;
+            let cut = Cut {
+                h: band.h,
+                line,
+                bar_w: bar_width(&theme, cell_w),
+                cell_w,
+                gap: 2,
+            };
+            // A bar this narrow holds no figure at the smallest size type is
+            // set at.
+            let floor = theme.small_px * FIGURE_FLOOR;
+            assert!(stub_width(floor, "80%") > cut.bar_w - theme.gap / 2);
+
+            let max = *values.iter().max().expect("a bar");
+            let set = settle(&theme, &values, max, &cut, figure, &mut stub_width);
+            let stated: Vec<usize> = (0..bars).filter(|at| !set.said[*at].is_empty()).collect();
+            assert!(set.step >= 2, "{w}x{h}: step {}", set.step);
+            // The two ends always state theirs, with more between them.
+            assert_eq!(stated.first(), Some(&0), "{w}x{h}");
+            assert_eq!(stated.last(), Some(&(bars - 1)), "{w}x{h}");
+            assert!(stated.len() > 2, "{w}x{h}: {} stated", stated.len());
+            // Evenly spread: no two runs differ by more than a cell.
+            let runs: Vec<usize> = stated.windows(2).map(|two| two[1] - two[0]).collect();
+            let (near, far) = (
+                runs.iter().min().expect("a run"),
+                runs.iter().max().expect("a run"),
+            );
+            assert!(far - near <= 1, "{w}x{h}: runs {near}..{far}");
+            // Every stated figure fits the run of cells it was given.
+            for at in stated {
+                for said in &set.said[at] {
+                    let wide = stub_width(set.px, said);
+                    let room = cut.cell_w * (*near).max(1) as i32 - cut.gap;
+                    assert!(wide <= room, "{w}x{h}: `{said}` is {wide} px in {room}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_bounded_quantity_fills_its_band_at_the_bound() {
+        // `places` tops out at 8 of a bound of 100.
+        let places = [6i64, 6, 7, 8, 8];
+        assert_eq!(scale(&places, Some(100)), 100);
+        assert_eq!(scale(&places, None), 8);
+        assert_eq!(scale(&[1, 55, 100], Some(100)), 100);
+        // 140 over a `ceiling` of 100 scales to 140.
+        assert_eq!(scale(&[40, 140], Some(100)), 140);
+        // An all-zero row and an empty one both scale to a band of their own.
+        assert_eq!(scale(&[0, 0], Some(100)), 100);
+        assert_eq!(scale(&[0, 0], None), 1);
+        assert_eq!(scale(&[], None), 1);
+    }
+
+    #[test]
+    fn buckets_sharing_a_name_state_it_once() {
+        // `days` names three days across five cells.
+        let days = ["Aug 28", "Aug 31", "Sep 1", "Sep 1", "Sep 7"];
+        let cells = Rect::new(0, 0, 1200, 300).columns(days.len() as i32, 6);
+        let stated = named(&cells, 1, 12, &|at| days[at].to_string(), &mut |said| {
+            stub_width(24.0, said)
+        });
+        let said: Vec<&str> = stated.iter().map(|(_, name)| name.as_str()).collect();
+        assert_eq!(said, ["Sep 7", "Sep 1", "Aug 31", "Aug 28"]);
+        // "Sep 1" stands over the rightmost cell carrying it.
+        let at = stated
+            .iter()
+            .position(|(_, name)| name == "Sep 1")
+            .expect("Sep 1");
+        assert!(stated[at].0 > cells[2].x, "Sep 1 names the earlier bucket");
+
+        // `same` names one day over six cells and states it once.
+        let same = ["Aug 30"; 6];
+        let cells = Rect::new(0, 0, 1200, 300).columns(same.len() as i32, 6);
+        let stated = named(&cells, 1, 12, &|at| same[at].to_string(), &mut |said| {
+            stub_width(24.0, said)
+        });
+        assert_eq!(stated.len(), 1);
+    }
+
+    #[test]
+    fn an_axis_name_keeps_inside_the_row() {
+        // `1月22日` is wider than the cell the first of 29 buckets has.
+        let names: Vec<String> = (0..29).map(|at| format!("{}月22日", at % 12 + 1)).collect();
+        let band = Rect::new(40, 0, 1186, 300);
+        let cells = band.columns(names.len() as i32, 2);
+        let stated = named(&cells, 7, 12, &|at| names[at].clone(), &mut |said| {
+            stub_width(24.0, said)
+        });
+        assert!(!stated.is_empty());
+        for (x, name) in &stated {
+            let w = stub_width(24.0, name);
+            assert!(*x >= band.x, "`{name}` opens at {x}, left of {}", band.x);
+            let right = band.right();
+            assert!(x + w <= right, "`{name}` closes at {}, past {right}", x + w);
+        }
+    }
+
+    #[test]
+    fn the_axis_always_names_its_last_bucket() {
+        let names: Vec<String> = (0..25).map(|at| format!("{at:02}")).collect();
+        let cells = Rect::new(0, 0, 1200, 300).columns(names.len() as i32, 2);
+        for every in [1usize, 3, 6, 24, 40] {
+            let stated = named(&cells, every, 12, &|at| names[at].clone(), &mut |said| {
+                stub_width(20.0, said)
+            });
+            assert_eq!(
+                stated.first().map(|(_, name)| name.as_str()),
+                Some("24"),
+                "every {every}"
+            );
         }
     }
 }

@@ -120,7 +120,7 @@ const KEEP_WHOLE: f32 = 0.7;
 
 /// The largest size at or under `px` holding every word of `said` inside
 /// `room`, floored at [`KEEP_WHOLE`] of it. Han and kana have no spaces to
-/// break on, so a title set in them keeps `px`.
+/// break on: a title set in them keeps `px`.
 fn fitting_px(text: &mut TextRenderer, script: Script, said: &str, room: i32, px: f32) -> f32 {
     let run = Script::resolve(script, said);
     let floor = px * KEEP_WHOLE;
@@ -189,9 +189,11 @@ fn decode(path: &str, max_w: i32, max_h: i32) -> Option<Thumb> {
     if sw == 0 || sh == 0 {
         return None;
     }
-    // Whichever of `max_w`, `max_h` and the source's own size binds first.
-    let w = max_w.min(sw * max_h / sh).min(sw).max(1) as usize;
-    let h = max_h.min(sh * max_w / sw).min(sh).max(1) as usize;
+    // Whichever of `max_w` and `max_h` binds first, keeping the source's
+    // aspect. A jacket smaller than its box is sampled up to fill it: one row
+    // of covers is one width, whatever size each file was cached at.
+    let w = max_w.min(sw * max_h / sh).max(1) as usize;
+    let h = max_h.min(sh * max_w / sw).max(1) as usize;
     let mut rgb = vec![0u8; w * h * 3];
     for (row, out) in rgb.chunks_exact_mut(w * 3).enumerate() {
         let sy = (row * sh as usize / h).min(sh as usize - 1);
@@ -233,16 +235,37 @@ mod tests {
     }
 
     #[test]
-    fn a_cover_smaller_than_its_box_is_never_sampled_up() {
+    fn covers_of_any_size_fill_the_box_they_are_given() {
         let dir = std::env::temp_dir().join("readinglog-cover-small");
         let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("small.png");
-        image::RgbImage::from_pixel(80, 120, image::Rgb([20, 130, 240]))
+        // Four files of four sizes, in one row of boxes, come to one width.
+        for (at, (w, h)) in [(80u32, 120u32), (217, 330), (400, 600), (900, 1350)]
+            .into_iter()
+            .enumerate()
+        {
+            let path = dir.join(format!("{at}.png"));
+            image::RgbImage::from_pixel(w, h, image::Rgb([20, 130, 240]))
+                .save(&path)
+                .expect("a written fixture");
+            let thumb = decode(path.to_str().unwrap(), 200, 300).expect("a decoded cover");
+            // Every jacket of this shape comes to the box's own height, and
+            // to a width within a pixel of every other's.
+            assert_eq!(thumb.h, 300, "{w}x{h} falls short of its box");
+            assert!(
+                (196..=200).contains(&thumb.w),
+                "{w}x{h} is {} wide",
+                thumb.w
+            );
+            assert_eq!(thumb.rgb.len(), thumb.w * thumb.h * 3);
+        }
+        // A jacket of another shape keeps its own inside the box: `max_w`
+        // binds on one wider than its box is.
+        let path = dir.join("wide.png");
+        image::RgbImage::from_pixel(120, 80, image::Rgb([20, 130, 240]))
             .save(&path)
             .expect("a written fixture");
-
         let thumb = decode(path.to_str().unwrap(), 200, 300).expect("a decoded cover");
-        assert_eq!((thumb.w, thumb.h), (80, 120), "drawn at its own size");
+        assert_eq!((thumb.w, thumb.h), (200, 133));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -252,7 +275,7 @@ mod tests {
             let theme = Theme::for_screen(w, h);
             let px = title_px(&theme);
             assert!(px < theme.small_px, "{w}x{h}: {px} px is no smaller");
-            // Small, and still a size a face renders at.
+            // Small, and a size a face renders at.
             assert!(px >= 8.0, "{w}x{h}: {px} px is a smudge");
         }
     }

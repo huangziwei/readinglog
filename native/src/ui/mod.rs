@@ -1,6 +1,6 @@
-//! On-screen drawing. Every type size and rule here is a design pixel at
-//! [`scale::DESIGN_DPI`], which [`theme::Theme`] maps through [`scale::Scale`]
-//! for the panel in front of it.
+//! On-screen drawing. Every type size and rule here is a design pixel written
+//! for [`scale::REFERENCE`], which [`theme::Theme`] maps through
+//! [`scale::Scale`] for the panel in front of it.
 
 pub mod charts;
 pub mod chrome;
