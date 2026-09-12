@@ -17,7 +17,7 @@ const SPAN_COLUMNS: i64 = 30;
 /// The per cent a full-height bar of the place band stands for.
 const WHOLE_BOOK: i64 = 100;
 
-/// The fewest places a book states before the place band draws.
+/// The fewest sittings carrying a `progress` before the place band draws.
 const PLACES: usize = 2;
 
 /// One hour of the clock in this many is named, as `alltime::trends` names it.
@@ -78,11 +78,18 @@ fn bands(stats: &Stats, index: usize, s: &'static Strings) -> Vec<Band> {
     };
 
     let places = stats.book_places(index);
-    if places.len() >= PLACES {
+    if places.iter().filter(|(_, at)| at.is_some()).count() >= PLACES {
         let axis = places.iter().map(|(day, _)| *day).collect::<Vec<i64>>();
-        let values: Vec<i64> = places.iter().map(|(_, at)| *at).collect();
+        // A sitting with no `progress` holds the place before it.
+        let mut place = 0;
+        let values: Vec<i64> = places
+            .iter()
+            .map(|(_, at)| {
+                place = at.unwrap_or(place);
+                place
+            })
+            .collect();
         out.push(Band {
-            // `book.sittings` counts a sitting stating no place; `values` has none.
             title: lang::counted(s.the_place, book.sittings),
             axis: axis.iter().map(|day| date::short_day(*day, s)).collect(),
             every: (values.len() / 4).max(1),
@@ -134,7 +141,7 @@ mod tests {
     use crate::stats::{BookStat, Sitting, Stats};
 
     /// A record of one book whose sittings ended at each of `places`, one a day.
-    /// `BookStat::sittings` counts all of them, stated or not.
+    /// `BookStat::sittings` counts all of them, `None` or not.
     fn read(places: &[Option<f64>]) -> Stats {
         let sittings: Vec<Sitting> = places
             .iter()
@@ -166,6 +173,11 @@ mod tests {
         }
     }
 
+    /// The bars the place band draws for the one book `read` built.
+    fn drawn(stats: &Stats) -> Vec<i64> {
+        bands(stats, 0, Lang::English.strings())[0].values.clone()
+    }
+
     /// The five shapes the record holds, none of them a climb.
     const SHAPES: [&[i64]; 5] = [
         &[89, 6, 9, 12, 15],
@@ -183,7 +195,7 @@ mod tests {
             let places: Vec<Option<f64>> =
                 shape.iter().map(|at| Some(*at as f64 / 100.0)).collect();
             let stats = read(&places);
-            let drawn: Vec<i64> = stats.book_places(0).iter().map(|(_, at)| *at).collect();
+            let drawn = drawn(&stats);
             assert_eq!(drawn, shape, "the band states the record's own places");
             // `drawn` stands between the foot and `WHOLE_BOOK`.
             assert!(drawn.iter().all(|at| (0..=WHOLE_BOOK).contains(at)));
@@ -191,37 +203,40 @@ mod tests {
     }
 
     #[test]
-    fn a_sitting_with_no_place_is_left_out_and_the_rest_keep_their_order() {
+    fn a_sitting_with_no_place_holds_the_place_before_it() {
         let stats = read(&[Some(0.10), None, Some(0.40), None, Some(0.25)]);
-        assert_eq!(
-            stats.book_places(0),
-            vec![(20_000, 10), (20_002, 40), (20_004, 25)]
-        );
+        assert_eq!(drawn(&stats), [10, 10, 40, 40, 25]);
+        // The first sitting has no place before it and opens at 0.
+        let stats = read(&[None, Some(0.40), Some(0.55)]);
+        assert_eq!(drawn(&stats), [0, 40, 55]);
     }
 
     #[test]
-    fn a_book_under_two_places_draws_no_place_band() {
+    fn a_book_under_two_known_places_draws_no_place_band() {
+        let s = Lang::English.strings();
         for places in [vec![], vec![Some(0.40)], vec![None, Some(0.40), None]] {
             let stats = read(&places);
-            assert!(stats.book_places(0).len() < PLACES);
+            assert!(bands(&stats, 0, s).iter().all(|b| b.ceiling.is_none()));
         }
         // `PLACES` places draw the band.
         let stats = read(&[Some(0.10), Some(0.40)]);
-        assert_eq!(stats.book_places(0).len(), PLACES);
+        assert_eq!(bands(&stats, 0, s)[0].values.len(), PLACES);
     }
 
-    /// `bands` heads the place band with `BookStat::sittings`, never the
-    /// count `book_places` holds.
+    /// `bands` draws one bar for each of [`Stats::book_sittings`] and heads
+    /// them with `BookStat::sittings`, the count `view::book` states.
     #[test]
-    fn the_place_band_is_headed_by_the_count_the_facts_state() {
+    fn the_place_band_draws_a_bar_for_every_sitting() {
         let places = [Some(0.10), Some(0.22), None, Some(0.40)];
         let stats = read(&places);
         let s = Lang::English.strings();
-        let head = &bands(&stats, 0, s)[0].title;
+        let band = &bands(&stats, 0, s)[0];
 
         assert_eq!(stats.books[0].sittings, places.len() as i64);
-        assert_eq!(head, "THE PLACE · 4 SITTINGS");
-        assert_eq!(stats.book_places(0).len(), places.len() - 1);
+        assert_eq!(band.values.len() as i64, stats.books[0].sittings);
+        assert_eq!(band.axis.len() as i64, stats.books[0].sittings);
+        assert_eq!(&band.title, "THE PLACE · 4 SITTINGS");
+        assert_eq!(band.values, [10, 22, 22, 40]);
     }
 
     #[test]

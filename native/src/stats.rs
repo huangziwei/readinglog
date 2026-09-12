@@ -604,10 +604,17 @@ impl Stats {
         self.sittings.iter().filter(move |s| s.day == day)
     }
 
+    /// One book's sittings, ascending, every one the [`SittingFloor`] kept.
+    /// The one population any figure counting this book's sittings is drawn
+    /// from, `BookStat::sittings` included.
+    pub fn book_sittings(&self, book: usize) -> impl Iterator<Item = &Sitting> {
+        self.sittings.iter().filter(move |s| s.book == Some(book))
+    }
+
     /// `(day, seconds)` for every day one book was read on, ascending.
     pub fn book_days(&self, book: usize) -> Vec<(i64, i64)> {
         let mut out: Vec<(i64, i64)> = Vec::new();
-        for s in self.sittings.iter().filter(|s| s.book == Some(book)) {
+        for s in self.book_sittings(book) {
             match out.binary_search_by_key(&s.day, |(d, _)| *d) {
                 Ok(i) => out[i].1 += s.seconds,
                 Err(i) => out.insert(i, (s.day, s.seconds)),
@@ -617,18 +624,22 @@ impl Stats {
     }
 
     /// Where one book stood as each of its sittings ended, in the order they
-    /// happened: the day, and the place as a whole per cent. A sitting the
-    /// device stated no place for is left out.
-    pub fn book_places(&self, book: usize) -> Vec<(i64, i64)> {
-        let mut out: Vec<((i64, i64), f64)> = self
-            .sittings
-            .iter()
-            .filter(|s| s.book == Some(book))
-            .filter_map(|s| Some(((s.day, s.to_secs), s.progress?)))
+    /// happened: one entry per [`Self::book_sittings`], the day and the place
+    /// as a whole per cent. A sitting with no `Sitting::progress` holds
+    /// `None`.
+    pub fn book_places(&self, book: usize) -> Vec<(i64, Option<i64>)> {
+        let mut out: Vec<((i64, i64), Option<f64>)> = self
+            .book_sittings(book)
+            .map(|s| ((s.day, s.to_secs), s.progress))
             .collect();
         out.sort_by_key(|(at, _)| *at);
         out.into_iter()
-            .map(|((day, _), p)| (day, whole_per_cent((p * 100.0).clamp(0.0, 100.0))))
+            .map(|((day, _), p)| {
+                (
+                    day,
+                    p.map(|p| whole_per_cent((p * 100.0).clamp(0.0, 100.0))),
+                )
+            })
             .collect()
     }
 
@@ -636,7 +647,7 @@ impl Stats {
     /// [`Stats::hours_over`] cuts a span of days.
     pub fn book_hours(&self, book: usize) -> [i64; 24] {
         let mut out = [0i64; 24];
-        for sitting in self.sittings.iter().filter(|s| s.book == Some(book)) {
+        for sitting in self.book_sittings(book) {
             for (hour, secs) in &sitting.hours {
                 out[(*hour as usize).min(23)] += secs;
             }
@@ -690,9 +701,8 @@ impl Stats {
         if stat.is_finished() && stat.has_percent() && days.contains(&stat.last_day) {
             return Some(stat.percent_shown());
         }
-        self.sittings
-            .iter()
-            .filter(|s| s.book == Some(book) && days.contains(&s.day))
+        self.book_sittings(book)
+            .filter(|s| days.contains(&s.day))
             .filter_map(|s| Some(((s.day, s.to_secs), s.progress?)))
             .max_by_key(|(at, _)| *at)
             .map(|(_, p)| whole_per_cent((p * 100.0).clamp(0.0, 100.0)))
@@ -1310,10 +1320,10 @@ pub(crate) mod tests {
         assert_eq!(stats.percent_over(0, first..=first), Some(31));
         assert_eq!(stats.percent_over(0, last..=last), Some(62));
         assert_eq!(stats.percent_over(0, first..=last), Some(62));
-        // A day with no sitting of this book states no place.
+        // A day with no sitting of this book carries no per cent.
         assert_eq!(stats.percent_over(0, first - 1..=first - 1), None);
 
-        // A sitting stating no place leaves the one before it standing.
+        // A sitting with no `progress` leaves the one before it standing.
         store.sessions[3].progress = None;
         let stats = Stats::build(
             &store,
@@ -1639,6 +1649,25 @@ pub(crate) mod tests {
             fold.each,
             "the hours of the fold are the day it states"
         );
+    }
+
+    /// `BookStat::sittings` and [`Stats::book_sittings`] count one population,
+    /// whatever floor [`Stats::build`] took. Every figure over a book's
+    /// sittings reads one of the two.
+    #[test]
+    fn a_book_states_one_count_of_its_sittings() {
+        for floor in SittingFloor::ALL {
+            let stats = Stats::build(&store(), at(2026, 3, 9), true, Figures::Device, floor);
+            for (at, book) in stats.books.iter().enumerate() {
+                assert_eq!(
+                    stats.book_sittings(at).count() as i64,
+                    book.sittings,
+                    "{floor:?} book {at}"
+                );
+                assert_eq!(stats.book_places(at).len() as i64, book.sittings);
+                assert_eq!(stats.book_days(at).len() as i64, book.days);
+            }
+        }
     }
 
     /// `hours_over` holds every second of the day it cuts, a `Session` whose
