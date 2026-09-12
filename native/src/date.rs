@@ -1,6 +1,6 @@
 //! Proleptic Gregorian date arithmetic on a day count from 1970-01-01. Every
-//! instant the crate stores is device-local wall clock with no zone on it, so a
-//! day the clock moved on holds 23 or 25 hours of it.
+//! stored instant is device-local wall clock with no zone on it. A day the
+//! clock moved on holds 23 or 25 hours.
 
 use crate::lang::Strings;
 use crate::settings::WeekStart;
@@ -86,27 +86,25 @@ pub fn now() -> (i64, i64) {
     local_of(epoch_now()).unwrap_or((0, 0))
 }
 
-/// The clock as an epoch second, which is what [`crate::zone`] takes.
+/// The clock as an epoch second, the form [`crate::zone`] takes.
 pub fn epoch_now() -> i64 {
     // SAFETY: `time` takes a null pointer and answers the clock.
     unsafe { libc::time(std::ptr::null_mut()) as i64 }
 }
 
-/// The days an instant may fall on to name one. The arithmetic above holds
-/// outside them, but nothing that far out is a device clock, and a stamp
-/// reaches here from `vocab.db` as well as from the clock.
+/// The days [`local_at`] answers on. An epoch second landing outside them
+/// names none.
 const FIRST_DAY: i64 = days_from_civil(1900, 1, 1);
 const LAST_DAY: i64 = days_from_civil(9999, 12, 31);
 
 /// An epoch second as `(day count, seconds into the day)` on the device's own
-/// clock. Every other instant the crate holds is local wall clock, so this is
-/// where the two meet, through the zone file the log's stamps come from.
+/// clock, through the zone file [`crate::zone`] reads.
 pub fn local_of(epoch: i64) -> Option<(i64, i64)> {
     local_at(epoch, crate::zone::offset_at(epoch))
 }
 
-/// [`local_of`] with the zone already read, which is where the arithmetic is.
-/// An `offset` of `None` is a device keeping no zone file this can read.
+/// [`local_of`] with `offset` supplied. An `offset` of `None` names a device
+/// keeping no zone file [`crate::zone`] reads.
 pub fn local_at(epoch: i64, offset: Option<i64>) -> Option<(i64, i64)> {
     let (days, secs) = match offset {
         Some(offset) => {
@@ -120,14 +118,14 @@ pub fn local_at(epoch: i64, offset: Option<i64>) -> Option<(i64, i64)> {
         .then_some((days, secs))
 }
 
-/// [`local_of`] through the C library, which takes the zone from the process
-/// environment.
+/// [`local_of`] through `libc::localtime_r`, which takes the zone from the
+/// process environment.
 fn libc_local_of(epoch: i64) -> Option<(i64, i64)> {
     // SAFETY: `localtime_r` fills a caller-owned `tm` and takes the zone from
     // the process environment. No pointer outlives the call.
     unsafe {
-        // `time_t` is 32 bits on the device and 64 on the host, so its width
-        // is left to the call. An instant too wide names no day, never a
+        // `time_t` is 32 bits on the device and 64 on the host: `clock` takes
+        // its width from the call. An `epoch` too wide names no day, never a
         // wrapped one.
         let clock = epoch as _;
         #[allow(clippy::unnecessary_cast)]
@@ -150,7 +148,7 @@ fn libc_local_of(epoch: i64) -> Option<(i64, i64)> {
 }
 
 /// `(day count, seconds into the day)` as the `YYYY-MM-DDTHH:MM:SS` a sitting
-/// is stored under, which is what [`day_of`] and [`secs_of`] read back.
+/// is stored under, the form [`day_of`] and [`secs_of`] read back.
 pub fn stamp(days: i64, secs: i64) -> String {
     let (y, m, d) = civil_from_days(days);
     let secs = secs.rem_euclid(86_400);
@@ -162,8 +160,7 @@ pub fn stamp(days: i64, secs: i64) -> String {
     )
 }
 
-/// "Aug 9" — enough to place a day at a glance. `9月9日` where the language
-/// writes a date year first.
+/// "Aug 9", or `9月9日` where `s.date_ymd`.
 pub fn short_day(days: i64, s: &Strings) -> String {
     let (_, m, d) = civil_from_days(days);
     let month = s.months_short[(m - 1).clamp(0, 11) as usize];
@@ -173,8 +170,7 @@ pub fn short_day(days: i64, s: &Strings) -> String {
     }
 }
 
-/// "Aug 9, 2026", or "2026年8月9日" — [`short_day`] placed in its year, for a
-/// row stating one date against another.
+/// "Aug 9, 2026", or "2026年8月9日" — [`short_day`] placed in its year.
 pub fn year_day(days: i64, s: &Strings) -> String {
     let (y, m, d) = civil_from_days(days);
     let month = s.months_short[(m - 1).clamp(0, 11) as usize];
@@ -226,9 +222,9 @@ pub fn shift_months(day: i64, by: i64) -> i64 {
     days_from_civil(year, month, d.min(days_in_month(year, month)))
 }
 
-/// `secs` as whole hours and the minutes left over — "4h 12m", "4小时12分" —
-/// rounded to the nearest minute and carried where that fills the hour. Never
-/// seconds: the counters behind these figures are not that precise.
+/// `secs` as whole hours and the minutes left over, rounded to the nearest
+/// minute and carried where that fills the hour. [`duration`],
+/// [`duration_coarse`] and [`duration_tight`] all land on this pair.
 pub fn hours_and_minutes(secs: i64) -> (i64, i64) {
     let hours = secs / 3600;
     let mins = (secs % 3600 + 30) / 60;
@@ -241,8 +237,7 @@ pub fn hours_and_minutes(secs: i64) -> (i64, i64) {
 pub fn duration(secs: i64, s: &Strings) -> String {
     let sp = if s.unit_space { " " } else { "" };
     let (h, m) = (s.hours, s.minutes);
-    // Nothing read is nothing, not "under a minute": a day with no reading on
-    // it reads as a day with no reading on it.
+    // `secs` at or below zero is "0m", never "<1m".
     if secs <= 0 {
         return format!("0{sp}{m}");
     }
@@ -257,8 +252,7 @@ pub fn duration(secs: i64, s: &Strings) -> String {
     }
 }
 
-/// A headline total: whole hours past a day of reading, where the minutes
-/// carry nothing beside the hours, and [`duration`] below it.
+/// Whole hours past `24 * 3600`, and [`duration`] below that.
 pub fn duration_coarse(secs: i64, s: &Strings) -> String {
     if secs < 24 * 3600 {
         return duration(secs, s);
@@ -267,12 +261,13 @@ pub fn duration_coarse(secs: i64, s: &Strings) -> String {
     format!("{}{space}{}", (secs + 1800) / 3600, s.hours)
 }
 
-/// The same, narrowed for a cell with no room: "4h12", "37m".
+/// [`duration`] narrowed for a cell with no room: "4h12", "37m". `secs` under
+/// 60 is "·".
 pub fn duration_tight(secs: i64, s: &Strings) -> String {
     if secs < 60 {
         return "·".into();
     }
-    let (hours, mins) = (secs / 3600, (secs % 3600) / 60);
+    let (hours, mins) = hours_and_minutes(secs);
     match hours {
         0 => format!("{mins}{}", s.minutes),
         _ => format!("{hours}{}{mins:02}", s.hours),
@@ -294,8 +289,7 @@ mod tests {
 
     #[test]
     fn an_epoch_second_reads_as_the_local_clock_and_back() {
-        // The zone is the machine's, so only what holds in every zone is
-        // asserted here.
+        // `local_of` reads the machine's zone: the assertions hold in any.
         let (day, secs) = local_of(1_757_000_000).expect("a breakable instant");
         let (later, then) = local_of(1_757_000_600).expect("a breakable instant");
         assert_eq!((later - day) * 86_400 + then - secs, 600);
@@ -309,7 +303,7 @@ mod tests {
     fn an_offset_places_an_instant_on_the_local_clock() {
         let day = days_from_civil(2026, 9, 9);
         let noon = day * 86_400 + 11 * 3600;
-        // +02:01, the offset a Kindle set by hand a minute fast stands at.
+        // 7260 is +02:01, an offset off the quarter hour.
         assert_eq!(local_at(noon, Some(7260)), Some((day, 13 * 3600 + 60)));
         assert_eq!(local_at(noon, Some(0)), Some((day, 11 * 3600)));
         // An offset that carries the instant into the next day, and one that
@@ -322,8 +316,8 @@ mod tests {
     fn an_instant_outside_the_calendar_names_no_day() {
         assert!(local_of(i64::MAX).is_none());
         assert!(local_of(i64::MIN).is_none());
-        // The edges themselves, whatever zone the machine stands in: a day
-        // either side of the calendar is out and the middle is in.
+        // The edges: a day either side of `FIRST_DAY..=LAST_DAY` is out and
+        // the middle is in.
         assert!(local_of(days_from_civil(1899, 12, 30) * 86_400).is_none());
         assert!(local_of(days_from_civil(10_000, 1, 2) * 86_400).is_none());
         assert!(local_of(days_from_civil(2026, 9, 9) * 86_400 + 12 * 3600).is_some());
@@ -334,13 +328,13 @@ mod tests {
         let day = days_from_civil(2026, 6, 8);
         assert_eq!(stamp(day, 19 * 3600 + 3 * 60 + 7), "2026-06-08T19:03:07");
         assert_eq!(stamp(day, 0), "2026-06-08T00:00:00");
-        // Seconds outside the day are wrapped into it rather than rendered.
+        // `secs` outside the day wraps into it.
         assert_eq!(stamp(day, 86_400), "2026-06-08T00:00:00");
     }
 
     use crate::lang::Lang;
 
-    /// English, which the assertions below are written in.
+    /// English, the `Strings` the assertions below read.
     fn en() -> &'static Strings {
         Lang::English.strings()
     }
@@ -402,6 +396,20 @@ mod tests {
     }
 
     #[test]
+    fn a_narrowed_duration_lands_on_the_minute_the_wide_one_does() {
+        // `duration` and `duration_tight` differ in width, never in the minute.
+        assert_eq!(duration(1071, en()), "18m");
+        assert_eq!(duration_tight(1071, en()), "18m");
+        assert_eq!(duration(3540, en()), "59m");
+        assert_eq!(duration_tight(3540, en()), "59m");
+        // `duration_tight` carries the rounded minute into the hour too.
+        assert_eq!(duration(3570, en()), "1h");
+        assert_eq!(duration_tight(3570, en()), "1h00");
+        assert_eq!(duration(7170, en()), "2h");
+        assert_eq!(duration_tight(7170, en()), "2h00");
+    }
+
+    #[test]
     fn a_year_first_date_names_its_month() {
         let day = days_from_civil(2026, 9, 3);
         let ja = Lang::Japanese.strings();
@@ -418,7 +426,7 @@ mod tests {
         assert_eq!(short_day(day, en()), "Sep 3");
         assert_eq!(year_day(day, en()), "Sep 3, 2026");
         assert_eq!(year_day(day, ja), "2026年9月3日");
-        // A day of another year states that year and not this one.
+        // `year_day` states the year a day falls in, 2019 included.
         assert_eq!(year_day(days_from_civil(2019, 1, 31), en()), "Jan 31, 2019");
     }
 
@@ -430,7 +438,7 @@ mod tests {
             shift_months(days_from_civil(2024, 3, 31), -1),
             days_from_civil(2024, 2, 29)
         );
-        // Across both year boundaries, and twelve at a time.
+        // `shift_months` across both year boundaries, and twelve at a time.
         assert_eq!(
             shift_months(days_from_civil(2026, 1, 15), -1),
             days_from_civil(2025, 12, 15)
