@@ -3,6 +3,7 @@
 
 use crate::date;
 use crate::lang::{self, Strings};
+use crate::stats::Stats;
 use crate::ui::charts;
 use crate::ui::chrome;
 use crate::ui::paint::Rect;
@@ -36,7 +37,7 @@ struct Band {
 /// to draw is left out and the rest take its height.
 pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
     let s = cx.s();
-    let bands = bands(cx, index, s);
+    let bands = bands(cx.stats, index, s);
     let hours = cx.stats.book_hours(index);
     let clock = hours.iter().any(|secs| *secs > 0);
     let deep = bands.len() as i32 + clock as i32;
@@ -61,8 +62,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
             band.ceiling,
         );
     }
-    // The clock is `alltime`'s own average-day band over this book's hours:
-    // the same heading, ticks and figures the Trends page draws.
+    // `alltime::band` draws `hours` as it draws its own average day.
     if let Some(row) = rows.last().filter(|_| clock) {
         let fold = cx.stats.fold(hours.to_vec(), hours.iter().sum());
         let names: Vec<String> = (0..24).map(|at| format!("{at:02}")).collect();
@@ -71,18 +71,19 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
 }
 
 /// The bands this book has the record for, in the order the page stacks them.
-fn bands(cx: &Ctx, index: usize, s: &'static Strings) -> Vec<Band> {
+fn bands(stats: &Stats, index: usize, s: &'static Strings) -> Vec<Band> {
     let mut out: Vec<Band> = Vec::new();
-    let Some(book) = cx.stats.books.get(index) else {
+    let Some(book) = stats.books.get(index) else {
         return out;
     };
 
-    let places = cx.stats.book_places(index);
+    let places = stats.book_places(index);
     if places.len() >= PLACES {
         let axis = places.iter().map(|(day, _)| *day).collect::<Vec<i64>>();
         let values: Vec<i64> = places.iter().map(|(_, at)| *at).collect();
         out.push(Band {
-            title: lang::counted(s.the_place, values.len() as i64),
+            // `book.sittings` counts a sitting stating no place; `values` has none.
+            title: lang::counted(s.the_place, book.sittings),
             axis: axis.iter().map(|day| date::short_day(*day, s)).collect(),
             every: (values.len() / 4).max(1),
             values,
@@ -91,12 +92,10 @@ fn bands(cx: &Ctx, index: usize, s: &'static Strings) -> Vec<Band> {
         });
     }
 
-    // The strip is anchored on the book's own stretch of days and never on
-    // `cx.today`: a book put down in the spring states its reading, not an
-    // empty summer.
+    // `opened` and `closed` are the book's own stretch, never the record's.
     let (opened, closed) = (book.first_day, book.last_day);
     let span = (closed - opened + 1).max(1);
-    let (series, each) = journey(cx, index, opened, closed);
+    let (series, each) = journey(stats, index, opened, closed);
     if series.iter().any(|secs| *secs > 0) {
         out.push(Band {
             title: lang::counted(s.the_journey, span),
@@ -115,12 +114,12 @@ fn bands(cx: &Ctx, index: usize, s: &'static Strings) -> Vec<Band> {
 
 /// The seconds read in each column of the strip, and the days one column
 /// covers. A book read over [`SPAN_COLUMNS`] days or fewer gets a column each.
-fn journey(cx: &Ctx, index: usize, opened: i64, closed: i64) -> (Vec<i64>, i64) {
+fn journey(stats: &Stats, index: usize, opened: i64, closed: i64) -> (Vec<i64>, i64) {
     let span = (closed - opened + 1).max(1);
     let each = (span + SPAN_COLUMNS - 1) / SPAN_COLUMNS;
     let columns = ((span + each - 1) / each).max(1) as usize;
     let mut series = vec![0i64; columns];
-    for (day, secs) in cx.stats.book_days(index) {
+    for (day, secs) in stats.book_days(index) {
         let at = ((day - opened) / each).clamp(0, columns as i64 - 1) as usize;
         series[at] += secs;
     }
@@ -130,12 +129,14 @@ fn journey(cx: &Ctx, index: usize, opened: i64, closed: i64) -> (Vec<i64>, i64) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lang::Lang;
     use crate::log::session::Measure;
-    use crate::stats::{Sitting, Stats};
+    use crate::stats::{BookStat, Sitting, Stats};
 
     /// A record of one book whose sittings ended at each of `places`, one a day.
+    /// `BookStat::sittings` counts all of them, stated or not.
     fn read(places: &[Option<f64>]) -> Stats {
-        let sittings = places
+        let sittings: Vec<Sitting> = places
             .iter()
             .enumerate()
             .map(|(at, progress)| Sitting {
@@ -151,8 +152,16 @@ mod tests {
                 progress: *progress,
             })
             .collect();
+        let book = BookStat {
+            sittings: sittings.len() as i64,
+            seconds: 1800 * sittings.len() as i64,
+            first_day: 20_000,
+            last_day: 20_000 + sittings.len() as i64 - 1,
+            ..BookStat::default()
+        };
         Stats {
             sittings,
+            books: vec![book],
             ..Stats::default()
         }
     }
@@ -176,8 +185,7 @@ mod tests {
             let stats = read(&places);
             let drawn: Vec<i64> = stats.book_places(0).iter().map(|(_, at)| *at).collect();
             assert_eq!(drawn, shape, "the band states the record's own places");
-            // Every bar stands inside the band: none is over the bound, and
-            // none is under the foot.
+            // `drawn` stands between the foot and `WHOLE_BOOK`.
             assert!(drawn.iter().all(|at| (0..=WHOLE_BOOK).contains(at)));
         }
     }
@@ -197,9 +205,23 @@ mod tests {
             let stats = read(&places);
             assert!(stats.book_places(0).len() < PLACES);
         }
-        // Two is enough.
+        // `PLACES` places draw the band.
         let stats = read(&[Some(0.10), Some(0.40)]);
         assert_eq!(stats.book_places(0).len(), PLACES);
+    }
+
+    /// `bands` heads the place band with `BookStat::sittings`, never the
+    /// count `book_places` holds.
+    #[test]
+    fn the_place_band_is_headed_by_the_count_the_facts_state() {
+        let places = [Some(0.10), Some(0.22), None, Some(0.40)];
+        let stats = read(&places);
+        let s = Lang::English.strings();
+        let head = &bands(&stats, 0, s)[0].title;
+
+        assert_eq!(stats.books[0].sittings, places.len() as i64);
+        assert_eq!(head, "THE PLACE · 4 SITTINGS");
+        assert_eq!(stats.book_places(0).len(), places.len() - 1);
     }
 
     #[test]

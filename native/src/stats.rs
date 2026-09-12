@@ -329,16 +329,17 @@ impl Stats {
                 None if !unnamed => continue,
                 None => out.unnamed_seconds += secs,
             }
+            let (from_secs, to_secs) = (date::secs_of(&s.started_at), date::secs_of(&s.ended_at));
             out.sittings.push(Sitting {
                 day,
-                from_secs: date::secs_of(&s.started_at),
-                to_secs: date::secs_of(&s.ended_at),
+                from_secs,
+                to_secs,
                 seconds: secs,
                 book: at,
                 key: raw,
                 measure: s.measure,
                 page_turns: s.page_turns,
-                hours: hours_at(&s.hours, s.seconds, secs),
+                hours: hours_at(&s.hours, s.seconds, secs, from_secs, to_secs),
                 progress: s.progress,
             });
             out.total_seconds += secs;
@@ -989,9 +990,13 @@ fn sitting_words(s: &Session, from: Figures) -> i64 {
 }
 
 /// `hours`, which sum to `sum`, rescaled to sum to `target`: each entry in
-/// proportion, and the division's remainder to the busiest.
-fn hours_at(hours: &[(u8, i64)], sum: i64, target: i64) -> Vec<(u8, i64)> {
-    if sum <= 0 || target == sum || hours.is_empty() {
+/// proportion, and the division's remainder to the busiest. An empty `hours`
+/// takes [`spread_over`] between `from` and `to`, seconds into the day.
+fn hours_at(hours: &[(u8, i64)], sum: i64, target: i64, from: i64, to: i64) -> Vec<(u8, i64)> {
+    if hours.is_empty() {
+        return spread_over(target, from, to);
+    }
+    if sum <= 0 || target == sum {
         return hours.to_vec();
     }
     let mut out: Vec<(u8, i64)> = hours
@@ -1005,6 +1010,37 @@ fn hours_at(hours: &[(u8, i64)], sum: i64, target: i64) -> Vec<(u8, i64)> {
         None => out.push((hours[0].0, target)),
     }
     out
+}
+
+/// `secs` across the clock hours between `from` and `to`, seconds into the day.
+/// Each hour of `held` takes the share of the span it holds, and the hour `from`
+/// falls in takes the remainder, as `log::session` books a page turn.
+fn spread_over(secs: i64, from: i64, to: i64) -> Vec<(u8, i64)> {
+    let hour = |at: i64| (at / 3600).clamp(0, 23) as usize;
+    if secs <= 0 {
+        return Vec::new();
+    }
+    let span = to - from;
+    if span <= 0 {
+        return vec![(hour(from) as u8, secs)];
+    }
+    let mut held = [0i64; 24];
+    let mut placed = 0;
+    for h in (from / 3600)..=((to - 1) / 3600) {
+        let overlap = to.min((h + 1) * 3600) - from.max(h * 3600);
+        if overlap <= 0 {
+            continue;
+        }
+        let share = secs * overlap / span;
+        held[hour(h * 3600)] += share;
+        placed += share;
+    }
+    held[hour(from)] += secs - placed;
+    held.iter()
+        .enumerate()
+        .filter(|(_, secs)| **secs > 0)
+        .map(|(at, secs)| (at as u8, *secs))
+        .collect()
 }
 
 fn credit(book: &mut BookStat, s: &Session, day: i64, secs: i64, words: i64) {
@@ -1603,6 +1639,64 @@ pub(crate) mod tests {
             fold.each,
             "the hours of the fold are the day it states"
         );
+    }
+
+    /// `hours_over` holds every second of the day it cuts, a `Session` whose
+    /// `hours` the record leaves empty included.
+    #[test]
+    fn a_sitting_stating_no_hour_reaches_the_clock() {
+        let day = at(2026, 3, 4);
+        let (y, m, d) = date::civil_from_days(day);
+        let mut store = on_days(&[day], 3600);
+        for (from, to, secs) in [
+            ("00:00:00", "21:44:19", 615),
+            ("09:11:08", "19:28:58", 1516),
+        ] {
+            store.sessions.push(Session {
+                started_at: format!("{y:04}-{m:02}-{d:02}T{from}"),
+                ended_at: format!("{y:04}-{m:02}-{d:02}T{to}"),
+                end_position: 100,
+                seconds: secs,
+                page_turns: 1,
+                words: 100,
+                hours: Vec::new(),
+                measure: Measure::Counted,
+                asin: None,
+                progress: None,
+                ..Session::default()
+            });
+        }
+        let stats = Stats::build(&store, day, true, Figures::Device, SittingFloor::All);
+
+        let clock = stats.hours_over(day..=day);
+        assert_eq!(clock.iter().sum::<i64>(), 3600 + 615 + 1516);
+        assert_eq!(
+            clock.iter().sum::<i64>(),
+            stats.days[0].1,
+            "the clock holds the day it decomposes"
+        );
+        // `clock` stands inside the windows the rows ran: 22 and 23 stand empty.
+        assert!(clock[22] == 0 && clock[23] == 0);
+        assert!(clock[9] > 0 && clock[19] > 0);
+    }
+
+    #[test]
+    fn spread_over_places_every_second_inside_the_span() {
+        // `hour` gives seconds into the day.
+        let hour = |at: i64| at * 3600;
+        assert_eq!(spread_over(600, hour(9), hour(10)), vec![(9, 600)]);
+        assert_eq!(
+            spread_over(600, hour(9), hour(11)),
+            vec![(9, 300), (10, 300)]
+        );
+        // `spread_over` holds a span of nothing at `from`.
+        assert_eq!(spread_over(600, hour(9), hour(9)), vec![(9, 600)]);
+        assert_eq!(spread_over(0, hour(9), hour(11)), Vec::new());
+
+        // `whole` adds back up across a day of span over a prime.
+        let whole = spread_over(3607, 0, 86_400);
+        assert_eq!(whole.iter().map(|(_, secs)| secs).sum::<i64>(), 3607);
+        assert_eq!(whole.len(), 24);
     }
 
     #[test]
