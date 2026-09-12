@@ -250,9 +250,7 @@ fn sitting_name(at: usize, first: usize, floor: SittingFloor, s: &Strings) -> St
 
 /// Books the shelf states as read through, longest first.
 fn finished_books(cx: &Ctx) -> Vec<usize> {
-    let mut out: Vec<usize> = (0..cx.stats.books.len())
-        .filter(|at| cx.stats.books[*at].is_finished())
-        .collect();
+    let mut out: Vec<usize> = cx.stats.finished_in(i64::MIN..=i64::MAX).collect();
     out.sort_by_key(|at| -cx.stats.books[*at].seconds);
     out
 }
@@ -262,7 +260,7 @@ fn cells(cx: &Ctx) -> Vec<Cell> {
     let s = cx.s();
     // The board states what the whole record came to, the same way a span
     // page states its own days.
-    let all = cx.stats.tally(opened(cx)..=cx.today);
+    let all = cx.stats.tally(cx.stats.opened(cx.today)..=cx.today);
     let sittings = (cx.stats.sittings.len() as i64).max(1);
     let books = cx.stats.book_count() as i64;
     let finished = finished_books(cx);
@@ -311,18 +309,10 @@ fn a_book(cx: &Ctx, finished: &[usize], s: &Strings) -> String {
     date::duration_coarse(spent / finished.len() as i64, s)
 }
 
-/// The first day the record holds.
-fn opened(cx: &Ctx) -> i64 {
-    cx.stats.days.first().map(|(d, _)| *d).unwrap_or(cx.today)
-}
-
 /// The fullest day of the record, and what was read on it.
 fn best_day(cx: &Ctx) -> (i64, i64) {
     cx.stats
-        .days
-        .iter()
-        .max_by_key(|(_, secs)| *secs)
-        .map(|(day, secs)| (*day, *secs))
+        .busiest_day(i64::MIN..=i64::MAX)
         .unwrap_or((cx.today, 0))
 }
 
@@ -357,7 +347,7 @@ fn weeks_running(cx: &Ctx) -> i64 {
 /// What the record covers, over the board.
 fn span_line(cx: &mut Ctx, area: Rect) {
     let s = cx.s();
-    let first = opened(cx);
+    let first = cx.stats.opened(cx.today);
     let over = (cx.today - first + 1).max(1);
     let (year, month, _) = date::civil_from_days(first);
     let line = crate::lang::counted(s.since_days, over)

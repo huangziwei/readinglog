@@ -42,7 +42,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, from: usize) {
     let [top, strip, list] = bands(area, theme, figures, head);
 
     let secs = cx.stats.day_seconds(today);
-    let turns: i64 = cx.stats.sittings_on(today).map(|s| s.page_turns).sum();
+    let turns = cx.stats.turns_on(today);
     let stated = [
         (date::duration(secs, s), s.read_today),
         (turns.to_string(), s.pages_turned),

@@ -143,7 +143,7 @@ fn day_page(cx: &mut Ctx, area: Rect, state: &State) {
     let head = chrome::section_height(cx.text, theme);
     let [top, strip, list] = home::bands(area, theme, figures, head);
 
-    let turns: i64 = cx.stats.sittings_on(day).map(|s| s.page_turns).sum();
+    let turns = cx.stats.turns_on(day);
     let longest = cx
         .stats
         .sittings_on(day)
@@ -897,7 +897,7 @@ fn books_on(cx: &Ctx, day: i64) -> Vec<usize> {
 
 /// The busiest day of a span, which every level on the page is banded against.
 fn peak_of(cx: &Ctx, days: std::ops::RangeInclusive<i64>) -> i64 {
-    days.map(|day| cx.stats.day_seconds(day)).max().unwrap_or(0)
+    cx.stats.busiest_day(days).map_or(0, |(_, secs)| secs)
 }
 
 /// The busiest single hour of any day of `days`. One scale under the whole

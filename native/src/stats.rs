@@ -604,6 +604,29 @@ impl Stats {
         self.sittings.iter().filter(move |s| s.day == day)
     }
 
+    /// Pages turned on one day, over [`Self::sittings_on`].
+    pub fn turns_on(&self, day: i64) -> i64 {
+        self.sittings_on(day).map(|s| s.page_turns).sum()
+    }
+
+    /// The sittings falling inside `days`, ascending. The one population every
+    /// figure over a stretch of sittings is drawn from.
+    pub fn sittings_over(
+        &self,
+        days: std::ops::RangeInclusive<i64>,
+    ) -> impl Iterator<Item = &Sitting> {
+        self.sittings.iter().filter(move |s| days.contains(&s.day))
+    }
+
+    /// `(day, seconds)` for every day inside `days` with reading on it. The one
+    /// population every figure over a stretch of days is drawn from.
+    pub fn days_in(
+        &self,
+        days: std::ops::RangeInclusive<i64>,
+    ) -> impl Iterator<Item = &(i64, i64)> {
+        self.days.iter().filter(move |(d, _)| days.contains(d))
+    }
+
     /// One book's sittings, ascending, every one the [`SittingFloor`] kept.
     /// The one population any figure counting this book's sittings is drawn
     /// from, `BookStat::sittings` included.
@@ -623,10 +646,9 @@ impl Stats {
         out
     }
 
-    /// Where one book stood as each of its sittings ended, in the order they
-    /// happened: one entry per [`Self::book_sittings`], the day and the place
-    /// as a whole per cent. A sitting with no `Sitting::progress` holds
-    /// `None`.
+    /// Where one book stood as each of its sittings ended: one entry per
+    /// [`Self::book_sittings`], ascending, the day and the place as a whole per
+    /// cent. A sitting with no `Sitting::progress` holds `None`.
     pub fn book_places(&self, book: usize) -> Vec<(i64, Option<i64>)> {
         let mut out: Vec<((i64, i64), Option<f64>)> = self
             .book_sittings(book)
@@ -660,7 +682,7 @@ impl Stats {
     /// to [`Stats::day_seconds`] over the same days.
     pub fn book_totals(&self, days: std::ops::RangeInclusive<i64>) -> Vec<(usize, i64)> {
         let mut out: Vec<(usize, i64)> = Vec::new();
-        for sitting in self.sittings.iter().filter(|s| days.contains(&s.day)) {
+        for sitting in self.sittings_over(days.clone()) {
             let Some(book) = sitting.book else { continue };
             match out.iter_mut().find(|(b, _)| *b == book) {
                 Some((_, secs)) => *secs += sitting.seconds,
@@ -676,7 +698,7 @@ impl Stats {
     pub fn book_totals_recent(&self, days: std::ops::RangeInclusive<i64>) -> Vec<(usize, i64)> {
         // Seconds, and the instant the book was last put down inside `days`.
         let mut out: Vec<(usize, i64, (i64, i64))> = Vec::new();
-        for sitting in self.sittings.iter().filter(|s| days.contains(&s.day)) {
+        for sitting in self.sittings_over(days.clone()) {
             let Some(book) = sitting.book else { continue };
             let at = (sitting.day, sitting.to_secs);
             match out.iter_mut().find(|(b, _, _)| *b == book) {
@@ -714,7 +736,7 @@ impl Stats {
     pub fn unnamed_over(&self, days: std::ops::RangeInclusive<i64>) -> (usize, i64) {
         let mut keys: Vec<i64> = Vec::new();
         let mut seconds = 0;
-        for sitting in self.sittings.iter().filter(|s| days.contains(&s.day)) {
+        for sitting in self.sittings_over(days.clone()) {
             if sitting.book.is_some() {
                 continue;
             }
@@ -749,7 +771,7 @@ impl Stats {
     /// counted where it was read, never where it started.
     pub fn hours_over(&self, days: std::ops::RangeInclusive<i64>) -> [i64; 24] {
         let mut out = [0i64; 24];
-        for sitting in self.sittings.iter().filter(|s| days.contains(&s.day)) {
+        for sitting in self.sittings_over(days.clone()) {
             for (hour, secs) in &sitting.hours {
                 out[(*hour as usize).min(23)] += secs;
             }
@@ -761,7 +783,7 @@ impl Stats {
     /// first.
     pub fn weekdays_over(&self, days: std::ops::RangeInclusive<i64>) -> [i64; 7] {
         let mut out = [0i64; 7];
-        for (day, secs) in self.days.iter().filter(|(d, _)| days.contains(d)) {
+        for (day, secs) in self.days_in(days.clone()) {
             out[date::weekday(*day)] += secs;
         }
         out
@@ -770,7 +792,7 @@ impl Stats {
     /// The same, cut by the month of the year it fell in.
     pub fn months_over(&self, days: std::ops::RangeInclusive<i64>) -> [i64; 12] {
         let mut out = [0i64; 12];
-        for (day, secs) in self.days.iter().filter(|(d, _)| days.contains(d)) {
+        for (day, secs) in self.days_in(days.clone()) {
             let (_, month, _) = date::civil_from_days(*day);
             out[(month - 1).clamp(0, 11) as usize] += secs;
         }
@@ -864,11 +886,14 @@ impl Stats {
 
     /// Seconds read over `days`.
     pub fn span_seconds(&self, days: std::ops::RangeInclusive<i64>) -> i64 {
-        self.days
-            .iter()
-            .filter(|(d, _)| days.contains(d))
-            .map(|(_, secs)| secs)
-            .sum()
+        self.days_in(days).map(|(_, secs)| secs).sum()
+    }
+
+    /// The fullest day inside `days` and what was read on it, the level every
+    /// bar over a stretch of days is banded against. `None` over a stretch
+    /// with no reading in it.
+    pub fn busiest_day(&self, days: std::ops::RangeInclusive<i64>) -> Option<(i64, i64)> {
+        self.days_in(days).max_by_key(|(_, secs)| *secs).copied()
     }
 
     /// What a stretch of days came to, stated the same way over the whole
@@ -887,16 +912,23 @@ impl Stats {
 
     /// Days of `days` with any reading on them.
     pub fn days_over(&self, days: std::ops::RangeInclusive<i64>) -> i64 {
-        self.days.iter().filter(|(d, _)| days.contains(d)).count() as i64
+        self.days_in(days).count() as i64
     }
 
     /// Books the catalog states read through whose last sitting falls inside
     /// `days`: the books finished over that stretch.
     pub fn finished_over(&self, days: std::ops::RangeInclusive<i64>) -> i64 {
+        self.finished_in(days).count() as i64
+    }
+
+    /// The books read through inside `days`, by their index in [`Self::books`].
+    /// The one population every figure over books read through is drawn from.
+    pub fn finished_in(&self, days: std::ops::RangeInclusive<i64>) -> impl Iterator<Item = usize> {
         self.books
             .iter()
-            .filter(|b| b.is_finished() && days.contains(&b.last_day))
-            .count() as i64
+            .enumerate()
+            .filter(move |(_, b)| b.is_finished() && days.contains(&b.last_day))
+            .map(|(at, _)| at)
     }
 
     /// Whether the book at `book` counts as finished on `day`: read through,
@@ -1666,6 +1698,37 @@ pub(crate) mod tests {
                 );
                 assert_eq!(stats.book_places(at).len() as i64, book.sittings);
                 assert_eq!(stats.book_days(at).len() as i64, book.days);
+                assert_eq!(stats.book_hours(at).iter().sum::<i64>(), book.seconds);
+                assert_eq!(
+                    stats.book_days(at).iter().map(|(_, s)| s).sum::<i64>(),
+                    book.seconds
+                );
+            }
+        }
+    }
+
+    /// `hours_over`, `weekdays_over` and `months_over` each hold the whole of
+    /// [`Stats::span_seconds`] over the same days.
+    #[test]
+    fn every_cut_of_a_span_holds_the_span_whole() {
+        let today = at(2026, 3, 9);
+        for floor in SittingFloor::ALL {
+            let stats = Stats::build(&store(), today, true, Figures::Device, floor);
+            for span in [
+                i64::MIN..=i64::MAX,
+                stats.opened(today)..=today,
+                today - 6..=today,
+                today..=today,
+            ] {
+                let whole = stats.span_seconds(span.clone());
+                let cuts = [
+                    ("hours", stats.hours_over(span.clone()).iter().sum::<i64>()),
+                    ("weekdays", stats.weekdays_over(span.clone()).iter().sum()),
+                    ("months", stats.months_over(span.clone()).iter().sum()),
+                ];
+                for (name, cut) in cuts {
+                    assert_eq!(cut, whole, "{floor:?} {name} over {span:?}");
+                }
             }
         }
     }
