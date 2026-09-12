@@ -290,6 +290,8 @@ fn bare(cx: &mut Ctx, area: Rect, said: &str) {
         .draw_in(script, cx.fb, area.x, baseline, said, false);
 }
 
+/// One book's row, stating what the whole record holds for it. The window
+/// chip over the list picks which books stand, never what their figures count.
 pub(super) fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
     let theme: &Theme = cx.theme;
     let book = &cx.stats.books[index];

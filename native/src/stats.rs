@@ -63,8 +63,7 @@ pub struct BookStat {
 }
 
 impl BookStat {
-    /// Whether a jacket can be drawn for this book. The config page hides
-    /// the books this is false on.
+    /// Whether a jacket can be drawn for this book: `thumbnail` names one.
     pub fn has_cover(&self) -> bool {
         !self.thumbnail.is_empty()
     }
@@ -249,14 +248,12 @@ pub struct Stats {
     /// Every mark the record holds, ascending by when it was made.
     /// [`BookStat::marks`] indexes into this.
     pub marks: Vec<Mark>,
-    /// Each mark's `body` lowercased and Han-folded, at the same index, so a
-    /// keystroke costs a substring test and not a table walk per mark. `None`
-    /// for a mark no book here holds, which no screen can reach.
+    /// Each mark's `body` lowercased and Han-folded, at the same index. `None`
+    /// for a mark no book in [`Self::books`] holds.
     pub folded: Vec<Option<String>>,
 }
 
-/// One row of [`Stats::marked`] and where in the record it came from, which is
-/// what a list running across books states.
+/// One row of [`Stats::marked`] and where in the record it came from.
 #[derive(Debug, Clone, Copy)]
 pub struct Across<'a> {
     /// The book, by its index in [`Stats::books`].
@@ -264,7 +261,7 @@ pub struct Across<'a> {
     /// The row's place in that book's own [`Stats::marked`] list, which is
     /// where the Marks tab opens.
     pub at: usize,
-    /// Where the mark sits in [`Stats::marks`], and so in [`Stats::folded`].
+    /// Where the mark sits in [`Stats::marks`], and in [`Stats::folded`].
     pub held: usize,
     pub mark: &'a Mark,
     /// The note written on it, as [`crate::annotate::Marked`] pairs them.
@@ -377,8 +374,7 @@ impl Stats {
     }
 
     /// Give each book the number of distinct days it was read on, in one pass
-    /// over the sittings. Asking book by book is a filter over every sitting
-    /// per book, which is the shelf times the reading.
+    /// over the sittings.
     fn hold_days(&mut self) {
         let mut seen: Vec<(usize, i64)> = self
             .sittings
@@ -395,14 +391,12 @@ impl Stats {
         }
     }
 
-    /// Hand every `a` row to the book it names, after `sort_books`, at the
-    /// indices the screens address. A mark naming no book in [`Self::books`]
-    /// is held in [`Self::marks`] all the same.
+    /// Hand every `a` row to the book it names, after `sort_books`, at that
+    /// book's index in [`Self::books`]. A mark naming no book there is held
+    /// in [`Self::marks`] all the same.
     fn hold_marks(&mut self, store: &Store) {
         self.marks = store.marks.clone();
-        // Both ways in, built once, each holding the *first* slot under a
-        // key. The title fallback is the common path, not the rare one: most
-        // records carry no extent, and neither do most marks.
+        // Both ways in, built once, each holding the *first* slot under a key.
         let mut by_extent: HashMap<i64, usize> = HashMap::new();
         let mut by_title: HashMap<String, usize> = HashMap::new();
         for (at, book) in self.books.iter().enumerate() {
@@ -444,9 +438,9 @@ impl Stats {
             .flat_map(|b| b.marks.iter().filter_map(|at| self.marks.get(*at)))
     }
 
-    /// One book's marks as a screen lists them: `Kind::marks_a_passage`, most
-    /// recently made first, each with the note `annotate::paired` folds under
-    /// it. `Kind::Bookmark` and `Kind::Pin` carry no words and are not here.
+    /// One book's marks: `Kind::marks_a_passage`, most recently made first,
+    /// each with the note `annotate::paired` folds under it. `Kind::Bookmark`
+    /// and `Kind::Pin` carry no words and are not here.
     pub fn marked(&self, book: usize) -> Vec<crate::annotate::Marked<'_>> {
         let mut held: Vec<&Mark> = self
             .marks_of(book)
@@ -462,9 +456,8 @@ impl Stats {
     pub fn marked_across(&self) -> Vec<Across<'_>> {
         let mut out: Vec<Across<'_>> = Vec::new();
         for book in 0..self.books.len() {
-            // A row knows its place in the list `paired` built, which is not
-            // where the mark sits, so `held` comes off the slots
-            // The slots `BookStat::marks` holds.
+            // `row.at` is a place in the list `paired` built; `held` is the
+            // place in [`Self::marks`], off `BookStat::marks`.
             let slots = &self.books[book].marks;
             for (at, row) in self.marked(book).into_iter().enumerate() {
                 let held = slots
@@ -785,7 +778,7 @@ impl Stats {
     }
 
     /// The record folded onto one week, from whichever day `week` starts on:
-    /// the seconds each weekday holds in an average week.
+    /// the seconds each weekday holds in an average week, and their sum.
     pub fn average_week(&self, today: i64, week: WeekStart) -> Fold {
         let over = self.opened(today)..=today;
         let counted = self.weekdays_over(over.clone());
@@ -793,14 +786,14 @@ impl Stats {
         for day in over.clone() {
             seen[date::weekday(day)] += 1;
         }
-        let values = (0..7)
+        let values: Vec<i64> = (0..7)
             .map(|column| {
                 let day = week.day_in(column);
                 counted[day] / seen[day].max(1)
             })
             .collect();
-        let days = over.end() - over.start() + 1;
-        self.fold(values, self.span_seconds(over) * 7 / days.max(1))
+        let each = values.iter().sum();
+        self.fold(values, each)
     }
 
     /// A [`Fold`] by month of the year, summed over every occurrence and
@@ -947,9 +940,9 @@ fn fresh(extent: i64, found: &BookRecord, day: i64) -> BookStat {
     }
 }
 
-/// The seconds one sitting states: the device's counter under
-/// [`Figures::Device`], and under [`Figures::App`] what its pages credit,
-/// then the awake span, then the counter.
+/// The seconds one sitting states: `seconds` under [`Figures::Device`], and
+/// under [`Figures::App`] `timed_seconds`, else `paged_seconds`, else
+/// `seconds`.
 fn sitting_seconds(s: &Session, from: Figures) -> i64 {
     match from {
         Figures::App if s.timed_seconds > 0 => s.timed_seconds,
@@ -1384,8 +1377,7 @@ pub(crate) mod tests {
         assert_eq!(minute.total_words, 100, "nor its words");
         assert_eq!(minute.sitting_bands()[0], 1);
 
-        // Above every run: the day itself is not a day read, so no streak
-        // stands on it.
+        // A floor above every run leaves `day` unread and `longest_streak` 0.
         let quarter = counted(SittingFloor::FifteenMinutes);
         assert!(quarter.sittings.is_empty());
         assert_eq!(quarter.total_seconds, 0);
@@ -1583,6 +1575,37 @@ pub(crate) mod tests {
             fold.each,
             "the hours of the fold are the day it states"
         );
+    }
+
+    #[test]
+    fn an_average_week_is_the_weekdays_the_band_under_it_draws() {
+        // An hour on one weekday, twice, over a nine-day record: `seen` counts
+        // that weekday twice and every other column stands empty.
+        let days = [at(2026, 3, 1), at(2026, 3, 8)];
+        let today = at(2026, 3, 9);
+        let stats = Stats::build(
+            &on_days(&days, 3600),
+            today,
+            true,
+            Figures::Device,
+            SittingFloor::All,
+        );
+
+        for week in [WeekStart::Monday, WeekStart::Sunday] {
+            let fold = stats.average_week(today, week);
+            assert_eq!(fold.values.len(), 7);
+            assert_eq!(
+                fold.values.iter().filter(|secs| **secs > 0).count(),
+                1,
+                "{week:?}: one weekday was read on"
+            );
+            assert_eq!(
+                fold.values.iter().sum::<i64>(),
+                fold.each,
+                "{week:?}: the weekdays of the fold are the week it states"
+            );
+            assert_eq!(fold.each, 3600, "{week:?}: an hour on that weekday");
+        }
     }
 
     #[test]
@@ -2479,8 +2502,7 @@ pub(crate) mod tests {
         assert_eq!(bible.read_seconds(Figures::App), 3_600);
         assert_eq!(bible.words_read(Figures::App), 1_800);
 
-        // The device's own rate where it stated one, off the newest sitting
-        // and not off a total.
+        // `stated_wpm` off the newest sitting, never a total.
         assert_eq!(bible.wpm(Figures::Device), Some(240));
         assert_eq!(bible.wpm(Figures::App), Some(30));
     }
@@ -2517,8 +2539,8 @@ pub(crate) mod tests {
         };
         assert_eq!(at(&app), at(&device) * 3 / 2);
         // Each mode divides its own words by its own seconds. These sittings
-        // state no page words, so App reads the counter's words over a span
-        // half again as long, and the rate is two thirds of the device's.
+        // state no page words: [`Figures::App`] takes the counter's words over
+        // a span half again as long, at two thirds the rate.
         let rate = |s: &Stats, from| {
             s.books
                 .iter()

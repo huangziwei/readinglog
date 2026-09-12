@@ -299,7 +299,7 @@ fn a_book(cx: &Ctx, finished: &[usize], s: &Strings) -> String {
         return "—".into();
     }
     let spent: i64 = finished.iter().map(|at| cx.stats.books[*at].seconds).sum();
-    hours(spent / finished.len() as i64, s)
+    date::duration_coarse(spent / finished.len() as i64, s)
 }
 
 /// The first day the record holds.
@@ -343,12 +343,6 @@ fn weeks_running(cx: &Ctx) -> i64 {
         week -= 7;
     }
     running
-}
-
-/// A whole-hour total: minutes carry nothing over a record this wide.
-fn hours(secs: i64, s: &Strings) -> String {
-    let space = if s.unit_space { " " } else { "" };
-    format!("{}{space}{}", (secs + 1800) / 3600, s.hours)
 }
 
 /// What the record covers, over the board.
