@@ -1,13 +1,6 @@
 # Reading Log
 
-Keep track of your reading, for jailbroken kindles. 
-
-## Build
-
-```sh
-git clone https://github.com/huangziwei/readinglog && cd readinglog/
-./build.sh
-```
+Keep track of your reading by parsing the local system logs on your jailbroken Kindle.  
 
 ## Install
 
@@ -17,6 +10,19 @@ Download and unzip the latest `readinglog-v<x.y.z>-kindle.zip` from the [release
 |:--|:--|:-- |
 | `extensions/readinglog/` | `/mnt/us/extensions/readinglog/` | it has to be here |
 | `documents/ReadingLog.sh` | `/mnt/us/documents/ReadingLog.sh` | or any subfolders within `documents`  |
+
+If this is your first ever homebrew Kindle extension, you can just copy the whole `extensions` folder to `/mnt/us/`. `/mnt/us/` is the default folder when you plug in your Kindle to a computer.
+
+## Update
+
+Use the Update button within the app via WIFI, or repeat the install procedure manually with a newer version. OTA update will always install the latest version, manual install can roll back to any releases.
+
+## Build from source
+
+```sh
+git clone https://github.com/huangziwei/readinglog && cd readinglog/
+./build.sh
+```
 
 ## How It Works
 
