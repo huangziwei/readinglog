@@ -1308,17 +1308,22 @@ impl Store {
         self.slot_for(extent, key).map(|i| &self.books[i])
     }
 
-    /// Where [`Self::book_for`]'s answer sits in [`Self::books`].
+    /// Where [`Self::book_for`]'s answer sits in [`Self::books`]. `extent`
+    /// answers, and `key` takes it where `key` reaches the lower [`Named`].
     fn slot_for(&self, extent: i64, key: Option<&str>) -> Option<usize> {
-        if extent != 0
-            && let Some(i) = self.slot_at(extent)
-        {
-            return Some(i);
-        }
-        if let Some(k) = key.filter(|k| !k.is_empty())
-            && let Some(i) = self.books.iter().position(|b| b.cde_key == k)
-        {
-            return Some(i);
+        let by_extent = match extent {
+            0 => None,
+            e => self.slot_at(e),
+        };
+        let by_key = key
+            .filter(|k| !k.is_empty())
+            .and_then(|k| self.books.iter().position(|b| b.cde_key == k));
+        let named = |slot: usize| self.books[slot].named_by;
+        match (by_extent, by_key) {
+            (Some(e), Some(k)) if named(k) < named(e) => return Some(k),
+            (Some(e), _) => return Some(e),
+            (None, Some(k)) => return Some(k),
+            (None, None) => {}
         }
         if let Some(i) = self
             .key_at(extent)
@@ -1515,8 +1520,7 @@ impl Store {
                 .collect(),
             books: vec![self.books[slot].clone()],
             marks: self.marks_of(self.books[slot].extent).cloned().collect(),
-            // The clocks the device stood on are the record's, not one book's,
-            // but the marks carried out state instants placed on them.
+            // `clock` is the record's, and `marks` state instants placed on it.
             clock: self.clock.clone(),
             // `mark`, `floor`, the `c` rows and the two gates key the record,
             // not one book.
@@ -2716,6 +2720,59 @@ mod tests {
         // `keep_covers` over the same store takes nothing and drops nothing.
         assert_eq!(store.keep_covers(&dir).kept, 0);
         assert!(covers::held(&dir, "B00OKPCRLG"));
+    }
+
+    /// An `end_position` no `e` row raises lands on the [`Named::Sidecar`]
+    /// record. `asin` reaches the [`Named::Catalog`] one.
+    #[test]
+    fn a_sidecar_record_gives_up_its_extent_to_the_key_the_catalog_holds() {
+        let dir = scratch("shadowed-sidecar");
+        let art = dir.join("thumbnail_usuoi3.jpg");
+        std::fs::write(&art, b"\xff\xd8\xff\xe0\x00\x10JFIF\0").expect("a written thumbnail");
+        let key = "OFMMGEJ7P4N5P4GMMECAHYOBBRN5MNAO";
+        let mut store = Store {
+            sessions: vec![Session {
+                asin: Some(key.into()),
+                ..session("2026-09-13T15:40:58", "2026-09-13T15:48:02", 166_929, 399)
+            }],
+            books: vec![
+                BookRecord {
+                    extent: 166_929,
+                    cde_key: "charles-dickens_a-christmas-carol".into(),
+                    title: "charles-dickens_a-christmas-carol".into(),
+                    named_by: Named::Sidecar,
+                    ..BookRecord::default()
+                },
+                BookRecord {
+                    extent: 166_933,
+                    cde_key: key.into(),
+                    title: "A Christmas Carol".into(),
+                    author: "Charles Dickens".into(),
+                    thumbnail: art.to_string_lossy().into_owned(),
+                    named_by: Named::Catalog,
+                    ..BookRecord::default()
+                },
+            ],
+            ..Store::default()
+        };
+        let found = store
+            .book_for(store.extent_of(166_929), Some(key))
+            .expect("a record");
+        assert_eq!(
+            (found.title.as_str(), found.author.as_str()),
+            ("A Christmas Carol", "Charles Dickens")
+        );
+
+        // `shown_slots` answers the slot, and `keep_covers` copies its jacket.
+        assert_eq!(store.keep_covers(&dir).kept, 1);
+        assert!(covers::held(&dir, key));
+
+        // `ends` raising the class answers the same record on `extent` alone.
+        store.ends = vec![(166_929, 166_933)];
+        let raised = store
+            .book_for(store.extent_of(166_929), None)
+            .expect("a record");
+        assert_eq!(raised.title, "A Christmas Carol");
     }
 
     /// A mark of a known shape, for the `a` row below.
@@ -4766,8 +4823,7 @@ m	260911:115340	7200
 
     #[test]
     fn a_class_whose_book_the_record_already_holds_is_linked_and_not_copied() {
-        // One book under two `EndPos` classes, its record under the older:
-        // the device logs a new class when the file changes under the book.
+        // One book under two `EndPos` classes, its record under the older.
         let mut store = orphaned();
         for s in &mut store.sessions {
             s.asin = None;
