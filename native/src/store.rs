@@ -177,8 +177,8 @@ pub struct Cleared {
 pub struct Store {
     /// Ascending by `started_at`, with `end_position` a sitting's identity.
     pub sessions: Vec<Session>,
-    /// The clocks the device has been seen standing on, which is what places
-    /// an instant a source states as a true epoch rather than a wall clock.
+    /// The clocks the device has been seen standing on, which places an
+    /// instant a source states as a true epoch.
     pub clock: Clock,
     /// `EndPos → BookEndPosition.FromBook`, ascending by key.
     pub ends: Vec<(i64, i64)>,
@@ -263,8 +263,7 @@ impl Store {
     /// The rows of `text`, one arm per row type.
     fn parse(text: &str) -> Self {
         let mut out = Self::default();
-        // Folded in whole at the end: `Clock` sorts and collapses, and a row
-        // taken alone would be compared against a half-read record.
+        // `Clock` sorts and collapses `seen`, folded in whole past the loop.
         let mut seen: Vec<(i64, i64)> = Vec::new();
         for line in text.lines() {
             let mut f = line.split('\t');
@@ -807,7 +806,13 @@ impl Store {
             let slot = match slot_in(&by_key, &self.books, book) {
                 Some(i) => {
                     let changed = merge(&mut self.books[i], book);
-                    moved[i] = changed || was_on[i] != self.books[i].on_device;
+                    // `was_on` holds one entry per record the pass opened with.
+                    // A slot past its end is one an earlier row of this pass
+                    // pushed, and it stands moved.
+                    moved[i] = match was_on.get(i) {
+                        Some(&was) => changed || was != self.books[i].on_device,
+                        None => true,
+                    };
                     i
                 }
                 // The purchase row beside a file row in `by_key` names no
@@ -836,8 +841,8 @@ impl Store {
     /// Name reading the catalog cannot: `sidecars` against [`Self::classes_by_counter`].
     pub fn recover(&mut self, sidecars: &[sidecar::Counter]) -> usize {
         // Drop a pairing whose extent a record carries under another key.
-        // `retain` cannot read `books` while it holds `pairs`, so the keys are
-        // gathered first; never a clone, which copies the whole record.
+        // `retain` cannot read `books` while it holds `pairs`. `keyed` borrows
+        // each `cde_key`, never a clone of the record.
         if !self.pairs.is_empty() {
             let mut keyed: std::collections::HashMap<i64, Vec<&str>> =
                 std::collections::HashMap::new();
@@ -1086,8 +1091,7 @@ impl Store {
     }
 
     /// Drop the record a source weaker than `by` made for `extent`, and the
-    /// rows reaching it, so a stronger claim can stand in its place. This is
-    /// what gives a book that arrived as a file name its real title.
+    /// `pairs` and `keys` rows reaching it.
     fn give_up(&mut self, extent: i64, by: Named) -> bool {
         let Some(slot) = self
             .books
@@ -1181,8 +1185,7 @@ impl Store {
     }
 
     /// The record in one short line: what it holds, and how far the pass has
-    /// read. A header block states this, so it is what the store was when the
-    /// launch opened it, not what the pass left behind.
+    /// read.
     pub fn said(&self) -> String {
         format!(
             "{} s, {} b, {} a, mark {}",
@@ -1328,8 +1331,8 @@ impl Store {
     }
 
     /// The first record carrying `extent`, over the key [`Self::sort_books`]
-    /// orders on. Records share an extent routinely and callers want the
-    /// **first** of the run, so `partition_point`, never `binary_search`.
+    /// orders on. `partition_point` answers the **first** of a run of records
+    /// sharing an extent, never `binary_search`.
     fn slot_at(&self, extent: i64) -> Option<usize> {
         let at = self.books.partition_point(|b| b.extent < extent);
         self.books
@@ -1429,14 +1432,12 @@ impl Store {
         for (extent, file) in &other.pairs {
             self.learn_pair(*extent, file);
         }
-        // A mark the record does not hold, so the gate goes and the next pass
-        // reads the sources again. Sorted and deduped, never a membership test
-        // per mark.
+        // `marks` sorted and deduped, never a membership test per mark. A
+        // mark the record does not hold drops `gate`.
         let held = self.marks.len();
         self.marks.extend(other.marks.iter().cloned());
         self.sort_marks();
-        // Two marks equal in every field sort adjacent, so this drops exactly
-        // the ones `self.marks` holds.
+        // Two marks equal in every field sort adjacent.
         self.marks.dedup_by(|a, b| a == b);
         if self.marks.len() != held {
             self.gate = None;
@@ -1601,8 +1602,7 @@ impl Store {
         self.sort_marks();
     }
 
-    /// Orders `marks` by when they were made, then by the book and the place,
-    /// so two passes over one device write the same file.
+    /// Orders `marks` by when they were made, then by the book and the place.
     fn sort_marks(&mut self) {
         self.marks.sort_by(|a, b| {
             (&a.at, a.extent, &a.title, a.kind, a.start, a.location)
@@ -1911,17 +1911,16 @@ fn merge(record: &mut BookRecord, book: &Book) -> bool {
     moved
 }
 
-/// Append one row and its line ending. Every writer below goes through this,
-/// so a record's rows cost the buffer they are written into and nothing else.
+/// Append one row and its line ending. Every writer below goes through `row`,
+/// into the one buffer.
 fn row(out: &mut String, args: std::fmt::Arguments) {
     use std::fmt::Write as _;
     let _ = out.write_fmt(args);
     out.push('\n');
 }
 
-/// Decimal places a `b` row carries for a place in a book. **A record must
-/// hold no more precision than its row can write**, or it compares unequal
-/// against the catalog on the pass after and the store is rewritten for it.
+/// Decimal places a `b` row carries for a place in a book. **A record holds
+/// no more precision than its row can write.**
 const PERCENT_PLACES: usize = 6;
 
 /// `percent` as a `b` row can hold it.
@@ -2034,7 +2033,7 @@ fn read_mark<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Mark> {
     out.state.is_in_the_book().then_some(out)
 }
 
-/// What a pass over the naming sources stood at, so one finding the same again
+/// What a pass over the naming sources stood at. A pass finding the same again
 /// is skipped whole. **Everything the pass reads has to be here**, and none of
 /// it may be a figure only a parse can state.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -2071,7 +2070,7 @@ fn read_gate<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Gate> {
 
 /// A `g` row as a [`Sources`]. A row an older build wrote states fewer
 /// fields, and every one it does not state reads as zero, which no live gate
-/// can equal — so the sources are asked again, which is the safe answer.
+/// equals.
 fn read_sources<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Sources> {
     let mut next = || f.next().unwrap_or_default().trim().to_string();
     Some(Sources {
@@ -2307,8 +2306,24 @@ mod tests {
         }
     }
 
+    /// `shelf` names one book twice, against a record holding no books. The
+    /// second row reaches a slot the same `remember` pushed.
+    #[test]
+    fn a_row_restating_a_book_this_pass_added_reaches_no_snapshot() {
+        let shelf = [
+            shelved(1, "B01", "One", -1.0),
+            shelved(938_018, "B00OKPCRLG", "Bible", 55.0),
+            shelved(938_018, "B00OKPCRLG", "Bible", 55.0),
+        ];
+        let mut store = Store::default();
+        assert_eq!(store.remember(&shelf), 2, "both books are new");
+        assert_eq!(store.books.len(), 2);
+        // `remember` over the same `shelf` again moves nothing.
+        assert_eq!(store.remember(&shelf), 0);
+    }
+
     /// A `b` row writes six decimal places. A record holding more compares
-    /// unequal against the catalog on the pass after it was written, so an
+    /// unequal against the catalog on the pass after it was written, and an
     /// unchanged shelf reports a change on every launch.
     #[test]
     fn a_place_the_row_cannot_write_is_not_a_place_the_record_keeps() {
@@ -2328,8 +2343,8 @@ mod tests {
         };
         let mut store = Store::default();
         store.remember(std::slice::from_ref(&book));
-        // The record holds what the row can write, so reading the row back
-        // gives the same number.
+        // The record holds what the row can write. Reading the row back gives
+        // the same number.
         let text = store.text();
         let written = Store::from_text(&text);
         assert_eq!(written.books[0].percent, store.books[0].percent);
@@ -2339,8 +2354,8 @@ mod tests {
         assert_eq!(again.text(), text);
     }
 
-    /// Most records carry no extent, so a run under one value is the normal
-    /// case and `slot_at` must answer its **first**.
+    /// Most records carry no extent. A run under one value is the normal case,
+    /// and `slot_at` answers its **first**.
     #[test]
     fn a_run_of_records_under_one_extent_answers_its_first() {
         let mut store = Store::default();
@@ -4080,9 +4095,9 @@ m	260911:115340	7200
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// [`crate::settings::Figures::App`] reads the page figure, so it has to
-    /// survive the row. A record an older build wrote states none and falls
-    /// back to `awake_seconds`, until a heal measures the sitting again.
+    /// [`crate::settings::Figures::App`] reads the page figure, and the `s`
+    /// row carries it. A record an older build wrote states none and falls
+    /// back to `awake_seconds`.
     #[test]
     fn an_s_row_carries_the_page_figure_beside_the_counter_and_the_awake_span() {
         let store = Store {
