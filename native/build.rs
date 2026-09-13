@@ -1,6 +1,6 @@
-//! Stamps `READINGLOG_BUILD` — the compile instant and the commit — into the
-//! binary, which is what tells two builds of one version apart. Naming any
-//! `rerun-if-changed` replaces cargo's default, so the sources are named too.
+//! `READINGLOG_BUILD` carries the compile instant and the commit into the
+//! binary. The `cargo:rerun-if-changed` lines name `build.rs`, `src`, and
+//! every path `watched` returns.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -14,8 +14,9 @@ fn main() {
     println!("cargo:rustc-env=READINGLOG_BUILD={} {}", at(), commit());
 }
 
-/// The git files that move when the commit does. Empty outside a checkout, or
-/// in a worktree, where the stamp falls back to following the sources.
+/// The `.git` files that move on a commit and that exist: `HEAD`, and the
+/// loose or packed file holding the ref `HEAD` names. Empty where `..` holds
+/// no `.git`.
 fn watched() -> Vec<PathBuf> {
     let git = Path::new("..").join(".git");
     if !git.is_dir() {
@@ -26,24 +27,23 @@ fn watched() -> Vec<PathBuf> {
         return Vec::new();
     };
     let mut out = vec![head];
-    // `ref: refs/heads/main` — the file that file names moves on a commit.
-    // A detached HEAD names no ref and moves on its own.
+    // `ref: refs/heads/main` — `at` is the ref, held by a loose file under
+    // `.git/` or by a line in `packed-refs`.
     if let Some(at) = said.trim().strip_prefix("ref: ") {
         out.push(git.join(at));
-        // A ref that has been packed away has no file of its own.
         out.push(git.join("packed-refs"));
     }
+    out.retain(|path| path.exists());
     out
 }
 
-/// The compile instant as `YYYY-MM-DDTHH:MM:SSZ`, or `?` where `date` is not
-/// there to state one.
+/// The compile instant as `YYYY-MM-DDTHH:MM:SSZ`, or `?` where `date` fails.
 fn at() -> String {
     run("date", &["-u", "+%Y-%m-%dT%H:%M:%SZ"]).unwrap_or_else(|| "?".into())
 }
 
-/// The short commit, with `+` where the tree carries changes over it. `?`
-/// outside a checkout.
+/// `git rev-parse --short HEAD`, with `+` where `git status --porcelain`
+/// states any line. `?` where `git rev-parse` fails.
 fn commit() -> String {
     let Some(short) = run("git", &["rev-parse", "--short", "HEAD"]) else {
         return "?".into();
@@ -54,7 +54,7 @@ fn commit() -> String {
     }
 }
 
-/// `program`'s trimmed stdout, or `None` where it did not run or failed.
+/// `program`'s trimmed stdout, or `None` where `Command` or `status` fails.
 fn run(program: &str, args: &[&str]) -> Option<String> {
     let out = Command::new(program).args(args).output().ok()?;
     out.status
