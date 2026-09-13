@@ -14,6 +14,15 @@ pub const BACKUPS_DIR: &str = "backups";
 /// The record's name inside an archive.
 const RECORD: &str = "sessions.tsv";
 
+/// The manifest's name inside an archive.
+const ABOUT: &str = "about.tsv";
+
+/// The device's own model line.
+const MODEL: &str = "/proc/device-tree/model";
+
+/// The firmware's version line.
+const FIRMWARE: &str = "/etc/prettyversion.txt";
+
 /// What an archive holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -48,22 +57,151 @@ pub fn dir(dir: &Path) -> PathBuf {
     dir.join(BACKUPS_DIR)
 }
 
-/// An archive's name: `mark` with every `:` written as `-`.
-pub fn name(kind: Kind, mark: &str) -> String {
-    format!("{}-{}.zip", kind.stem(), mark.replace(':', "-"))
+/// The device's clock as the `YYMMDD:HHMMSS` an archive is named for.
+pub fn stamped_now() -> String {
+    let (days, secs) = crate::date::now();
+    crate::log::line::log_stamp(&crate::date::stamp(days, secs)).unwrap_or_default()
+}
+
+/// The `stamp` an archive's name carries: `YYMMDD-HHMMSS`, which
+/// [`Backup::stamp`] reads back.
+const STAMP_LEN: usize = 13;
+
+/// An archive's name: `stamp` with every `:` written as `-`, and `tag` where
+/// one names the book. Two archives of one book at one second differ in
+/// nothing else, and [`free`] steps them apart.
+pub fn name(kind: Kind, stamp: &str, tag: &str) -> String {
+    let stamp = stamp.replace(':', "-");
+    match tag.is_empty() {
+        true => format!("{}-{stamp}.zip", kind.stem()),
+        false => format!("{}-{stamp}-{tag}.zip", kind.stem()),
+    }
+}
+
+/// `named` under `dir`, stepping `-2`, `-3` while a file stands at it.
+/// `archive::write` renames onto its path, and an archive is never the file
+/// that goes.
+fn free(dir: &Path, named: &str) -> PathBuf {
+    let at = dir.join(named);
+    if !at.exists() {
+        return at;
+    }
+    let stem = named.strip_suffix(".zip").unwrap_or(named);
+    (2..)
+        .map(|n| dir.join(format!("{stem}-{n}.zip")))
+        .find(|next| !next.exists())
+        .unwrap_or(at)
+}
+
+/// What an archive states about itself, beside the record it carries. An
+/// archive written without an [`ABOUT`] entry answers every field empty.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct About {
+    /// The clock the archive was written at, `YYMMDD:HHMMSS`.
+    pub written: String,
+    /// `update::VERSION`.
+    pub app: String,
+    /// [`MODEL`], one line.
+    pub device: String,
+    /// [`FIRMWARE`], one line.
+    pub firmware: String,
+    /// The length of `Store::sessions`.
+    pub sittings: usize,
+    /// The day the first and the last sitting started on, `YYYY-MM-DD`.
+    pub first: String,
+    pub last: String,
+}
+
+impl About {
+    /// Whether an archive stated any of this.
+    pub fn is_empty(&self) -> bool {
+        *self == About::default()
+    }
+}
+
+/// One line per field, the name and the value tab apart.
+fn about_text(store: &Store, stamp: &str) -> String {
+    let day = |at: Option<&crate::log::session::Session>| {
+        at.map(|s| crate::date::day_of(&s.started_at).to_string())
+            .unwrap_or_default()
+    };
+    [
+        ("written", stamp.to_string()),
+        ("app", crate::update::VERSION.to_string()),
+        ("device", one_line(MODEL)),
+        ("firmware", one_line(FIRMWARE)),
+        ("sittings", store.sessions.len().to_string()),
+        ("first", day(store.sessions.first())),
+        ("last", day(store.sessions.last())),
+    ]
+    .iter()
+    .map(|(name, value)| format!("{name}\t{value}\n"))
+    .collect()
+}
+
+/// The first line of the file at `at`, without its control characters. Empty
+/// where there is no file to read.
+fn one_line(at: &str) -> String {
+    std::fs::read_to_string(at)
+        .unwrap_or_default()
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim_matches(|c: char| c.is_control() || c.is_whitespace())
+        .to_string()
+}
+
+/// The [`About`] the archive at `at` carries.
+pub fn about(at: &Path) -> archive::Result<About> {
+    let mut open = Archive::open(at)?;
+    let Some(entry) = open.entries().iter().find(|e| e.path == ABOUT).cloned() else {
+        return Ok(About::default());
+    };
+    let bytes = open.read(&entry)?;
+    Ok(read_about(&String::from_utf8_lossy(&bytes)))
+}
+
+/// [`about_text`] read back.
+fn read_about(text: &str) -> About {
+    let mut out = About::default();
+    for line in text.lines() {
+        let Some((name, value)) = line.split_once('\t') else {
+            continue;
+        };
+        match name {
+            "written" => out.written = value.to_string(),
+            "app" => out.app = value.to_string(),
+            "device" => out.device = value.to_string(),
+            "firmware" => out.firmware = value.to_string(),
+            "sittings" => out.sittings = value.parse().unwrap_or(0),
+            "first" => out.first = value.to_string(),
+            "last" => out.last = value.to_string(),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Write an archive of `store` and every jacket held, taking nothing away.
+/// Answers where it landed.
+pub fn export(dir: &Path, store: &Store) -> archive::Result<PathBuf> {
+    keep_record(dir, store, &stamped_now(), true)
 }
 
 /// Write `store`, and under `jackets` every file in `covers::COVERS_DIR`,
-/// into an archive named for `mark`. Answers where it landed.
+/// into an archive named for `stamp`. Answers where it landed.
 pub fn keep_record(
     dir: &Path,
     store: &Store,
-    mark: &str,
+    stamp: &str,
     jackets: bool,
 ) -> archive::Result<PathBuf> {
     let text = store.text();
-    let mut entries: Vec<(String, Source<'_>)> =
-        vec![(RECORD.to_string(), Source::Bytes(text.as_bytes()))];
+    let said = about_text(store, stamp);
+    let mut entries: Vec<(String, Source<'_>)> = vec![
+        (RECORD.to_string(), Source::Bytes(text.as_bytes())),
+        (ABOUT.to_string(), Source::Bytes(said.as_bytes())),
+    ];
     let held = match jackets {
         true => jackets_under(dir),
         false => Vec::new(),
@@ -71,14 +209,14 @@ pub fn keep_record(
     for (name, path) in &held {
         entries.push((format!("{}/{name}", covers::COVERS_DIR), Source::File(path)));
     }
-    let at = dir.join(BACKUPS_DIR).join(name(Kind::Record, mark));
+    let at = free(&self::dir(dir), &name(Kind::Record, stamp, ""));
     archive::write(&at, &entries)?;
     Ok(at)
 }
 
-/// Write `one` and the jacket `covers::path` names, into an archive named
-/// for `mark`. Answers where it landed.
-pub fn keep_book(dir: &Path, one: &Store, mark: &str) -> archive::Result<PathBuf> {
+/// Write `one` and the jacket `covers::path` names, into an archive named for
+/// `stamp` and for the book. Answers where it landed.
+pub fn keep_book(dir: &Path, one: &Store, stamp: &str) -> archive::Result<PathBuf> {
     let text = one.text();
     let mut entries: Vec<(String, Source<'_>)> =
         vec![(RECORD.to_string(), Source::Bytes(text.as_bytes()))];
@@ -97,7 +235,15 @@ pub fn keep_book(dir: &Path, one: &Store, mark: &str) -> archive::Result<PathBuf
             Source::File(path),
         ));
     }
-    let at = dir.join(BACKUPS_DIR).join(name(Kind::Book, mark));
+    let tag: String = one
+        .books
+        .first()
+        .map(|b| b.cde_key.as_str())
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
+    let at = free(&self::dir(dir), &name(Kind::Book, stamp, &tag));
     archive::write(&at, &entries)?;
     Ok(at)
 }
@@ -119,7 +265,7 @@ pub fn reset(dir: &Path, store: &mut Store, keep: Keep) -> archive::Result<Optio
         return Ok(None);
     }
     let kept = match keep {
-        Keep::Archive => Some(keep_record(dir, store, &store.mark.clone(), true)?),
+        Keep::Archive => Some(keep_record(dir, store, &stamped_now(), true)?),
         Keep::Nothing => None,
     };
     store.wipe();
@@ -146,8 +292,11 @@ pub fn list(dir: &Path) -> Vec<Backup> {
             let kind = [Kind::Record, Kind::Book]
                 .into_iter()
                 .find(|k| stem.starts_with(&format!("{}-", k.stem())))?;
+            // Past the stamp stands the book a `Kind::Book` name carries and
+            // the step `free` took, neither of them part of the stamp.
+            let rest = &stem[kind.stem().len() + 1..];
             Some(Backup {
-                stamp: stem[kind.stem().len() + 1..].to_string(),
+                stamp: rest.get(..STAMP_LEN).unwrap_or(rest).to_string(),
                 kind,
                 bytes: e.metadata().map(|m| m.len()).unwrap_or_default(),
                 path,
@@ -207,7 +356,7 @@ pub fn take(
         if entry.path == RECORD {
             let bytes = open.read(entry)?;
             inside = Store::from_archive(&String::from_utf8_lossy(&bytes));
-            added = store.merge(&inside);
+            added = store.fold_in(&inside);
             continue;
         }
         let Some(named) = entry.path.strip_prefix(&format!("{}/", covers::COVERS_DIR)) else {
@@ -237,7 +386,7 @@ pub fn take(
 
 /// Whether `store` holds every sitting, end and book row of `inside`, on the
 /// identities `Store::sort` de-duplicates by.
-fn holds(store: &Store, inside: &Store) -> bool {
+pub fn holds(store: &Store, inside: &Store) -> bool {
     let sitting = |a: &crate::log::session::Session| {
         store.sessions.iter().any(|s| {
             s.started_at == a.started_at
@@ -253,6 +402,11 @@ fn holds(store: &Store, inside: &Store) -> bool {
                 .iter()
                 .any(|h| h.extent == b.extent && h.cde_key == b.cde_key)
         })
+}
+
+/// Take the archive at `at` off disk. The one call that deletes one.
+pub fn remove(at: &Path) -> std::io::Result<()> {
+    std::fs::remove_file(at)
 }
 
 /// How many bytes the jacket cache and the archives take under `dir`.
@@ -309,10 +463,69 @@ mod tests {
     #[test]
     fn an_archive_is_named_without_a_colon() {
         assert_eq!(
-            name(Kind::Record, "260906:010231"),
+            name(Kind::Record, "260906:010231", ""),
             "readinglog-260906-010231.zip"
         );
-        assert_eq!(name(Kind::Book, "260906:010231"), "book-260906-010231.zip");
+        assert_eq!(
+            name(Kind::Book, "260906:010231", "B00OKPCRLG"),
+            "book-260906-010231-B00OKPCRLG.zip"
+        );
+    }
+
+    /// The archive was named for `Store::mark`, the newest log line read. Two
+    /// written under one mark landed on one path, and `archive::write` renames
+    /// onto it.
+    #[test]
+    fn two_archives_of_one_second_are_two_files() {
+        let dir = scratch("collide");
+        let store = read_one(&dir);
+        let first = keep_record(&dir, &store, "260810:120000", true).unwrap();
+        let second = keep_record(&dir, &store, "260810:120000", true).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(list(&dir).len(), 2);
+        assert!(peek(&first).is_ok() && peek(&second).is_ok());
+
+        // Two books cleared under one stamp: the name carries the book.
+        let one = store.one_book(148_207, "B00OKPCRLG");
+        let other = Store::from_text(&format!(
+            "{HEADER}\n\
+             b\t999\tB0OTHER0001\tAnother\tSomeone\t\t\t10.000000\t0\t\t\t0\t\t-1\tEBOK\n"
+        ));
+        let a = keep_book(&dir, &one, "260810:120000").unwrap();
+        let b = keep_book(&dir, &other, "260810:120000").unwrap();
+        assert_ne!(a, b);
+        assert_eq!(peek(&a).unwrap().books[0].title, "A Book");
+        assert_eq!(peek(&b).unwrap().books[0].title, "Another");
+        assert_eq!(list(&dir).len(), 4);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A name a `Kind::Book` tag or a [`free`] step made longer reads back as
+    /// the stamp alone, and one no stamp fits reads as itself.
+    #[test]
+    fn a_stamp_is_read_out_of_whatever_the_name_carries() {
+        let dir = scratch("stamps");
+        std::fs::create_dir_all(self::dir(&dir)).unwrap();
+        for named in [
+            "readinglog-260901-120000.zip",
+            "readinglog-260901-120000-2.zip",
+            "book-260905-090000-B00OKPCRLG.zip",
+            "readinglog-nonsense.zip",
+        ] {
+            std::fs::write(self::dir(&dir).join(named), b"x").unwrap();
+        }
+        let held = list(&dir);
+        assert_eq!(
+            held.iter().map(|b| b.stamp.as_str()).collect::<Vec<_>>(),
+            [
+                "nonsense",
+                "260905-090000",
+                "260901-120000",
+                "260901-120000",
+            ]
+        );
+        assert_eq!(held[1].kind, Kind::Book);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -452,7 +665,7 @@ mod tests {
         let stamped = text.replacen(HEADER, "#readinglog\t0", 1);
         let at = dir
             .join(BACKUPS_DIR)
-            .join(name(Kind::Record, "260810:120000"));
+            .join(name(Kind::Record, "260810:120000", ""));
         archive::write(
             &at,
             &[(RECORD.to_string(), Source::Bytes(stamped.as_bytes()))],
@@ -469,7 +682,7 @@ mod tests {
     }
 
     #[test]
-    fn an_archive_the_record_did_not_take_whole_is_not_the_apps_to_delete() {
+    fn holds_answers_for_a_record_carrying_the_rows_and_one_carrying_none() {
         let dir = scratch("partial");
         let mut store = read_one(&dir);
         let at = reset(&dir, &mut store, Keep::Archive).unwrap().unwrap();
@@ -489,6 +702,57 @@ mod tests {
             "an empty record holds none of it"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_export_writes_an_archive_and_takes_nothing_away() {
+        let dir = scratch("export");
+        let store = read_one(&dir);
+        let at = export(&dir, &store).expect("an archive");
+
+        assert_eq!(peek(&at).expect("a readable archive").sessions.len(), 1);
+        assert!(covers::held(&dir, "B00OKPCRLG"), "a jacket went");
+        let back = Store::load(&dir);
+        assert_eq!(back.sessions.len(), 1, "the record was emptied");
+        assert_eq!(back.floor, store.floor, "the floor moved");
+        assert_eq!(back.mark, store.mark, "the mark moved");
+    }
+
+    #[test]
+    fn an_archive_states_the_clock_it_was_written_at_and_what_it_holds() {
+        let dir = scratch("about");
+        let store = read_one(&dir);
+        let at = keep_record(&dir, &store, "260913:103226", true).expect("an archive");
+
+        let said = about(&at).expect("a readable archive");
+        assert_eq!(said.written, "260913:103226");
+        assert_eq!(said.app, crate::update::VERSION);
+        assert_eq!(said.sittings, 1);
+        assert_eq!(said.first, "2026-08-07");
+        assert_eq!(said.last, "2026-08-07");
+        assert!(!said.is_empty());
+
+        // An archive carrying no `ABOUT` entry.
+        let older = self::dir(&dir).join("readinglog-260101-000000.zip");
+        archive::write(
+            &older,
+            &[(RECORD.to_string(), Source::Bytes(store.text().as_bytes()))],
+        )
+        .expect("an archive");
+        assert!(about(&older).expect("a readable archive").is_empty());
+        assert_eq!(peek(&older).expect("a readable archive").sessions.len(), 1);
+    }
+
+    #[test]
+    fn an_archive_taken_back_stands_on_disk() {
+        let dir = scratch("kept-after");
+        let mut store = read_one(&dir);
+        let at = reset(&dir, &mut store, Keep::Archive).unwrap().unwrap();
+
+        let taken = take(&dir, &at, &mut store, &mut |_, _| {}).expect("a merge");
+        assert!(taken.whole, "the record took every row");
+        assert!(at.is_file(), "the archive went");
+        assert_eq!(list(&dir).len(), 1);
     }
 
     #[test]
@@ -529,7 +793,7 @@ mod tests {
         let one = store.one_book(148_207, "B00OKPCRLG");
         let at = keep_book(&dir, &one, &store.mark.clone()).expect("an archive");
 
-        assert_eq!(at.file_name().unwrap(), "book-260810-120000.zip");
+        assert_eq!(at.file_name().unwrap(), "book-260810-120000-B00OKPCRLG.zip");
         let open = Archive::open(&at).expect("a readable archive");
         assert_eq!(
             open.entries()

@@ -1413,6 +1413,29 @@ impl Store {
         true
     }
 
+    /// [`Self::merge`] `other`, with the stronger claim taken on every book
+    /// both records hold. `Self::sort_books` keeps the record standing here
+    /// over the one `other` carries, and this is what it keeps of the other.
+    pub fn fold_in(&mut self, other: &Store) -> usize {
+        let mut at: std::collections::HashMap<(i64, &str), usize> =
+            std::collections::HashMap::with_capacity(self.books.len());
+        for (slot, book) in self.books.iter().enumerate() {
+            at.insert((book.extent, book.cde_key.as_str()), slot);
+        }
+        let both: Vec<(usize, &BookRecord)> = other
+            .books
+            .iter()
+            .filter_map(|incoming| {
+                let slot = *at.get(&(incoming.extent, incoming.cde_key.as_str()))?;
+                Some((slot, incoming))
+            })
+            .collect();
+        for (slot, incoming) in both {
+            take_stronger(&mut self.books[slot], incoming);
+        }
+        self.merge(other)
+    }
+
     /// Fold `other`'s sittings, ends and books into this one, through
     /// [`Self::sort`]. [`Self::floor`] and the `c` rows stand. Answers the
     /// sittings added.
@@ -1872,6 +1895,32 @@ fn slot_in(
     }
     // A record made before the catalog stated a size takes the size here.
     slots.first().copied()
+}
+
+/// Take what `incoming` claims about a book `held` names too, where the claim
+/// is the stronger one. `on_device`, `location` and `read_state` stand, and a
+/// `held` carrying a `restart` keeps its place and its mark.
+fn take_stronger(held: &mut BookRecord, incoming: &BookRecord) {
+    for (field, stated) in [
+        (&mut held.cde_type, &incoming.cde_type),
+        (&mut held.title, &incoming.title),
+        (&mut held.author, &incoming.author),
+        (&mut held.thumbnail, &incoming.thumbnail),
+        (&mut held.language, &incoming.language),
+        (&mut held.cover, &incoming.cover),
+    ] {
+        if field.is_empty() {
+            *field = stated.clone();
+        }
+    }
+    held.kept |= incoming.kept;
+    if held.restart.is_some() {
+        return;
+    }
+    if incoming.percent > held.percent {
+        held.stand_at(incoming.percent);
+    }
+    held.finished |= incoming.finished;
 }
 
 /// Fold what the catalog states into `record`, answering whether anything
@@ -2352,6 +2401,81 @@ mod tests {
         let mut again = Store::from_text(&text);
         assert_eq!(again.remember(std::slice::from_ref(&book)), 0);
         assert_eq!(again.text(), text);
+    }
+
+    /// One book, at the place and the mark each record gives it.
+    fn placed(percent: f64, finished: bool, title: &str) -> Store {
+        let mut store = Store::default();
+        let mut book = from_witness(938_018, title, "An Author", "B00OKPCRLG", Named::Catalog);
+        book.percent = percent;
+        book.finished = finished;
+        store.books.push(book);
+        store
+    }
+
+    /// `sort_books` keeps the record standing here over the one an archive
+    /// carries. `fold_in` takes the further place and the standing mark out of
+    /// the one it drops.
+    #[test]
+    fn a_book_both_records_hold_takes_the_further_place() {
+        let mut here = placed(40.0, false, "A Book");
+        here.fold_in(&placed(80.0, true, "A Book"));
+        assert_eq!(here.books.len(), 1);
+        assert_eq!(here.books[0].percent, 80.0);
+        assert!(here.books[0].finished);
+    }
+
+    /// A restore folds an older archive of this record's own books in, and
+    /// the place it holds is the newer one either way.
+    #[test]
+    fn an_older_archive_of_this_records_own_books_moves_nothing() {
+        let mut here = placed(80.0, true, "A Book");
+        let text = here.text();
+        here.fold_in(&placed(40.0, false, "A Book"));
+        assert_eq!(here.text(), text);
+    }
+
+    /// A title, an author and a jacket the record has none of are taken; the
+    /// ones it holds stand.
+    #[test]
+    fn a_field_the_record_states_none_of_is_taken_from_the_archive() {
+        let mut here = placed(40.0, false, "");
+        here.books[0].author = String::new();
+        let mut archived = placed(10.0, false, "A Book");
+        archived.books[0].cover = "B00OKPCRLG.jpg".into();
+        here.fold_in(&archived);
+        assert_eq!(here.books[0].title, "A Book");
+        assert_eq!(here.books[0].author, "An Author");
+        assert_eq!(here.books[0].cover, "B00OKPCRLG.jpg");
+        assert_eq!(here.books[0].percent, 40.0, "the place moved backwards");
+    }
+
+    /// `restart` is the floor a record's place is read against. A record
+    /// carrying one keeps the place and the mark that restart set.
+    #[test]
+    fn a_restart_here_outranks_a_place_and_a_mark_from_elsewhere() {
+        let mut here = placed(0.0, false, "A Book");
+        here.books[0].restart = Some(80.0);
+        here.fold_in(&placed(90.0, true, "A Book"));
+        assert_eq!(here.books[0].percent, 0.0);
+        assert!(!here.books[0].finished);
+        assert_eq!(here.books[0].restart, Some(80.0));
+    }
+
+    /// A book one record names and the other does not is added whole.
+    #[test]
+    fn a_book_only_the_archive_names_is_added() {
+        let mut here = placed(40.0, false, "A Book");
+        let mut archived = Store::default();
+        archived.books.push(from_witness(
+            555,
+            "Another",
+            "Someone",
+            "B0OTHER0001",
+            Named::Catalog,
+        ));
+        here.fold_in(&archived);
+        assert_eq!(here.books.len(), 2);
     }
 
     /// Most records carry no extent. A run under one value is the normal case,

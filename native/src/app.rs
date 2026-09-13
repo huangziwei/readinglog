@@ -216,6 +216,12 @@ impl App {
         self.state.config_page = page;
     }
 
+    /// List the archives over the config page, from the row at `from`, or take
+    /// the list down.
+    pub fn set_backups(&mut self, from: Option<usize>) {
+        self.state.backups = from;
+    }
+
     /// Draw the open book at `tab`, whatever it was left on, with its marks
     /// opened `from` rows down.
     pub fn set_book_tab(&mut self, tab: view::BookTab, from: usize) {
@@ -407,9 +413,13 @@ impl App {
                 &self.stats,
                 &self.dir,
                 !self.store.floor.is_empty(),
-                self.lang,
             ),
             false => view::config::Record::default(),
+        };
+        // Every archive opened once, on the frame that lists them.
+        let listed = match state.backups.is_some() {
+            true => view::config::Record::listed(&self.dir, &self.store, self.lang),
+            false => view::backups::Listed::default(),
         };
         self.frame(fb, &mut |cx, area| match state.book {
             Some(index) => {
@@ -423,6 +433,9 @@ impl App {
             None => match state.tab {
                 Tab::Config => {
                     view::config::draw(cx, area, &settings, colour, &record, state.config_page);
+                    if let Some(from) = state.backups {
+                        view::backups::draw(cx, area, &listed, from);
+                    }
                     if let Some(confirm) = &state.confirm {
                         view::config::asking(cx, area, confirm);
                     }
@@ -644,6 +657,10 @@ impl App {
                         }
                         Action::Resetting(about) => {
                             self.resetting(fb, about)?;
+                            self.draw(fb)?;
+                        }
+                        Action::Exporting => {
+                            self.exporting(fb, input)?;
                             self.draw(fb)?;
                         }
                         Action::Nothing => {}
@@ -1048,8 +1065,16 @@ impl App {
             Hit::Wipe(keep) => {
                 return self.ask_question(view::About::Reset(view::Reset::Wipe(keep)));
             }
+            Hit::BackUp => return Action::Exporting,
+            Hit::Backups => self.state.backups = Some(0),
+            Hit::BackupsPage(at) => self.state.backups = Some(at),
+            Hit::BackupsClose => self.state.backups = None,
             Hit::Restore(at) => {
                 return self.ask_question(view::About::Reset(view::Reset::Restore(at)));
+            }
+            Hit::Deleted(at) => {
+                self.state.confirm = None;
+                self.delete_backup(at);
             }
             Hit::Rebuild => return self.ask_question(view::About::Reset(view::Reset::Rebuild)),
             // `App::resetting`, `App::retry` and `App::heal` carry these out,
@@ -1105,7 +1130,11 @@ impl App {
                     true => jackets + record_bytes(self.dir()),
                     false => jackets,
                 },
-                named: crate::backup::name(crate::backup::Kind::Record, &self.store.mark),
+                named: crate::backup::name(
+                    crate::backup::Kind::Record,
+                    &crate::backup::stamped_now(),
+                    "",
+                ),
             },
             view::About::Reset(view::Reset::Restore(at)) => {
                 let held = crate::backup::list(self.dir());
@@ -1266,6 +1295,50 @@ impl App {
         rescue.named()
     }
 
+    /// Write an archive of the record under a banner, and state what it came
+    /// to on an outcome banner `App::hold` keeps up.
+    fn exporting(&mut self, fb: &mut Framebuffer, input: &mut Input) -> Result<()> {
+        let s = self.lang.strings();
+        let headline = s.back_up.to_string();
+        let doing = vec![s.export_doing.to_string()];
+        self.banner(fb, &headline, &doing, "", true)?;
+        let said = match crate::backup::export(&self.dir.clone(), &self.store) {
+            Ok(at) => {
+                eprintln!("export: the record is at {}", at.display());
+                let named = at
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let bytes = std::fs::metadata(&at).map(|m| m.len()).unwrap_or_default();
+                s.export_done
+                    .replace("{file}", &named)
+                    .replace("{size}", &view::config::bytes(bytes))
+            }
+            Err(err) => {
+                eprintln!("!! export: nothing was written — {err}");
+                s.export_failed.to_string()
+            }
+        };
+        self.banner(fb, &headline, &[said], "", true)?;
+        self.hold(input, OUTCOME_LINGER)
+    }
+
+    /// Take one archive off disk, by its place in `backup::list`.
+    fn delete_backup(&mut self, at: usize) {
+        let held = crate::backup::list(self.dir());
+        let Some(backup) = held.get(at) else {
+            return;
+        };
+        match crate::backup::remove(&backup.path) {
+            Ok(()) => eprintln!("backup: {} is gone", backup.path.display()),
+            Err(err) => eprintln!("!! backup: {} stands — {err}", backup.path.display()),
+        }
+        // The last archive gone takes the list down.
+        if held.len() <= 1 {
+            self.state.backups = None;
+        }
+    }
+
     /// Empty the record, keeping an archive of it first under `keep`.
     fn wipe(&mut self, keep: bool) {
         let keeping = match keep {
@@ -1310,17 +1383,9 @@ impl App {
                 eprintln!("restore: {} sittings from {}", taken.added, path.display());
                 self.store_it("restore");
                 // `Taken::whole`: `store` holds every row the archive carried.
-                if taken.whole {
-                    match std::fs::remove_file(&path) {
-                        Ok(()) => eprintln!("restore: {} is now in the record", path.display()),
-                        Err(err) => eprintln!("!! restore: {} stands — {err}", path.display()),
-                    }
-                } else {
-                    eprintln!(
-                        "restore: {} holds more than the record took",
-                        path.display()
-                    );
-                }
+                // The file stands either way, and `backup::remove` is the way
+                // out.
+                eprintln!("restore: {} whole {}", path.display(), taken.whole);
             }
             Err(err) => eprintln!("!! restore: {} would not open — {err}", path.display()),
         }
@@ -1368,7 +1433,8 @@ impl App {
         };
         let (extent, key) = (book.extent, book.cde_key.clone());
         let one = self.store.one_book(extent, &key);
-        if let Err(err) = crate::backup::keep_book(self.dir(), &one, &self.store.mark.clone()) {
+        if let Err(err) = crate::backup::keep_book(self.dir(), &one, &crate::backup::stamped_now())
+        {
             eprintln!("!! clear: nothing was cleared — {err}");
             return Action::Redraw;
         }
@@ -1590,6 +1656,8 @@ enum Action {
     Heal,
     /// Carry out one of the config page's resets, over the whole screen.
     Resetting(view::Reset),
+    /// Write an archive of the record, over the whole screen.
+    Exporting,
 }
 
 impl Drop for App {

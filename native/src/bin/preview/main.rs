@@ -350,7 +350,10 @@ fn thinned_for(shot: &Shot, opts: &Opts, art: &Path) -> Option<Store> {
         ("today", Some("empty")) => 0,
         ("today", Some("busy")) => return Some(fixture::crowded(opts.day, art)),
         // A record standing on a floor, which is what offers the log rebuild.
-        ("config", Some("restore" | "logs" | "many" | "many2")) => {
+        (
+            "config",
+            Some("restore" | "logs" | "many" | "many2" | "backups" | "backups2" | "gone"),
+        ) => {
             let mut store = fixture::library(opts.day, art);
             store.floor = "260810:120000".into();
             return Some(store);
@@ -384,7 +387,8 @@ fn thinned_for(shot: &Shot, opts: &Opts, art: &Path) -> Option<Store> {
 fn archives_for(shot: &Shot, store: &Store, out: &Path) -> Result<Option<PathBuf>> {
     let stamps: &[&str] = match (shot.name.as_str(), shot.of.as_deref()) {
         ("config", Some("restore")) => &["260906:010231", "260830:184500"],
-        ("config", Some("many" | "many2")) => &[
+        ("config", Some("gone")) => &["260906:010231"],
+        ("config", Some("many" | "many2" | "backups" | "backups2")) => &[
             "260906:010231",
             "260830:184500",
             "260412:093000",
@@ -466,15 +470,21 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
     app.set_book_search(find);
     app.ask(book.zip(asking));
     if shot.name == "config" {
-        app.set_config_page(usize::from(shot.of.as_deref() == Some("many2")));
+        let second = shot.of.as_deref() == Some("many2");
+        app.set_config_page(usize::from(second));
+        app.set_backups(match shot.of.as_deref() {
+            Some("backups") => Some(0),
+            Some("backups2") => Some(4),
+            _ => None,
+        });
         app.ask_about(match shot.of.as_deref() {
             Some("reset") => Some(About::Reset(Reset::Wipe(true))),
             Some("nobackup") => Some(About::Reset(Reset::Wipe(false))),
-            Some("restore") => Some(About::Reset(Reset::Restore(0))),
+            Some("restore" | "gone") => Some(About::Reset(Reset::Restore(0))),
             Some("logs") => Some(About::Reset(Reset::Rebuild)),
             Some("heal") => Some(About::Heal),
             Some("retry") => Some(About::Retry),
-            Some("many" | "many2") | None => None,
+            Some("many" | "many2" | "backups" | "backups2") | None => None,
             Some(other) => bail!("no config shot called {other}"),
         });
     }
@@ -770,7 +780,9 @@ fn list() {
             "book" => {
                 "  (:<index> :<index>:marks :<index>:marks:<n> :<index>:find\n   :<index>:find:<query> :<index>:restart :<index>:mark :<index>:unmark\n   :<index>:clear :<index>:cleared)"
             }
-            "config" => "  (:reset :nobackup :restore :logs :heal :retry :many :many2)",
+            "config" => {
+                "  (:reset :nobackup :restore :gone :logs :heal :retry :many :many2\n   :backups :backups2)"
+            }
             "search" | "highlights" => "  (:<query> :empty :none :down :preedit)",
             "books" => {
                 "  (:finished :unfinished :unfinished-progress :time :progress\n   :mid :last :window :windowweek :windowprogress :windowempty)"

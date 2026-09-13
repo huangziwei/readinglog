@@ -378,9 +378,29 @@ pub struct Strings {
     /// The restore row, and the chip offering the logs.
     pub restore_row: &'static str,
     pub restore_logs: &'static str,
+    /// The two chips beside it: one writes an archive, one lists them.
+    pub back_up: &'static str,
+    pub bring_back: &'static str,
+    /// The archive list: how many files it holds, the way out, and the second
+    /// line of a row the archive states nothing on.
+    pub n_files: &'static str,
+    pub close: &'static str,
+    pub backup_silent: &'static str,
+    /// The second line of a row the archive does state: `{n}` sittings over
+    /// `{from}` to `{to}`, and the note where the record holds all of it.
+    pub backup_holds: &'static str,
+    pub backup_whole: &'static str,
+    /// Writing an archive: the banner over it, and what it came to.
+    pub export_doing: &'static str,
+    pub export_done: &'static str,
+    pub export_failed: &'static str,
+    /// Taking an archive off disk. `{file}` is its name, `{size}` its weight.
+    pub delete_ask: &'static str,
+    pub delete_note: &'static str,
+    pub delete_do: &'static str,
     /// What the archives beside the record take on disk, stated on the
     /// recorded row. `{size}` is the total. They are never taken away on the
-    /// app's own account, so what is owed the reader is the figure.
+    /// app's own account, and the figure stands on the row.
     pub n_archived: &'static str,
     /// Emptying the record, keeping an archive first. `{what}` is what goes,
     /// `{file}` the archive's name, `{size}` how large it is.
@@ -626,6 +646,20 @@ const ENGLISH: Strings = Strings {
     reset_none: "No backup",
     restore_row: "Backups",
     restore_logs: "From the logs",
+    back_up: "Back up",
+    bring_back: "Bring back",
+    n_files: "{n} files · {size}",
+    close: "Close",
+    backup_silent: "States nothing about itself",
+    backup_holds: "{n} sittings · {from} to {to}",
+    backup_whole: "all of it in the record",
+    export_doing: "Writing a copy of the record.",
+    export_done: "Backed up to {file}, {size}.",
+    export_failed: "Nothing was written.",
+    delete_ask: "Delete this backup?",
+    delete_note: "{file} goes off the Kindle for good, freeing {size}. The \
+                  record itself is not touched.",
+    delete_do: "Delete",
     n_archived: "{size} in backups",
     wipe_ask: "Back up, then reset?",
     wipe_note: "{what}, with every cover held, are copied into {file}, {size}. \
@@ -641,7 +675,7 @@ const ENGLISH: Strings = Strings {
     restore_ask: "Bring this back?",
     restore_note: "{file} holds {what}. Whatever the record already has is \
                    left as it stands, so nothing is counted twice. The backup \
-                   itself goes once all of it is back in the record.",
+                   itself stays on the Kindle.",
     restore_do: "Restore",
     rebuild_ask: "Read the Kindle's logs again?",
     rebuild_note: "Every log the device still holds is read from the start, \
@@ -867,6 +901,20 @@ const GERMAN: Strings = Strings {
     reset_none: "Ohne Sicherung",
     restore_row: "Sicherungen",
     restore_logs: "Aus den Protokollen",
+    back_up: "Sichern",
+    bring_back: "Zurückholen",
+    n_files: "{n} Dateien · {size}",
+    close: "Schließen",
+    backup_silent: "Sagt nichts über sich selbst",
+    backup_holds: "{n} Sitzungen · {from} bis {to}",
+    backup_whole: "alles davon im Verzeichnis",
+    export_doing: "Eine Kopie des Verzeichnisses wird geschrieben.",
+    export_done: "Gesichert in {file}, {size}.",
+    export_failed: "Es wurde nichts geschrieben.",
+    delete_ask: "Diese Sicherung löschen?",
+    delete_note: "{file} verschwindet endgültig vom Kindle und gibt {size} \
+                  frei. Das Verzeichnis selbst bleibt unberührt.",
+    delete_do: "Löschen",
     n_archived: "{size} in Sicherungen",
     wipe_ask: "Erst sichern, dann zurücksetzen?",
     wipe_note: "{what} werden mit allen Titelbildern nach {file} kopiert, \
@@ -882,8 +930,7 @@ const GERMAN: Strings = Strings {
     restore_ask: "Das zurückholen?",
     restore_note: "{file} enthält {what}. Was die Aufzeichnung schon hat, \
                    bleibt unverändert, also wird nichts doppelt gezählt. Die \
-                   Sicherung selbst wird gelöscht, sobald alles wieder in der \
-                   Aufzeichnung steht.",
+                   Sicherung selbst bleibt auf dem Kindle.",
     restore_do: "Zurückholen",
     rebuild_ask: "Die Protokolle erneut lesen?",
     rebuild_note: "Jedes Protokoll auf dem Gerät wird von vorn gelesen, was \
@@ -1121,6 +1168,20 @@ const JAPANESE: Strings = Strings {
     reset_none: "保存しない",
     restore_row: "バックアップ",
     restore_logs: "ログから",
+    back_up: "書き出す",
+    bring_back: "取り込む",
+    n_files: "{n} 件 · {size}",
+    close: "閉じる",
+    backup_silent: "内容の記載なし",
+    backup_holds: "{n} セッション · {from}〜{to}",
+    backup_whole: "すべて記録済み",
+    export_doing: "記録のコピーを書き出しています。",
+    export_done: "{file} に保存しました（{size}）。",
+    export_failed: "何も書き出されませんでした。",
+    delete_ask: "このバックアップを削除しますか？",
+    delete_note: "{file} を Kindle から完全に削除し、{size} を解放します。記録\
+                  そのものはそのまま残ります。",
+    delete_do: "削除",
     n_archived: "バックアップ {size}",
     wipe_ask: "保存してからリセットしますか？",
     wipe_note: "{what}と表紙をすべて {file} に保存します（{size}）。記録は今日から空で始まります。\
@@ -1133,7 +1194,7 @@ const JAPANESE: Strings = Strings {
     nowipe_do: "保存せずリセット",
     restore_ask: "これを戻しますか？",
     restore_note: "{file} には{what}が入っています。すでにある記録はそのままなので、二重には数えません。\
-                   すべてが記録に戻ると、このバックアップ自体は削除されます。",
+                   バックアップ自体は Kindle に残ります。",
     restore_do: "戻す",
     rebuild_ask: "Kindleのログを読み直しますか？",
     rebuild_note: "端末に残っているログを最初から読み直します。数分かかります。\
@@ -1355,6 +1416,19 @@ const SIMPLIFIED: Strings = Strings {
     reset_none: "不备份",
     restore_row: "备份",
     restore_logs: "从日志读取",
+    back_up: "导出",
+    bring_back: "导入",
+    n_files: "{n} 个文件 · {size}",
+    close: "关闭",
+    backup_silent: "未说明内容",
+    backup_holds: "{n} 次阅读 · {from} 至 {to}",
+    backup_whole: "已全部读回记录",
+    export_doing: "正在写出记录的副本。",
+    export_done: "已备份至 {file}，{size}。",
+    export_failed: "未写出任何内容。",
+    delete_ask: "删除这个备份？",
+    delete_note: "{file} 将从 Kindle 上彻底删除，释放 {size}。记录本身不受影响。",
+    delete_do: "删除",
     n_archived: "备份占 {size}",
     wipe_ask: "先备份再重置？",
     wipe_note: "{what}和所有封面会存入 {file}（{size}）。记录随后从今天起为空。\
@@ -1367,7 +1441,7 @@ const SIMPLIFIED: Strings = Strings {
     nowipe_do: "不备份重置",
     restore_ask: "取回这一份？",
     restore_note: "{file} 中有{what}。记录里已有的内容保持不变，因此不会重复计入。\
-                   全部回到记录后，这份备份本身会被删除。",
+                   这份备份本身会留在 Kindle 上。",
     restore_do: "取回",
     rebuild_ask: "重新读取 Kindle 日志？",
     rebuild_note: "设备上仍保留的日志会从头读一遍，需要几分钟。现有记录不会丢失。\
@@ -1597,6 +1671,19 @@ const TRADITIONAL: Strings = Strings {
     reset_none: "不備份",
     restore_row: "備份",
     restore_logs: "從日誌讀取",
+    back_up: "匯出",
+    bring_back: "匯入",
+    n_files: "{n} 個檔案 · {size}",
+    close: "關閉",
+    backup_silent: "未說明內容",
+    backup_holds: "{n} 次閱讀 · {from} 至 {to}",
+    backup_whole: "已全部讀回記錄",
+    export_doing: "正在寫出記錄的副本。",
+    export_done: "已備份至 {file}，{size}。",
+    export_failed: "未寫出任何內容。",
+    delete_ask: "刪除這個備份？",
+    delete_note: "{file} 將從 Kindle 上徹底刪除，釋放 {size}。記錄本身不受影響。",
+    delete_do: "刪除",
     n_archived: "備份佔 {size}",
     wipe_ask: "先備份再重設？",
     wipe_note: "{what}和所有封面會存入 {file}（{size}）。記錄隨後從今天起為空。\
@@ -1609,7 +1696,7 @@ const TRADITIONAL: Strings = Strings {
     nowipe_do: "不備份重設",
     restore_ask: "取回這一份？",
     restore_note: "{file} 中有{what}。記錄裡已有的內容保持不變，因此不會重複計入。\
-                   全部回到記錄後，這份備份本身會被刪除。",
+                   這份備份本身會留在 Kindle 上。",
     restore_do: "取回",
     rebuild_ask: "重新讀取 Kindle 日誌？",
     rebuild_note: "裝置上仍保留的日誌會從頭讀一遍，需要幾分鐘。現有記錄不會遺失。\

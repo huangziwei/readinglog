@@ -3,6 +3,7 @@
 //! span and the open book; a redraw after a tap is the same call.
 
 pub mod alltime;
+pub mod backups;
 pub mod band;
 pub mod book;
 pub mod book_graphs;
@@ -124,10 +125,20 @@ pub enum Hit {
     Wipe(bool),
     /// Empty it, as [`Hit::Wipe`] asked.
     Wiped(bool),
-    /// Ask to take an archive back, by its place in `backup::list`.
+    /// Write an archive of the record, taking nothing away.
+    BackUp,
+    /// List the archives over the config page.
+    Backups,
+    /// Where that list is paged to, as an index into it.
+    BackupsPage(usize),
+    /// Take the list down.
+    BackupsClose,
+    /// Ask what to do with one archive, by its place in `backup::list`.
     Restore(usize),
     /// Take it back.
     Restored(usize),
+    /// Take it off disk.
+    Deleted(usize),
     /// Ask to read every log again, and read them.
     Rebuild,
     Rebuilt,
@@ -536,6 +547,8 @@ pub struct State {
     pub asked: Option<(usize, Ask)>,
     /// The question over the config page, with the figures it states.
     pub confirm: Option<Confirm>,
+    /// The archives listed over the config page, and how far down.
+    pub backups: Option<usize>,
     /// Which page of the config screen is showing.
     pub config_page: usize,
     /// How far down the book list has been paged.
@@ -575,6 +588,7 @@ impl State {
             book: None,
             asked: None,
             confirm: None,
+            backups: None,
             config_page: 0,
             books_from: 0,
             search: None,

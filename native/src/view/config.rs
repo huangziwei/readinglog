@@ -79,7 +79,7 @@ impl<'a> Line<'a> {
 struct Section<'a> {
     heading: &'a str,
     /// A figure the section is measured in, stated on the heading's own line.
-    /// It sets nothing, so it takes no row and no chip.
+    /// It sets nothing, and takes no row and no chip.
     said: Option<String>,
     lines: Vec<Line<'a>>,
 }
@@ -92,10 +92,10 @@ pub struct Record {
     pub sittings: usize,
     /// [`crate::stats::Stats::book_count`].
     pub books: usize,
-    /// One label per archive, newest first, as its chip reads.
-    pub backups: Vec<String>,
+    /// How many archives are on disk, which is what offers the list.
+    pub archives: usize,
     /// What the archives take on disk, together. The app never takes one away
-    /// on its own account, so the reader is owed the figure.
+    /// on its own account, and the figure stands here.
     pub archived: u64,
     /// Whether the record stands on a floor, which is what offers the logs.
     pub floored: bool,
@@ -108,32 +108,83 @@ impl Record {
         stats: &crate::stats::Stats,
         dir: &std::path::Path,
         floored: bool,
-        lang: Lang,
     ) -> Record {
         Record {
             sittings: store.sessions.len(),
             books: stats.book_count(),
-            backups: labels(&crate::backup::list(dir), lang.strings()),
+            archives: crate::backup::list(dir).len(),
             archived: crate::backup::sizes(dir).1,
             floored,
         }
     }
+
+    /// Every archive under `dir` as [`crate::view::backups`] lists it, and the
+    /// figure its heading states.
+    pub fn listed(
+        dir: &std::path::Path,
+        store: &crate::store::Store,
+        lang: Lang,
+    ) -> crate::view::backups::Listed {
+        let s = lang.strings();
+        let held = crate::backup::list(dir);
+        let rows = held
+            .iter()
+            .map(|backup| {
+                let said = crate::backup::about(&backup.path).unwrap_or_default();
+                crate::view::backups::Row {
+                    when: when(backup, &said, s),
+                    size: bytes(backup.bytes),
+                    holds: holds(&backup.path, store, &said, s),
+                }
+            })
+            .collect();
+        crate::view::backups::Listed {
+            rows,
+            said: s
+                .n_files
+                .replace("{n}", &held.len().to_string())
+                .replace("{size}", &bytes(held.iter().map(|b| b.bytes).sum())),
+        }
+    }
 }
 
-/// What each archive's chip reads: the day it was written. Where two fall on
-/// one day, both carry the clock as well, there being no other way to tell
-/// them apart.
-fn labels(held: &[crate::backup::Backup], s: &crate::lang::Strings) -> Vec<String> {
-    let days: Vec<String> = held.iter().map(|b| stamp_day(&b.stamp, s)).collect();
-    days.iter()
-        .enumerate()
-        .map(
-            |(i, day)| match days.iter().filter(|d| *d == day).count() > 1 {
-                true => format!("{day} {}", stamp_clock(&held[i].stamp)),
-                false => day.clone(),
-            },
-        )
-        .collect()
+/// The clock an archive was written at, else the file's own name.
+fn when(
+    backup: &crate::backup::Backup,
+    said: &crate::backup::About,
+    s: &crate::lang::Strings,
+) -> String {
+    let stamp = match said.written.is_empty() {
+        true => backup.stamp.clone(),
+        false => said.written.replace(':', "-"),
+    };
+    let day = stamp_day(&stamp, s);
+    match stamp.len() >= 13 {
+        true => format!("{day} {}", stamp_clock(&stamp)),
+        false => day,
+    }
+}
+
+/// What an archive holds, and whether `store` holds all of it.
+fn holds(
+    at: &std::path::Path,
+    store: &crate::store::Store,
+    said: &crate::backup::About,
+    s: &crate::lang::Strings,
+) -> String {
+    if said.is_empty() {
+        return s.backup_silent.to_string();
+    }
+    let mut out = s
+        .backup_holds
+        .replace("{n}", &said.sittings.to_string())
+        .replace("{from}", &said.first)
+        .replace("{to}", &said.last);
+    if crate::backup::peek(at).is_ok_and(|inside| crate::backup::holds(store, &inside)) {
+        out.push_str(" · ");
+        out.push_str(s.backup_whole);
+    }
+    out
 }
 
 /// `YYMMDD-HHMMSS` as the day it names, and as `HH:MM`. A stamp that will not
@@ -326,9 +377,8 @@ fn sections<'a>(
             crate::lang::counted(s.n_sittings, record.sittings as i64),
             crate::lang::counted(s.n_books, record.books as i64)
         );
-        // The archives sit beside the record and grow without end. What they
-        // take is stated here, over the reset controls that read against it,
-        // and taking them away stays the reader's own act.
+        // What the archives take, over the controls that read against it.
+        // `backup::remove` is the one call that takes one away.
         if record.archived > 0 {
             said.push_str(" · ");
             said.push_str(&s.n_archived.replace("{size}", &bytes(record.archived)));
@@ -348,24 +398,26 @@ fn sections<'a>(
         apart: None,
     });
 
-    // `restore_logs` leads where `record.floored`, then `record.backups`,
-    // newest first. `one_row` holds the chips to one line.
+    // Two buttons and, where `record.floored`, the logs set apart from them.
+    // A fixed run: the archives are listed by `view::backups`, never here.
     let logs = record.floored;
-    let restore = (!record.backups.is_empty() || logs).then(|| Row {
+    let lists = record.archives > 0;
+    let anything = record.sittings > 0 || lists || logs;
+    let restore = anything.then(|| Row {
         label: s.restore_row,
-        options: logs
-            .then(|| (s.restore_logs.to_string(), plain))
+        options: [(s.back_up.to_string(), plain)]
             .into_iter()
-            .chain(record.backups.iter().map(|at| (at.clone(), plain)))
+            .chain(lists.then(|| (s.bring_back.to_string(), plain)))
+            .chain(logs.then(|| (s.restore_logs.to_string(), plain)))
             .collect(),
         on: NONE_ON,
-        hit: Box::new(move |i| match (logs, i) {
-            (true, 0) => Hit::Rebuild,
-            (true, i) => Hit::Restore(i - 1),
-            (false, i) => Hit::Restore(i),
+        hit: Box::new(move |i| match (i, lists) {
+            (0, _) => Hit::BackUp,
+            (1, true) => Hit::Backups,
+            _ => Hit::Rebuild,
         }),
-        one_row: true,
-        apart: None,
+        one_row: false,
+        apart: Some(1 + lists as usize),
     });
 
     vec![
@@ -466,7 +518,7 @@ pub fn question(confirm: &Confirm, s: &crate::lang::Strings) -> (String, String,
 }
 
 /// `count` as MB to one place, KB under that.
-fn bytes(count: u64) -> String {
+pub fn bytes(count: u64) -> String {
     match count {
         0..=999_999 => format!("{} KB", count.div_ceil(1024).max(1)),
         _ => format!("{:.1} MB", count as f64 / (1024.0 * 1024.0)),
@@ -484,13 +536,19 @@ pub fn asking(cx: &mut Ctx, area: Rect, confirm: &Confirm) {
         About::Heal => Hit::Healed,
         About::Retry => Hit::Retried,
     };
+    // An archive's question carries a third answer, and `backup::remove`
+    // answers only to it.
+    let mut answers: Vec<(&str, Hit)> = vec![(s.cancel, Hit::Dismiss), (&answer, carry)];
+    if let About::Reset(Reset::Restore(at)) = confirm.about {
+        answers.push((s.delete_do, Hit::Deleted(at)));
+    }
     crate::ui::dialog::draw(
         cx,
         area,
         &crate::ui::dialog::Question {
             heading: &heading,
             note: &note,
-            answers: &[(s.cancel, Hit::Dismiss), (&answer, carry)],
+            answers: &answers,
         },
     );
 }
@@ -851,7 +909,7 @@ mod tests {
     #[test]
     fn a_record_with_nothing_in_it_offers_no_reset() {
         assert_eq!(the_record(&Record::default()), expected(&[]));
-        // Nothing to state, so the heading states nothing.
+        // Nothing to state, and the heading states nothing.
         assert_eq!(record_section(Lang::English, &Record::default()).said, None);
     }
 
@@ -863,7 +921,8 @@ mod tests {
             ..Record::default()
         };
         let s = Lang::English.strings();
-        assert_eq!(the_record(&record), expected(&[s.reset_row]));
+        // Reading in the record is something to back up, and both rows stand.
+        assert_eq!(the_record(&record), expected(&[s.reset_row, s.restore_row]));
         // The figure stands on the heading, not on a row of its own.
         assert_eq!(
             record_section(Lang::English, &record).said.as_deref(),
@@ -872,9 +931,7 @@ mod tests {
     }
 
     /// The figure clears the heading's own words and the page's right margin
-    /// in every language, on the narrowest panel at the largest type, with
-    /// every archive the record can offer. Set on a row at `body_px` it ran
-    /// off the panel in German, which is what moved it here.
+    /// in every language, on the narrowest panel at the largest type.
     #[test]
     fn the_record_figure_shares_the_heading_line() {
         let Ok(mut text) = crate::ui::text::TextRenderer::load(24.0) else {
@@ -883,7 +940,7 @@ mod tests {
         let record = Record {
             sittings: 2332,
             books: 19,
-            backups: vec!["Sep 6".into(), "Aug 30".into()],
+            archives: 2,
             archived: 1_258_291,
             floored: true,
         };
@@ -910,13 +967,13 @@ mod tests {
         let kept = Record {
             sittings: 12,
             books: 3,
-            backups: vec!["Sep 6".into()],
+            archives: 1,
             archived: 0,
             floored: false,
         };
         assert_eq!(the_record(&kept), expected(&[s.reset_row, s.restore_row]));
         let floored = Record {
-            backups: Vec::new(),
+            archives: 0,
             archived: 0,
             floored: true,
             ..kept
@@ -927,25 +984,57 @@ mod tests {
         );
     }
 
+    /// The run is `back_up`, then `bring_back` where an archive is on disk,
+    /// then the logs where the record stands on a floor. Every archive is
+    /// listed by `view::backups`, and no chip here grows with their number.
     #[test]
-    fn the_logs_lead_the_archives_and_answer_for_the_first_chip() {
+    fn the_backups_row_is_two_buttons_and_the_logs_apart_from_them() {
         let settings = Settings::new(Lang::English);
-        let record = Record {
+        let s = Lang::English.strings();
+        let held = |archives: usize, floored: bool| Record {
             sittings: 12,
             books: 3,
-            backups: vec!["Sep 6".into(), "Aug 30".into()],
+            archives,
             archived: 0,
-            floored: true,
+            floored,
         };
-        let page = sections(Lang::English, &settings, true, &record);
-        let at = page.len() - 2;
-        let last = page[at].lines.len() - 1;
-        let archives = row(&page, at, last);
-        assert_eq!(archives.options[0].0, Lang::English.strings().restore_logs);
-        assert_eq!((archives.hit)(0), Hit::Rebuild);
-        assert_eq!((archives.hit)(1), Hit::Restore(0));
-        assert_eq!((archives.hit)(2), Hit::Restore(1));
-        assert!(archives.one_row, "the run would grow without end");
+        let archives = |record: &Record| {
+            let page = sections(Lang::English, &settings, true, record);
+            let at = page.len() - 2;
+            let last = page[at].lines.len() - 1;
+            let row = row(&page, at, last);
+            (
+                row.options
+                    .iter()
+                    .map(|(o, _)| o.clone())
+                    .collect::<Vec<_>>(),
+                (0..row.options.len()).map(&row.hit).collect::<Vec<_>>(),
+                row.apart,
+                row.one_row,
+            )
+        };
+
+        let (said, hits, apart, one_row) = archives(&held(2, true));
+        assert_eq!(said, [s.back_up, s.bring_back, s.restore_logs]);
+        assert_eq!(hits, [Hit::BackUp, Hit::Backups, Hit::Rebuild]);
+        assert_eq!(apart, Some(2), "the logs stand apart from the two buttons");
+        assert!(!one_row, "the run is fixed and never truncated");
+
+        // No archive on disk, and nothing to list.
+        let (said, hits, apart, _) = archives(&held(0, true));
+        assert_eq!(said, [s.back_up, s.restore_logs]);
+        assert_eq!(hits, [Hit::BackUp, Hit::Rebuild]);
+        assert_eq!(apart, Some(1));
+
+        // No floor, and the logs are not offered.
+        let (said, hits, _, _) = archives(&held(2, false));
+        assert_eq!(said, [s.back_up, s.bring_back]);
+        assert_eq!(hits, [Hit::BackUp, Hit::Backups]);
+
+        // A record with neither offers a backup.
+        let (said, hits, _, _) = archives(&held(0, false));
+        assert_eq!(said, [s.back_up]);
+        assert_eq!(hits, [Hit::BackUp]);
     }
 
     /// The row `label` names, wherever it sits on the page.
@@ -1156,13 +1245,7 @@ mod tests {
             SittingFloor::OneMinute,
         );
         assert!(stats.sittings.is_empty(), "the skim is not counted");
-        let record = Record::of(
-            &store,
-            &stats,
-            std::path::Path::new("/nowhere"),
-            false,
-            Lang::English,
-        );
+        let record = Record::of(&store, &stats, std::path::Path::new("/nowhere"), false);
         assert_eq!(record.sittings, 1, "but the file still holds it");
         // `reset_row` stands where `Record::sittings` is above zero.
         let labels = the_record(&record);
@@ -1229,8 +1312,11 @@ mod tests {
         assert_eq!(bytes(5_000_000), "4.8 MB");
     }
 
+    /// A row names the day and the clock the archive was written at. One that
+    /// states no clock of its own falls back to the stamp in its name, and one
+    /// carrying neither reads as whatever the name spells.
     #[test]
-    fn an_archive_chip_names_the_day_and_the_clock_where_two_share_one() {
+    fn a_row_names_the_day_and_the_clock_an_archive_was_written_at() {
         let s = Lang::English.strings();
         let one = crate::backup::Backup {
             path: std::path::PathBuf::from("a.zip"),
@@ -1238,22 +1324,21 @@ mod tests {
             kind: crate::backup::Kind::Record,
             bytes: 0,
         };
-        let two = crate::backup::Backup {
-            stamp: "260906-184500".into(),
-            ..one.clone()
+        let said = crate::backup::About {
+            written: "260906:184500".into(),
+            ..crate::backup::About::default()
         };
-        let other = crate::backup::Backup {
-            stamp: "260830-090000".into(),
-            ..one.clone()
+        assert_eq!(when(&one, &said, s), "Sep 6 18:45");
+        assert_eq!(
+            when(&one, &crate::backup::About::default(), s),
+            "Sep 6 01:02",
+            "the name's own stamp, where the archive states none"
+        );
+        let odd = crate::backup::Backup {
+            stamp: "nonsense".into(),
+            ..one
         };
-        assert_eq!(
-            labels(&[one.clone(), other.clone()], s),
-            ["Sep 6", "Aug 30"]
-        );
-        assert_eq!(
-            labels(&[one, two, other], s),
-            ["Sep 6 01:02", "Sep 6 18:45", "Aug 30"]
-        );
+        assert_eq!(when(&odd, &crate::backup::About::default(), s), "nonsense");
     }
 
     #[test]
