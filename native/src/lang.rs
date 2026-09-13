@@ -367,10 +367,8 @@ pub struct Strings {
     /// The row hiding every book no jacket can be drawn for, set with the same
     /// two chips.
     pub uncovered_row: &'static str,
-    /// The row stating what the record holds, above the reset controls.
-    pub recorded_row: &'static str,
-    /// `{d} sitting[s]` and `{d} book[s]`, which that row and the dialogs
-    /// below count with.
+    /// `{d} sitting[s]` and `{d} book[s]`, which the record heading's own
+    /// figure and the dialogs below count with.
     pub n_sittings: &'static str,
     pub n_books: &'static str,
     /// The reset row, and its two chips.
@@ -621,7 +619,6 @@ const ENGLISH: Strings = Strings {
     retry_named: "{d} book[s] identified.",
     retry_none: "Nothing new could be identified.",
     uncovered_row: "Books without a cover",
-    recorded_row: "Recorded",
     n_sittings: "{d} sitting[s]",
     n_books: "{d} book[s]",
     reset_row: "Reset",
@@ -863,7 +860,6 @@ const GERMAN: Strings = Strings {
     heal_done: "{d} Sitzung[en] neu gemessen.",
     heal_none: "In den Protokollen hat sich nichts geändert.",
     the_record: "DIE AUFZEICHNUNG",
-    recorded_row: "Aufgezeichnet",
     n_sittings: "{d} Sitzung[en]",
     n_books: "{d} Titel",
     reset_row: "Zurücksetzen",
@@ -1118,7 +1114,6 @@ const JAPANESE: Strings = Strings {
     heal_done: "{d}回を再計測しました。",
     heal_none: "ログの範囲に変わりはありません。",
     the_record: "記録",
-    recorded_row: "記録の中身",
     n_sittings: "{d}回",
     n_books: "{d}冊",
     reset_row: "リセット",
@@ -1353,7 +1348,6 @@ const SIMPLIFIED: Strings = Strings {
     heal_done: "已重新测量 {d}次。",
     heal_none: "日志所及的记录没有变动。",
     the_record: "记录",
-    recorded_row: "已记录",
     n_sittings: "{d}次",
     n_books: "{d}本",
     reset_row: "重置",
@@ -1596,7 +1590,6 @@ const TRADITIONAL: Strings = Strings {
     heal_done: "已重新測量 {d}次。",
     heal_none: "日誌所及的紀錄沒有變動。",
     the_record: "記錄",
-    recorded_row: "已記錄",
     n_sittings: "{d}次",
     n_books: "{d}本",
     reset_row: "重設",

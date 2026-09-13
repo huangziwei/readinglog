@@ -9,6 +9,7 @@ use anyhow::Result;
 
 use crate::eink::fb::Framebuffer;
 use crate::font::{self, Band, FontChain};
+use crate::ui::paint;
 
 const COVERAGE_THRESHOLD: u8 = 96;
 
@@ -261,8 +262,28 @@ impl TextRenderer {
         s: &str,
         inverted: bool,
     ) -> i32 {
+        let ink = match inverted {
+            true => paint::WHITE,
+            false => paint::INK,
+        };
+        self.draw_inked(script, fb, x, y_baseline, s, ink)
+    }
+
+    /// [`TextRenderer::draw_in`] in `ink` rather than in black or in white: a
+    /// figure the page states beside what it belongs to, set back from the
+    /// text it stands against. Every glyph is one value, the coverage
+    /// thresholded as it is everywhere else.
+    pub fn draw_inked(
+        &mut self,
+        script: font::Script,
+        fb: &mut Framebuffer,
+        x: i32,
+        y_baseline: i32,
+        s: &str,
+        ink: u8,
+    ) -> i32 {
         let quarter = self.aki_px();
-        self.pen(script, fb, x, y_baseline, s, inverted, quarter)
+        self.pen(script, fb, x, y_baseline, s, ink, quarter)
     }
 
     /// [`TextRenderer::draw`] with the script boundaries set solid: `1時間`
@@ -276,7 +297,11 @@ impl TextRenderer {
         s: &str,
         inverted: bool,
     ) -> i32 {
-        self.pen(font::Script::Unknown, fb, x, y_baseline, s, inverted, 0)
+        let fg = match inverted {
+            true => paint::WHITE,
+            false => paint::INK,
+        };
+        self.pen(font::Script::Unknown, fb, x, y_baseline, s, fg, 0)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -287,10 +312,9 @@ impl TextRenderer {
         x: i32,
         y_baseline: i32,
         s: &str,
-        inverted: bool,
+        fg: u8,
         quarter: u32,
     ) -> i32 {
-        let fg = if inverted { 0xFF } else { 0x00 };
         let run = font::Script::resolve(script, s);
         let px = self.px;
         let px_key = px.to_bits();

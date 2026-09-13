@@ -6,7 +6,7 @@ use crate::eink::fb::Framebuffer;
 
 use crate::lang::Lang;
 
-use super::paint::{self, INK, LIGHT, PALE, Rect, WHITE};
+use super::paint::{self, DARK, INK, LIGHT, PALE, Rect, WHITE};
 use super::text::TextRenderer;
 use super::theme::Theme;
 
@@ -154,9 +154,35 @@ pub fn section(
     area: Rect,
     title: &str,
 ) -> Rect {
+    section_stating(fb, text, theme, area, title, None)
+}
+
+/// [`section`] with `said` at the right end of the rule: a figure the section
+/// is measured in, which the reader does not set. It takes the heading's own
+/// size and stands back from it in [`paint::DARK`], so the two read as one
+/// line and the settings below keep the page's only black.
+pub fn section_stating(
+    fb: &mut Framebuffer,
+    text: &mut TextRenderer,
+    theme: &Theme,
+    area: Rect,
+    title: &str,
+    said: Option<&str>,
+) -> Rect {
     text.set_px(theme.small_px);
     let h = text.line_height() as i32 + theme.gap;
-    text.draw(fb, area.x, area.y + text.cap_height() as i32, title, false);
+    let baseline = area.y + text.cap_height() as i32;
+    let over = text.draw(fb, area.x, baseline, title, false);
+    if let Some(said) = said {
+        // Against the right end, and never over the heading: the two are one
+        // line, and a language that fills it drops the figure rather than set
+        // it on top of the words.
+        let w = text.measure_width(said) as i32;
+        let x = area.right() - w;
+        if x > over + theme.gap {
+            text.draw_inked(crate::font::Script::Unknown, fb, x, baseline, said, DARK);
+        }
+    }
     paint::hline(fb, area.x, area.y + h - theme.gap / 2, area.w, PALE, 1);
     let (_, rest) = area.split_top(h + theme.gap / 2);
     rest

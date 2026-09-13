@@ -78,6 +78,9 @@ impl<'a> Line<'a> {
 /// A section of the page.
 struct Section<'a> {
     heading: &'a str,
+    /// A figure the section is measured in, stated on the heading's own line.
+    /// It sets nothing, so it takes no row and no chip.
+    said: Option<String>,
     lines: Vec<Line<'a>>,
 }
 
@@ -315,24 +318,22 @@ fn sections<'a>(
         apart: None,
     };
 
-    // `recorded` states the record `reset` and `restore` below act on.
-    let recorded = (record.sittings > 0).then(|| Line::Says {
-        label: s.recorded_row,
-        value: {
-            let mut said = format!(
-                "{} · {}",
-                crate::lang::counted(s.n_sittings, record.sittings as i64),
-                crate::lang::counted(s.n_books, record.books as i64)
-            );
-            // The archives sit beside the record and grow without end. What
-            // they take is stated here, on the row the reset controls read
-            // against, and taking them away stays the reader's own act.
-            if record.archived > 0 {
-                said.push_str(" · ");
-                said.push_str(&s.n_archived.replace("{size}", &bytes(record.archived)));
-            }
-            said
-        },
+    // What the section is measured in: the record `reset` and `restore` below
+    // act on. It stands on the heading, above every setting that moves it.
+    let recorded = (record.sittings > 0).then(|| {
+        let mut said = format!(
+            "{} · {}",
+            crate::lang::counted(s.n_sittings, record.sittings as i64),
+            crate::lang::counted(s.n_books, record.books as i64)
+        );
+        // The archives sit beside the record and grow without end. What they
+        // take is stated here, over the reset controls that read against it,
+        // and taking them away stays the reader's own act.
+        if record.archived > 0 {
+            said.push_str(" · ");
+            said.push_str(&s.n_archived.replace("{size}", &bytes(record.archived)));
+        }
+        said
     });
 
     let reset = (record.sittings > 0).then(|| Row {
@@ -370,6 +371,7 @@ fn sections<'a>(
     vec![
         Section {
             heading: s.interface,
+            said: None,
             lines: [Line::Set(language), Line::Set(size)]
                 .into_iter()
                 .chain(scheme.map(Line::Set))
@@ -377,24 +379,28 @@ fn sections<'a>(
         },
         Section {
             heading: s.the_calendar,
+            said: None,
             lines: vec![Line::Set(week)],
         },
         Section {
+            // The two settings that move the figure lead, under the figure
+            // itself; the two that decide how it was measured follow.
             heading: s.the_record,
+            said: recorded,
             lines: [
-                Line::Set(figures),
-                Line::Set(sitting_floor),
                 Line::Set(unnamed),
                 Line::Set(uncovered),
+                Line::Set(figures),
+                Line::Set(sitting_floor),
             ]
             .into_iter()
-            .chain(recorded)
             .chain(reset.map(Line::Set))
             .chain(restore.map(Line::Set))
             .collect(),
         },
         Section {
             heading: s.about,
+            said: None,
             lines: vec![
                 Line::Says {
                     label: s.version_row,
@@ -617,7 +623,14 @@ pub fn draw(
         let (band, left) = rest.split_top(need.min(rest.h));
         rest = left;
 
-        let mut inner = chrome::section(cx.fb, cx.text, theme, band, section.heading);
+        let mut inner = chrome::section_stating(
+            cx.fb,
+            cx.text,
+            theme,
+            band,
+            section.heading,
+            section.said.as_deref(),
+        );
         for (at, stated) in section.lines.iter().enumerate() {
             let (line, below) = inner.split_top(heights[at].min(inner.h));
             inner = below;
@@ -799,53 +812,96 @@ mod tests {
         assert!(update.on >= update.options.len(), "a button drawn filled");
     }
 
-    /// The record section of a page built over `record`.
+    /// The record section of a page built over `record`, in `lang`.
+    fn record_section(lang: Lang, record: &Record) -> Section<'_> {
+        let settings = Settings::new(lang);
+        let page = sections(lang, &settings, true, record);
+        page.into_iter()
+            .find(|s| s.heading == lang.strings().the_record)
+            .expect("the record section")
+    }
+
+    /// Every row of that section, by its label.
     fn the_record(record: &Record) -> Vec<String> {
-        let settings = Settings::new(Lang::English);
-        let page = sections(Lang::English, &settings, true, record);
-        let section = page
-            .into_iter()
-            .find(|s| s.heading == Lang::English.strings().the_record)
-            .expect("the record section");
-        section
+        record_section(Lang::English, record)
             .lines
             .iter()
             .map(|l| l.label().to_string())
             .collect()
     }
 
+    /// The two settings that move the figure lead, under the figure itself.
+    const SETTINGS: [fn(&crate::lang::Strings) -> &'static str; 4] = [
+        |s| s.unnamed_row,
+        |s| s.uncovered_row,
+        |s| s.figures_row,
+        |s| s.sitting_floor_row,
+    ];
+
+    /// Those four labels, then whatever `rest` the record earns.
+    fn expected(rest: &[&'static str]) -> Vec<&'static str> {
+        let s = Lang::English.strings();
+        SETTINGS
+            .iter()
+            .map(|f| f(s))
+            .chain(rest.iter().copied())
+            .collect()
+    }
+
     #[test]
     fn a_record_with_nothing_in_it_offers_no_reset() {
-        assert_eq!(
-            the_record(&Record::default()),
-            [
-                Lang::English.strings().figures_row,
-                Lang::English.strings().sitting_floor_row,
-                Lang::English.strings().unnamed_row,
-                Lang::English.strings().uncovered_row
-            ]
-        );
+        assert_eq!(the_record(&Record::default()), expected(&[]));
+        // Nothing to state, so the heading states nothing.
+        assert_eq!(record_section(Lang::English, &Record::default()).said, None);
     }
 
     #[test]
     fn a_record_with_reading_in_it_states_what_it_holds_and_offers_a_reset() {
-        let s = Lang::English.strings();
         let record = Record {
             sittings: 12,
             books: 3,
             ..Record::default()
         };
+        let s = Lang::English.strings();
+        assert_eq!(the_record(&record), expected(&[s.reset_row]));
+        // The figure stands on the heading, not on a row of its own.
         assert_eq!(
-            the_record(&record),
-            [
-                s.figures_row,
-                s.sitting_floor_row,
-                s.unnamed_row,
-                s.uncovered_row,
-                s.recorded_row,
-                s.reset_row
-            ]
+            record_section(Lang::English, &record).said.as_deref(),
+            Some("12 sittings · 3 books")
         );
+    }
+
+    /// The figure clears the heading's own words and the page's right margin
+    /// in every language, on the narrowest panel at the largest type, with
+    /// every archive the record can offer. Set on a row at `body_px` it ran
+    /// off the panel in German, which is what moved it here.
+    #[test]
+    fn the_record_figure_shares_the_heading_line() {
+        let Ok(mut text) = crate::ui::text::TextRenderer::load(24.0) else {
+            return;
+        };
+        let record = Record {
+            sittings: 2332,
+            books: 19,
+            backups: vec!["Sep 6".into(), "Aug 30".into()],
+            archived: 1_258_291,
+            floored: true,
+        };
+        let theme = Theme::sized(600, 800, TextSize::Large);
+        let room = chrome::content_box(&theme).w;
+        text.set_px(theme.small_px);
+        for lang in Lang::ALL {
+            let s = lang.strings();
+            let said = record_section(lang, &record).said.expect("a figure");
+            let head = text.measure_width(s.the_record) as i32;
+            let figure = text.measure_width(&said) as i32;
+            assert!(
+                head + theme.gap + figure < room,
+                "{lang:?}: {:?} and {said:?} want {}px of {room}px",
+                s.the_record,
+                head + theme.gap + figure
+            );
+        }
     }
 
     #[test]
@@ -858,18 +914,7 @@ mod tests {
             archived: 0,
             floored: false,
         };
-        assert_eq!(
-            the_record(&kept),
-            [
-                s.figures_row,
-                s.sitting_floor_row,
-                s.unnamed_row,
-                s.uncovered_row,
-                s.recorded_row,
-                s.reset_row,
-                s.restore_row
-            ]
-        );
+        assert_eq!(the_record(&kept), expected(&[s.reset_row, s.restore_row]));
         let floored = Record {
             backups: Vec::new(),
             archived: 0,
@@ -878,15 +923,7 @@ mod tests {
         };
         assert_eq!(
             the_record(&floored),
-            [
-                s.figures_row,
-                s.sitting_floor_row,
-                s.unnamed_row,
-                s.uncovered_row,
-                s.recorded_row,
-                s.reset_row,
-                s.restore_row
-            ]
+            expected(&[s.reset_row, s.restore_row])
         );
     }
 
@@ -902,7 +939,8 @@ mod tests {
         };
         let page = sections(Lang::English, &settings, true, &record);
         let at = page.len() - 2;
-        let archives = row(&page, at, 6);
+        let last = page[at].lines.len() - 1;
+        let archives = row(&page, at, last);
         assert_eq!(archives.options[0].0, Lang::English.strings().restore_logs);
         assert_eq!((archives.hit)(0), Hit::Rebuild);
         assert_eq!((archives.hit)(1), Hit::Restore(0));
