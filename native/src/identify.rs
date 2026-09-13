@@ -168,6 +168,7 @@ pub fn rescue_from(
     };
     out.sidecars = counters.len();
     out.by_sidecars = store.recover(counters);
+    store.note_timers(&shelf.counters);
 
     out.unnamed = store.classes_wanting(Named::Sidecar).len();
     out

@@ -125,6 +125,14 @@ impl Value {
         }
     }
 
+    /// The number in a `Double`, which the format writes big-endian.
+    pub fn as_double(&self) -> Option<f64> {
+        match self {
+            Self::Double(bytes) => Some(f64::from_be_bytes(*bytes)),
+            _ => None,
+        }
+    }
+
     /// The object in an `Object`.
     pub fn as_object(&self) -> Option<&Object> {
         match self {
@@ -321,16 +329,16 @@ pub struct Annotation {
     /// Field 3, `created`, epoch milliseconds on the device's own clock. This
     /// is the instant a clipping's `Added on` names, to the second.
     pub created: i64,
-    /// Field 4, `modified`. Equal to `created` until the reader edits it.
+    /// Field 4, `modified`. Equal to `created` until the annotation is edited.
     pub modified: i64,
     /// Field 5, `<tags>\u{FFFC}<flags>` verbatim. `0\u{FFFC}0` is the
     /// ordinary case: no tags and no flags.
     pub flags: String,
-    /// Field 6 where the kind writes a colour — one of the eleven
-    /// `AnnotationColor` names — and empty otherwise.
+    /// Field 6 where `kind` writes a colour: one of the eleven
+    /// `AnnotationColor` names. Empty on every other kind.
     pub colour: String,
-    /// Field 6 where the kind writes the reader's own words, and empty
-    /// otherwise. Never the book's text: no sidecar holds that.
+    /// Field 6 where `kind` writes typed words. Empty on every other kind, and
+    /// never the book's text: no sidecar holds that.
     pub body: String,
 }
 
@@ -365,7 +373,7 @@ fn position(anchor: &str) -> Option<i64> {
 }
 
 /// What a book's frequent sidecar states about the reading it has had.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Counter {
     /// The `.sdr` directory's name without its suffix: the book's own file.
     pub file: String,
@@ -373,14 +381,19 @@ pub struct Counter {
     pub total_ms: i64,
     /// `timer.model`'s `TotalWords`.
     pub words: i64,
+    /// `timer.model`'s fourth value: the share of the book `total_ms` and
+    /// `words` were gathered over, which `ReadingTimerModel` divides by.
+    pub covered: f64,
 }
 
-/// `timer.model`'s `TotalTime` and `TotalWords`, its values 1 and 2.
-fn counters(store: &Store) -> Option<(i64, i64)> {
+/// `timer.model`'s `TotalTime`, `TotalWords` and covered share: its values 1,
+/// 2 and 3. A file stating no fourth value reads a zero share.
+fn counters(store: &Store) -> Option<(i64, i64, f64)> {
     let model = store.root(TIMER_MODEL)?;
     let total_ms = model.values.get(1)?.as_long()?;
     let words = model.values.get(2)?.as_long()?;
-    Some((total_ms, words))
+    let covered = model.values.get(3).and_then(Value::as_double);
+    Some((total_ms, words, covered.unwrap_or(0.0)))
 }
 
 /// What one `.sdr` directory's **rare** sidecar states about its book's marks:
@@ -399,7 +412,7 @@ pub struct Roster {
 }
 
 /// What one walk of `documents` found: both halves of every sidecar.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct Shelf {
     /// `timer.model`'s counters, ascending by file.
     pub counters: Vec<Counter>,
@@ -421,7 +434,7 @@ pub struct Survey {
 }
 
 /// [`Survey`] of `documents`: the same walk [`read`] makes, stopping at each
-/// sidecar's metadata rather than its bytes.
+/// sidecar's metadata and reading no bytes.
 pub fn survey(documents: &Path) -> Survey {
     let mut dirs = Vec::new();
     collect(documents, 0, &mut dirs);
@@ -429,8 +442,8 @@ pub fn survey(documents: &Path) -> Survey {
     let mut stamp = crate::stamp::Stamp::default();
     for (sdr, file) in &dirs {
         stamp.text(file);
-        // Both halves, by name, so that a sidecar appearing or being replaced
-        // moves the stamp even where the lengths happen to match.
+        // Both halves, by name: a sidecar appearing or being replaced moves
+        // the stamp where the lengths match.
         let mut found = files_in(sdr, &FREQUENT);
         found.extend(files_in(sdr, &RARE));
         found.sort();
@@ -504,11 +517,12 @@ fn collect(dir: &Path, depth: usize, out: &mut Vec<(PathBuf, String)>) {
 fn read_counter(sdr: &Path, file: &str) -> Option<Counter> {
     let at = frequent(sdr)?;
     let store = open_sidecar(&at)?;
-    let (total_ms, words) = counters(&store)?;
+    let (total_ms, words, covered) = counters(&store)?;
     Some(Counter {
         file: file.to_string(),
         total_ms,
         words,
+        covered,
     })
 }
 
@@ -866,6 +880,22 @@ mod tests {
         out
     }
 
+    /// One record whose values are laid out by the caller, type bytes and all.
+    fn raw_sidecar(name: &str, body: &[u8]) -> Vec<u8> {
+        let mut out = Vec::from(SIGNATURE);
+        out.push(T_LONG);
+        out.extend_from_slice(&1i64.to_be_bytes());
+        out.push(T_INT);
+        out.extend_from_slice(&1i32.to_be_bytes());
+        out.push(T_OBJECT_BEGIN);
+        out.push(0);
+        out.extend_from_slice(&(name.len() as u16).to_be_bytes());
+        out.extend_from_slice(name.as_bytes());
+        out.extend_from_slice(body);
+        out.push(T_OBJECT_END);
+        out
+    }
+
     /// The 32-hex profile infix a real sidecar carries between the book's stem
     /// and the suffix.
     const INFIX: &str = "c0354bae47758639f54c3d3efca2d41a";
@@ -888,7 +918,26 @@ mod tests {
     fn a_sidecar_states_the_counter_the_log_states_on_every_turn() {
         let bytes = sidecar(&[("timer.model", &[0, 3_198_932, 30_965])]);
         let store = Store::parse(&bytes).expect("a sidecar");
-        assert_eq!(counters(&store), Some((3_198_932, 30_965)));
+        assert_eq!(counters(&store), Some((3_198_932, 30_965, 0.0)));
+    }
+
+    /// `timer.model`'s fourth value is a `T_DOUBLE`: the share of the book its
+    /// first two were gathered over.
+    #[test]
+    fn a_sidecar_states_the_share_the_counter_was_gathered_over() {
+        let mut body = vec![T_LONG];
+        for value in [0_i64, 341_149, 1_909] {
+            body.extend_from_slice(&value.to_be_bytes());
+            body.push(T_LONG);
+        }
+        body.pop();
+        body.push(T_DOUBLE);
+        body.extend_from_slice(&0.005_617_f64.to_be_bytes());
+        let bytes = raw_sidecar("timer.model", &body);
+        let store = Store::parse(&bytes).expect("a sidecar");
+        let (ms, words, covered) = counters(&store).expect("the counter");
+        assert_eq!((ms, words), (341_149, 1_909));
+        assert!((covered - 0.005_617).abs() < 1e-12, "covered {covered}");
     }
 
     #[test]
@@ -926,8 +975,7 @@ mod tests {
     #[test]
     fn a_note_body_above_the_bmp_costs_nothing() {
         // `writeUTF` is Java *modified* UTF-8: an astral character is a
-        // six-byte surrogate pair, which `String::from_utf8` refuses. A note
-        // body is the reader's own words, so one emoji reaches this.
+        // six-byte surrogate pair, which `String::from_utf8` refuses.
         let held = marks(EMOJI_NOTE);
         assert_eq!(held.len(), 1);
         assert_eq!(held[0].kind, Kind::Note);
@@ -1001,7 +1049,7 @@ mod tests {
         assert_eq!(held[0].start_position(), Some(82_107));
         assert_eq!(held[0].end_position(), Some(82_514));
         // `PDFPosition` writes a page and a point, which is on no position
-        // axis at all. It states none rather than a number off another axis.
+        // axis at all. `start_position` states none for it.
         let held = marks(PDF_ANCHOR);
         assert_eq!(held.len(), 1);
         assert_eq!(held[0].start, "3 100 200 0");

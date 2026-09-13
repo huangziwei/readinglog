@@ -291,6 +291,11 @@ pub fn library(last: i64, art: &Path) -> Store {
             },
             language: book.language.into(),
             percent: book.percent,
+            // The device's own counter for this book: the whole of `percent`,
+            // at a rate putting a full read at eight hours.
+            timer_covered: book.percent.max(0.0) / 100.0,
+            timer_words: (120_000.0 * book.percent.max(0.0) / 100.0) as i64,
+            timer_ms: (8.0 * 3600.0 * 1000.0 * book.percent.max(0.0) / 100.0) as i64,
             on_device: slot % 5 != 4,
             cover: String::new(),
             // A title with a space in it, which `open::uri` escapes.

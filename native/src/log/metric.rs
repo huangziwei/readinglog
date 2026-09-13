@@ -24,9 +24,10 @@ pub const METRIC_MARKERS: [&str; 8] = [
 /// track.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Metric {
-    /// `ereader_book_consume_content`: a page, with the words on it and where
-    /// it began. A redraw repeats `start`; a record stating none reads -1.
-    Page { words: i64, start: i64 },
+    /// `ereader_book_consume_content`: a page, with the words on it and the span
+    /// it covers. A redraw repeats `start`; a record naming neither place
+    /// reads -1. `end` less `start` is the page's own share of the book.
+    Page { words: i64, start: i64, end: i64 },
     /// A forward turn.
     Forward,
     /// A backward turn, which advances no reading.
@@ -41,6 +42,7 @@ pub fn metric(line: &str) -> Option<Metric> {
         return Some(Metric::Page {
             words: field_num(line, "words_count").unwrap_or(0),
             start: field_num(line, "start_position").unwrap_or(-1),
+            end: field_num(line, "end_position").unwrap_or(-1),
         });
     }
     if line.contains(METRIC_MARKERS[1]) {
@@ -102,13 +104,14 @@ mod tests {
     const NO_KEY: &str = r#"260814:112035 fastmetrics[9842]: D fastmetrics: Emitting a new record. SchemaName[ereader_reader_latency_ops], Fields[{ 	"cde_key" : "N/A", 	"op_name" : "OpenBook" } ]. :"#;
 
     #[test]
-    fn a_page_record_carries_the_words_on_it_and_where_it_began() {
+    fn a_page_record_carries_the_words_on_it_and_the_span_it_covers() {
         let read = |w| metric(&page(w));
         assert_eq!(
             read(217),
             Some(Metric::Page {
                 words: 217,
-                start: 3227
+                start: 3227,
+                end: 4133,
             })
         );
         // `words_count` of a fixed-layout page.
@@ -116,7 +119,8 @@ mod tests {
             read(0),
             Some(Metric::Page {
                 words: 0,
-                start: 3227
+                start: 3227,
+                end: 4133,
             })
         );
     }

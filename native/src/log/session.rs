@@ -168,6 +168,10 @@ pub struct Session {
     /// The words on those pages. `TotalWords` counts only the intervals inside
     /// [40, 900], and `Session::words` states those alone.
     pub paged_words: i64,
+    /// The share of the book those same pages cover, summed page by page.
+    /// `ReadingTimerModel` sums the same figure into `timer.model`'s fourth
+    /// value, under the test that admits their words.
+    pub covered: f64,
     /// The book's own reading counter where this run began and where it was
     /// last seen. Both or neither: a run the device never counted has none.
     pub start_counter_ms: Option<i64>,
@@ -197,6 +201,7 @@ impl Session {
         self.awake_seconds = fresh.awake_seconds;
         self.paged_seconds = fresh.paged_seconds;
         self.paged_words = fresh.paged_words;
+        self.covered = fresh.covered;
         self.start_counter_ms = fresh.start_counter_ms.or(self.start_counter_ms);
         self.end_counter_ms = fresh.end_counter_ms.or(self.end_counter_ms);
         self.start_words = fresh.start_words.or(self.start_words);
@@ -347,7 +352,9 @@ struct Open {
     /// Milliseconds the pages were open, beside the open page.
     paged_total_ms: i64,
     paged_hours_ms: [i64; 24],
-    open_page: Option<(Moment, i64, i64)>,
+    /// The share of the book those pages cover, beside their words.
+    covered: f64,
+    open_page: Option<Page>,
     /// The catalog key a reader-shell record named for this run.
     asin: Option<String>,
     /// The last `%Left` a line stated for this book.
@@ -395,6 +402,7 @@ impl Open {
             interval_hours_ms: [0; 24],
             paged_total_ms: 0,
             paged_hours_ms: [0; 24],
+            covered: 0.0,
             open_page: None,
             asin: None,
             progress: None,
@@ -492,21 +500,27 @@ impl Open {
             Metric::Forward => self.metric_turns += 1,
             Metric::Back => {}
             Metric::Close => self.open_page = None,
-            Metric::Page { words, start } => {
-                if let Some((from, from_words, from_start)) = self.open_page.take() {
+            Metric::Page { words, start, end } => {
+                if let Some(page) = self.open_page.take() {
                     // `Awake::bound`: the interval less the sleeps it states.
-                    let counts = paged_secs(awake.bound(from.abs, now.abs)) * 1000;
+                    let counts = paged_secs(awake.bound(page.at.abs, now.abs)) * 1000;
                     self.paged_total_ms += counts;
                     // A page under the floor counts no time and no words. A
                     // redraw repeats `start`, and its words stand on the screen
                     // the record before it counted.
-                    let redraw = *start >= 0 && *start == from_start;
+                    let redraw = *start >= 0 && *start == page.start;
                     if counts > 0 && !redraw {
-                        self.metric_words += from_words;
+                        self.metric_words += page.words;
+                        self.covered += share_of(page.start, page.end, self.end_position);
                     }
-                    credit_awake(&mut self.paged_hours_ms, awake, &from, now, counts);
+                    credit_awake(&mut self.paged_hours_ms, awake, &page.at, now, counts);
                 }
-                self.open_page = Some((now.clone(), *words, *start));
+                self.open_page = Some(Page {
+                    at: now.clone(),
+                    words: *words,
+                    start: *start,
+                    end: *end,
+                });
             }
         }
     }
@@ -626,11 +640,32 @@ impl Open {
             awake_seconds: awake.bound(self.began.abs, self.last.abs),
             paged_seconds: paged,
             paged_words: self.metric_words,
+            covered: self.covered,
             start_counter_ms: self.time_lo,
             end_counter_ms: self.time_lo.map(|_| self.time_hi),
             start_words: self.words_lo,
             end_words: self.words_lo.map(|_| self.words_hi),
         }
+    }
+}
+
+/// The screen a page record opened, held until the record after it closes it.
+#[derive(Debug, Clone)]
+struct Page {
+    at: Moment,
+    words: i64,
+    /// The page's own span, which `share_of` reads as its share of the book.
+    start: i64,
+    end: i64,
+}
+
+/// The share of `extent` one page's own span covers. `ReadingTimerModel` takes
+/// the same figure off the page's two `Position.ox()` readings through
+/// `Math.abs`. Zero where `extent` or either place is unstated.
+fn share_of(from: i64, to: i64, extent: i64) -> f64 {
+    match extent > 0 && from >= 0 && to >= 0 {
+        true => (to - from).abs() as f64 / extent as f64,
+        false => 0.0,
     }
 }
 
@@ -1224,6 +1259,59 @@ mod tests {
         assert_eq!(out[0].paged_seconds, 90);
         // 300 once for the screen redrawn at 101530, then 250.
         assert_eq!(out[0].paged_words, 550, "a redraw counted its words twice");
+    }
+
+    /// A page record stating the span it covers.
+    fn spanned_page(hhmmss: &str, words: i64, start: i64, end: i64) -> String {
+        format!(
+            "260807:{hhmmss} fastmetrics[9842]: D fastmetrics: Emitting a new record. \
+             SchemaName[ereader_book_consume_content], Fields[{{ \"start_position\" : {start}, \
+             \"end_position\" : {end}, \"words_count\" : {words} }} ]. :"
+        )
+    }
+
+    /// `covered` is the share of the book the pages crediting words cover,
+    /// against the run's own `end_position`. One test admits a page's
+    /// seconds, its words and its share together.
+    #[test]
+    fn the_pages_that_count_carry_the_share_of_the_book() {
+        let lines = [
+            page("101500", 7_390_020),
+            spanned_page("101500", 300, 1000, 1301),
+            spanned_page("101530", 250, 1301, 1552),
+            // A jump, landing on a page 251 wide like the rest.
+            spanned_page("101600", 100, 9000, 9251),
+            spanned_page("101630", 120, 9251, 9500),
+        ];
+        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        // Three closed pages, each its own span over the book's own 148207.
+        let want = (301.0 + 251.0 + 251.0) / 148_207.0;
+        assert!(
+            (out[0].covered - want).abs() < 1e-12,
+            "covered {} against {want}",
+            out[0].covered
+        );
+        // The 7448 positions skipped between 1552 and 9000 are no part of it.
+        let gapped = (301.0 + 251.0 + 7_448.0) / 148_207.0;
+        assert!(
+            (out[0].covered - gapped).abs() > 1e-9,
+            "a jump between two pages counted as reading"
+        );
+    }
+
+    /// A record naming no `start_position` leaves `share_of` both places at
+    /// -1, and the run's `covered` stays zero.
+    #[test]
+    fn pages_stating_no_place_carry_no_share() {
+        let lines = [
+            page("101500", 7_390_020),
+            worded_page("101500", 300),
+            worded_page("101530", 300),
+            worded_page("101600", 250),
+        ];
+        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        assert!(out[0].paged_words > 0, "the pages counted their words");
+        assert_eq!(out[0].covered, 0.0);
     }
 
     #[test]

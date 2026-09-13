@@ -53,6 +53,19 @@ pub struct BookStat {
     pub last_day: i64,
     /// Seconds into `last_day` at which the last sitting ended.
     pub last_secs: i64,
+    /// The share of the book this record's own sittings cover, summed. The
+    /// divisor [`Self::time_left`] projects on. `percent` counts reading below
+    /// the record's floor and this counts none of it.
+    pub covered: f64,
+    /// The seconds those same pages were open. `covered`'s own numerator: both
+    /// come off the page records, under the one test that admits a page.
+    pub covered_seconds: i64,
+    /// `timer.model`'s own figures for this book, off `BookRecord::timer_ms`,
+    /// `timer_words` and `timer_covered`. These reach reading below the
+    /// record's floor, under `ReadingTimerModel`'s own test.
+    pub timer_seconds: i64,
+    pub timer_words: i64,
+    pub timer_covered: f64,
     /// `Session::time_left` as the newest sitting closed.
     pub stated_time_left: Option<i64>,
     /// The rate it stated at the same moment, off `Session::stated_wpm`.
@@ -142,9 +155,9 @@ impl BookStat {
         self.words
     }
 
-    /// Seconds left to read: `stated_time_left`, else `percent` and the reading
-    /// projected. `Some(0)` under [`Self::is_finished`], `None` where either
-    /// carries too little to divide.
+    /// Seconds left to read: `stated_time_left`, else the seconds a book's pages
+    /// were open over the share they cover, times the share ahead.
+    /// `ReadingTimerModel` states the same as `OldTimeLeft`.
     pub fn time_left(&self, from: Figures) -> Option<i64> {
         if self.is_finished() {
             return Some(0);
@@ -152,11 +165,20 @@ impl BookStat {
         if let (Figures::Device, Some(stated)) = (from, self.stated_time_left) {
             return Some(stated);
         }
-        let read = self.read_seconds(from);
-        if self.percent < 0.5 || self.percent >= FINISHED_PERCENT || read <= 0 {
+        if self.percent < 0.5 || self.percent >= FINISHED_PERCENT {
             return None;
         }
-        Some((read as f64 * (100.0 - self.percent) / self.percent) as i64)
+        let ahead = (100.0 - self.percent) / 100.0;
+        let (read, covered) = match from {
+            Figures::Device => (self.timer_seconds, self.timer_covered),
+            Figures::App => (self.covered_seconds, self.covered),
+        };
+        // `ReadingTimerModel` states `DataSufficient:NO` and answers -3 on a
+        // zero here, beside a zero `TotalTime` and a zero `TotalWords`.
+        if covered <= 0.0 || read <= 0 {
+            return None;
+        }
+        Some((read as f64 * ahead / covered) as i64)
     }
 
     /// Words a minute: `stated_wpm` under [`Figures::Device`], else this
@@ -166,11 +188,16 @@ impl BookStat {
         if let (Figures::Device, Some(stated)) = (from, self.stated_wpm) {
             return Some(stated);
         }
-        let read = match from {
-            Figures::App => self.seconds,
-            Figures::Device => self.counted_seconds,
+        let (words, read) = match from {
+            Figures::App => (self.words, self.seconds),
+            // `timer.model`'s own figures before this record's, which reach
+            // reading below the floor as `Self::time_left` does.
+            Figures::Device if self.timer_words > 0 && self.timer_seconds > 0 => {
+                (self.timer_words, self.timer_seconds)
+            }
+            Figures::Device => (self.words, self.counted_seconds),
         };
-        (self.words > 0 && read > 0).then(|| self.words * 60 / read)
+        (words > 0 && read > 0).then(|| words * 60 / read)
     }
 }
 
@@ -1005,6 +1032,11 @@ fn fresh(extent: i64, found: &BookRecord, day: i64) -> BookStat {
         first_day: day,
         last_day: day,
         last_secs: 0,
+        covered: 0.0,
+        covered_seconds: 0,
+        timer_seconds: found.timer_ms / 1000,
+        timer_words: found.timer_words,
+        timer_covered: found.timer_covered,
         stated_time_left: None,
         stated_wpm: None,
         marks: Vec::new(),
@@ -1101,6 +1133,11 @@ fn credit(book: &mut BookStat, s: &Session, day: i64, secs: i64, words: i64) {
     book.sittings += 1;
     book.page_turns += s.page_turns;
     book.words += words;
+    // The share and the seconds over it come off the same pages together.
+    if s.covered > 0.0 {
+        book.covered += s.covered;
+        book.covered_seconds += s.paged_seconds;
+    }
     // [`NO_DAY`] takes `day` whole.
     book.first_day = match book.first_day {
         NO_DAY => day,
@@ -2714,18 +2751,38 @@ pub(crate) mod tests {
         );
     }
 
+    /// The sittings on one book, each carrying its own share of `whole` over
+    /// pages open for its own seconds.
+    fn carrying(store: &mut Store, book: i64, whole: f64) {
+        let secs: i64 = sittings_on(store, book).map(|s| s.seconds).sum();
+        for s in sittings_on(store, book) {
+            s.covered = whole * s.seconds as f64 / secs as f64;
+            s.paged_seconds = s.seconds;
+        }
+    }
+
+    fn sittings_on(store: &mut Store, book: i64) -> impl Iterator<Item = &mut Session> {
+        store
+            .sessions
+            .iter_mut()
+            .filter(move |s| s.end_position == book)
+    }
+
     #[test]
-    fn what_is_left_is_projected_from_what_the_catalog_says_is_done() {
+    fn what_is_left_is_projected_from_the_share_the_sittings_carried() {
+        let mut store = store();
+        // The three sittings carry the whole quarter the catalog states.
+        carrying(&mut store, 148_207, 0.25);
         let stats = Stats::build(
-            &store(),
+            &store,
             day(2026, 8, 7),
             true,
             Figures::Device,
             SittingFloor::All,
         );
         let bible = stats.books.iter().find(|b| b.extent == 148_209).unwrap();
-        // 3600 s at 25%: 75% is three times that.
-        assert_eq!(bible.time_left(Figures::Device), Some(10_800));
+        // 3600 s carried 25%: the 75% ahead is three times that.
+        assert_eq!(bible.time_left(Figures::App), Some(10_800));
         assert_eq!(bible.per_day(Figures::Device), 1_200);
         assert_eq!(bible.per_sitting(Figures::Device), 1_200);
         // A book the catalog states no progress for is projected from nothing.
@@ -2737,7 +2794,71 @@ pub(crate) mod tests {
             SittingFloor::All,
         );
         let gone = other.books.iter().find(|b| b.extent == 555).unwrap();
-        assert_eq!(gone.time_left(Figures::Device), None);
+        assert_eq!(gone.time_left(Figures::App), None);
+    }
+
+    /// `percent` counts reading below the record's floor and `covered` counts
+    /// none of it. The catalog's own figure is never the divisor.
+    #[test]
+    fn a_book_read_below_the_floor_is_projected_off_the_share_watched() {
+        let mut store = store();
+        // A fiftieth of a book the catalog states is a quarter done.
+        carrying(&mut store, 148_207, 0.02);
+        let stats = Stats::build(
+            &store,
+            day(2026, 8, 7),
+            true,
+            Figures::Device,
+            SittingFloor::All,
+        );
+        let bible = stats.books.iter().find(|b| b.extent == 148_209).unwrap();
+        // 3600 s against the 2% watched: 0.75 / 0.02 is 37.5 of it.
+        assert_eq!(bible.time_left(Figures::App), Some(135_000));
+    }
+
+    /// `timer_covered` answers under [`Figures::Device`], and it reaches reading
+    /// no sitting here covers.
+    #[test]
+    fn the_device_projects_off_the_counter_in_its_own_sidecar() {
+        let mut store = store();
+        // `covered` holds a fiftieth; `timer_covered` holds the whole quarter
+        // the catalog states, over two hours of `timer_ms`.
+        carrying(&mut store, 148_207, 0.02);
+        let slot = store
+            .books
+            .iter()
+            .position(|b| b.extent == 148_209)
+            .expect("the record");
+        store.books[slot].timer_ms = 7_200_000;
+        store.books[slot].timer_covered = 0.25;
+        let stats = Stats::build(
+            &store,
+            day(2026, 8, 7),
+            true,
+            Figures::Device,
+            SittingFloor::All,
+        );
+        let bible = stats.books.iter().find(|b| b.extent == 148_209).unwrap();
+        // 7200 s carried 25%: the 75% ahead is three times that.
+        assert_eq!(bible.time_left(Figures::Device), Some(21_600));
+        // `covered` and `covered_seconds` answer the same beside it.
+        assert_eq!(bible.time_left(Figures::App), Some(135_000));
+    }
+
+    /// A row an older build wrote states no share, and a sitting whose pages
+    /// never reached the log carries none.
+    #[test]
+    fn a_book_no_sitting_states_a_share_for_is_projected_from_nothing() {
+        let stats = Stats::build(
+            &store(),
+            day(2026, 8, 7),
+            true,
+            Figures::Device,
+            SittingFloor::All,
+        );
+        let bible = stats.books.iter().find(|b| b.extent == 148_209).unwrap();
+        assert_eq!(bible.covered, 0.0);
+        assert_eq!(bible.time_left(Figures::App), None);
     }
 
     /// The `t` row is a running total in the book's own sidecar, lost whenever

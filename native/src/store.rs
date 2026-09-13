@@ -98,6 +98,12 @@ pub struct BookRecord {
     pub restart: Option<f64>,
     /// The catalog's `p_readState`, negative where it states none.
     pub read_state: i64,
+    /// `timer.model`'s `TotalTime` in milliseconds, its `TotalWords`, and the
+    /// share of the book both were gathered over. Zero until a sidecar of this
+    /// book's own file is read.
+    pub timer_ms: i64,
+    pub timer_words: i64,
+    pub timer_covered: f64,
     /// Whether [`Store::clear_book`] took this book's reading. `Stats::build`
     /// lists the book at zero while it stands.
     pub kept: bool,
@@ -836,6 +842,31 @@ impl Store {
         self.note_progress(&stated);
         self.sort_books();
         moved.into_iter().filter(|&m| m).count()
+    }
+
+    /// Take each book's `timer.model` counter off the sidecar of its own file,
+    /// through [`Self::pairs`]. Answers how many records moved.
+    pub fn note_timers(&mut self, sidecars: &[sidecar::Counter]) -> usize {
+        let mut moved = 0;
+        for card in sidecars {
+            let Some((extent, _)) = self.pairs.iter().find(|(_, file)| *file == card.file) else {
+                continue;
+            };
+            let Some(slot) = self.slot_for(*extent, None) else {
+                continue;
+            };
+            let book = &mut self.books[slot];
+            if (book.timer_ms, book.timer_words, book.timer_covered)
+                == (card.total_ms, card.words, card.covered)
+            {
+                continue;
+            }
+            book.timer_ms = card.total_ms;
+            book.timer_words = card.words;
+            book.timer_covered = card.covered;
+            moved += 1;
+        }
+        moved
     }
 
     /// Name reading the catalog cannot: `sidecars` against [`Self::classes_by_counter`].
@@ -1775,6 +1806,9 @@ fn from_witness(extent: i64, title: &str, author: &str, key: &str, by: Named) ->
         finished: false,
         restart: None,
         read_state: -1,
+        timer_ms: 0,
+        timer_words: 0,
+        timer_covered: 0.0,
         kept: false,
         named_by: by,
     }
@@ -1803,6 +1837,9 @@ fn from_sidecar(extent: i64, file: &str) -> BookRecord {
         finished: false,
         restart: None,
         read_state: -1,
+        timer_ms: 0,
+        timer_words: 0,
+        timer_covered: 0.0,
         kept: false,
         named_by: Named::Sidecar,
     }
@@ -1826,6 +1863,9 @@ fn taken(book: &Book) -> BookRecord {
         restart: None,
         // What `take_mark` reads to answer whether `book` states a new mark.
         read_state: -1,
+        timer_ms: 0,
+        timer_words: 0,
+        timer_covered: 0.0,
         kept: false,
         named_by: Named::Catalog,
     };
@@ -1986,7 +2026,7 @@ fn write_book(out: &mut String, b: &BookRecord) {
     row(
         out,
         format_args!(
-            "b\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "b\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             b.extent,
             flat(&b.cde_key),
             flat(&b.title),
@@ -2005,6 +2045,9 @@ fn write_book(out: &mut String, b: &BookRecord) {
             flat(&b.cde_type),
             u8::from(b.kept),
             b.named_by.as_str(),
+            b.timer_ms,
+            b.timer_words,
+            format_args!("{:.*}", PERCENT_PLACES, b.timer_covered),
         ),
     )
 }
@@ -2034,6 +2077,11 @@ fn read_book<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<BookRecord> {
         // A row stating none reads as the catalog's, which is what no source
         // may take. `Store::migrate` picks out the records a sidecar made.
         named_by: Named::from_stored(next()).unwrap_or_default(),
+        // A row written before these columns states none of them, and the next
+        // pass over the sidecars fills them.
+        timer_ms: next().trim().parse().unwrap_or(0),
+        timer_words: next().trim().parse().unwrap_or(0),
+        timer_covered: next().trim().parse().unwrap_or(0.0),
     })
     // `read_through` marks a record the row left unmarked.
     .map(|mut record: BookRecord| {
@@ -2201,7 +2249,7 @@ fn write_session(out: &mut String, s: &Session) {
     row(
         out,
         format_args!(
-            "s\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "s\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             s.started_at,
             s.ended_at,
             s.end_position,
@@ -2224,6 +2272,7 @@ fn write_session(out: &mut String, s: &Session) {
             s.paged_words,
             s.timed_seconds,
             s.timed_words,
+            format_args!("{:.*}", PERCENT_PLACES, s.covered),
         ),
     )
 }
@@ -2261,6 +2310,8 @@ fn read_session<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Session> {
         paged_words: next().parse().unwrap_or(0),
         timed_seconds: next().parse().unwrap_or(0),
         timed_words: next().parse().unwrap_or(0),
+        // A row written before this column states no share.
+        covered: next().parse().unwrap_or(0.0),
     })
 }
 
@@ -3648,6 +3699,7 @@ m	260911:115340	7200
             file: file.into(),
             total_ms,
             words,
+            covered: 0.0,
         }
     }
 
@@ -4301,8 +4353,9 @@ m	260911:115340	7200
             .lines()
             .map(|l| match l.strip_prefix("s\t") {
                 Some(rest) => {
-                    // The four fields a build before v0.3.4 never wrote.
-                    let cut = (0..4).fold(rest, |r, _| {
+                    // The four fields a build before v0.3.4 states none of, and
+                    // the share of the book after them.
+                    let cut = (0..5).fold(rest, |r, _| {
                         r.rsplit_once('\t').expect("a page or interval field").0
                     });
                     format!("s\t{cut}\n")
@@ -4315,6 +4368,7 @@ m	260911:115340	7200
         assert_eq!(read.sessions[0].paged_words, 0);
         assert_eq!(read.sessions[0].timed_seconds, 0);
         assert_eq!(read.sessions[0].timed_words, 0);
+        assert_eq!(read.sessions[0].covered, 0.0);
         assert_eq!(read.sessions[0].awake_seconds, 6607);
         assert_eq!(read.sessions[0].seconds, 2390);
     }
