@@ -1011,29 +1011,27 @@ fn fresh(extent: i64, found: &BookRecord, day: i64) -> BookStat {
     }
 }
 
-/// The seconds one sitting states: `seconds` under [`Figures::Device`], and
-/// under [`Figures::App`] `timed_seconds`, else `paged_seconds`, else
-/// `seconds`.
-///
-/// Both App sources add back time the device's own counter refused, so neither
-/// may state less than that counter did. A stack that logs one interval for a
-/// whole sitting rather than one per page samples the run instead of covering
-/// it, and `seconds` is the floor that holds there.
+/// Whether `measured` states at least the seconds `counted` states.
+fn reaches(measured: i64, counted: i64) -> bool {
+    measured > 0 && measured >= counted
+}
+
+/// `s.seconds` under [`Figures::Device`]. Under [`Figures::App`], the first of
+/// `timed_seconds` and `paged_seconds` that [`reaches`] it, else `s.seconds`.
 fn sitting_seconds(s: &Session, from: Figures) -> i64 {
     match from {
-        Figures::App if s.timed_seconds > 0 => s.timed_seconds.max(s.seconds),
-        Figures::App if s.paged_seconds > 0 => s.paged_seconds.max(s.seconds),
+        Figures::App if reaches(s.timed_seconds, s.seconds) => s.timed_seconds,
+        Figures::App if reaches(s.paged_seconds, s.seconds) => s.paged_seconds,
         _ => s.seconds,
     }
 }
 
-/// The words one sitting states, from the same source its seconds came from,
-/// and never under the counter's own reading, for the reason
-/// [`sitting_seconds`] gives.
+/// `s.words` under [`Figures::Device`]. Under [`Figures::App`], the words of
+/// whichever source [`sitting_seconds`] reads, and `s.words` at the least.
 fn sitting_words(s: &Session, from: Figures) -> i64 {
     match from {
-        Figures::App if s.timed_words > 0 => s.timed_words.max(s.words),
-        Figures::App if s.paged_words > 0 => s.paged_words.max(s.words),
+        Figures::App if reaches(s.timed_seconds, s.seconds) => s.timed_words.max(s.words),
+        Figures::App if reaches(s.paged_seconds, s.seconds) => s.paged_words.max(s.words),
         _ => s.words,
     }
 }
@@ -1536,38 +1534,51 @@ pub(crate) mod tests {
         assert_eq!(counted(&store, Figures::App), 0);
     }
 
-    /// A stack stating one interval for a whole sitting — the KPP reader logs
-    /// at close, not at each page — leaves both App sources holding a sample of
-    /// the run. Neither may take the figure below what the device counted.
+    /// `timed_seconds` under `seconds` hands the sitting to `paged_seconds`,
+    /// and `paged_seconds` under `seconds` hands it to `seconds`.
     #[test]
-    fn the_app_figure_never_falls_under_the_counter() {
+    fn a_measure_states_the_app_figure_only_where_it_reaches_the_counter() {
         let day = at(2026, 3, 1);
         let mut store = on_days(&[day], 455);
+        store.books.push(crate::store::BookRecord {
+            extent: 100,
+            title: "A Book".into(),
+            ..Default::default()
+        });
         store.sessions[0].words = 1_819;
         store.sessions[0].timed_seconds = 5;
         store.sessions[0].timed_words = 283;
         let built = |store: &Store, from| {
             Stats::build(store, at(2026, 3, 2), true, from, SittingFloor::OneMinute)
         };
-        let app = built(&store, Figures::App);
-        assert_eq!(app.total_seconds, 455, "the counter, not the one interval");
-        assert_eq!(app.total_words, 1_819);
-        assert_eq!(built(&store, Figures::Device).total_seconds, 455);
 
-        // The pages hold the same floor where no turn line states anything.
-        store.sessions[0].timed_seconds = 0;
-        store.sessions[0].timed_words = 0;
-        store.sessions[0].paged_seconds = 48;
-        store.sessions[0].paged_words = 213;
+        // Neither source reaches 455: `seconds` answers under both.
         let app = built(&store, Figures::App);
         assert_eq!((app.total_seconds, app.total_words), (455, 1_819));
+        assert_eq!(built(&store, Figures::Device).total_seconds, 455);
 
-        // A source that does cover the run still states its own added-back
-        // time, which is the whole point of the App figure.
+        // `paged_seconds` reaches 455 and answers with its own 600.
         store.sessions[0].paged_seconds = 600;
         store.sessions[0].paged_words = 2_000;
         let app = built(&store, Figures::App);
         assert_eq!((app.total_seconds, app.total_words), (600, 2_000));
+        assert_eq!(
+            app.books[0].wpm(Figures::App),
+            Some(200),
+            "one source, both sides"
+        );
+
+        // `paged_seconds` at 448 falls under `seconds`.
+        store.sessions[0].paged_seconds = 448;
+        let app = built(&store, Figures::App);
+        assert_eq!((app.total_seconds, app.total_words), (455, 1_819));
+
+        // `timed_seconds` at 700 reaches `seconds` and heads the chain.
+        store.sessions[0].timed_seconds = 700;
+        store.sessions[0].timed_words = 2_400;
+        store.sessions[0].paged_seconds = 600;
+        let app = built(&store, Figures::App);
+        assert_eq!((app.total_seconds, app.total_words), (700, 2_400));
     }
 
     #[test]
