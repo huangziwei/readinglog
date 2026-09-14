@@ -366,7 +366,7 @@ pub fn scatter(
     let line = text.line_height() as i32;
     let cap = text.cap_height() as i32;
     let (band, foot) = area.split_top((area.h - line - theme.gap / 2).max(1));
-    let side = (theme.rule() * 3).max(5);
+    let side = (theme.rule() * 4).max(7);
     let over = cap + theme.gap / 2;
     let plot = Rect::new(band.x, band.y + over, band.w, (band.h - over).max(1));
     let cells = plot.columns(count as i32, cell_gap(theme, count));
@@ -374,20 +374,15 @@ pub fn scatter(
     for share in STOPS {
         paint::hline(fb, plot.x, at_share(share), plot.w, PALE, 1);
     }
-    // The names go down before the marks, which stand over them.
+    // The names stand at the closing end, clear of the low places a reading
+    // opens on, and go down before the marks, which stand over them.
     for share in NAMED {
         let said = stop(share * ceiling / 100);
         let baseline = at_share(share) - theme.gap / 4;
-        text.draw_inked(
-            crate::font::Script::Unknown,
-            fb,
-            plot.x,
-            baseline,
-            &said,
-            DARK,
-        );
+        let x = plot.right() - text.measure_width(&said) as i32;
+        text.draw_inked(crate::font::Script::Unknown, fb, x, baseline, &said, LIGHT);
     }
-    let ink = palette.bar();
+    let ink = palette.deep();
     for (column, place) in at {
         let Some(cell) = cells.get(*column) else {
             continue;

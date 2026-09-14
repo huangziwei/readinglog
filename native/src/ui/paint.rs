@@ -31,6 +31,12 @@ impl Palette {
         self.steps[2]
     }
 
+    /// One step under [`Palette::bar`], for a mark that has to hold against
+    /// the rules and names it stands over.
+    pub fn deep(&self) -> [u8; 3] {
+        self.steps[3]
+    }
+
     /// The ground a found word is set on: [`STEP_LUMAS`]`[1]`, which is
     /// [`LIGHT`]'s own luma in the scheme's hue.
     pub fn wash(&self) -> [u8; 3] {

@@ -598,7 +598,6 @@ impl Stats {
         streaks(&left, self.last_day()).0
     }
 
-    /// Seconds read on one day.
     pub fn day_seconds(&self, day: i64) -> i64 {
         self.days
             .binary_search_by_key(&day, |(d, _)| *d)

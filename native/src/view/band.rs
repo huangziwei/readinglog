@@ -25,7 +25,6 @@ pub fn height(text: &mut TextRenderer, theme: &Theme) -> i32 {
     height_on(theme, text.line_height() as i32)
 }
 
-/// What one band states.
 pub struct Band {
     /// How full the track draws, from [`BookStat::bar_percent`].
     pub fill: i64,

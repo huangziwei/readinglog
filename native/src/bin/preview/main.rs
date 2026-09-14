@@ -804,16 +804,13 @@ fn list() {
         };
         println!("  {name}{of}");
     }
-    // `BANNERS` states this list itself.
+    // Each of these four states its own list of qualifiers.
     let banners: Vec<&str> = BANNERS.iter().map(|(name, _)| *name).collect();
     println!("  update  (:{})", banners.join(" :"));
-    // As does `RESETS`.
     let resets: Vec<&str> = RESETS.iter().map(|(name, _)| *name).collect();
     println!("  reset   (:{})", resets.join(" :"));
-    // And `RETRIES`.
     let retries: Vec<&str> = RETRIES.iter().map(|(name, _)| *name).collect();
     println!("  retry   (:{})", retries.join(" :"));
-    // And `HEALS`.
     let heals: Vec<&str> = HEALS.iter().map(|(name, _)| *name).collect();
     println!("  heal    (:{})", heals.join(" :"));
     println!("sketches:");

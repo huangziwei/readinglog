@@ -540,7 +540,6 @@ pub struct Window {
 }
 
 impl Window {
-    /// The days this window covers.
     pub fn days(self, week: WeekStart) -> std::ops::RangeInclusive<i64> {
         self.span.days(self.day, week)
     }

@@ -93,7 +93,6 @@ impl Service {
         self.sock.as_raw_fd()
     }
 
-    /// The name this service holds.
     pub fn name(&self) -> &str {
         &self.name
     }

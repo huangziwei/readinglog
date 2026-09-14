@@ -151,7 +151,6 @@ fn one_line(at: &str) -> String {
         .to_string()
 }
 
-/// The [`About`] the archive at `at` carries.
 pub fn about(at: &Path) -> archive::Result<About> {
     let mut open = Archive::open(at)?;
     let Some(entry) = open.entries().iter().find(|e| e.path == ABOUT).cloned() else {

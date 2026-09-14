@@ -402,7 +402,6 @@ impl App {
         &self.hits
     }
 
-    /// The language every screen is drawn in.
     pub fn language(&self) -> Lang {
         self.lang
     }

@@ -93,7 +93,6 @@ impl Lang {
         }
     }
 
-    /// The [`Strings`] for this [`Lang`].
     pub fn strings(self) -> &'static Strings {
         match self {
             Lang::English => &ENGLISH,
