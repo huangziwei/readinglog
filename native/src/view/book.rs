@@ -11,9 +11,7 @@ use crate::ui::paint::{self, INK, LIGHT, Rect};
 use crate::ui::text::TextRenderer;
 use crate::ui::theme::Theme;
 
-use super::{
-    Ask, BookTab, Ctx, Hit, MarksOrder, Search, State, band, book_graphs, books, marks, search,
-};
+use super::{Ask, BookTab, Ctx, Hit, Search, State, Way, band, book_graphs, books, marks, search};
 
 /// Lines a title takes before the rest of it is ellipsized.
 const TITLE_LINES: usize = 2;
@@ -187,7 +185,7 @@ fn search_button(cx: &mut Ctx, area: Rect) -> Rect {
 }
 
 /// What one tab reads. An `order` puts the caret on `BookTab::Marks`.
-fn tab_label(tab: BookTab, lang: Lang, marked: usize, order: Option<MarksOrder>) -> String {
+fn tab_label(tab: BookTab, lang: Lang, marked: usize, order: Option<Way>) -> String {
     let name = tab.label(lang);
     match (tab, order) {
         (BookTab::Marks, Some(order)) => format!("{name} ({marked}) {}", order.caret()),
@@ -199,7 +197,7 @@ fn tab_label(tab: BookTab, lang: Lang, marked: usize, order: Option<MarksOrder>)
 /// The book's three pages as a segmented control, each its own hit box and an
 /// equal cell, in the shape `rhythm::picker` gives the spans. Every label sets
 /// at the one size that fits its cell.
-fn picker(cx: &mut Ctx, area: Rect, on: BookTab, marked: usize, order: MarksOrder) {
+fn picker(cx: &mut Ctx, area: Rect, on: BookTab, marked: usize, order: Way) {
     let theme: &Theme = cx.theme;
     let cells = area.columns(BookTab::ALL.len() as i32, 0);
     let script = cx.ui_script();
@@ -262,23 +260,17 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
     // A field takes the whole head row, and the two pages stand down.
     if let Some(open) = state.book_search.as_ref() {
         field(cx, head, open);
-        marks::draw(cx, area, index, open.from, state.marks_order, Some(open));
+        marks::draw(cx, area, index, open.from, state.marks_way, Some(open));
         return;
     }
     let cells = search_button(cx, head);
-    picker(
-        cx,
-        cells,
-        tab,
-        cx.stats.marks_held(index),
-        state.marks_order,
-    );
+    picker(cx, cells, tab, cx.stats.marks_held(index), state.marks_way);
     // `BookTab::Marks` and `BookTab::Graphs` take the whole box under the head
     // row. The cover, the headline figures, the bar and the controls are
     // `BookTab::Statistics`'s.
     match tab {
         BookTab::Marks => {
-            return marks::draw(cx, area, index, state.marks_from, state.marks_order, None);
+            return marks::draw(cx, area, index, state.marks_from, state.marks_way, None);
         }
         BookTab::Graphs => return book_graphs::draw(cx, area, index),
         BookTab::Statistics => {}
@@ -578,13 +570,13 @@ mod tests {
     #[test]
     fn only_the_tab_showing_carries_the_caret() {
         let lang = Lang::English;
-        let on = tab_label(BookTab::Marks, lang, 8, Some(MarksOrder::Recent));
+        let on = tab_label(BookTab::Marks, lang, 8, Some(Way::Down));
         let off = tab_label(BookTab::Marks, lang, 8, None);
-        assert!(on.ends_with(MarksOrder::Recent.caret()), "{on}");
+        assert!(on.ends_with(Way::Down.caret()), "{on}");
         assert_eq!(off, "Highlights (8)");
         assert!(on.contains("(8)") && off.contains("(8)"));
         for tab in [BookTab::Statistics, BookTab::Graphs] {
-            let said = tab_label(tab, lang, 8, Some(MarksOrder::Recent));
+            let said = tab_label(tab, lang, 8, Some(Way::Down));
             assert_eq!(said, tab.label(lang), "{said}");
         }
     }
@@ -602,7 +594,7 @@ mod tests {
                     // caret that stands beside it whichever way it points.
                     let said: Vec<String> = BookTab::ALL
                         .iter()
-                        .map(|tab| tab_label(*tab, lang, 999, Some(MarksOrder::Recent)))
+                        .map(|tab| tab_label(*tab, lang, 999, Some(Way::Down)))
                         .collect();
                     let lines: Vec<&str> = said.iter().map(String::as_str).collect();
                     let floor = theme.body_px * chrome::SHRINK_FLOOR;

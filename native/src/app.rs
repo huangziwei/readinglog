@@ -230,8 +230,8 @@ impl App {
     }
 
     /// Draw the open book's marks from `order`'s own end.
-    pub fn set_marks_order(&mut self, order: view::MarksOrder) {
-        self.state.marks_order = order;
+    pub fn set_marks_way(&mut self, order: view::Way) {
+        self.state.marks_way = order;
     }
 
     /// Draw All Time at `page`, whatever it was left on.
@@ -248,6 +248,12 @@ impl App {
     /// List the books in `order`.
     pub fn set_sort(&mut self, order: crate::view::Sort) {
         self.state.sort = order;
+        self.state.books_from = 0;
+    }
+
+    /// Run that order `way`.
+    pub fn set_sort_way(&mut self, way: crate::view::Way) {
+        self.state.sort_way = way;
         self.state.books_from = 0;
     }
 
@@ -961,6 +967,13 @@ impl App {
                 self.state.sort = order;
                 self.state.books_from = 0;
             }
+            Hit::SortWay(way) => {
+                if self.state.sort_way == way {
+                    return Action::Nothing;
+                }
+                self.state.sort_way = way;
+                self.state.books_from = 0;
+            }
             Hit::Scoped(pick) => {
                 if self.state.scope == pick {
                     return Action::Nothing;
@@ -1487,7 +1500,7 @@ impl App {
             &self.stats,
             book,
             rest,
-            self.state.marks_order,
+            self.state.marks_way,
             None,
         );
         let forward = by > 0;
@@ -1546,7 +1559,7 @@ impl App {
             &self.stats,
             book,
             rest,
-            self.state.marks_order,
+            self.state.marks_way,
             Some(open),
         );
         let page = opens.iter().rposition(|o| *o <= open.from).unwrap_or(0) as i64;
@@ -1643,6 +1656,7 @@ impl App {
                     &self.stats,
                     self.state.shelf,
                     self.state.sort,
+                    self.state.sort_way,
                     over,
                     self.settings.show_uncovered,
                 )

@@ -1,4 +1,4 @@
-//! One book's highlights and notes, at whichever end [`super::MarksOrder`]
+//! One book's highlights and notes, at whichever end [`super::Way`]
 //! opens the list. `Mark::body` comes from the clippings file and `Mark::start`
 //! from the `.sdr` sidecar; [`place`] states each on its own axis.
 
@@ -14,7 +14,7 @@ use crate::ui::text::TextRenderer;
 use crate::ui::theme::Theme;
 use crate::wrap::{MORE, mark_more};
 
-use super::{Ctx, Hit, MarksOrder, Search, pager, search};
+use super::{Ctx, Hit, Search, Way, pager, search};
 
 /// What separates the parts of a row's own label: `Location 608 | Highlight`.
 const BAR: &str = " | ";
@@ -190,7 +190,7 @@ pub fn pages(
     stats: &Stats,
     book: usize,
     area: Rect,
-    order: MarksOrder,
+    order: Way,
     search: Option<&Search>,
 ) -> Vec<usize> {
     let Some(record) = stats.books.get(book) else {
@@ -224,7 +224,7 @@ fn listing(
     stats: &Stats,
     book: usize,
     record: &BookStat,
-    order: MarksOrder,
+    order: Way,
     query: Option<&str>,
 ) -> Vec<Row> {
     let mut held = rows(stats, book, record);
@@ -237,7 +237,7 @@ fn listing(
                     .is_some_and(|note| needle.holds(&note.body))
         });
     }
-    if order == MarksOrder::Earliest {
+    if order == Way::Up {
         held.reverse();
     }
     held
@@ -300,7 +300,7 @@ pub fn draw(
     area: Rect,
     book: usize,
     from: usize,
-    order: MarksOrder,
+    order: Way,
     search: Option<&Search>,
 ) {
     let theme: &Theme = cx.theme;
@@ -841,7 +841,7 @@ mod tests {
     fn a_query_names_the_passages_of_one_book_and_no_other() {
         let stats = crate::stats::tests::marked_shelf();
         let record = stats.books[0].clone();
-        let recent = MarksOrder::Recent;
+        let recent = Way::Down;
         // The whole book with no query, and with one that holds nothing.
         assert_eq!(listing(&stats, 0, &record, recent, None).len(), 1);
         assert_eq!(listing(&stats, 0, &record, recent, Some("")).len(), 1);

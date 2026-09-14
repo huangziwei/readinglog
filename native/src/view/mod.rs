@@ -102,6 +102,8 @@ pub enum Hit {
     ConfigPage(usize),
     /// The order the Books screen lists in.
     Sorted(Sort),
+    /// Which way that order runs.
+    SortWay(Way),
     /// Which list the search names, off the chips in its head row.
     Scoped(Scope),
     /// Open the search over the Books tab, with the keyboard up.
@@ -403,40 +405,38 @@ impl Sort {
     }
 }
 
-/// Which end of a book's marks its list opens at: `Stats::marked`'s own order,
-/// or that order turned over.
+/// Which way a list runs: `Down` the order its own measure gives, `Up` that
+/// order turned over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum MarksOrder {
-    /// Most recently marked first, which is the order `Stats::marked` holds.
+pub enum Way {
     #[default]
-    Recent,
-    /// Earliest marked first, which is the order the passages were read in.
-    Earliest,
+    Down,
+    Up,
 }
 
-impl MarksOrder {
-    /// The order a tap on the tab showing opens.
-    pub fn flipped(self) -> MarksOrder {
+impl Way {
+    /// The way a tap on the caret opens.
+    pub fn flipped(self) -> Way {
         match self {
-            MarksOrder::Recent => MarksOrder::Earliest,
-            MarksOrder::Earliest => MarksOrder::Recent,
+            Way::Down => Way::Up,
+            Way::Up => Way::Down,
         }
     }
 
-    /// The mark the Marks tab carries, stating which way its list runs.
+    /// The mark a control carries, stating which way its list runs.
     pub fn caret(self) -> &'static str {
         match self {
-            MarksOrder::Recent => "▾",
-            MarksOrder::Earliest => "▴",
+            Way::Down => "▾",
+            Way::Up => "▴",
         }
     }
 
-    /// Where the row standing `at` in `Stats::marked`'s own order falls in a
-    /// list of `of` rows drawn in this one. Its own mirror.
+    /// Where the row standing `at` in the measure's own order falls in a list
+    /// of `of` rows drawn this way. Its own mirror.
     pub fn place(self, at: usize, of: usize) -> usize {
         match self {
-            MarksOrder::Recent => at,
-            MarksOrder::Earliest => of.saturating_sub(1).saturating_sub(at),
+            Way::Down => at,
+            Way::Up => of.saturating_sub(1).saturating_sub(at),
         }
     }
 }
@@ -601,6 +601,8 @@ pub struct State {
     pub window: Option<Window>,
     /// The order it lists them in, which a tab change keeps.
     pub sort: Sort,
+    /// Which way that order runs.
+    pub sort_way: Way,
     /// Which list the search names, which a tab change keeps as well.
     /// `Settings::scope` holds it between launches.
     pub scope: Scope,
@@ -615,7 +617,7 @@ pub struct State {
     /// How far down that book's list of marks has been paged.
     pub marks_from: usize,
     /// Which end that list opens at, which opening another book keeps.
-    pub marks_order: MarksOrder,
+    pub marks_way: Way,
 }
 
 impl State {
@@ -636,13 +638,14 @@ impl State {
             shelf: Shelf::default(),
             window: None,
             sort: Sort::default(),
+            sort_way: Way::default(),
             scope: Scope::default(),
             opened_day: false,
             alltime_page: 0,
             list_from: 0,
             book_tab: BookTab::default(),
             marks_from: 0,
-            marks_order: MarksOrder::default(),
+            marks_way: Way::default(),
         }
     }
 
@@ -686,7 +689,7 @@ impl State {
     pub fn open_mark(&mut self, book: usize, at: usize, of: usize) {
         self.open_book(book);
         self.book_tab = BookTab::Marks;
-        self.marks_from = self.marks_order.place(at, of);
+        self.marks_from = self.marks_way.place(at, of);
     }
 
     /// Show `tab` of the open book. Answers whether that moved anywhere.
@@ -702,7 +705,7 @@ impl State {
     /// Turn the open book's list of marks over, which opens it at the head
     /// again.
     pub fn flip_marks(&mut self) {
-        self.marks_order = self.marks_order.flipped();
+        self.marks_way = self.marks_way.flipped();
         self.marks_from = 0;
     }
 
@@ -1003,7 +1006,7 @@ mod tests {
         assert_eq!(s.search.as_ref().map(|search| search.keyboard), Some(false));
         // The same passage, counted from the other end, where the book's own
         // list is turned over.
-        s.marks_order = MarksOrder::Earliest;
+        s.marks_way = Way::Up;
         s.open_mark(4, 7, 12);
         assert_eq!(s.marks_from, 4, "the passage is the fifth from the front");
     }
@@ -1014,31 +1017,31 @@ mod tests {
         s.open_book(3);
         s.go_in_book(BookTab::Marks);
         s.marks_from = 6;
-        assert_eq!(s.marks_order, MarksOrder::Recent, "newest first to start");
+        assert_eq!(s.marks_way, Way::Down, "newest first to start");
         s.flip_marks();
-        assert_eq!(s.marks_order, MarksOrder::Earliest);
+        assert_eq!(s.marks_way, Way::Up);
         assert_eq!(s.marks_from, 0, "a turned list opens at its own head");
         // And back, which is the only other place the caret leads.
         s.flip_marks();
-        assert_eq!(s.marks_order, MarksOrder::Recent);
+        assert_eq!(s.marks_way, Way::Down);
         // The order is the reader's, so opening another book keeps it.
         s.flip_marks();
         s.open_book(5);
-        assert_eq!(s.marks_order, MarksOrder::Earliest);
+        assert_eq!(s.marks_way, Way::Up);
     }
 
     #[test]
     fn a_place_in_one_order_reads_back_in_the_other() {
         for of in 1..12usize {
             for at in 0..of {
-                assert_eq!(MarksOrder::Recent.place(at, of), at);
-                let drawn = MarksOrder::Earliest.place(at, of);
+                assert_eq!(Way::Down.place(at, of), at);
+                let drawn = Way::Up.place(at, of);
                 assert!(drawn < of, "{at} of {of}: {drawn} is off the list");
-                assert_eq!(MarksOrder::Earliest.place(drawn, of), at, "{at} of {of}");
+                assert_eq!(Way::Up.place(drawn, of), at, "{at} of {of}");
             }
         }
         // A book with no marks names no row either way.
-        assert_eq!(MarksOrder::Earliest.place(0, 0), 0);
+        assert_eq!(Way::Up.place(0, 0), 0);
     }
 
     #[test]

@@ -24,7 +24,7 @@ use readinglog_native::ui::text::TextRenderer;
 use readinglog_native::ui::theme::Theme;
 use readinglog_native::update::{Doing, Failure, Outcome};
 use readinglog_native::view::{
-    About, Ask, BookTab, Healing, MarksOrder, Reset, Retrying, Search, Shelf, Sort, Span, Window,
+    About, Ask, BookTab, Healing, Reset, Retrying, Search, Shelf, Sort, Span, Way, Window,
 };
 
 /// The day the preview is set to, and the second of it.
@@ -467,9 +467,9 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
     };
     app.show(*tab, book);
     app.set_book_tab(page, from);
-    app.set_marks_order(match shot.of.as_deref() {
-        Some(of) if of.ends_with(":marks:earliest") => MarksOrder::Earliest,
-        _ => MarksOrder::Recent,
+    app.set_marks_way(match shot.of.as_deref() {
+        Some(of) if of.ends_with(":marks:earliest") => Way::Up,
+        _ => Way::Down,
     });
     app.set_book_search(find);
     app.ask(book.zip(asking));
@@ -678,6 +678,7 @@ fn set_span(app: &mut App, shot: &Shot, week: WeekStart) -> Result<()> {
         }
         "time" => app.set_sort(Sort::Time),
         "progress" => app.set_sort(Sort::Progress),
+        "up" => app.set_sort_way(Way::Up),
         "last" => app.open_books(usize::MAX),
         // A page with a list either side of it, where both jump marks stand.
         "mid" => app.open_books(5),
@@ -789,7 +790,7 @@ fn list() {
             }
             "search" | "highlights" => "  (:<query> :empty :none :down :preedit)",
             "books" => {
-                "  (:finished :unfinished :unfinished-progress :time :progress\n   :mid :last :window :windowweek :windowprogress :windowempty)"
+                "  (:finished :unfinished :unfinished-progress :time :progress :up\n   :mid :last :window :windowweek :windowprogress :windowempty)"
             }
             _ => "",
         };

@@ -8,7 +8,7 @@ use crate::ui::cover;
 use crate::ui::paint::{self, INK, LIGHT, Rect};
 use crate::ui::theme::Theme;
 
-use super::{Ctx, Hit, Shelf, Sort, State, Window, band, pager};
+use super::{Ctx, Hit, Shelf, Sort, State, Way, Window, band, pager};
 
 /// Lines a title takes before the rest of it is ellipsized.
 const TITLE_LINES: usize = 2;
@@ -29,13 +29,14 @@ fn figures_width(cx: &mut Ctx, figure: &str) -> i32 {
     cx.text.measure_width(figure) as i32
 }
 
-/// Books on `shelf` in `order`, by their index in [`Stats::books`], held most
-/// recently read first. [`Sort::Recent`] is that order untouched, and the
-/// stable sorts fall back to it on a tie.
+/// Books on `shelf` in `order`, running `way`, by their index in
+/// [`Stats::books`], held most recently read first. [`Sort::Recent`] is that
+/// order untouched, and the stable sorts fall back to it on a tie.
 pub fn listed(
     stats: &Stats,
     shelf: Shelf,
     order: Sort,
+    way: Way,
     days: Option<std::ops::RangeInclusive<i64>>,
     uncovered: bool,
 ) -> Vec<usize> {
@@ -56,6 +57,9 @@ pub fn listed(
         Sort::Time => out.sort_by_key(|at| -stats.books[*at].seconds),
         // A book the catalog states no percent for sorts as though unopened.
         Sort::Progress => out.sort_by_key(|at| -stats.books[*at].percent_shown().max(0)),
+    }
+    if way == Way::Up {
+        out.reverse();
     }
     out
 }
@@ -120,7 +124,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
     }
     // `search_button` and `sort_chip` stand on every shelf.
     let (head, _) = area.split_top(chrome::chip_height(theme) + theme.gap * 2);
-    let sort = sort_chip(cx, head, state.sort);
+    let sort = sort_chip(cx, head, state.sort, state.sort_way);
     let search = search_button(cx, head);
     let opens_at = search.right() + chrome::chip_gap(theme);
     let head = Rect::new(opens_at, head.y, head.right() - opens_at, head.h);
@@ -133,7 +137,14 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
     }
     let area = list_box(theme, area, true);
     let over = state.window.map(|window| window.days(cx.week));
-    let shelf = listed(cx.stats, state.shelf, state.sort, over, cx.uncovered);
+    let shelf = listed(
+        cx.stats,
+        state.shelf,
+        state.sort,
+        state.sort_way,
+        over,
+        cx.uncovered,
+    );
     if shelf.is_empty() {
         let said = cx.s().nothing_on_the_shelf;
         bare(cx, area, said);
@@ -200,33 +211,28 @@ pub(super) fn magnifier(cx: &mut Ctx, box_: Rect) {
     );
 }
 
-/// The order the list is in, at the right of the shelf chips' own row. One
-/// chip for all three orders. A tap opens the order after this one, and the
-/// box it took is returned.
-fn sort_chip(cx: &mut Ctx, area: Rect, on: Sort) -> Rect {
+/// The order the list is in, at the right of the shelf chips' own row: the
+/// words open the order after this one, the caret turns the list over.
+fn sort_chip(cx: &mut Ctx, area: Rect, on: Sort, way: Way) -> Rect {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
-    let said = on.label(cx.lang);
+    let pad = chrome::chip_pad(theme);
     cx.text.set_px(theme.body_px);
-    let w = cx.text.measure_width_in(script, said) as i32 + chrome::chip_pad(theme) * 2;
-    let chip = Rect::new(
-        area.right() - w,
-        area.y,
-        w.min(area.w),
-        chrome::chip_height(theme),
-    );
+    let said = on.label(cx.lang);
+    let turn = cx.text.measure_width_in(script, way.caret()) as i32 + pad * 2;
+    let w = (cx.text.measure_width_in(script, said) as i32 + pad * 2 + turn).min(area.w);
+    let chip = Rect::new(area.right() - w, area.y, w, chrome::chip_height(theme));
     paint::stroke(cx.fb, chip, INK, theme.rule());
-    let tw = cx.text.measure_width_in(script, said) as i32;
+    let (words, caret) = chip.split_left((chip.w - turn).max(0));
+    paint::vline(cx.fb, caret.x, caret.y, caret.h, INK, theme.rule());
     let baseline = chip.center_y() + cx.text.cap_height() as i32 / 2;
-    cx.text.draw_in(
-        script,
-        cx.fb,
-        chip.x + (chip.w - tw) / 2,
-        baseline,
-        said,
-        false,
-    );
-    cx.hit(Hit::Sorted(on.next()), chip);
+    for (box_, said) in [(words, said), (caret, way.caret())] {
+        let tw = cx.text.measure_width_in(script, said) as i32;
+        let x = box_.x + (box_.w - tw) / 2;
+        cx.text.draw_in(script, cx.fb, x, baseline, said, false);
+    }
+    cx.hit(Hit::Sorted(on.next()), words);
+    cx.hit(Hit::SortWay(way.flipped()), caret);
     chip
 }
 
@@ -268,14 +274,18 @@ fn window_chip(cx: &mut Ctx, area: Rect, opens: i32, until: i32, window: Window,
         chrome::chip_height(theme),
     );
     paint::fill(cx.fb, chip, INK);
-    let tw = cx.text.measure_width_in(script, &said) as i32;
+    // Cut inside the chip, never drawn over the row beside it.
+    let room = (chip.w - chrome::chip_pad(theme)).max(1) as u32;
+    let said = cx.text.wrap_and_clamp_in(script, &said, room, 1);
+    let said = said.first().map(String::as_str).unwrap_or_default();
+    let tw = cx.text.measure_width_in(script, said) as i32;
     let baseline = chip.center_y() + cx.text.cap_height() as i32 / 2;
     cx.text.draw_in(
         script,
         cx.fb,
         chip.x + (chip.w - tw) / 2,
         baseline,
-        &said,
+        said,
         true,
     );
     cx.hit(Hit::Shelved(shelf, None), chip);
@@ -468,19 +478,41 @@ mod tests {
     }
 
     #[test]
+    fn a_list_turned_over_runs_the_other_way_under_every_order() {
+        let stats = shelf_of(&[100.0, 98.0, -1.0, 99.9]);
+        for order in Sort::ALL {
+            let down = listed(&stats, Shelf::All, order, Way::Down, None, true);
+            let mut up = listed(&stats, Shelf::All, order, Way::Up, None, true);
+            assert_eq!(up.len(), down.len(), "{order:?}");
+            up.reverse();
+            assert_eq!(up, down, "{order:?}");
+        }
+        // The shelf is picked before the turn, so it names the same books.
+        let up = listed(&stats, Shelf::Finished, Sort::Recent, Way::Up, None, true);
+        assert_eq!(up, [3, 0]);
+    }
+
+    #[test]
     fn a_shelf_holding_the_finished_holds_none_of_them_on_the_next_tap() {
         // 100 and 99.9 are read through; 98 and a book with no figure are not.
         let stats = shelf_of(&[100.0, 98.0, -1.0, 99.9]);
         assert_eq!(
-            listed(&stats, Shelf::All, Sort::Recent, None, true),
+            listed(&stats, Shelf::All, Sort::Recent, Way::Down, None, true),
             [0, 1, 2, 3]
         );
         assert_eq!(
-            listed(&stats, Shelf::Finished, Sort::Recent, None, true),
+            listed(&stats, Shelf::Finished, Sort::Recent, Way::Down, None, true),
             [0, 3]
         );
         assert_eq!(
-            listed(&stats, Shelf::Unfinished, Sort::Recent, None, true),
+            listed(
+                &stats,
+                Shelf::Unfinished,
+                Sort::Recent,
+                Way::Down,
+                None,
+                true
+            ),
             [1, 2]
         );
     }
@@ -513,16 +545,23 @@ mod tests {
             stats.books[at].thumbnail = format!("/covers/{at}.jpg");
         }
         assert_eq!(
-            listed(&stats, Shelf::All, Sort::Recent, None, true),
+            listed(&stats, Shelf::All, Sort::Recent, Way::Down, None, true),
             [0, 1, 2, 3]
         );
         assert_eq!(
-            listed(&stats, Shelf::All, Sort::Recent, None, false),
+            listed(&stats, Shelf::All, Sort::Recent, Way::Down, None, false),
             [1, 3]
         );
         // A shelf narrows what is left and never brings one back.
         assert_eq!(
-            listed(&stats, Shelf::Finished, Sort::Recent, None, false),
+            listed(
+                &stats,
+                Shelf::Finished,
+                Sort::Recent,
+                Way::Down,
+                None,
+                false
+            ),
             [3]
         );
     }
@@ -551,11 +590,18 @@ mod tests {
         let stats = shelf_of(&[100.0, 40.0, -1.0, 100.0, 92.0]);
         // `Sort::Progress` leads on the books read through.
         assert_eq!(
-            listed(&stats, Shelf::All, Sort::Progress, None, true),
+            listed(&stats, Shelf::All, Sort::Progress, Way::Down, None, true),
             [0, 3, 4, 1, 2]
         );
         assert_eq!(
-            listed(&stats, Shelf::Unfinished, Sort::Progress, None, true),
+            listed(
+                &stats,
+                Shelf::Unfinished,
+                Sort::Progress,
+                Way::Down,
+                None,
+                true
+            ),
             [4, 1, 2]
         );
     }
@@ -681,7 +727,16 @@ mod tests {
             day: inside,
         }
         .days(WeekStart::Monday);
-        let over = |shelf| listed(&stats, shelf, Sort::Recent, Some(year.clone()), true);
+        let over = |shelf| {
+            listed(
+                &stats,
+                shelf,
+                Sort::Recent,
+                Way::Down,
+                Some(year.clone()),
+                true,
+            )
+        };
         assert_eq!(over(Shelf::All), [0, 1]);
         assert_eq!(over(Shelf::Finished), [0]);
         assert_eq!(over(Shelf::Unfinished), [1]);
@@ -692,7 +747,7 @@ mod tests {
         );
         // With no window, the book of the year before stands with them.
         assert_eq!(
-            listed(&stats, Shelf::All, Sort::Recent, None, true),
+            listed(&stats, Shelf::All, Sort::Recent, Way::Down, None, true),
             [0, 1, 2]
         );
     }
