@@ -1,6 +1,6 @@
 # Reading Log
 
-Keep track of your reading by parsing the local system logs on your jailbroken Kindle.  
+Keep track of your reading stats by parsing the local system logs on your jailbroken Kindle.  
 
 <p align="center">
     <img src=".github/assets/books/today.png" width="250" alt="Today" />
