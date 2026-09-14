@@ -24,7 +24,7 @@ use readinglog_native::ui::text::TextRenderer;
 use readinglog_native::ui::theme::Theme;
 use readinglog_native::update::{Doing, Failure, Outcome};
 use readinglog_native::view::{
-    About, Ask, BookTab, Healing, Reset, Retrying, Search, Shelf, Sort, Span, Window,
+    About, Ask, BookTab, Healing, MarksOrder, Reset, Retrying, Search, Shelf, Sort, Span, Window,
 };
 
 /// The day the preview is set to, and the second of it.
@@ -438,8 +438,8 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
             let of = shot.of.as_deref().unwrap_or("0");
             let (at, asking, page, from, find) = match of.split_once(':') {
                 Some((at, "cleared")) => (at, None, BookTab::Statistics, 0, None),
-                // `marks` opens the list at its head; `marks:<n>` `n` rows down,
-                // which is where the pager's own second page starts.
+                // `marks` opens the list at its head, `marks:<n>` `n` rows
+                // down, and `marks:earliest` the list turned over.
                 Some((at, "marks")) => (at, None, BookTab::Marks, 0, None),
                 Some((at, "graphs")) => (at, None, BookTab::Graphs, 0, None),
                 // `find` puts a field over the book's own passages, and
@@ -467,6 +467,10 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
     };
     app.show(*tab, book);
     app.set_book_tab(page, from);
+    app.set_marks_order(match shot.of.as_deref() {
+        Some(of) if of.ends_with(":marks:earliest") => MarksOrder::Earliest,
+        _ => MarksOrder::Recent,
+    });
     app.set_book_search(find);
     app.ask(book.zip(asking));
     if shot.name == "config" {
@@ -778,7 +782,7 @@ fn list() {
             }
             "today" => "  (:quiet :empty :busy)",
             "book" => {
-                "  (:<index> :<index>:marks :<index>:marks:<n> :<index>:find\n   :<index>:find:<query> :<index>:restart :<index>:mark :<index>:unmark\n   :<index>:clear :<index>:cleared)"
+                "  (:<index> :<index>:marks :<index>:marks:<n> :<index>:marks:earliest\n   :<index>:find :<index>:find:<query> :<index>:restart :<index>:mark\n   :<index>:unmark :<index>:clear :<index>:cleared)"
             }
             "config" => {
                 "  (:reset :nobackup :restore :gone :logs :heal :retry :many :many2\n   :backups :backups2)"

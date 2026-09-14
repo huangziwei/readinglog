@@ -11,7 +11,9 @@ use crate::ui::paint::{self, INK, LIGHT, Rect};
 use crate::ui::text::TextRenderer;
 use crate::ui::theme::Theme;
 
-use super::{Ask, BookTab, Ctx, Hit, Search, State, band, book_graphs, books, marks, search};
+use super::{
+    Ask, BookTab, Ctx, Hit, MarksOrder, Search, State, band, book_graphs, books, marks, search,
+};
 
 /// Lines a title takes before the rest of it is ellipsized.
 const TITLE_LINES: usize = 2;
@@ -184,17 +186,24 @@ fn search_button(cx: &mut Ctx, area: Rect) -> Rect {
     pages_box(theme, area)
 }
 
+/// The Marks tab's label: its name, the count, and the caret stating which end
+/// the list opens at. The caret stands whether the tab is the one showing or
+/// not, so the strip keeps one type size across a tap.
+fn marks_label(name: &str, marked: usize, order: MarksOrder) -> String {
+    format!("{name} ({marked}) {}", order.caret())
+}
+
 /// The book's three pages as a segmented control, each its own hit box and an
-/// equal cell, in the shape `rhythm::picker` gives the spans. `BookTab::Marks`
-/// carries `marked`; every label sets at the one size that fits its cell.
-fn picker(cx: &mut Ctx, area: Rect, on: BookTab, marked: usize) {
+/// equal cell, in the shape `rhythm::picker` gives the spans. Every label sets
+/// at the one size that fits its cell.
+fn picker(cx: &mut Ctx, area: Rect, on: BookTab, marked: usize, order: MarksOrder) {
     let theme: &Theme = cx.theme;
     let cells = area.columns(BookTab::ALL.len() as i32, 0);
     let script = cx.ui_script();
     let labels: Vec<String> = BookTab::ALL
         .iter()
         .map(|tab| match tab {
-            BookTab::Marks => format!("{} ({marked})", tab.label(cx.lang)),
+            BookTab::Marks => marks_label(tab.label(cx.lang), marked, order),
             _ => tab.label(cx.lang).to_string(),
         })
         .collect();
@@ -247,16 +256,24 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
     // A field takes the whole head row, and the two pages stand down.
     if let Some(open) = state.book_search.as_ref() {
         field(cx, head, open);
-        marks::draw(cx, area, index, open.from, Some(open));
+        marks::draw(cx, area, index, open.from, state.marks_order, Some(open));
         return;
     }
     let cells = search_button(cx, head);
-    picker(cx, cells, tab, cx.stats.marks_held(index));
+    picker(
+        cx,
+        cells,
+        tab,
+        cx.stats.marks_held(index),
+        state.marks_order,
+    );
     // `BookTab::Marks` and `BookTab::Graphs` take the whole box under the head
     // row. The cover, the headline figures, the bar and the controls are
     // `BookTab::Statistics`'s.
     match tab {
-        BookTab::Marks => return marks::draw(cx, area, index, state.marks_from, None),
+        BookTab::Marks => {
+            return marks::draw(cx, area, index, state.marks_from, state.marks_order, None);
+        }
         BookTab::Graphs => return book_graphs::draw(cx, area, index),
         BookTab::Statistics => {}
     }
@@ -561,11 +578,12 @@ mod tests {
                     .columns(BookTab::ALL.len() as i32, 0);
                 let room = (cells[0].w - chrome::chip_pad(&theme)).max(1);
                 for lang in Lang::ALL {
-                    // The longest count the strip ever carries.
+                    // The longest count the strip ever carries, and the
+                    // caret that stands beside it whichever way it points.
                     let said: Vec<String> = BookTab::ALL
                         .iter()
                         .map(|tab| match tab {
-                            BookTab::Marks => format!("{} (999)", tab.label(lang)),
+                            BookTab::Marks => marks_label(tab.label(lang), 999, MarksOrder::Recent),
                             _ => tab.label(lang).to_string(),
                         })
                         .collect();

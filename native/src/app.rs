@@ -229,6 +229,11 @@ impl App {
         self.state.marks_from = from;
     }
 
+    /// Draw the open book's marks from `order`'s own end.
+    pub fn set_marks_order(&mut self, order: view::MarksOrder) {
+        self.state.marks_order = order;
+    }
+
     /// Draw All Time at `page`, whatever it was left on.
     pub fn set_alltime_page(&mut self, page: usize) {
         self.state.alltime_page = page;
@@ -916,9 +921,14 @@ impl App {
                 self.settings.save();
             }
             Hit::Book(index) => self.state.open_book(index),
+            // A tap on the tab showing is no navigation; on the Marks tab it
+            // turns the list over instead.
             Hit::BookTab(tab) => {
                 if !self.state.go_in_book(tab) {
-                    return Action::Nothing;
+                    match tab {
+                        view::BookTab::Marks => self.state.flip_marks(),
+                        _ => return Action::Nothing,
+                    }
                 }
             }
             Hit::MarksPage(from) => {
@@ -929,7 +939,7 @@ impl App {
             }
             // A passage the search found opens the book it was marked in, at
             // its own place in that book's list.
-            Hit::Mark(book, at) => self.state.open_mark(book, at),
+            Hit::Mark(book, at) => self.state.open_mark(book, at, self.stats.marks_held(book)),
             // A second tap on the day picked drops it again.
             Hit::Day(day) => {
                 self.state.picked = !(self.state.picked && self.state.day == day);
@@ -1471,7 +1481,15 @@ impl App {
         if let Some(open) = self.state.book_search.clone() {
             return self.through_found(book, rest, &open, by);
         }
-        let opens = view::marks::pages(&mut self.text, &self.theme, &self.stats, book, rest, None);
+        let opens = view::marks::pages(
+            &mut self.text,
+            &self.theme,
+            &self.stats,
+            book,
+            rest,
+            self.state.marks_order,
+            None,
+        );
         let forward = by > 0;
         match self.state.book_tab {
             view::BookTab::Statistics if forward => {
@@ -1528,6 +1546,7 @@ impl App {
             &self.stats,
             book,
             rest,
+            self.state.marks_order,
             Some(open),
         );
         let page = opens.iter().rposition(|o| *o <= open.from).unwrap_or(0) as i64;

@@ -1,6 +1,6 @@
-//! One book's highlights and notes, most recent first. `Mark::body` comes
-//! from the clippings file and `Mark::start` from the `.sdr` sidecar;
-//! [`place`] states each on its own axis.
+//! One book's highlights and notes, at whichever end [`super::MarksOrder`]
+//! opens the list. `Mark::body` comes from the clippings file and `Mark::start`
+//! from the `.sdr` sidecar; [`place`] states each on its own axis.
 
 use crate::annotate::Mark;
 use crate::clippings::Kind;
@@ -14,7 +14,7 @@ use crate::ui::text::TextRenderer;
 use crate::ui::theme::Theme;
 use crate::wrap::{MORE, mark_more};
 
-use super::{Ctx, Hit, Search, pager, search};
+use super::{Ctx, Hit, MarksOrder, Search, pager, search};
 
 /// What separates the parts of a row's own label: `Location 608 | Highlight`.
 const BAR: &str = " | ";
@@ -190,13 +190,14 @@ pub fn pages(
     stats: &Stats,
     book: usize,
     area: Rect,
+    order: MarksOrder,
     search: Option<&Search>,
 ) -> Vec<usize> {
     let Some(record) = stats.books.get(book) else {
         return Vec::new();
     };
     let query = search.map(|search| search.query.as_str());
-    let held = listing(stats, book, record, query);
+    let held = listing(stats, book, record, order, query);
     if held.is_empty() {
         return Vec::new();
     }
@@ -216,22 +217,30 @@ fn rows(stats: &Stats, book: usize, record: &BookStat) -> Vec<Row> {
         .collect()
 }
 
-/// The rows a list holds: every one of `book`'s, or those a `query` names by
-/// the words of the passage or of the note on it.
-fn listing(stats: &Stats, book: usize, record: &BookStat, query: Option<&str>) -> Vec<Row> {
-    let held = rows(stats, book, record);
-    let Some(needle) = query.map(search::Needle::of) else {
-        return held;
-    };
-    held.into_iter()
-        .filter(|row| {
+/// The rows a list holds, in `order`: every one of `book`'s, or those a `query`
+/// names by the words of the passage or of the note on it. Turning the list
+/// over leaves every `Row::at` alone.
+fn listing(
+    stats: &Stats,
+    book: usize,
+    record: &BookStat,
+    order: MarksOrder,
+    query: Option<&str>,
+) -> Vec<Row> {
+    let mut held = rows(stats, book, record);
+    if let Some(needle) = query.map(search::Needle::of) {
+        held.retain(|row| {
             needle.holds(&row.mark.body)
                 || row
                     .note
                     .as_ref()
                     .is_some_and(|note| needle.holds(&note.body))
-        })
-        .collect()
+        });
+    }
+    if order == MarksOrder::Earliest {
+        held.reverse();
+    }
+    held
 }
 
 /// What the rows are measured against: a list a query found windows each
@@ -283,19 +292,26 @@ fn list_box(text: &mut TextRenderer, theme: &Theme, area: Rect) -> Rect {
     rest.split_top(chrome::section_height(text, theme)).1
 }
 
-/// One book's marks under their own heading, opened at `from`, which is held
-/// inside the list. `search` names the passages listed, opens the list at its
-/// own `from`, and floors the box while the keyboard stands.
-pub fn draw(cx: &mut Ctx, area: Rect, book: usize, from: usize, search: Option<&Search>) {
+/// One book's marks under their own heading, in `order` and opened at `from`,
+/// which is held inside the list. `search` names the passages listed, opens
+/// the list at its own `from`, and floors the box while the keyboard stands.
+pub fn draw(
+    cx: &mut Ctx,
+    area: Rect,
+    book: usize,
+    from: usize,
+    order: MarksOrder,
+    search: Option<&Search>,
+) {
     let theme: &Theme = cx.theme;
     let s = cx.s();
-    // `Stats::marked` sets the order, the kinds that are here, and which
-    // note belongs under which passage.
+    // `Stats::marked` sets the kinds that are here and which note belongs
+    // under which passage; `order` sets which end the list opens at.
     let Some(record) = cx.stats.books.get(book).cloned() else {
         return;
     };
     let query = search.map(|search| search.query.as_str());
-    let held = listing(cx.stats, book, &record, query);
+    let held = listing(cx.stats, book, &record, order, query);
     let named = heading(cx, book);
     let page = page_box(theme, area, search.is_some_and(|search| search.keyboard));
     let inner = list_box(cx.text, theme, page);
@@ -825,16 +841,20 @@ mod tests {
     fn a_query_names_the_passages_of_one_book_and_no_other() {
         let stats = crate::stats::tests::marked_shelf();
         let record = stats.books[0].clone();
+        let recent = MarksOrder::Recent;
         // The whole book with no query, and with one that holds nothing.
-        assert_eq!(listing(&stats, 0, &record, None).len(), 1);
-        assert_eq!(listing(&stats, 0, &record, Some("")).len(), 1);
+        assert_eq!(listing(&stats, 0, &record, recent, None).len(), 1);
+        assert_eq!(listing(&stats, 0, &record, recent, Some("")).len(), 1);
         // The passage's own words, and the note written on it.
-        assert_eq!(listing(&stats, 0, &record, Some("SKY")).len(), 1);
-        assert_eq!(listing(&stats, 0, &record, Some("borrowed")).len(), 1);
+        assert_eq!(listing(&stats, 0, &record, recent, Some("SKY")).len(), 1);
+        assert_eq!(
+            listing(&stats, 0, &record, recent, Some("borrowed")).len(),
+            1
+        );
         // A word the other book's passage holds names nothing here.
-        assert!(listing(&stats, 0, &record, Some("港")).is_empty());
+        assert!(listing(&stats, 0, &record, recent, Some("港")).is_empty());
         // And the row states the place its own book's list opens at.
-        let held = listing(&stats, 0, &record, Some("sky"));
+        let held = listing(&stats, 0, &record, recent, Some("sky"));
         assert_eq!((held[0].book, held[0].at), (0, 0));
     }
 

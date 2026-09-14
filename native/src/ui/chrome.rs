@@ -159,8 +159,7 @@ pub fn section(
 
 /// [`section`] with `said` at the right end of the rule: a figure the section
 /// is measured in, which the reader does not set. It takes the heading's own
-/// size and stands back from it in [`paint::DARK`], so the two read as one
-/// line and the settings below keep the page's only black.
+/// size, set back from it in [`paint::DARK`].
 pub fn section_stating(
     fb: &mut Framebuffer,
     text: &mut TextRenderer,

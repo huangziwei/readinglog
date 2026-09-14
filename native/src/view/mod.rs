@@ -403,6 +403,44 @@ impl Sort {
     }
 }
 
+/// Which end of a book's marks its list opens at: `Stats::marked`'s own order,
+/// or that order turned over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MarksOrder {
+    /// Most recently marked first, which is the order `Stats::marked` holds.
+    #[default]
+    Recent,
+    /// Earliest marked first, which is the order the passages were read in.
+    Earliest,
+}
+
+impl MarksOrder {
+    /// The order a tap on the tab showing opens.
+    pub fn flipped(self) -> MarksOrder {
+        match self {
+            MarksOrder::Recent => MarksOrder::Earliest,
+            MarksOrder::Earliest => MarksOrder::Recent,
+        }
+    }
+
+    /// The mark the Marks tab carries, stating which way its list runs.
+    pub fn caret(self) -> &'static str {
+        match self {
+            MarksOrder::Recent => "▾",
+            MarksOrder::Earliest => "▴",
+        }
+    }
+
+    /// Where the row standing `at` in `Stats::marked`'s own order falls in a
+    /// list of `of` rows drawn in this one. Its own mirror.
+    pub fn place(self, at: usize, of: usize) -> usize {
+        match self {
+            MarksOrder::Recent => at,
+            MarksOrder::Earliest => of.saturating_sub(1).saturating_sub(at),
+        }
+    }
+}
+
 /// How wide a stretch of days the Rhythm screen draws around the one showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Span {
@@ -576,6 +614,8 @@ pub struct State {
     pub book_tab: BookTab,
     /// How far down that book's list of marks has been paged.
     pub marks_from: usize,
+    /// Which end that list opens at, which opening another book keeps.
+    pub marks_order: MarksOrder,
 }
 
 impl State {
@@ -602,6 +642,7 @@ impl State {
             list_from: 0,
             book_tab: BookTab::default(),
             marks_from: 0,
+            marks_order: MarksOrder::default(),
         }
     }
 
@@ -639,12 +680,13 @@ impl State {
         self.searching_slot().as_mut()
     }
 
-    /// Open `book` at the passage standing `at` in its own list of marks,
-    /// which is where a search result leads.
-    pub fn open_mark(&mut self, book: usize, at: usize) {
+    /// Open `book` at the passage standing `at` in `Stats::marked`'s order, of
+    /// `of` marks, which is where a search result leads. The tab's own order
+    /// may differ, so `at` is read through it.
+    pub fn open_mark(&mut self, book: usize, at: usize, of: usize) {
         self.open_book(book);
         self.book_tab = BookTab::Marks;
-        self.marks_from = at;
+        self.marks_from = self.marks_order.place(at, of);
     }
 
     /// Show `tab` of the open book. Answers whether that moved anywhere.
@@ -655,6 +697,13 @@ impl State {
         self.book_tab = tab;
         self.marks_from = 0;
         true
+    }
+
+    /// Turn the open book's list of marks over, which opens it at the head
+    /// again.
+    pub fn flip_marks(&mut self) {
+        self.marks_order = self.marks_order.flipped();
+        self.marks_from = 0;
     }
 
     /// Go to `tab`, closing any book, day or shelf open over it. Answers
@@ -945,13 +994,51 @@ mod tests {
             keyboard: true,
             ..Search::default()
         });
-        s.open_mark(4, 7);
+        s.open_mark(4, 7, 12);
         assert_eq!(s.book, Some(4));
         assert_eq!(s.book_tab, BookTab::Marks);
         assert_eq!(s.marks_from, 7, "the book opens on the passage tapped");
         // The keyboard comes down under the book, as it does for any book
         // opened out of the results.
-        assert_eq!(s.search.map(|search| search.keyboard), Some(false));
+        assert_eq!(s.search.as_ref().map(|search| search.keyboard), Some(false));
+        // The same passage, counted from the other end, where the book's own
+        // list is turned over.
+        s.marks_order = MarksOrder::Earliest;
+        s.open_mark(4, 7, 12);
+        assert_eq!(s.marks_from, 4, "the passage is the fifth from the front");
+    }
+
+    #[test]
+    fn turning_the_marks_over_opens_the_list_at_its_head() {
+        let mut s = State::new(third());
+        s.open_book(3);
+        s.go_in_book(BookTab::Marks);
+        s.marks_from = 6;
+        assert_eq!(s.marks_order, MarksOrder::Recent, "newest first to start");
+        s.flip_marks();
+        assert_eq!(s.marks_order, MarksOrder::Earliest);
+        assert_eq!(s.marks_from, 0, "a turned list opens at its own head");
+        // And back, which is the only other place the caret leads.
+        s.flip_marks();
+        assert_eq!(s.marks_order, MarksOrder::Recent);
+        // The order is the reader's, so opening another book keeps it.
+        s.flip_marks();
+        s.open_book(5);
+        assert_eq!(s.marks_order, MarksOrder::Earliest);
+    }
+
+    #[test]
+    fn a_place_in_one_order_reads_back_in_the_other() {
+        for of in 1..12usize {
+            for at in 0..of {
+                assert_eq!(MarksOrder::Recent.place(at, of), at);
+                let drawn = MarksOrder::Earliest.place(at, of);
+                assert!(drawn < of, "{at} of {of}: {drawn} is off the list");
+                assert_eq!(MarksOrder::Earliest.place(drawn, of), at, "{at} of {of}");
+            }
+        }
+        // A book with no marks names no row either way.
+        assert_eq!(MarksOrder::Earliest.place(0, 0), 0);
     }
 
     #[test]

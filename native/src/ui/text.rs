@@ -269,10 +269,9 @@ impl TextRenderer {
         self.draw_inked(script, fb, x, y_baseline, s, ink)
     }
 
-    /// [`TextRenderer::draw_in`] in `ink` rather than in black or in white: a
-    /// figure the page states beside what it belongs to, set back from the
-    /// text it stands against. Every glyph is one value, the coverage
-    /// thresholded as it is everywhere else.
+    /// [`TextRenderer::draw_in`] in `ink` rather than in black or in white.
+    /// Every glyph is one value, the coverage thresholded as it is everywhere
+    /// else.
     pub fn draw_inked(
         &mut self,
         script: font::Script,
