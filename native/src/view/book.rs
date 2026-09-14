@@ -3,7 +3,7 @@
 
 use crate::date;
 use crate::font::Script;
-use crate::lang::Strings;
+use crate::lang::{Lang, Strings};
 use crate::stats::BookStat;
 use crate::ui::chrome;
 use crate::ui::cover;
@@ -186,11 +186,14 @@ fn search_button(cx: &mut Ctx, area: Rect) -> Rect {
     pages_box(theme, area)
 }
 
-/// The Marks tab's label: its name, the count, and the caret stating which end
-/// the list opens at. The caret stands whether the tab is the one showing or
-/// not, so the strip keeps one type size across a tap.
-fn marks_label(name: &str, marked: usize, order: MarksOrder) -> String {
-    format!("{name} ({marked}) {}", order.caret())
+/// What one tab reads. An `order` puts the caret on `BookTab::Marks`.
+fn tab_label(tab: BookTab, lang: Lang, marked: usize, order: Option<MarksOrder>) -> String {
+    let name = tab.label(lang);
+    match (tab, order) {
+        (BookTab::Marks, Some(order)) => format!("{name} ({marked}) {}", order.caret()),
+        (BookTab::Marks, None) => format!("{name} ({marked})"),
+        _ => name.to_string(),
+    }
 }
 
 /// The book's three pages as a segmented control, each its own hit box and an
@@ -200,15 +203,18 @@ fn picker(cx: &mut Ctx, area: Rect, on: BookTab, marked: usize, order: MarksOrde
     let theme: &Theme = cx.theme;
     let cells = area.columns(BookTab::ALL.len() as i32, 0);
     let script = cx.ui_script();
+    // The caret is drawn on the tab showing alone and measured on every tab,
+    // so the strip keeps one type size across a tap.
     let labels: Vec<String> = BookTab::ALL
         .iter()
-        .map(|tab| match tab {
-            BookTab::Marks => marks_label(tab.label(cx.lang), marked, order),
-            _ => tab.label(cx.lang).to_string(),
-        })
+        .map(|tab| tab_label(*tab, cx.lang, marked, (*tab == on).then_some(order)))
+        .collect();
+    let measured: Vec<String> = BookTab::ALL
+        .iter()
+        .map(|tab| tab_label(*tab, cx.lang, marked, Some(order)))
         .collect();
     let room = (cells[0].w - chrome::chip_pad(theme)).max(1);
-    let said: Vec<&str> = labels.iter().map(String::as_str).collect();
+    let said: Vec<&str> = measured.iter().map(String::as_str).collect();
     let floor = theme.body_px * chrome::SHRINK_FLOOR;
     let px = chrome::shrink_to_fit(theme.body_px, floor, &said, &|_| room, |px, line| {
         cx.text.set_px(px);
@@ -570,6 +576,20 @@ mod tests {
     /// in any language, on any panel, at any text size. `wrap_and_clamp_in`
     /// cuts a label that does, taking its own words off.
     #[test]
+    fn only_the_tab_showing_carries_the_caret() {
+        let lang = Lang::English;
+        let on = tab_label(BookTab::Marks, lang, 8, Some(MarksOrder::Recent));
+        let off = tab_label(BookTab::Marks, lang, 8, None);
+        assert!(on.ends_with(MarksOrder::Recent.caret()), "{on}");
+        assert_eq!(off, "Highlights (8)");
+        assert!(on.contains("(8)") && off.contains("(8)"));
+        for tab in [BookTab::Statistics, BookTab::Graphs] {
+            let said = tab_label(tab, lang, 8, Some(MarksOrder::Recent));
+            assert_eq!(said, tab.label(lang), "{said}");
+        }
+    }
+
+    #[test]
     fn the_three_tabs_fit_their_cells_in_every_language() {
         for (w, h) in PANELS {
             for size in crate::settings::TextSize::ALL {
@@ -582,10 +602,7 @@ mod tests {
                     // caret that stands beside it whichever way it points.
                     let said: Vec<String> = BookTab::ALL
                         .iter()
-                        .map(|tab| match tab {
-                            BookTab::Marks => marks_label(tab.label(lang), 999, MarksOrder::Recent),
-                            _ => tab.label(lang).to_string(),
-                        })
+                        .map(|tab| tab_label(*tab, lang, 999, Some(MarksOrder::Recent)))
                         .collect();
                     let lines: Vec<&str> = said.iter().map(String::as_str).collect();
                     let floor = theme.body_px * chrome::SHRINK_FLOOR;
