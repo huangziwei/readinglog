@@ -16,10 +16,15 @@ pub const DAYS: i64 = 1150;
 /// The [`SHELF`] slot `BookRecord::finished` is set on.
 const MARKED: usize = 7;
 
-/// The book read end to end three times, and the one part way through its
-/// second reading.
+/// The book read end to end twice, and the one part way through the reading
+/// after its own.
 const REREAD: usize = 0;
 const READING_AGAIN: usize = 2;
+
+/// The collection gone back to again and again, which is the only shot the
+/// Graphs tab's list of readings fills up on.
+const MANY: usize = 11;
+const TIMES: usize = 8;
 
 /// The [`SHELF`] slots the device holds no jacket for: a Latin title, a Han
 /// one, and a title too long for the box it stands in: what a cover box says
@@ -312,7 +317,7 @@ pub fn library(last: i64, art: &Path) -> Store {
             // this one is `MARKED`, short of `FINISHED_PERCENT`.
             finished: slot == MARKED || book.percent >= FINISHED_PERCENT,
             restart: None,
-            finished_before: 0,
+            restarted_on: Vec::new(),
             read_state: -1,
             kept: false,
             named_by: Named::Catalog,
@@ -383,11 +388,25 @@ pub fn library(last: i64, art: &Path) -> Store {
 /// The books read end to end before, laid down after the seeded loop so a shot
 /// drawing none stays pixel-identical.
 fn reread(store: &mut Store) {
-    for (slot, before) in [(REREAD, 2), (READING_AGAIN, 1)] {
+    for slot in [REREAD, READING_AGAIN, MANY] {
+        let Some(extent) = store.books.get(slot).map(|b| b.extent) else {
+            continue;
+        };
+        let days: Vec<i64> = store
+            .sessions
+            .iter()
+            .filter(|s| s.end_position == extent)
+            .filter_map(|s| date::parse_day(date::day_of(&s.started_at)))
+            .collect();
+        // Each climb after the first opens on the day the book was begun
+        // again, as [`climb`] cuts them.
+        let over = (days.len() as f64 / times(slot)).ceil().max(1.0) as usize;
         let Some(record) = store.books.get_mut(slot) else {
             continue;
         };
-        record.finished_before = before;
+        record.restarted_on = (1..times(slot) as usize)
+            .filter_map(|n| days.get(n * over).copied())
+            .collect();
         if slot == READING_AGAIN {
             record.finished = false;
         }
@@ -726,9 +745,20 @@ fn marked(store: &mut Store, last: i64) {
     store.marks.sort_by(|a, b| a.at.cmp(&b.at));
 }
 
-/// The [`SHELF`] slot [`climb`] reads twice: its places climb, drop to the
-/// front of the book and climb again.
+/// The [`SHELF`] slots [`climb`] reads more than once: their places climb,
+/// drop to the front of the book and climb again. [`RESTARTED`] never reached
+/// the end; the rest carried every reading but the last through it.
+const TWICE: [usize; 3] = [RESTARTED, REREAD, READING_AGAIN];
 const RESTARTED: usize = 12;
+
+/// How many times [`climb`] reads one slot through.
+fn times(slot: usize) -> f64 {
+    match slot {
+        MANY => TIMES as f64,
+        slot if TWICE.contains(&slot) => 2.0,
+        _ => 1.0,
+    }
+}
 
 /// Give each sitting the place its book stood at as it ended: an even climb
 /// over that book's own sittings, ending at the record's `percent`. A sitting
@@ -743,13 +773,16 @@ fn climb(store: &mut Store) {
             .filter(|&i| store.sessions[i].end_position == extent)
             .collect();
         let count = at.len() as f64;
-        let over = match slot == RESTARTED {
-            true => (count / 2.0).ceil().max(1.0),
-            false => count,
-        };
+        let over = (count / times(slot)).ceil().max(1.0);
         for (n, i) in at.iter().enumerate() {
             let step = (n as f64 % over) + 1.0;
-            store.sessions[*i].progress = Some((percent / 100.0 * step / over).min(1.0));
+            // Every reading but the last ends at the end of the book, except
+            // for the one that was begun again part way through.
+            let peak = match (n as f64) < count - over && slot != RESTARTED {
+                true => 100.0,
+                false => percent,
+            };
+            store.sessions[*i].progress = Some((peak / 100.0 * step / over).min(1.0));
         }
     }
 }

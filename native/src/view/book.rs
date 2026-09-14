@@ -269,7 +269,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
         BookTab::Marks => {
             return marks::draw(cx, area, index, state.marks_from, state.marks_way, None);
         }
-        BookTab::Graphs => return book_graphs::draw(cx, area, index),
+        BookTab::Graphs => return book_graphs::draw(cx, area, index, state.reading),
         BookTab::Statistics => {}
     }
     let (head, rest) = area.split_top(heading_height(cx.text, theme, ui, &book, s) + air);
@@ -304,7 +304,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
         (s.finished_on, finished_note(&book, s)),
     ];
     // A restart empties `finished_on`, so this row is where that reading shows.
-    if book.finished_before > 0 {
+    if !book.restarted_on.is_empty() {
         let said = crate::lang::counted(s.n_times, book.times_finished());
         lines.push((s.read_through_row, said));
     }
@@ -627,7 +627,7 @@ mod tests {
             cde_key: "KEY1".into(),
             cde_type: "EBOK".into(),
             finished: false,
-            finished_before: 0,
+            restarted_on: Vec::new(),
             title: "A Book".into(),
             author: String::new(),
             thumbnail: String::new(),

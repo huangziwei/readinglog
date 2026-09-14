@@ -96,9 +96,10 @@ pub struct BookRecord {
     pub finished: bool,
     /// The place [`Store::restart`] was called at.
     pub restart: Option<f64>,
-    /// Readings of this book finished and then restarted. The one standing is
-    /// not counted here; `BookStat::times_finished` adds it.
-    pub finished_before: i64,
+    /// The day each reading carried through the end of the book was restarted
+    /// on. The reading standing is not here; `BookStat::times_finished`
+    /// counts it.
+    pub restarted_on: Vec<i64>,
     /// The catalog's `p_readState`, negative where it states none.
     pub read_state: i64,
     /// `timer.model`'s `TotalTime` in milliseconds, its `TotalWords`, and the
@@ -1421,16 +1422,18 @@ impl Store {
         }
     }
 
-    /// Restart the record [`Self::book_for`] answers for: `finished` banks on
-    /// [`BookRecord::finished_before`] and comes off, `percent` becomes
+    /// Restart the record [`Self::book_for`] answers for, on `day`: `finished`
+    /// banks on [`BookRecord::restarted_on`] and comes off, `percent` becomes
     /// [`BookRecord::restart`] and reads 0. Answers whether anything changed.
-    pub fn restart(&mut self, extent: i64, key: &str) -> bool {
+    pub fn restart(&mut self, extent: i64, key: &str, day: i64) -> bool {
         let Some(slot) = self.slot_for(extent, Some(key)) else {
             return false;
         };
         let record = &mut self.books[slot];
         let changed = record.finished || record.percent > 0.0;
-        record.finished_before += i64::from(record.finished);
+        if record.finished {
+            record.restarted_on.push(day);
+        }
         record.finished = false;
         if record.percent > 0.0 {
             record.restart = Some(record.percent);
@@ -1573,10 +1576,10 @@ impl Store {
     /// [`BookRecord::kept`] keeps it listed. Answers the sittings dropped.
     pub fn clear_book(&mut self, extent: i64, key: &str) -> usize {
         let went = self.drop_reading(extent, key);
-        self.restart(extent, key);
+        self.restart(extent, key, 0);
         if let Some(slot) = self.slot_for(extent, Some(key)) {
             self.books[slot].kept = true;
-            self.books[slot].finished_before = 0;
+            self.books[slot].restarted_on.clear();
         }
         went
     }
@@ -1810,7 +1813,7 @@ fn from_witness(extent: i64, title: &str, author: &str, key: &str, by: Named) ->
         location: String::new(),
         finished: false,
         restart: None,
-        finished_before: 0,
+        restarted_on: Vec::new(),
         read_state: -1,
         timer_ms: 0,
         timer_words: 0,
@@ -1842,7 +1845,7 @@ fn from_sidecar(extent: i64, file: &str) -> BookRecord {
         location: String::new(),
         finished: false,
         restart: None,
-        finished_before: 0,
+        restarted_on: Vec::new(),
         read_state: -1,
         timer_ms: 0,
         timer_words: 0,
@@ -1868,7 +1871,7 @@ fn taken(book: &Book) -> BookRecord {
         location: flat(&book.location),
         finished: book.percent >= FINISHED_PERCENT,
         restart: None,
-        finished_before: 0,
+        restarted_on: Vec::new(),
         // What `take_mark` reads to answer whether `book` states a new mark.
         read_state: -1,
         timer_ms: 0,
@@ -1966,7 +1969,9 @@ fn take_stronger(held: &mut BookRecord, incoming: &BookRecord) {
         }
     }
     held.kept |= incoming.kept;
-    held.finished_before = held.finished_before.max(incoming.finished_before);
+    if incoming.restarted_on.len() > held.restarted_on.len() {
+        held.restarted_on = incoming.restarted_on.clone();
+    }
     if held.restart.is_some() {
         return;
     }
@@ -2057,7 +2062,11 @@ fn write_book(out: &mut String, b: &BookRecord) {
             b.timer_ms,
             b.timer_words,
             format_args!("{:.*}", PERCENT_PLACES, b.timer_covered),
-            b.finished_before,
+            b.restarted_on
+                .iter()
+                .map(i64::to_string)
+                .collect::<Vec<String>>()
+                .join(";"),
         ),
     )
 }
@@ -2092,7 +2101,10 @@ fn read_book<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<BookRecord> {
         timer_ms: next().trim().parse().unwrap_or(0),
         timer_words: next().trim().parse().unwrap_or(0),
         timer_covered: next().trim().parse().unwrap_or(0.0),
-        finished_before: next().trim().parse().unwrap_or(0),
+        restarted_on: next()
+            .split(';')
+            .filter_map(|d| d.trim().parse().ok())
+            .collect(),
     })
     // `read_through` marks a record the row left unmarked.
     .map(|mut record: BookRecord| {
@@ -2520,55 +2532,55 @@ mod tests {
     fn a_book_begun_again_part_way_through_counts_no_reading() {
         let mut store = placed(46.0, false, "A Book");
         let (extent, key) = (store.books[0].extent, store.books[0].cde_key.clone());
-        assert!(store.restart(extent, &key), "a place is something to clear");
-        assert_eq!(store.books[0].finished_before, 0);
+        assert!(
+            store.restart(extent, &key, 0),
+            "a place is something to clear"
+        );
+        assert_eq!(store.books[0].restarted_on.len(), 0);
         // And again from the head of that reading, which clears nothing.
-        assert!(!store.restart(extent, &key));
-        assert_eq!(store.books[0].finished_before, 0);
+        assert!(!store.restart(extent, &key, 0));
+        assert_eq!(store.books[0].restarted_on.len(), 0);
     }
 
     #[test]
     fn a_book_read_end_to_end_and_begun_again_counts_the_reading_that_ended() {
         let mut store = placed(100.0, true, "A Book");
         let (extent, key) = (store.books[0].extent, store.books[0].cde_key.clone());
-        assert_eq!(store.books[0].finished_before, 0);
+        assert_eq!(store.books[0].restarted_on.len(), 0);
 
-        store.restart(extent, &key);
-        assert_eq!(store.books[0].finished_before, 1);
+        store.restart(extent, &key, 0);
+        assert_eq!(store.books[0].restarted_on.len(), 1);
         assert!(!store.books[0].finished, "the mark comes off");
 
         // Part way through the second reading: the tally stands where it is.
         store.books[0].percent = 40.0;
-        store.restart(extent, &key);
-        assert_eq!(store.books[0].finished_before, 1);
+        store.restart(extent, &key, 0);
+        assert_eq!(store.books[0].restarted_on.len(), 1);
 
         // And through the end of a third, which the mark carries.
         store.books[0].finished = true;
-        store.restart(extent, &key);
-        assert_eq!(store.books[0].finished_before, 2);
+        store.restart(extent, &key, 0);
+        assert_eq!(store.books[0].restarted_on.len(), 2);
     }
 
     #[test]
     fn clearing_a_book_takes_the_readings_it_was_counted_for() {
         let mut store = placed(100.0, true, "A Book");
         let (extent, key) = (store.books[0].extent, store.books[0].cde_key.clone());
-        store.restart(extent, &key);
-        assert_eq!(store.books[0].finished_before, 1);
+        store.restart(extent, &key, 0);
+        assert_eq!(store.books[0].restarted_on.len(), 1);
         store.clear_book(extent, &key);
-        assert_eq!(store.books[0].finished_before, 0);
+        assert_eq!(store.books[0].restarted_on.len(), 0);
     }
 
     #[test]
     fn the_tally_rides_the_row_and_a_row_without_it_reads_zero() {
         let mut store = placed(100.0, true, "A Book");
         let (extent, key) = (store.books[0].extent, store.books[0].cde_key.clone());
-        store.restart(extent, &key);
-        store.restart(extent, &key);
+        store.restart(extent, &key, 0);
+        store.restart(extent, &key, 0);
         let again = Store::from_text(&store.text());
-        assert_eq!(
-            again.books[0].finished_before,
-            store.books[0].finished_before
-        );
+        assert_eq!(again.books[0].restarted_on, store.books[0].restarted_on);
 
         // The row as an older build wrote it: every column but the last.
         let text = store.text();
@@ -2580,7 +2592,7 @@ mod tests {
             })
             .collect::<Vec<String>>()
             .join("\n");
-        assert_eq!(Store::from_text(&cut).books[0].finished_before, 0);
+        assert_eq!(Store::from_text(&cut).books[0].restarted_on.len(), 0);
     }
 
     /// `restart` is the floor a record's place is read against. A record
@@ -3303,7 +3315,7 @@ mod tests {
 
         // `restart` clears `finished`, with `read_state` unchanged through
         // it.
-        assert!(store.restart(938_018, "B00OKPCRLG"));
+        assert!(store.restart(938_018, "B00OKPCRLG", 0));
         assert!(!store.books[0].finished);
         store.remember(&[marked(100.0, 3)]);
         assert_eq!(store.books[0].percent, 0.0);
@@ -3361,7 +3373,7 @@ mod tests {
         store.remember(&shelf);
         assert!(store.books[0].finished);
 
-        assert!(store.restart(938_018, "B00OKPCRLG"));
+        assert!(store.restart(938_018, "B00OKPCRLG", 0));
         assert_eq!(store.books[0].percent, 0.0);
         assert_eq!(store.books[0].restart, Some(100.0));
         assert!(!store.books[0].finished);
@@ -3388,9 +3400,9 @@ mod tests {
 
         // No record, and a record at its beginning, have nothing to
         // give up.
-        assert!(!store.restart(0, "NOSUCHKEY"));
+        assert!(!store.restart(0, "NOSUCHKEY", 0));
         store.remember(&[shelved(555, "B00OTHER", "Another", 0.0)]);
-        assert!(!store.restart(555, "B00OTHER"));
+        assert!(!store.restart(555, "B00OTHER", 0));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

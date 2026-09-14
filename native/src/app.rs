@@ -234,6 +234,11 @@ impl App {
         self.state.marks_way = order;
     }
 
+    /// Draw the open book's Graphs tab on `reading`, counted from the first.
+    pub fn set_reading(&mut self, reading: Option<usize>) {
+        self.state.reading = reading;
+    }
+
     /// Draw All Time at `page`, whatever it was left on.
     pub fn set_alltime_page(&mut self, page: usize) {
         self.state.alltime_page = page;
@@ -804,7 +809,7 @@ impl App {
         if let Some(book) = self.stats.books.get(index) {
             let (extent, key, cde_type) =
                 (book.extent, book.cde_key.clone(), book.cde_type.clone());
-            if self.store.restart(extent, &key) {
+            if self.store.restart(extent, &key, self.today) {
                 self.hand_over_mark(extent, &key, &cde_type, false);
                 self.rebuild();
                 if let Err(err) = self
@@ -959,6 +964,12 @@ impl App {
                 }
                 self.state.opened_day = true;
                 self.state.list_from = 0;
+            }
+            Hit::Reading(at) => {
+                if self.state.reading == Some(at) {
+                    return Action::Nothing;
+                }
+                self.state.reading = Some(at);
             }
             Hit::Sorted(order) => {
                 if self.state.sort == order {

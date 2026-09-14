@@ -420,7 +420,7 @@ mod tests {
                 cde_type: "EBOK".into(),
                 // The mark the store puts on a place read through.
                 finished: *percent >= crate::store::FINISHED_PERCENT,
-                finished_before: 0,
+                restarted_on: Vec::new(),
                 title: format!("Book {at}"),
                 author: String::new(),
                 thumbnail: String::new(),

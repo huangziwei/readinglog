@@ -272,12 +272,14 @@ pub struct Strings {
     pub cancel: &'static str,
     pub yes: &'static str,
     pub no: &'static str,
-    /// A book's own reading, start to finish. `{d}` is filled by [`counted`].
-    pub the_journey: &'static str,
-    /// Where a book stood as each of its sittings ended, and which hour of the
-    /// day it was read in. `{d}` is filled by [`counted`]; the clock names its
-    /// fullest hour after `most`.
-    pub the_place: &'static str,
+    /// The Graphs tab's bands. `readings_band` counts the book's readings and
+    /// `the_days` names the one drawn; `{d}` is filled by [`counted`], and the
+    /// clock names its fullest hour after `most`.
+    pub readings_band: &'static str,
+    pub the_days: &'static str,
+    pub where_you_sat: &'static str,
+    /// The reading drawn, by its place in the order they were read.
+    pub nth_reading: &'static str,
     pub the_clock: &'static str,
     pub read: &'static str,
     pub left: &'static str,
@@ -589,8 +591,10 @@ const ENGLISH: Strings = Strings {
     cancel: "Cancel",
     yes: "yes",
     no: "no",
-    the_journey: "THE JOURNEY · {d} DAY[S]",
-    the_place: "THE PLACE · {d} SITTING[S]",
+    readings_band: "READING[S] · {d}",
+    the_days: "THE DAYS",
+    where_you_sat: "WHERE YOU SAT",
+    nth_reading: "READING {d}",
     the_clock: "THE CLOCK",
     statistics: "Statistics",
     graphs_tab: "Graphs",
@@ -861,8 +865,10 @@ const GERMAN: Strings = Strings {
     cancel: "Abbrechen",
     yes: "ja",
     no: "nein",
-    the_journey: "DER VERLAUF · {d} TAG[E]",
-    the_place: "DIE STELLE · {d} SITZUNG[EN]",
+    readings_band: "LEKTÜRE[N] · {d}",
+    the_days: "DIE TAGE",
+    where_you_sat: "WO DU WARST",
+    nth_reading: "LEKTÜRE {d}",
     the_clock: "DIE UHRZEIT",
     statistics: "Statistik",
     graphs_tab: "Grafiken",
@@ -1130,8 +1136,10 @@ const JAPANESE: Strings = Strings {
     cancel: "キャンセル",
     yes: "あり",
     no: "なし",
-    the_journey: "読書の歩み · {d}日",
-    the_place: "読書の到達点 · {d}回",
+    readings_band: "読書 · {d}回",
+    the_days: "読んだ日",
+    where_you_sat: "読んだ位置",
+    nth_reading: "{d}回目の読書",
     the_clock: "時間帯",
     statistics: "統計",
     graphs_tab: "グラフ",
@@ -1380,8 +1388,10 @@ const SIMPLIFIED: Strings = Strings {
     cancel: "取消",
     yes: "是",
     no: "否",
-    the_journey: "阅读历程 · {d}天",
-    the_place: "阅读进度 · {d}次",
+    readings_band: "阅读 · {d}次",
+    the_days: "阅读日",
+    where_you_sat: "阅读位置",
+    nth_reading: "第{d}次阅读",
     the_clock: "时段",
     statistics: "统计",
     graphs_tab: "图表",
@@ -1637,8 +1647,10 @@ const TRADITIONAL: Strings = Strings {
     cancel: "取消",
     yes: "是",
     no: "否",
-    the_journey: "閱讀歷程 · {d}天",
-    the_place: "閱讀進度 · {d}次",
+    readings_band: "閱讀 · {d}次",
+    the_days: "閱讀日",
+    where_you_sat: "閱讀位置",
+    nth_reading: "第{d}次閱讀",
     the_clock: "時段",
     statistics: "統計",
     graphs_tab: "圖表",
@@ -1815,10 +1827,9 @@ mod tests {
         assert_eq!(counted("SEIT {m} · {d} TAG[E]", 1), "SEIT {m} · 1 TAG");
         // A `template` with no brackets.
         assert_eq!(counted("{d}\u{65e5}", 1), "1\u{65e5}");
-        // `since_days` and `the_journey`, for one and for many.
         for lang in Lang::ALL {
             let s = lang.strings();
-            for said in [s.since_days, s.the_journey] {
+            for said in [s.since_days, s.readings_band, s.nth_reading] {
                 for n in [1, 30] {
                     let out = counted(said, n);
                     assert!(!out.contains(['[', ']']), "{lang:?}: {out}");

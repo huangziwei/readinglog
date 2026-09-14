@@ -104,6 +104,8 @@ pub enum Hit {
     Sorted(Sort),
     /// Which way that order runs.
     SortWay(Way),
+    /// Which of the open book's readings the Graphs tab draws.
+    Reading(usize),
     /// Which list the search names, off the chips in its head row.
     Scoped(Scope),
     /// Open the search over the Books tab, with the keyboard up.
@@ -618,6 +620,9 @@ pub struct State {
     pub marks_from: usize,
     /// Which end that list opens at, which opening another book keeps.
     pub marks_way: Way,
+    /// Which of the open book's readings the Graphs tab draws, counted from
+    /// the first. `None` takes the standing one.
+    pub reading: Option<usize>,
 }
 
 impl State {
@@ -646,6 +651,7 @@ impl State {
             book_tab: BookTab::default(),
             marks_from: 0,
             marks_way: Way::default(),
+            reading: None,
         }
     }
 
@@ -655,6 +661,7 @@ impl State {
         self.book = Some(book);
         self.book_tab = BookTab::default();
         self.marks_from = 0;
+        self.reading = None;
         self.book_search = None;
         if let Some(search) = self.search.as_mut() {
             search.keyboard = false;
@@ -738,6 +745,7 @@ impl State {
         self.list_from = 0;
         self.book_tab = BookTab::default();
         self.marks_from = 0;
+        self.reading = None;
         true
     }
 

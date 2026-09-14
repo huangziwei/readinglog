@@ -37,8 +37,8 @@ pub struct BookStat {
     pub language: String,
     /// `BookRecord::finished`.
     pub finished: bool,
-    /// `BookRecord::finished_before`, which the reading standing is not in.
-    pub finished_before: i64,
+    /// `BookRecord::restarted_on`, which the reading standing is not in.
+    pub restarted_on: Vec<i64>,
     pub seconds: i64,
     /// The seconds `Session` counted, whatever [`Figures`] names. Under
     /// [`Figures::Device`] `words` was counted across these and no others.
@@ -119,7 +119,7 @@ impl BookStat {
     /// How many times this book has been read end to end: the readings
     /// `Store::restart` banked, and the one standing where it is finished.
     pub fn times_finished(&self) -> i64 {
-        self.finished_before + i64::from(self.is_finished())
+        self.restarted_on.len() as i64 + i64::from(self.is_finished())
     }
 
     /// Whether `percent` alone reaches [`FINISHED_PERCENT`].
@@ -700,6 +700,33 @@ impl Stats {
             .collect()
     }
 
+    /// Each reading of one book: the first and last day it was read on. A day
+    /// in `BookStat::restarted_on` opens a reading and closes the one before
+    /// it, so every reading but the standing one was carried to the end.
+    pub fn book_readings(&self, book: usize) -> Vec<(i64, i64)> {
+        let Some(stat) = self.books.get(book) else {
+            return Vec::new();
+        };
+        let days: Vec<i64> = self
+            .book_days(book)
+            .into_iter()
+            .map(|(day, _)| day)
+            .collect();
+        let mut out = Vec::new();
+        let mut from = 0usize;
+        for began in &stat.restarted_on {
+            let cut = from + days[from..].partition_point(|day| day < began);
+            if cut > from {
+                out.push((days[from], days[cut - 1]));
+            }
+            from = cut;
+        }
+        if from < days.len() {
+            out.push((days[from], days[days.len() - 1]));
+        }
+        out
+    }
+
     /// One book's reading cut by the clock hour it happened in, as
     /// [`Stats::hours_over`] cuts a span of days.
     pub fn book_hours(&self, book: usize) -> [i64; 24] {
@@ -1022,7 +1049,7 @@ fn fresh(extent: i64, found: &BookRecord, day: i64) -> BookStat {
         cde_key: found.cde_key.clone(),
         cde_type: found.cde_type.clone(),
         finished: found.finished,
-        finished_before: found.finished_before,
+        restarted_on: found.restarted_on.clone(),
         title: found.title.clone(),
         author: found.author.clone(),
         thumbnail: jacket(found),
@@ -1283,7 +1310,7 @@ pub(crate) mod tests {
         assert_eq!(book.times_finished(), 1);
         // Restarted out of that reading: the store banks it and the mark goes.
         book.finished = false;
-        book.finished_before = 1;
+        book.restarted_on = vec![0];
         assert_eq!(
             book.times_finished(),
             1,

@@ -1,68 +1,147 @@
-//! One book's reading drawn: where it stood as each sitting ended, how long it
-//! took day by day, and which hours of the day it was read in.
+//! One book's reading drawn: each reading it has been given, the days of the
+//! one picked, where each of its sittings sat in the book, and which hours of
+//! the day it was read in.
 
 use crate::date;
 use crate::lang::{self, Strings};
-use crate::stats::Stats;
+use crate::settings::WeekStart;
 use crate::ui::charts;
 use crate::ui::chrome;
-use crate::ui::paint::Rect;
+use crate::ui::paint::{self, DARK, INK, Rect};
 use crate::ui::theme::Theme;
 
-use super::Ctx;
+use super::{Ctx, Hit};
 
-/// The most columns the journey is cut into.
-const SPAN_COLUMNS: i64 = 30;
-
-/// The per cent a full-height bar of the place band stands for.
+/// The per cent a mark at the top of the scatter stands for.
 const WHOLE_BOOK: i64 = 100;
-
-/// The fewest sittings carrying a `progress` before the place band draws.
-const PLACES: usize = 2;
 
 /// One hour of the clock in this many is named, as `alltime::trends` names it.
 const HOURS_NAMED: usize = 3;
 
-/// One band of the page, as [`charts::columns`] takes it.
-struct Band {
-    title: String,
-    values: Vec<i64>,
-    axis: Vec<String>,
-    figure: Box<dyn Fn(i64) -> Vec<String>>,
-    every: usize,
-    ceiling: Option<i64>,
+/// The list of readings takes at most one in this many of the page's height.
+const LISTED: i32 = 2;
+
+/// How wide a column of the days band may fall before the strip steps up to a
+/// coarser one.
+const THINNEST: i32 = 4;
+
+/// What one column of a strip of days covers.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Grain {
+    Day,
+    Week,
+    Month,
 }
 
-/// The whole box under the head row, cut into equal bands. A band with nothing
-/// to draw is left out and the rest take its height.
-pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
+impl Grain {
+    /// The coarsest column a span of `days` needs to come under `most`.
+    fn for_span(days: i64, most: i64) -> Grain {
+        match (days <= most, days / 7 < most) {
+            (true, _) => Grain::Day,
+            (_, true) => Grain::Week,
+            _ => Grain::Month,
+        }
+    }
+
+    /// The first day of every column between `from` and `to`.
+    fn edges(self, from: i64, to: i64, week: WeekStart) -> Vec<i64> {
+        let mut out = Vec::new();
+        match self {
+            Grain::Day => out.extend(from..=to),
+            Grain::Week => {
+                let mut at = from - week.column_of(date::weekday(from)) as i64;
+                while at <= to {
+                    out.push(at);
+                    at += 7;
+                }
+            }
+            Grain::Month => {
+                let (y, m, _) = date::civil_from_days(from);
+                let mut at = date::days_from_civil(y, m, 1);
+                while at <= to {
+                    out.push(at);
+                    at = date::shift_months(at, 1);
+                }
+            }
+        }
+        out
+    }
+
+    /// What a column opening on `day` is called. A strip reaching over a new
+    /// year states one, so two columns a year apart never read alike.
+    fn name(self, day: i64, year: bool, s: &Strings) -> String {
+        let (y, m, _) = date::civil_from_days(day);
+        match (self, year) {
+            (Grain::Month, _) => date::month_name(y, m, s),
+            (_, true) => date::year_day(day, s),
+            (_, false) => date::short_day(day, s),
+        }
+    }
+}
+
+/// A strip of seconds over `from..=to`, no column narrower than [`THINNEST`].
+fn strip(
+    days: &[(i64, i64)],
+    from: i64,
+    to: i64,
+    wide: i32,
+    week: WeekStart,
+) -> (Vec<i64>, Vec<i64>, Grain) {
+    let most = (wide / THINNEST).max(2) as i64;
+    let grain = Grain::for_span(to - from + 1, most);
+    let edges = grain.edges(from, to, week);
+    let mut values = vec![0i64; edges.len().max(1)];
+    let last = values.len() - 1;
+    for (day, secs) in days {
+        if *day < from || *day > to {
+            continue;
+        }
+        let at = edges.partition_point(|edge| edge <= day).saturating_sub(1);
+        values[at.min(last)] += secs;
+    }
+    (values, edges, grain)
+}
+
+/// "Aug 6 – Oct 22, 2024", or both years where the two fall in different ones.
+fn spanned(from: i64, to: i64, s: &Strings) -> String {
+    let (opened, closed) = (date::civil_from_days(from).0, date::civil_from_days(to).0);
+    let from = match opened == closed {
+        true => date::short_day(from, s),
+        false => date::year_day(from, s),
+    };
+    format!("{from} – {}", date::year_day(to, s))
+}
+
+/// The whole box under the head row: the readings listed, then the one picked
+/// drawn out under them.
+pub fn draw(cx: &mut Ctx, area: Rect, index: usize, on: Option<usize>) {
     let s = cx.s();
-    let bands = bands(cx.stats, index, s);
+    let reads = cx.stats.book_readings(index);
+    let Some((on, (from, to))) = picked(on, &reads) else {
+        return;
+    };
+    let theme: &Theme = cx.theme;
+    // A row is a tap target, so it takes a list row's height where the
+    // readings are few and gives way to the line height where they are many.
+    let head = chrome::section_height(cx.text, theme);
+    let line = line(cx);
+    let room = (area.h / LISTED - head).max(line);
+    let pitch = (room / reads.len() as i32).clamp(line, theme.row_h);
+    let deep = (head + pitch * reads.len() as i32).min(head + room) + theme.gap * 2;
+    let (top, rest) = area.split_top(deep);
+    listed(cx, top, index, &reads, on, pitch);
+
     let hours = cx.stats.book_hours(index);
     let clock = hours.iter().any(|secs| *secs > 0);
-    let deep = bands.len() as i32 + clock as i32;
-    if deep == 0 {
-        return;
-    }
-    let rows = area.rows(deep, cx.theme.gap * 2);
-    for (band, row) in bands.iter().zip(&rows) {
-        let theme: &Theme = cx.theme;
-        let inner = chrome::section(cx.fb, cx.text, theme, *row, &band.title);
-        charts::columns(
-            cx.fb,
-            cx.text,
-            theme,
-            cx.palette,
-            inner,
-            &band.values,
-            |at| band.axis[at].clone(),
-            &|value| (band.figure)(value),
-            band.every,
-            None,
-            band.ceiling,
-        );
-    }
-    // `alltime::band` draws `hours` as it draws its own average day.
+    let rows = rest.rows(2 + clock as i32, cx.theme.gap * 2);
+    let theme: &Theme = cx.theme;
+    let title = lang::counted(s.nth_reading, on as i64 + 1);
+    let said = spanned(from, to, s);
+    let head = format!("{} · {title}", s.the_days);
+    let inner = chrome::section_stating(cx.fb, cx.text, theme, rows[0], &head, Some(&said));
+    days(cx, inner, index, from, to);
+    let inner = chrome::section(cx.fb, cx.text, theme, rows[1], s.where_you_sat);
+    sat(cx, inner, index, from, to);
     if let Some(row) = rows.last().filter(|_| clock) {
         let fold = cx.stats.fold(hours.to_vec(), hours.iter().sum());
         let names: Vec<String> = (0..24).map(|at| format!("{at:02}")).collect();
@@ -70,67 +149,138 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize) {
     }
 }
 
-/// The bands this book has the record for, in the order the page stacks them.
-fn bands(stats: &Stats, index: usize, s: &'static Strings) -> Vec<Band> {
-    let mut out: Vec<Band> = Vec::new();
-    let Some(book) = stats.books.get(index) else {
-        return out;
-    };
-
-    let places = stats.book_places(index);
-    if places.iter().filter(|(_, at)| at.is_some()).count() >= PLACES {
-        let axis = places.iter().map(|(day, _)| *day).collect::<Vec<i64>>();
-        // A sitting with no `progress` holds the place before it.
-        let mut place = 0;
-        let values: Vec<i64> = places
-            .iter()
-            .map(|(_, at)| {
-                place = at.unwrap_or(place);
-                place
-            })
-            .collect();
-        out.push(Band {
-            title: lang::counted(s.the_place, book.sittings),
-            axis: axis.iter().map(|day| date::short_day(*day, s)).collect(),
-            every: (values.len() / 4).max(1),
-            values,
-            figure: Box::new(move |at| vec![s.percent_plain.replace("{d}", &at.to_string())]),
-            ceiling: Some(WHOLE_BOOK),
-        });
-    }
-
-    // `opened` and `closed` are the book's own stretch, never the record's.
-    let (opened, closed) = (book.first_day, book.last_day);
-    let span = (closed - opened + 1).max(1);
-    let (series, each) = journey(stats, index, opened, closed);
-    if series.iter().any(|secs| *secs > 0) {
-        out.push(Band {
-            title: lang::counted(s.the_journey, span),
-            axis: (0..series.len())
-                .map(|at| date::short_day(opened + at as i64 * each, s))
-                .collect(),
-            every: (series.len() / 4).max(1),
-            values: series,
-            figure: Box::new(move |secs| super::alltime::duration_rows(secs, s)),
-            ceiling: None,
-        });
-    }
-
-    out
+/// The reading drawn: the one `State::reading` names, or the standing one.
+fn picked(on: Option<usize>, reads: &[(i64, i64)]) -> Option<(usize, (i64, i64))> {
+    let last = reads.len().checked_sub(1)?;
+    let on = on.unwrap_or(last).min(last);
+    Some((on, reads[on]))
 }
 
-/// The seconds read in each column of the strip, and the days one column
-/// covers. A book read over [`SPAN_COLUMNS`] days or fewer gets a column each.
-fn journey(stats: &Stats, index: usize, opened: i64, closed: i64) -> (Vec<i64>, i64) {
-    let span = (closed - opened + 1).max(1);
-    let each = (span + SPAN_COLUMNS - 1) / SPAN_COLUMNS;
-    let columns = ((span + each - 1) / each).max(1) as usize;
-    let mut series = vec![0i64; columns];
-    for (day, secs) in stats.book_days(index) {
-        let at = ((day - opened) / each).clamp(0, columns as i64 - 1) as usize;
-        series[at] += secs;
+fn line(cx: &mut Ctx) -> i32 {
+    cx.text.set_px(cx.theme.small_px);
+    cx.text.line_height() as i32
+}
+
+/// Each reading on its own row, newest first, the picked one inked black. A
+/// reading carried through the end of the book takes a filled mark.
+fn listed(cx: &mut Ctx, area: Rect, index: usize, reads: &[(i64, i64)], on: usize, pitch: i32) {
+    let s = cx.s();
+    let theme: &Theme = cx.theme;
+    let title = lang::counted(s.readings_band, reads.len() as i64);
+    let inner = chrome::section(cx.fb, cx.text, theme, area, &title);
+    let days = cx.stats.book_days(index);
+    let standing = cx.stats.books[index].finished;
+    let script = cx.ui_script();
+    line(cx);
+    let cap = cx.text.cap_height() as i32;
+    let side = cap * 2 / 3;
+    for (at, (opened, closed)) in reads.iter().enumerate().rev() {
+        let down = (reads.len() - 1 - at) as i32 * pitch;
+        let row = Rect::new(inner.x, inner.y + down, inner.w, pitch);
+        if row.bottom() > inner.bottom() {
+            break;
+        }
+        let secs: i64 = days
+            .iter()
+            .filter(|(day, _)| day >= opened && day <= closed)
+            .map(|(_, secs)| secs)
+            .sum();
+        let whole = at + 1 < reads.len() || standing;
+        let baseline = row.y + (pitch + cap) / 2;
+        let mark = Rect::new(row.x, baseline - side, side, side);
+        match whole {
+            true => paint::fill_rgb(cx.fb, mark, cx.palette.bar()),
+            false => paint::stroke(cx.fb, mark, DARK, theme.rule()),
+        }
+        let ink = match at == on {
+            true => INK,
+            false => DARK,
+        };
+        let said = format!("{}   {}", at + 1, spanned(*opened, *closed, s));
+        let x = mark.right() + theme.gap;
+        cx.text.draw_inked(script, cx.fb, x, baseline, &said, ink);
+        let (rest, spark) = row.split_left(row.w - row.w / 5);
+        let over = date::duration(secs, s);
+        let w = cx.text.measure_width(&over) as i32;
+        cx.text
+            .draw_inked(script, cx.fb, rest.right() - w, baseline, &over, ink);
+        let tall = (cap * 3 / 2).min(pitch - 2);
+        let strip = Rect::new(
+            spark.x + theme.gap,
+            baseline - tall,
+            spark.w - theme.gap,
+            tall,
+        );
+        sparkline(cx, strip, &days, *opened, *closed);
+        cx.hit(Hit::Reading(at), row);
     }
-    (series, each)
+}
+
+/// One reading's own days, small enough to stand on a row of the list.
+fn sparkline(cx: &mut Ctx, area: Rect, days: &[(i64, i64)], from: i64, to: i64) {
+    let (values, _, _) = strip(days, from, to, area.w, cx.week);
+    let top = values.iter().copied().max().unwrap_or(0).max(1);
+    let ink = cx.palette.bar();
+    for (secs, cell) in values.iter().zip(area.columns(values.len() as i32, 0)) {
+        let h = (area.h as i64 * secs / top) as i32;
+        if h > 0 {
+            let bar = Rect::new(cell.x, area.bottom() - h, cell.w.max(1), h);
+            paint::fill_rgb(cx.fb, bar, ink);
+        }
+    }
+}
+
+/// The seconds read on each day of one reading.
+fn days(cx: &mut Ctx, area: Rect, index: usize, from: i64, to: i64) {
+    let s = cx.s();
+    let read = cx.stats.book_days(index);
+    let (values, edges, grain) = strip(&read, from, to, area.w, cx.week);
+    let over = date::civil_from_days(from).0 != date::civil_from_days(to).0;
+    let theme: &Theme = cx.theme;
+    charts::columns(
+        cx.fb,
+        cx.text,
+        theme,
+        cx.palette,
+        area,
+        &values,
+        |at| grain.name(edges[at], over, s),
+        &|secs| super::alltime::duration_rows(secs, s),
+        (values.len() / 4).max(1),
+        None,
+        None,
+    );
+}
+
+/// Where each sitting of one reading ended, as a mark with nothing under it.
+fn sat(cx: &mut Ctx, area: Rect, index: usize, from: i64, to: i64) {
+    let s = cx.s();
+    let mut place = 0;
+    let at: Vec<(i64, i64)> = cx
+        .stats
+        .book_places(index)
+        .into_iter()
+        .filter(|(day, _)| (from..=to).contains(day))
+        .map(|(day, at)| {
+            place = at.unwrap_or(place);
+            (day, place)
+        })
+        .collect();
+    let theme: &Theme = cx.theme;
+    let ends = (date::short_day(from, s), date::short_day(to, s));
+    charts::scatter(
+        cx.fb,
+        cx.text,
+        theme,
+        cx.palette,
+        area,
+        &at,
+        from,
+        to,
+        WHOLE_BOOK,
+        &|share| s.percent_plain.replace("{d}", &share.to_string()),
+        (&ends.0, &ends.1),
+    );
 }
 
 #[cfg(test)]
@@ -140,9 +290,9 @@ mod tests {
     use crate::log::session::Measure;
     use crate::stats::{BookStat, Sitting, Stats};
 
-    /// A record of one book whose sittings ended at each of `places`, one a day.
-    /// `BookStat::sittings` counts all of them, `None` or not.
-    fn read(places: &[Option<f64>]) -> Stats {
+    /// A record of one book whose sittings ended at each of `places`, one a
+    /// day from day 20000, begun again on each of `again`.
+    fn read(places: &[Option<f64>], again: &[i64]) -> Stats {
         let sittings: Vec<Sitting> = places
             .iter()
             .enumerate()
@@ -164,6 +314,7 @@ mod tests {
             seconds: 1800 * sittings.len() as i64,
             first_day: 20_000,
             last_day: 20_000 + sittings.len() as i64 - 1,
+            restarted_on: again.to_vec(),
             ..BookStat::default()
         };
         Stats {
@@ -173,75 +324,72 @@ mod tests {
         }
     }
 
-    /// The bars the place band draws for the one book `read` built.
-    fn drawn(stats: &Stats) -> Vec<i64> {
-        bands(stats, 0, Lang::English.strings())[0].values.clone()
+    /// The days of a book read `n` days running, begun again on `again`.
+    fn readings(n: usize, again: &[i64]) -> Vec<(i64, i64)> {
+        let places = vec![Some(0.5); n];
+        read(&places, again).book_readings(0)
     }
 
-    /// The five shapes the record holds, none of them a climb.
-    const SHAPES: [&[i64]; 5] = [
-        &[89, 6, 9, 12, 15],
-        &[85, 18, 11, 21],
-        &[
-            1, 7, 13, 20, 33, 33, 40, 51, 3, 51, 0, 55, 64, 67, 85, 89, 100,
-        ],
-        &[8, 44, 0],
-        &[9, 13, 22, 34, 43, 55, 100, 98, 100, 100],
-    ];
+    #[test]
+    fn a_reading_runs_from_its_first_day_to_the_day_before_the_next_began() {
+        // Begun again on day 20003: the first reading closes the day before.
+        assert_eq!(readings(5, &[20_003]), [(20_000, 20_002), (20_003, 20_004)]);
+        // Never begun again, and begun again twice.
+        assert_eq!(readings(5, &[]), [(20_000, 20_004)]);
+        assert_eq!(
+            readings(5, &[20_002, 20_004]),
+            [(20_000, 20_001), (20_002, 20_003), (20_004, 20_004)]
+        );
+        // A day past the last sitting closes the record and opens nothing.
+        assert_eq!(readings(5, &[20_099]), [(20_000, 20_004)]);
+        // A day before it opens leaves one reading, which it opens.
+        assert_eq!(readings(5, &[19_000]), [(20_000, 20_004)]);
+        assert!(readings(0, &[]).is_empty());
+    }
 
     #[test]
-    fn the_place_band_draws_a_series_that_does_not_climb_as_it_stands() {
-        for shape in SHAPES {
-            let places: Vec<Option<f64>> =
-                shape.iter().map(|at| Some(*at as f64 / 100.0)).collect();
-            let stats = read(&places);
-            let drawn = drawn(&stats);
-            assert_eq!(drawn, shape, "the band states the record's own places");
-            // `drawn` stands between the foot and `WHOLE_BOOK`.
-            assert!(drawn.iter().all(|at| (0..=WHOLE_BOOK).contains(at)));
+    fn a_strip_steps_up_a_grain_rather_than_draw_a_column_too_thin_to_see() {
+        let week = WeekStart::Monday;
+        let days: Vec<(i64, i64)> = (0..400).map(|d| (20_000 + d, 1800)).collect();
+        // Forty days in 400px is a column a day; four hundred is not.
+        let (values, _, grain) = strip(&days, 20_000, 20_039, 400, week);
+        assert_eq!((values.len(), grain == Grain::Day), (40, true));
+        let (_, _, grain) = strip(&days, 20_000, 20_399, 400, week);
+        assert_eq!(grain, Grain::Week);
+        let (_, _, grain) = strip(&days, 20_000, 22_000, 400, week);
+        assert_eq!(grain, Grain::Month);
+        // Every second of the span lands in a column, wherever it is cut.
+        for wide in [40, 120, 400] {
+            let (values, _, _) = strip(&days, 20_000, 20_399, wide, week);
+            assert_eq!(values.iter().sum::<i64>(), 400 * 1800);
         }
     }
 
     #[test]
-    fn a_sitting_with_no_place_holds_the_place_before_it() {
-        let stats = read(&[Some(0.10), None, Some(0.40), None, Some(0.25)]);
-        assert_eq!(drawn(&stats), [10, 10, 40, 40, 25]);
-        // The first sitting has no place before it and opens at 0.
-        let stats = read(&[None, Some(0.40), Some(0.55)]);
-        assert_eq!(drawn(&stats), [0, 40, 55]);
+    fn a_span_states_a_year_once_where_it_holds_to_one() {
+        let s = Lang::English.strings();
+        let (open, close) = (
+            date::days_from_civil(2024, 8, 6),
+            date::days_from_civil(2024, 10, 22),
+        );
+        assert_eq!(spanned(open, close, s), "Aug 6 – Oct 22, 2024");
+        let close = date::days_from_civil(2026, 8, 7);
+        assert_eq!(spanned(open, close, s), "Aug 6, 2024 – Aug 7, 2026");
     }
 
     #[test]
-    fn a_book_under_two_known_places_draws_no_place_band() {
-        let s = Lang::English.strings();
-        for places in [vec![], vec![Some(0.40)], vec![None, Some(0.40), None]] {
-            let stats = read(&places);
-            assert!(bands(&stats, 0, s).iter().all(|b| b.ceiling.is_none()));
-        }
-        // `PLACES` places draw the band.
-        let stats = read(&[Some(0.10), Some(0.40)]);
-        assert_eq!(bands(&stats, 0, s)[0].values.len(), PLACES);
-    }
-
-    /// `bands` draws one bar for each of [`Stats::book_sittings`] and heads
-    /// them with `BookStat::sittings`, the count `view::book` states.
-    #[test]
-    fn the_place_band_draws_a_bar_for_every_sitting() {
-        let places = [Some(0.10), Some(0.22), None, Some(0.40)];
-        let stats = read(&places);
-        let s = Lang::English.strings();
-        let band = &bands(&stats, 0, s)[0];
-
-        assert_eq!(stats.books[0].sittings, places.len() as i64);
-        assert_eq!(band.values.len() as i64, stats.books[0].sittings);
-        assert_eq!(band.axis.len() as i64, stats.books[0].sittings);
-        assert_eq!(&band.title, "THE PLACE · 4 SITTINGS");
-        assert_eq!(band.values, [10, 22, 22, 40]);
+    fn the_reading_drawn_is_the_standing_one_until_a_row_is_tapped() {
+        let reads = readings(5, &[20_003]);
+        assert_eq!(picked(None, &reads), Some((1, (20_003, 20_004))));
+        assert_eq!(picked(Some(0), &reads), Some((0, (20_000, 20_002))));
+        // A picked row the record no longer holds falls back to the last.
+        assert_eq!(picked(Some(9), &reads), Some((1, (20_003, 20_004))));
+        assert_eq!(picked(None, &[]), None);
     }
 
     #[test]
     fn the_clock_holds_every_hour_this_book_was_read_in() {
-        let stats = read(&[Some(0.10), Some(0.40)]);
+        let stats = read(&[Some(0.10), Some(0.40)], &[]);
         let hours = stats.book_hours(0);
         assert_eq!(hours[1], 3600, "both sittings fell in the same hour");
         assert_eq!(hours.iter().sum::<i64>(), 3600);
