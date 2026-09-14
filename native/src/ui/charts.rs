@@ -336,9 +336,11 @@ pub fn columns(
     }
 }
 
-/// The shares of its ceiling a scatter rules, which the heading states the
-/// range of: the plot carries no text of its own, so no mark is hidden.
-const STOPS: [i64; 3] = [0, 50, 100];
+/// The shares of its ceiling a scatter rules, and the ones it names. A name
+/// stands inside the plot and under the marks, so it costs the strip no width
+/// and the axis stays the one [`columns`] cuts.
+const STOPS: [i64; 5] = [0, 25, 50, 75, 100];
+const NAMED: [i64; 3] = [0, 50, 100];
 
 /// Where each of `at` stood, as a mark on its column and nothing under it:
 /// `(column, place)` on a scale of 0 to `ceiling`, over `count` columns cut
@@ -355,19 +357,35 @@ pub fn scatter(
     axis: impl Fn(usize) -> String,
     every: usize,
     ceiling: i64,
+    stop: &dyn Fn(i64) -> String,
 ) {
     if count == 0 {
         return;
     }
     text.set_px(theme.small_px);
     let line = text.line_height() as i32;
+    let cap = text.cap_height() as i32;
     let (band, foot) = area.split_top((area.h - line - theme.gap / 2).max(1));
     let side = (theme.rule() * 3).max(5);
-    let plot = Rect::new(band.x, band.y + side, band.w, (band.h - side).max(1));
+    let over = cap + theme.gap / 2;
+    let plot = Rect::new(band.x, band.y + over, band.w, (band.h - over).max(1));
     let cells = plot.columns(count as i32, cell_gap(theme, count));
+    let at_share = |share: i64| plot.bottom() - (plot.h as i64 * share / 100) as i32;
     for share in STOPS {
-        let y = plot.bottom() - (plot.h as i64 * share / 100) as i32;
-        paint::hline(fb, plot.x, y, plot.w, PALE, 1);
+        paint::hline(fb, plot.x, at_share(share), plot.w, PALE, 1);
+    }
+    // The names go down before the marks, which stand over them.
+    for share in NAMED {
+        let said = stop(share * ceiling / 100);
+        let baseline = at_share(share) - theme.gap / 4;
+        text.draw_inked(
+            crate::font::Script::Unknown,
+            fb,
+            plot.x,
+            baseline,
+            &said,
+            DARK,
+        );
     }
     let ink = palette.bar();
     for (column, place) in at {

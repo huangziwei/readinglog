@@ -165,10 +165,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, on: Option<usize>, from_row:
     let strip = Strip::of(cx, index, rows[0].w, from, to);
     let inner = chrome::heading_stating(cx.fb, cx.text, theme, rows[0], &head, Some(&said));
     days(cx, inner, &strip, s);
-    let whole = s.percent_plain.replace("{d}", &WHOLE_BOOK.to_string());
-    let scale = format!("0–{whole}");
-    let head = rows[1];
-    let inner = chrome::heading_stating(cx.fb, cx.text, theme, head, s.where_you_sat, Some(&scale));
+    let inner = chrome::heading_stating(cx.fb, cx.text, theme, rows[1], s.where_you_sat, None);
     sat(cx, inner, index, &strip, from, to);
     if let Some(row) = rows.last().filter(|_| clock) {
         let fold = cx.stats.fold(hours.to_vec(), hours.iter().sum());
@@ -367,6 +364,7 @@ fn sat(cx: &mut Ctx, area: Rect, index: usize, strip: &Strip, from: i64, to: i64
         |at| strip.name(at, s),
         strip.every,
         WHOLE_BOOK,
+        &|share| s.percent_plain.replace("{d}", &share.to_string()),
     );
 }
 
