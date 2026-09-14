@@ -273,10 +273,7 @@ pub fn columns(
     let line = text.line_height() as i32;
     let (band, foot) = area.split_top((area.h - line - theme.gap / 2).max(1));
     let max = scale(values, ceiling);
-    let gap = match values.len() > 16 {
-        true => 2,
-        false => theme.gap / 2,
-    };
+    let gap = cell_gap(theme, values.len());
     let cell_w = band.columns(values.len() as i32, gap)[0].w;
     let cut = Cut {
         h: band.h,
@@ -339,12 +336,13 @@ pub fn columns(
     }
 }
 
-/// The stops a scatter rules and names, as a share of its ceiling.
+/// The shares of its ceiling a scatter rules, which the heading states the
+/// range of: the plot carries no text of its own, so no mark is hidden.
 const STOPS: [i64; 3] = [0, 50, 100];
 
-/// Where each of `at` stood, as a mark on its day and nothing under it:
-/// `(day, place)` on a scale of 0 to `ceiling`, over `from..=to` named by
-/// `ends`. Reading out of order scatters here where reading in order climbs.
+/// Where each of `at` stood, as a mark on its column and nothing under it:
+/// `(column, place)` on a scale of 0 to `ceiling`, over `count` columns cut
+/// and named exactly as [`columns`] cuts and names the same strip.
 #[allow(clippy::too_many_arguments)]
 pub fn scatter(
     fb: &mut Framebuffer,
@@ -352,48 +350,48 @@ pub fn scatter(
     theme: &Theme,
     palette: Palette,
     area: Rect,
-    at: &[(i64, i64)],
-    from: i64,
-    to: i64,
+    at: &[(usize, i64)],
+    count: usize,
+    axis: impl Fn(usize) -> String,
+    every: usize,
     ceiling: i64,
-    stop: &dyn Fn(i64) -> String,
-    ends: (&str, &str),
 ) {
+    if count == 0 {
+        return;
+    }
     text.set_px(theme.small_px);
     let line = text.line_height() as i32;
-    let cap = text.cap_height() as i32;
     let (band, foot) = area.split_top((area.h - line - theme.gap / 2).max(1));
     let side = (theme.rule() * 3).max(5);
-    let names = STOPS
-        .iter()
-        .map(|share| text.measure_width(&stop(share * ceiling / 100)) as i32)
-        .max()
-        .unwrap_or(0)
-        + theme.gap;
-    let plot = Rect::new(
-        band.x + names,
-        band.y + side,
-        (band.w - names).max(1),
-        (band.h - side * 2).max(1),
-    );
+    let plot = Rect::new(band.x, band.y + side, band.w, (band.h - side).max(1));
+    let cells = plot.columns(count as i32, cell_gap(theme, count));
     for share in STOPS {
         let y = plot.bottom() - (plot.h as i64 * share / 100) as i32;
         paint::hline(fb, plot.x, y, plot.w, PALE, 1);
-        let said = stop(share * ceiling / 100);
-        let script = crate::font::Script::Unknown;
-        text.draw_inked(script, fb, band.x, y + cap / 2, &said, DARK);
     }
-    let span = (to - from + 1).max(1);
     let ink = palette.bar();
-    for (day, place) in at {
-        let x = plot.x + ((day - from) * (plot.w - side) as i64 / span) as i32;
+    for (column, place) in at {
+        let Some(cell) = cells.get(*column) else {
+            continue;
+        };
         let y = plot.bottom() - (plot.h as i64 * place.clamp(&0, &ceiling) / ceiling) as i32;
+        let x = cell.x + (cell.w - side) / 2;
         paint::fill_rgb(fb, Rect::new(x, y - side / 2, side, side), ink);
     }
     let baseline = foot.y + line;
-    text.draw(fb, plot.x, baseline, ends.0, false);
-    let w = text.measure_width(ends.1) as i32;
-    text.draw(fb, plot.right() - w, baseline, ends.1, false);
+    for (x, name) in named(&cells, every, theme.gap, &axis, &mut |said| {
+        text.measure_width(said) as i32
+    }) {
+        text.draw(fb, x, baseline, &name, false);
+    }
+}
+
+/// The air between two columns of a strip that many wide.
+fn cell_gap(theme: &Theme, count: usize) -> i32 {
+    match count > 16 {
+        true => 2,
+        false => theme.gap / 2,
+    }
 }
 
 /// The value a full-height bar stands for: `ceiling`, or the tallest of

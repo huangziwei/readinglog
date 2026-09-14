@@ -157,6 +157,19 @@ pub fn section(
     section_stating(fb, text, theme, area, title, None)
 }
 
+/// [`section_stating`] with no rule under the heading, for a page whose bands
+/// are told apart by what they hold.
+pub fn heading_stating(
+    fb: &mut Framebuffer,
+    text: &mut TextRenderer,
+    theme: &Theme,
+    area: Rect,
+    title: &str,
+    said: Option<&str>,
+) -> Rect {
+    headed(fb, text, theme, area, title, said, false)
+}
+
 /// [`section`] with `said` at the right end of the rule: a figure the section
 /// is measured in, which the reader does not set. It takes the heading's own
 /// size, set back from it in [`paint::DARK`].
@@ -167,6 +180,18 @@ pub fn section_stating(
     area: Rect,
     title: &str,
     said: Option<&str>,
+) -> Rect {
+    headed(fb, text, theme, area, title, said, true)
+}
+
+fn headed(
+    fb: &mut Framebuffer,
+    text: &mut TextRenderer,
+    theme: &Theme,
+    area: Rect,
+    title: &str,
+    said: Option<&str>,
+    rule: bool,
 ) -> Rect {
     text.set_px(theme.small_px);
     let h = text.line_height() as i32 + theme.gap;
@@ -182,7 +207,9 @@ pub fn section_stating(
             text.draw_inked(crate::font::Script::Unknown, fb, x, baseline, said, DARK);
         }
     }
-    paint::hline(fb, area.x, area.y + h - theme.gap / 2, area.w, PALE, 1);
+    if rule {
+        paint::hline(fb, area.x, area.y + h - theme.gap / 2, area.w, PALE, 1);
+    }
     let (_, rest) = area.split_top(h + theme.gap / 2);
     rest
 }

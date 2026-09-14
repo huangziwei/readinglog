@@ -234,9 +234,11 @@ impl App {
         self.state.marks_way = order;
     }
 
-    /// Draw the open book's Graphs tab on `reading`, counted from the first.
+    /// Draw the open book's Graphs tab on `reading`, counted from the first,
+    /// with its list of readings opened to hold it.
     pub fn set_reading(&mut self, reading: Option<usize>) {
         self.state.reading = reading;
+        self.state.readings_from = 0;
     }
 
     /// Draw All Time at `page`, whatever it was left on.
@@ -970,6 +972,12 @@ impl App {
                     return Action::Nothing;
                 }
                 self.state.reading = Some(at);
+            }
+            Hit::ReadingsPage(from) => {
+                if self.state.readings_from == from {
+                    return Action::Nothing;
+                }
+                self.state.readings_from = from;
             }
             Hit::Sorted(order) => {
                 if self.state.sort == order {

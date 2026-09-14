@@ -112,17 +112,17 @@ fn trends(cx: &mut Ctx, area: Rect) {
 
     let day = cx.stats.average_day(cx.today);
     let names: Vec<String> = (0..24).map(|at| format!("{at:02}")).collect();
-    band(cx, rows[0], cx.s().an_average_day, &day, &names, 3);
+    band(cx, rows[0], cx.s().an_average_day, &day, &names, 3, true);
 
     let week = cx.stats.average_week(cx.today, cx.week);
     let names: Vec<String> = (0..7)
         .map(|at| cx.s().weekdays_short[cx.week.day_in(at)].to_string())
         .collect();
-    band(cx, rows[1], cx.s().an_average_week, &week, &names, 1);
+    band(cx, rows[1], cx.s().an_average_week, &week, &names, 1, true);
 
     let year = cx.stats.by_month(cx.today);
     let names: Vec<String> = cx.s().months_short.iter().map(|m| m.to_string()).collect();
-    band(cx, rows[2], cx.s().by_month, &year, &names, 1);
+    band(cx, rows[2], cx.s().by_month, &year, &names, 1, true);
 
     sittings(cx, rows[3]);
 }
@@ -136,6 +136,7 @@ pub(super) fn band(
     fold: &Fold,
     axis: &[String],
     every: usize,
+    rule: bool,
 ) {
     let theme: &Theme = cx.theme;
     let s = cx.s();
@@ -150,7 +151,10 @@ pub(super) fn band(
         true => title,
         false => short,
     };
-    let inner = chrome::section(cx.fb, cx.text, theme, area, &title);
+    let inner = match rule {
+        true => chrome::section(cx.fb, cx.text, theme, area, &title),
+        false => chrome::heading_stating(cx.fb, cx.text, theme, area, &title, None),
+    };
     let names = axis.to_vec();
     charts::columns(
         cx.fb,

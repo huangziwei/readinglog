@@ -269,7 +269,9 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
         BookTab::Marks => {
             return marks::draw(cx, area, index, state.marks_from, state.marks_way, None);
         }
-        BookTab::Graphs => return book_graphs::draw(cx, area, index, state.reading),
+        BookTab::Graphs => {
+            return book_graphs::draw(cx, area, index, state.reading, state.readings_from);
+        }
         BookTab::Statistics => {}
     }
     let (head, rest) = area.split_top(heading_height(cx.text, theme, ui, &book, s) + air);

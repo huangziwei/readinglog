@@ -97,7 +97,7 @@ pub fn paged(cx: &mut Ctx, area: Rect, day: i64, from: usize) {
     let from = from.min(super::last_page_at(read.len(), deep));
     let to = (from + deep).min(read.len());
     if read.len() > deep {
-        pager(cx, bar, from, to, read.len(), deep);
+        pager(cx, bar, from, to, read.len(), deep, &Hit::ListPage);
     }
     draw_noting(cx, inner, day, &read[from..to]);
 }
@@ -105,7 +105,15 @@ pub fn paged(cx: &mut Ctx, area: Rect, day: i64, from: usize) {
 /// `from`–`to` of `count` at the right of the list's heading, a chip either
 /// side of it stepping by `deep` and carrying the index it opens at. The two
 /// straddle the count, each its own target.
-fn pager(cx: &mut Ctx, head: Rect, from: usize, to: usize, count: usize, deep: usize) {
+pub(super) fn pager(
+    cx: &mut Ctx,
+    head: Rect,
+    from: usize,
+    to: usize,
+    count: usize,
+    deep: usize,
+    page: &dyn Fn(usize) -> Hit,
+) {
     let theme: &Theme = cx.theme;
     let last = super::last_page_at(count, deep);
     let of = format!("{}–{to} {} {count}", from + 1, cx.s().of);
@@ -114,8 +122,8 @@ fn pager(cx: &mut Ctx, head: Rect, from: usize, to: usize, count: usize, deep: u
     cx.text.set_px(theme.small_px);
     let said = cx.text.measure_width(&of) as i32;
     let steps = [
-        ("‹", Hit::ListPage(from.saturating_sub(deep))),
-        ("›", Hit::ListPage((from + deep).min(last))),
+        ("‹", page(from.saturating_sub(deep))),
+        ("›", page((from + deep).min(last))),
     ];
     let chips: Vec<i32> = steps
         .iter()

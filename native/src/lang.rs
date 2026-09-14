@@ -272,10 +272,10 @@ pub struct Strings {
     pub cancel: &'static str,
     pub yes: &'static str,
     pub no: &'static str,
-    /// The Graphs tab's bands. `readings_band` counts the book's readings and
-    /// `the_days` names the one drawn; `{d}` is filled by [`counted`], and the
-    /// clock names its fullest hour after `most`.
-    pub readings_band: &'static str,
+    /// The Graphs tab's bands. `read_through_band` counts the book's readings
+    /// and `nth_reading` names the one drawn; `{d}` is filled by [`counted`],
+    /// and the clock names its fullest hour after `most`.
+    pub read_through_band: &'static str,
     pub the_days: &'static str,
     pub where_you_sat: &'static str,
     /// The reading drawn, by its place in the order they were read.
@@ -591,10 +591,10 @@ const ENGLISH: Strings = Strings {
     cancel: "Cancel",
     yes: "yes",
     no: "no",
-    readings_band: "READING[S] · {d}",
+    read_through_band: "READ THROUGH · {d}",
     the_days: "THE DAYS",
     where_you_sat: "WHERE YOU SAT",
-    nth_reading: "READING {d}",
+    nth_reading: "READ THROUGH {d}",
     the_clock: "THE CLOCK",
     statistics: "Statistics",
     graphs_tab: "Graphs",
@@ -865,10 +865,10 @@ const GERMAN: Strings = Strings {
     cancel: "Abbrechen",
     yes: "ja",
     no: "nein",
-    readings_band: "LEKTÜRE[N] · {d}",
+    read_through_band: "GANZ GELESEN · {d}",
     the_days: "DIE TAGE",
     where_you_sat: "WO DU WARST",
-    nth_reading: "LEKTÜRE {d}",
+    nth_reading: "{d}. DURCHGANG",
     the_clock: "DIE UHRZEIT",
     statistics: "Statistik",
     graphs_tab: "Grafiken",
@@ -1136,10 +1136,10 @@ const JAPANESE: Strings = Strings {
     cancel: "キャンセル",
     yes: "あり",
     no: "なし",
-    readings_band: "読書 · {d}回",
+    read_through_band: "通読 · {d}回",
     the_days: "読んだ日",
     where_you_sat: "読んだ位置",
-    nth_reading: "{d}回目の読書",
+    nth_reading: "{d}回目の通読",
     the_clock: "時間帯",
     statistics: "統計",
     graphs_tab: "グラフ",
@@ -1388,10 +1388,10 @@ const SIMPLIFIED: Strings = Strings {
     cancel: "取消",
     yes: "是",
     no: "否",
-    readings_band: "阅读 · {d}次",
+    read_through_band: "通读 · {d}次",
     the_days: "阅读日",
     where_you_sat: "阅读位置",
-    nth_reading: "第{d}次阅读",
+    nth_reading: "第{d}次通读",
     the_clock: "时段",
     statistics: "统计",
     graphs_tab: "图表",
@@ -1647,10 +1647,10 @@ const TRADITIONAL: Strings = Strings {
     cancel: "取消",
     yes: "是",
     no: "否",
-    readings_band: "閱讀 · {d}次",
+    read_through_band: "通讀 · {d}次",
     the_days: "閱讀日",
     where_you_sat: "閱讀位置",
-    nth_reading: "第{d}次閱讀",
+    nth_reading: "第{d}次通讀",
     the_clock: "時段",
     statistics: "統計",
     graphs_tab: "圖表",
@@ -1829,7 +1829,7 @@ mod tests {
         assert_eq!(counted("{d}\u{65e5}", 1), "1\u{65e5}");
         for lang in Lang::ALL {
             let s = lang.strings();
-            for said in [s.since_days, s.readings_band, s.nth_reading] {
+            for said in [s.since_days, s.read_through_band, s.nth_reading] {
                 for n in [1, 30] {
                     let out = counted(said, n);
                     assert!(!out.contains(['[', ']']), "{lang:?}: {out}");
