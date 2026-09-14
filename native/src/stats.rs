@@ -37,6 +37,8 @@ pub struct BookStat {
     pub language: String,
     /// `BookRecord::finished`.
     pub finished: bool,
+    /// `BookRecord::finished_before`, which the reading standing is not in.
+    pub finished_before: i64,
     pub seconds: i64,
     /// The seconds `Session` counted, whatever [`Figures`] names. Under
     /// [`Figures::Device`] `words` was counted across these and no others.
@@ -112,6 +114,12 @@ impl BookStat {
     /// and a falling `percent` leaves on.
     pub fn is_finished(&self) -> bool {
         self.finished
+    }
+
+    /// How many times this book has been read end to end: the readings
+    /// `Store::restart` banked, and the one standing where it is finished.
+    pub fn times_finished(&self) -> i64 {
+        self.finished_before + i64::from(self.is_finished())
     }
 
     /// Whether `percent` alone reaches [`FINISHED_PERCENT`].
@@ -1014,6 +1022,7 @@ fn fresh(extent: i64, found: &BookRecord, day: i64) -> BookStat {
         cde_key: found.cde_key.clone(),
         cde_type: found.cde_type.clone(),
         finished: found.finished,
+        finished_before: found.finished_before,
         title: found.title.clone(),
         author: found.author.clone(),
         thumbnail: jacket(found),
@@ -1263,6 +1272,26 @@ pub(crate) mod tests {
         book.percent = -1.0;
         assert!(!book.has_percent());
         assert_eq!(book.bar_percent(), 100);
+    }
+
+    #[test]
+    fn the_readings_counted_are_the_banked_ones_and_the_one_standing() {
+        let mut book = fresh(1, &BookRecord::default(), 0);
+        // Never read through, and read through once without a restart.
+        assert_eq!(book.times_finished(), 0);
+        book.finished = true;
+        assert_eq!(book.times_finished(), 1);
+        // Restarted out of that reading: the store banks it and the mark goes.
+        book.finished = false;
+        book.finished_before = 1;
+        assert_eq!(
+            book.times_finished(),
+            1,
+            "the reading that ended still counts"
+        );
+        // And through the end of the second.
+        book.finished = true;
+        assert_eq!(book.times_finished(), 2);
     }
 
     #[test]

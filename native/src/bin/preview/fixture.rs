@@ -16,6 +16,11 @@ pub const DAYS: i64 = 1150;
 /// The [`SHELF`] slot `BookRecord::finished` is set on.
 const MARKED: usize = 7;
 
+/// The book read end to end three times, and the one part way through its
+/// second reading.
+const REREAD: usize = 0;
+const READING_AGAIN: usize = 2;
+
 /// The [`SHELF`] slots the device holds no jacket for: a Latin title, a Han
 /// one, and a title too long for the box it stands in: what a cover box says
 /// without a cover is drawn in every shape it takes.
@@ -307,6 +312,7 @@ pub fn library(last: i64, art: &Path) -> Store {
             // this one is `MARKED`, short of `FINISHED_PERCENT`.
             finished: slot == MARKED || book.percent >= FINISHED_PERCENT,
             restart: None,
+            finished_before: 0,
             read_state: -1,
             kept: false,
             named_by: Named::Catalog,
@@ -370,7 +376,22 @@ pub fn library(last: i64, art: &Path) -> Store {
         .sort_by(|a, b| a.started_at.cmp(&b.started_at));
     climb(&mut store);
     marked(&mut store, last);
+    reread(&mut store);
     store
+}
+
+/// The books read end to end before, laid down after the seeded loop so a shot
+/// drawing none stays pixel-identical.
+fn reread(store: &mut Store) {
+    for (slot, before) in [(REREAD, 2), (READING_AGAIN, 1)] {
+        let Some(record) = store.books.get_mut(slot) else {
+            continue;
+        };
+        record.finished_before = before;
+        if slot == READING_AGAIN {
+            record.finished = false;
+        }
+    }
 }
 
 /// The marks `store` holds, laid down after the seeded loop: a shot drawing no

@@ -27,9 +27,6 @@ fn unit(book: &BookStat, s: &Strings) -> (&'static str, &'static str) {
     }
 }
 
-/// Rows of figures the reading section lists.
-const LINES: usize = 10;
-
 /// What a row states in place of a figure it has none of.
 const DASH: &str = "—";
 
@@ -288,7 +285,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
     // [`figures`] states the other three.
     let from = cx.figures;
     let (count, rate) = unit(&book, s);
-    let lines: [(&str, String); LINES] = [
+    let mut lines: Vec<(&str, String)> = vec![
         (s.sittings, book.sittings.to_string()),
         (s.days, days_note(&book, s)),
         (s.average_a_day, date::duration(book.per_day(from), s)),
@@ -305,8 +302,14 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
         (s.started, day_note(book.first_day, &book, s)),
         (s.last_read, day_note(book.last_day, &book, s)),
         (s.finished_on, finished_note(&book, s)),
-        (s.on_the_device, where_note(&book, s)),
     ];
+    // A restart empties `finished_on`, so this row is where that reading shows.
+    if book.finished_before > 0 {
+        let said = crate::lang::counted(s.n_times, book.times_finished());
+        lines.push((s.read_through_row, said));
+    }
+    // The file, not the reading: the last row whatever stands above it.
+    lines.push((s.on_the_device, where_note(&book, s)));
     // A row stands `theme.row_h` tall, as `config`'s do, and the rows share
     // what the section leaves them where it leaves them less than that.
     let deep = (theme.row_h * lines.len() as i32).min(inner.h);
@@ -624,6 +627,7 @@ mod tests {
             cde_key: "KEY1".into(),
             cde_type: "EBOK".into(),
             finished: false,
+            finished_before: 0,
             title: "A Book".into(),
             author: String::new(),
             thumbnail: String::new(),
