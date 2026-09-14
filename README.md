@@ -2,6 +2,12 @@
 
 Keep track of your reading by parsing the local system logs on your jailbroken Kindle.  
 
+<p align="center">
+    <img src=".github/assets/books/today.png" width="250" alt="Today" />
+    <img src=".github/assets/rhythm/all-stats.png" width="250" alt="All Stats" />
+    <img src=".github/assets/rhythm/year.png" width="250" alt="Year" />
+</p>
+
 ## Install
 
 Download and unzip the latest `readinglog-v<x.y.z>-kindle.zip` from the [release page](https://github.com/huangziwei/readinglog/releases), then copy two things onto the device:
@@ -32,22 +38,20 @@ Book identity is redacted in most of the logs, but can be recovered by looking u
 
 Backlogs can only go back 30 days of use, and they might not even be complete due to file size limit, and removed sideloaded books will not have covers. Don't expect too much from the backlogs, you might be happier if you just reset the history and start tracking from today. 
 
-## Screenshots
+## More Screenshots
+
+### Books
 
 <p align="center">
-    <img src=".github/assets/today.png" width="250" alt="Today" />
-    <img src=".github/assets/book.png" width="250" alt="Book" />
-    <img src=".github/assets/config.png" width="250" alt="Config" />
+    <img src=".github/assets/books/book.png" width="250" alt="Book" />
+    <img src=".github/assets/books/graphs.png" width="250" alt="Graphs" />
+    <img src=".github/assets/books/highlights.png" width="250" alt="Highlights" />
 </p>
+
+### Rhythm
 
 <p align="center">    
-    <img src=".github/assets/books.png" width="250" alt="books" />
-    <img src=".github/assets/rhythm-all-stats.png" width="250" alt="stats" />
-    <img src=".github/assets/rhythm-all-trends.png" width="250" alt="trends" />
-</p>
-
-<p align="center">
-    <img src=".github/assets/rhythm-year.png" width="250" alt="year" />
-    <img src=".github/assets/rhythm-month.png" width="250" alt="month" />
-    <img src=".github/assets/rhythm-week.png" width="250" alt="week" />
+    <img src=".github/assets/rhythm/all-trends.png" width="250" alt="trends" />
+    <img src=".github/assets/rhythm/month.png" width="250" alt="month" />
+    <img src=".github/assets/rhythm/week.png" width="250" alt="wekk" />
 </p>
