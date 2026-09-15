@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use crate::annotate::Mark;
 use crate::clippings::Kind;
 use crate::date;
-use crate::log::session::{Measure, Session};
+use crate::log::session::{Measure, Session, Stretch};
 use crate::settings::{Figures, SittingFloor, WeekStart};
 use crate::store::{BookRecord, FINISHED_PERCENT, Store};
 
@@ -231,6 +231,8 @@ pub struct Sitting {
     pub hours: Vec<(u8, i64)>,
     /// [`Session::progress`], where the book stood as this sitting ended.
     pub progress: Option<f64>,
+    /// [`Session::stretches`], the runs of the book this sitting covered.
+    pub stretches: Vec<Stretch>,
 }
 
 /// The sitting histogram: five minutes a band, and one band above them all.
@@ -376,6 +378,7 @@ impl Stats {
                 page_turns: s.page_turns,
                 hours: hours_at(&s.hours, s.seconds, secs, from_secs, to_secs),
                 progress: s.progress,
+                stretches: s.stretches.clone(),
             });
             out.total_seconds += secs;
             out.total_turns += s.page_turns;
@@ -697,6 +700,26 @@ impl Stats {
                 )
             })
             .collect()
+    }
+
+    /// The runs of the book each sitting covered: one entry per
+    /// [`Self::book_sittings`], ascending, in step with [`Self::book_places`],
+    /// each run a pair of whole per cents. A sitting the record states no run
+    /// for holds an empty list, and the band draws its place as a mark.
+    pub fn book_stretches(&self, book: usize) -> Vec<Vec<(i64, i64)>> {
+        /// One sitting's runs, keyed by the instant it closed, so the band's
+        /// bars stand in the order [`Stats::book_places`] puts its marks.
+        type Closed = ((i64, i64), Vec<(i64, i64)>);
+        let mut out: Vec<Closed> = self
+            .book_sittings(book)
+            .map(|s| {
+                let at = |p: f64| whole_per_cent((p * 100.0).clamp(0.0, 100.0));
+                let runs = s.stretches.iter().map(|r| (at(r.from), at(r.to))).collect();
+                ((s.day, s.to_secs), runs)
+            })
+            .collect();
+        out.sort_by_key(|(at, _)| *at);
+        out.into_iter().map(|(_, runs)| runs).collect()
     }
 
     /// Each reading of one book: the first and last day it was read on. A day
@@ -1841,6 +1864,10 @@ pub(crate) mod tests {
                     "{floor:?} book {at}"
                 );
                 assert_eq!(stats.book_places(at).len() as i64, book.sittings);
+                // The band draws one cluster mark a sitting off `book_places`
+                // and its bars off `book_stretches`; the two walk in step or
+                // the bars belong to the wrong sittings.
+                assert_eq!(stats.book_stretches(at).len() as i64, book.sittings);
                 assert_eq!(stats.book_days(at).len() as i64, book.days);
                 assert_eq!(stats.book_hours(at).iter().sum::<i64>(), book.seconds);
                 assert_eq!(

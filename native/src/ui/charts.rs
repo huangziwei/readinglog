@@ -342,9 +342,49 @@ pub fn columns(
 const STOPS: [i64; 5] = [0, 25, 50, 75, 100];
 const NAMED: [i64; 3] = [0, 50, 100];
 
-/// Where each of `at` stood, as a mark on its column and nothing under it:
-/// `(column, place)` on a scale of 0 to `ceiling`, over `count` columns cut
-/// and named exactly as [`columns`] cuts and names the same strip.
+/// Where the `deep` sittings of one column stand: the step between them, how
+/// wide each draws, and where the first opens.
+///
+/// They stand shoulder to shoulder in time order, a half-mark apart, and the
+/// cluster is only as wide as the sittings in it — never a share of the column,
+/// which would smear a day's sittings across the axis until they stopped
+/// reading as that day. It is centred on the column and **never reaches past
+/// it**: a column with fewer pixels than it has sittings cannot show them apart
+/// at all, and they take its one centre, which is what every mark did before
+/// this band drew runs.
+fn cluster(cell: Rect, deep: i32, side: i32) -> (i32, i32, i32) {
+    let air = (side / 2).max(1);
+    if deep > cell.w {
+        return (0, side, cell.x + (cell.w - side) / 2);
+    }
+    let step = (side + air).min(cell.w / deep);
+    (
+        step,
+        step.min(side).max(1),
+        cell.x + (cell.w - step * deep) / 2,
+    )
+}
+
+/// One sitting on a scatter: the column it falls in, the place it left the
+/// book at, and the runs of the book it covered — each a pair of places on the
+/// same scale. A sitting the record states no run for draws its place alone.
+pub struct Sat {
+    pub column: usize,
+    pub place: i64,
+    pub runs: Vec<(i64, i64)>,
+}
+
+/// Where each of `at` sat, on a scale of 0 to `ceiling`, over `count` columns
+/// cut and named exactly as [`columns`] cuts and names the same strip.
+///
+/// A run draws as a bar from where it opened to where it closed, and one
+/// shorter than its own mark draws as the mark — which is also what a sitting
+/// with no run at all draws, so a record stating only where its sittings ended
+/// is a row of marks and nothing is lost. The sittings sharing a column stand
+/// shoulder to shoulder in time order, a half-mark apart, the cluster centred
+/// on the column and never reaching past it; each states a foot on the axis,
+/// because a sitting cut by a jump draws more than one bar and the bars are
+/// therefore not the sittings.
 #[allow(clippy::too_many_arguments)]
 pub fn scatter(
     fb: &mut Framebuffer,
@@ -352,7 +392,7 @@ pub fn scatter(
     theme: &Theme,
     palette: Palette,
     area: Rect,
-    at: &[(usize, i64)],
+    at: &[Sat],
     count: usize,
     axis: impl Fn(usize) -> String,
     every: usize,
@@ -383,13 +423,49 @@ pub fn scatter(
         text.draw_inked(crate::font::Script::Unknown, fb, x, baseline, &said, LIGHT);
     }
     let ink = palette.deep();
-    for (column, place) in at {
-        let Some(cell) = cells.get(*column) else {
+    let at_place =
+        |place: i64| plot.bottom() - (plot.h as i64 * place.clamp(0, ceiling) / ceiling) as i32;
+    let air = (side / 2).max(1);
+    let mut from = 0;
+    while from < at.len() {
+        let column = at[from].column;
+        let to = at[from..]
+            .iter()
+            .position(|s| s.column != column)
+            .map_or(at.len(), |n| from + n);
+        let held = &at[from..to];
+        from = to;
+        let Some(cell) = cells.get(column) else {
             continue;
         };
-        let y = plot.bottom() - (plot.h as i64 * place.clamp(&0, &ceiling) / ceiling) as i32;
-        let x = cell.x + (cell.w - side) / 2;
-        paint::fill_rgb(fb, Rect::new(x, y - side / 2, side, side), ink);
+        let (step, wide, left) = cluster(*cell, held.len() as i32, side);
+        for (nth, sat) in held.iter().enumerate() {
+            let x = left + step * nth as i32;
+            paint::fill_rgb(
+                fb,
+                Rect::new(x, plot.bottom() + air, wide, theme.rule()),
+                ink,
+            );
+            let mark = |fb: &mut Framebuffer, place: i64| {
+                paint::fill_rgb(
+                    fb,
+                    Rect::new(x, at_place(place) - side / 2, wide, side),
+                    ink,
+                )
+            };
+            if sat.runs.is_empty() {
+                mark(fb, sat.place);
+                continue;
+            }
+            for (opened, closed) in &sat.runs {
+                let (a, b) = (at_place(*opened), at_place(*closed));
+                let (top, tall) = (a.min(b), (a - b).abs());
+                match tall < side {
+                    true => mark(fb, *closed),
+                    false => paint::fill_rgb(fb, Rect::new(x, top, wide, tall), ink),
+                }
+            }
+        }
     }
     let baseline = foot.y + line;
     for (x, name) in named(&cells, every, theme.gap, &axis, &mut |said| {
@@ -1319,6 +1395,39 @@ mod tests {
             assert!(*x >= band.x, "`{name}` opens at {x}, left of {}", band.x);
             let right = band.right();
             assert!(x + w <= right, "`{name}` closes at {}, past {right}", x + w);
+        }
+    }
+
+    /// A cluster reaching into the days either side is the one way this band
+    /// can lie about *when*, and at sixteen sittings to a column no render can
+    /// be read closely enough to settle it.
+    #[test]
+    fn a_cluster_of_sittings_never_leaves_its_column() {
+        // Every panel's own mark, and the narrowest column any strip cuts.
+        for side in [7, 8, 12] {
+            for wide in [4, 5, 9, 17, 33, 120, 400] {
+                for deep in 1..=40 {
+                    let cell = Rect::new(500, 0, wide, 300);
+                    let (step, mark, left) = cluster(cell, deep, side);
+                    assert!(mark >= 1, "side {side} wide {wide} deep {deep}");
+                    let last = left + step * (deep - 1);
+                    let inside = left >= cell.x && last + mark <= cell.right();
+                    // A column narrower than the mark itself cannot hold even
+                    // one; there the cluster is centred and overhangs equally,
+                    // which is exactly what a lone mark already did.
+                    let cramped = mark > wide;
+                    assert!(
+                        inside || cramped,
+                        "side {side} wide {wide} deep {deep}: {left}..{} outside {}..{}",
+                        last + mark,
+                        cell.x,
+                        cell.right(),
+                    );
+                    // Never spread: two sittings stand within a mark and its
+                    // air of each other, whatever room the column has.
+                    assert!(step <= side + (side / 2).max(1));
+                }
+            }
         }
     }
 

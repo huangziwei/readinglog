@@ -7,7 +7,7 @@ use std::path::Path;
 use readinglog_native::annotate::{Mark, State};
 use readinglog_native::clippings::Kind;
 use readinglog_native::date;
-use readinglog_native::log::session::{Measure, Session};
+use readinglog_native::log::session::{Measure, Session, Stretch};
 use readinglog_native::store::{BookRecord, FINISHED_PERCENT, Named, Store};
 
 /// Days of reading laid down behind the day being drawn.
@@ -774,6 +774,7 @@ fn climb(store: &mut Store) {
             .collect();
         let count = at.len() as f64;
         let over = (count / times(slot)).ceil().max(1.0);
+        let mut stood = 0.0;
         for (n, i) in at.iter().enumerate() {
             let step = (n as f64 % over) + 1.0;
             // Every reading but the last ends at the end of the book, except
@@ -782,7 +783,32 @@ fn climb(store: &mut Store) {
                 true => 100.0,
                 false => percent,
             };
-            store.sessions[*i].progress = Some((peak / 100.0 * step / over).min(1.0));
+            let place = (peak / 100.0 * step / over).min(1.0);
+            store.sessions[*i].progress = Some(place);
+            // A sitting covers the ground between where the one before it left
+            // off and where it ends — except every fifth, which dips into the
+            // front matter first and carries on, the shape a jump leaves.
+            let opened = match step == 1.0 {
+                true => 0.0,
+                false => stood,
+            };
+            store.sessions[*i].stretches = match n % 5 == 4 && opened < place {
+                true => vec![
+                    Stretch {
+                        from: 0.01,
+                        to: 0.03,
+                    },
+                    Stretch {
+                        from: opened,
+                        to: place,
+                    },
+                ],
+                false => vec![Stretch {
+                    from: opened,
+                    to: place,
+                }],
+            };
+            stood = place;
         }
     }
 }

@@ -12,7 +12,7 @@ use crate::clippings::Kind;
 use crate::clock::Clock;
 use crate::covers;
 use crate::log::line::{line_stamp, log_stamp};
-use crate::log::session::{Measure, SESSION_GAP_SECS, Session};
+use crate::log::session::{Measure, SESSION_GAP_SECS, Session, Stretch};
 use crate::log::source;
 use crate::sidecar;
 
@@ -2272,7 +2272,7 @@ fn write_session(out: &mut String, s: &Session) {
     row(
         out,
         format_args!(
-            "s\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "s\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             s.started_at,
             s.ended_at,
             s.end_position,
@@ -2296,6 +2296,7 @@ fn write_session(out: &mut String, s: &Session) {
             s.timed_seconds,
             s.timed_words,
             format_args!("{:.*}", PERCENT_PLACES, s.covered),
+            write_stretches(&s.stretches),
         ),
     )
 }
@@ -2335,7 +2336,36 @@ fn read_session<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Session> {
         timed_words: next().parse().unwrap_or(0),
         // A row written before this column states no share.
         covered: next().parse().unwrap_or(0.0),
+        // A row written before this column, or one whose log never stated a
+        // place, states no run of the book. The band draws its mark instead.
+        stretches: read_stretches(next()),
     })
+}
+
+/// The runs of the book a sitting covered, as `from-to` pairs in hundredths of
+/// a per cent: `500-800,1000-1200` is 5 %–8 % and then 10 %–12 %.
+fn write_stretches(runs: &[Stretch]) -> String {
+    runs.iter()
+        .map(|r| {
+            let at = |p: f64| (p * 10_000.0).round() as i64;
+            format!("{}-{}", at(r.from), at(r.to))
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn read_stretches(said: &str) -> Vec<Stretch> {
+    said.split(',')
+        .filter_map(|run| {
+            // A negative place never occurs; `split_once` on '-' is safe.
+            let (from, to) = run.split_once('-')?;
+            let at = |s: &str| s.trim().parse::<f64>().ok().map(|n| n / 10_000.0);
+            Some(Stretch {
+                from: at(from)?,
+                to: at(to)?,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -4443,9 +4473,10 @@ m	260911:115340	7200
             .lines()
             .map(|l| match l.strip_prefix("s\t") {
                 Some(rest) => {
-                    // The four fields a build before v0.3.4 states none of, and
-                    // the share of the book after them.
-                    let cut = (0..5).fold(rest, |r, _| {
+                    // The four fields a build before v0.3.4 states none of, the
+                    // share of the book after them, and the runs of the book
+                    // after that.
+                    let cut = (0..6).fold(rest, |r, _| {
                         r.rsplit_once('\t').expect("a page or interval field").0
                     });
                     format!("s\t{cut}\n")
@@ -4459,8 +4490,112 @@ m	260911:115340	7200
         assert_eq!(read.sessions[0].timed_seconds, 0);
         assert_eq!(read.sessions[0].timed_words, 0);
         assert_eq!(read.sessions[0].covered, 0.0);
+        assert!(read.sessions[0].stretches.is_empty());
         assert_eq!(read.sessions[0].awake_seconds, 6607);
         assert_eq!(read.sessions[0].seconds, 2390);
+    }
+
+    /// The runs of the book survive a round trip, and a row stating none — an
+    /// older build's, or a stack that logs one summary at close — reads as no
+    /// run rather than as a run of nothing.
+    #[test]
+    fn the_runs_of_the_book_survive_the_record() {
+        let runs = vec![
+            Stretch {
+                from: 0.05,
+                to: 0.08,
+            },
+            Stretch {
+                from: 0.1,
+                to: 0.1234,
+            },
+            // One read backwards, which the record states as it stands.
+            Stretch {
+                from: 0.9,
+                to: 0.87,
+            },
+        ];
+        let store = Store {
+            sessions: vec![Session {
+                started_at: "2026-09-15T20:00:00".into(),
+                ended_at: "2026-09-15T20:30:00".into(),
+                end_position: 148_207,
+                seconds: 1800,
+                stretches: runs.clone(),
+                ..Session::default()
+            }],
+            ..Store::default()
+        };
+        let back = Store::from_text(&store.text());
+        assert_eq!(back.sessions[0].stretches, runs);
+        // The column is the last, so an older reader of a newer row keeps
+        // every field before it.
+        assert!(store.text().contains("\t500-800,1000-1234,9000-8700"));
+        assert!(read_stretches("").is_empty());
+        assert!(read_stretches("nonsense").is_empty());
+    }
+
+    /// A stretch list is the first field whose *first* entry matters as much as
+    /// its last: every other figure is replaced or summed, and an opening place
+    /// taken from a batch that began mid-sitting would be silently wrong.
+    ///
+    /// `Store::absorb` is what makes that unreachable. A pass either re-reads a
+    /// sitting from its own start and replaces the row whole, or leaves the row
+    /// alone — it never folds a partial parse into a standing row.
+    #[test]
+    fn a_sitting_extended_by_a_later_pass_keeps_the_place_it_opened_at() {
+        let place = |stamp: &str, total_ms: i64, left: f64| {
+            format!(
+                "{stamp} cvm[6144]: I ReadingTimerController:Information::NextPage,\
+                 Verdict:Processed,IntervalTime:39890,TotalTime:{total_ms},TotalWords:49583,\
+                 CurrentPos:YJPosition: AfQJAAAAAAAA:54205,\
+                 EndPos:YJPosition: AbcVAAAPAAAA:148207,PosLeft:94002,%Left:{left};"
+            )
+        };
+        // The reader opens at 10 % and is at 20 % when the first pass runs.
+        let first = [
+            place("260807:101501", 7_390_020, 0.9),
+            place("260807:101543", 7_431_463, 0.8),
+        ];
+        let mut store = Store::default();
+        store.absorb(&first, "");
+        assert_eq!(store.sessions.len(), 1);
+        assert_eq!(write_stretches(&store.sessions[0].stretches), "1000-2000");
+
+        // The reader keeps going. The next pass collects from `read_from`,
+        // which drops back to this sitting's own start while the mark stands
+        // within `SESSION_GAP_SECS` of it — so the batch opens at 10 % again.
+        let from = store.read_from();
+        assert_eq!(from, "260807:101501", "the batch opens at the sitting");
+        let whole = [
+            first[0].clone(),
+            first[1].clone(),
+            place("260807:101643", 7_531_463, 0.7),
+        ];
+        store.absorb(&whole, &from);
+        assert_eq!(store.sessions.len(), 1, "the row was replaced, not doubled");
+        assert_eq!(
+            write_stretches(&store.sessions[0].stretches),
+            "1000-3000",
+            "the run still opens where the reader opened it",
+        );
+
+        // Once the mark walks past the sitting, `read_from` no longer reaches
+        // it and `absorb` leaves the row whole rather than restating it from a
+        // batch that begins after it opened.
+        store.mark = "260807:120000".into();
+        let from = store.read_from();
+        assert!(
+            from.as_str() > "260807:101501",
+            "the batch opens past the sitting"
+        );
+        store.absorb(&[place("260807:120001", 9_000_000, 0.5)], &from);
+        let held = store
+            .sessions
+            .iter()
+            .find(|s| s.started_at == "2026-08-07T10:15:01")
+            .expect("the sitting stands");
+        assert_eq!(write_stretches(&held.stretches), "1000-3000");
     }
 
     #[test]

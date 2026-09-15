@@ -129,6 +129,15 @@ impl Measure {
     }
 }
 
+/// A run of the book read without navigating away from it: where the reader
+/// stood when it opened, and where they stood when it closed, each as a
+/// fraction of the book. `to` behind `from` is a stretch read backwards.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Stretch {
+    pub from: f64,
+    pub to: f64,
+}
+
 /// One parsed sitting.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Session {
@@ -149,6 +158,11 @@ pub struct Session {
     pub asin: Option<String>,
     /// How far into the book the sitting ended, as a fraction, off `%Left`.
     pub progress: Option<f64>,
+    /// The runs of the book this sitting covered, in the order they were read,
+    /// each a pair of fractions. Empty where the log states no place, which is
+    /// every sitting older than the log and every sitting on a reader stack
+    /// that logs one summary at close.
+    pub stretches: Vec<Stretch>,
     /// The seconds the device stated were left in the book as it closed, off
     /// `NewTimeLeft`.
     pub time_left: Option<i64>,
@@ -208,6 +222,13 @@ impl Session {
         self.end_words = fresh.end_words.or(self.end_words);
         self.asin = fresh.asin.clone().or_else(|| self.asin.clone());
         self.progress = fresh.progress.or(self.progress);
+        // Only a heal calls this, and a heal parses from an empty watermark, so
+        // `fresh` always saw this sitting from its own opening place. A pass
+        // that sees less of a sitting never reaches here: `Store::absorb` drops
+        // and replaces a sitting from its own start, or leaves it untouched.
+        if !fresh.stretches.is_empty() {
+            self.stretches = fresh.stretches.clone();
+        }
         self.time_left = fresh.time_left.or(self.time_left);
         self.stated_wpm = fresh.stated_wpm.or(self.stated_wpm);
         self.tz_offset_s = fresh.tz_offset_s.or(self.tz_offset_s);
@@ -359,6 +380,10 @@ struct Open {
     asin: Option<String>,
     /// The last `%Left` a line stated for this book.
     progress: Option<f64>,
+    /// The runs of the book closed so far, and the one still open: where it
+    /// began, where it was last seen, and whether a page has been turned in it.
+    stretches: Vec<Stretch>,
+    open_stretch: Option<(f64, f64, bool)>,
     /// The last `NewTimeLeft` a line stated for this book.
     time_left: Option<i64>,
     /// The last `TotalWPM` a line stated for this book.
@@ -406,9 +431,42 @@ impl Open {
             open_page: None,
             asin: None,
             progress: None,
+            stretches: Vec::new(),
+            open_stretch: None,
             time_left: None,
             stated_wpm: None,
         }
+    }
+
+    /// Fold in a place the log stated, `jumped` saying whether the reader got
+    /// there by navigating. A jump closes the run it lands in and opens a new
+    /// one where it landed; a page turn extends the one standing. Only a turn
+    /// opens a run, so two jumps together — or a footer tap on the way to one —
+    /// state no run of their own.
+    fn place(&mut self, at: f64, jumped: bool) {
+        match self.open_stretch {
+            // The run closes where the reader last *stood*, not where the jump
+            // put them: a jump line states its destination, and the page it
+            // left is the one the line before it stated.
+            Some((from, to, turned)) if jumped => {
+                if turned {
+                    self.stretches.push(Stretch { from, to });
+                }
+                self.open_stretch = Some((at, at, false));
+            }
+            Some((from, _, _)) => self.open_stretch = Some((from, at, true)),
+            None => self.open_stretch = Some((at, at, !jumped)),
+        }
+    }
+
+    /// The runs this sitting covered, the one still open closed at its last
+    /// place. A run no page was turned in is not a run of the book.
+    fn covered(&self) -> Vec<Stretch> {
+        let mut out = self.stretches.clone();
+        if let Some((from, to, true)) = self.open_stretch {
+            out.push(Stretch { from, to });
+        }
+        out
     }
 
     /// Book an interval's counted reading against the clock hours it ran
@@ -595,6 +653,7 @@ impl Open {
     /// The run as a session. [`Measure`] names the first of the four its
     /// records support, and none of the four keeps the zero.
     fn finish(self, awake: &Awake) -> Session {
+        let stretches = self.covered();
         let counted = (self.time_hi - self.time_lo.unwrap_or(self.time_hi)) / 1000;
         let timed = self.interval_total_ms / 1000;
         let paged = self.paged_total_ms / 1000;
@@ -632,6 +691,7 @@ impl Open {
             measure,
             asin: self.asin,
             progress: self.progress,
+            stretches,
             time_left: self.time_left,
             stated_wpm: self.stated_wpm,
             tz_offset_s: None,
@@ -914,6 +974,7 @@ pub fn parse_sessions<'a>(
         }
         if let Some(left) = percent_left(line, cur.end_position) {
             cur.progress = Some(1.0 - left);
+            cur.place(1.0 - left, obs.jumped);
         }
         if let Some(secs) = time_left(line, cur.end_position) {
             cur.time_left = Some(secs);
@@ -997,6 +1058,103 @@ mod tests {
         "260906:192404 cvm[6144]: I ReadingTimerController:Information::NextPage,Verdict:Processed,PageStartPos:HTMLPosition:7731097,IntervalTime:785,IntervalWords:12,TotalTime:329785,TotalWords:1905,CurrentPos:HTMLPosition:7731097,EndPos:HTMLPosition:19886489,PosLeft:12155392,%Left:0.6112;",
         "260906:192425 cvm[6144]: I ReadingTimerController:Information::NextPage,Verdict:Processed,PageStartPos:HTMLPosition:7731725,IntervalTime:21217,IntervalWords:172,TotalTime:351002,TotalWords:2077,CurrentPos:HTMLPosition:7731725,EndPos:HTMLPosition:19886489,PosLeft:12154764,%Left:0.6111;",
     ];
+
+    /// One `cvm` line at `hhmmss` naming `event`, standing `left` of the book.
+    /// The counter climbs with the clock so the run measures as one sitting.
+    fn placed(hhmmss: &str, event: &str, left: f64) -> String {
+        let secs: i64 = hhmmss[0..2].parse::<i64>().unwrap() * 3600
+            + hhmmss[2..4].parse::<i64>().unwrap() * 60
+            + hhmmss[4..6].parse::<i64>().unwrap();
+        format!(
+            "260906:{hhmmss} cvm[6144]: I ReadingTimerController:Information::{event},\
+             Verdict:Processed,PageStartPos:HTMLPosition:7731097,IntervalTime:785,\
+             IntervalWords:12,TotalTime:{},TotalWords:1905,CurrentPos:HTMLPosition:7731097,\
+             EndPos:HTMLPosition:19886489,PosLeft:12155392,%Left:{left};",
+            secs * 1000,
+        )
+    }
+
+    fn covered(lines: &[String]) -> Vec<(i64, i64)> {
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let out = parse_sessions(refs, &[]);
+        assert_eq!(out.len(), 1, "one sitting");
+        out[0]
+            .stretches
+            .iter()
+            .map(|r| {
+                (
+                    (r.from * 100.0).round() as i64,
+                    (r.to * 100.0).round() as i64,
+                )
+            })
+            .collect()
+    }
+
+    /// The run the reader's own example states: 0 to 10, then back to 5 and on
+    /// to 8, then a jump to 10 and on to 12 — with nothing joining 8 to 10.
+    #[test]
+    fn a_jump_cuts_the_run_of_the_book_and_a_page_turn_opens_one() {
+        assert_eq!(
+            covered(&[
+                placed("100000", "NextPage", 1.0),
+                placed("100100", "NextPage", 0.9),
+                placed("100200", "GoToPosition", 0.95),
+                placed("100300", "NextPage", 0.92),
+                placed("100400", "GoToPosition", 0.9),
+                placed("100500", "NextPage", 0.88),
+            ]),
+            [(0, 10), (5, 8), (10, 12)],
+        );
+        // A run of page turns is one stretch however far it reaches.
+        assert_eq!(
+            covered(&[
+                placed("100000", "NextPage", 1.0),
+                placed("100100", "NextPage", 0.9),
+                placed("100200", "PreviousPage", 0.93),
+                placed("100300", "NextPage", 0.8),
+            ]),
+            [(0, 20)],
+        );
+    }
+
+    /// Two jumps running, and a footer tap on the way to one, cover no ground.
+    /// Cutting on the jump alone drew five runs of nothing on a real record.
+    #[test]
+    fn a_run_no_page_was_turned_in_is_not_a_run_of_the_book() {
+        assert_eq!(
+            covered(&[
+                placed("100000", "NextPage", 1.0),
+                placed("100100", "NextPage", 0.9),
+                placed("100200", "TapOnFooter", 0.9),
+                placed("100300", "GoToPosition", 0.5),
+                placed("100400", "GoToPosition", 0.3),
+                placed("100500", "NextPage", 0.28),
+            ]),
+            [(0, 10), (70, 72)],
+        );
+        // A sitting that only ever navigated states no run at all, and keeps
+        // the place it left the book at.
+        assert!(
+            covered(&[
+                placed("100000", "GoToPosition", 0.5),
+                placed("100100", "TapOnFooter", 0.4),
+            ])
+            .is_empty()
+        );
+    }
+
+    /// A stretch states the run it covered, backwards included — the y axis is
+    /// the place in the book, not the clock.
+    #[test]
+    fn a_run_read_backwards_states_the_ground_it_covered() {
+        assert_eq!(
+            covered(&[
+                placed("100000", "NextPage", 0.2),
+                placed("100100", "PreviousPage", 0.25),
+            ]),
+            [(80, 75)],
+        );
+    }
 
     #[test]
     fn a_mobi8_run_is_measured_the_way_a_kfx_one_is() {
@@ -1543,6 +1701,7 @@ mod tests {
             refused,
             page_turn: true,
             closes: false,
+            jumped: false,
         }
     }
 

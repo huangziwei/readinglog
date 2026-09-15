@@ -338,18 +338,26 @@ fn days(cx: &mut Ctx, area: Rect, strip: &Strip, s: &'static Strings) {
     );
 }
 
-/// Where each sitting of one reading ended, as a mark with nothing under it.
+/// The run of the book each sitting of one reading covered, opening place to
+/// closing place. A sitting the record states no run for keeps its own mark,
+/// and the place before it where it states no place either.
 fn sat(cx: &mut Ctx, area: Rect, index: usize, strip: &Strip, from: i64, to: i64) {
     let s: &Strings = cx.s();
     let mut place = 0;
-    let at: Vec<(usize, i64)> = cx
+    let runs = cx.stats.book_stretches(index);
+    let at: Vec<charts::Sat> = cx
         .stats
         .book_places(index)
         .into_iter()
-        .filter(|(day, _)| (from..=to).contains(day))
-        .map(|(day, at)| {
+        .zip(runs)
+        .filter(|((day, _), _)| (from..=to).contains(day))
+        .map(|((day, at), runs)| {
             place = at.unwrap_or(place);
-            (strip.column(day), place)
+            charts::Sat {
+                column: strip.column(day),
+                place,
+                runs,
+            }
         })
         .collect();
     let theme: &Theme = cx.theme;
@@ -392,6 +400,7 @@ mod tests {
                 page_turns: 40,
                 hours: vec![(1, 1800)],
                 progress: *progress,
+                stretches: Vec::new(),
             })
             .collect();
         let book = BookStat {

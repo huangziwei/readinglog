@@ -219,6 +219,11 @@ pub struct Observation {
     pub refused: bool,
     pub page_turn: bool,
     pub closes: bool,
+    /// Whether the reader reached this place by navigating rather than by
+    /// turning a page — the timer's own `GoToPosition`, and the `TapOnFooter`
+    /// that opens the control one is made from. The place stated beside it is
+    /// where the jump *landed*; the page it left is `ScreenStart`/`ScreenEnd`.
+    pub jumped: bool,
 }
 
 /// Read a line as an observation of some book's reading counter, or `None`. A
@@ -227,6 +232,7 @@ pub struct Observation {
 pub fn observation(line: &str) -> Option<Observation> {
     let page_turn = names(line, "NextPage");
     let closes = names(line, "CloseBook");
+    let jumped = names(line, "GoToPosition") || names(line, "TapOnFooter");
     // A named page event with no counter marks a turn. `TotalTime` is absent
     // from the uncredited ones.
     let named = page_turn || closes || names(line, "PreviousPage") || names(line, "GoToPosition");
@@ -256,6 +262,7 @@ pub fn observation(line: &str) -> Option<Observation> {
         refused: fields(chosen, "SkipAvgReason:").next().is_some(),
         page_turn,
         closes,
+        jumped,
     })
 }
 
