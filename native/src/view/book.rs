@@ -270,7 +270,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
             return marks::draw(cx, area, index, state.marks_from, state.marks_way, None);
         }
         BookTab::Graphs => {
-            return book_graphs::draw(cx, area, index, state.reading, state.readings_from);
+            return book_graphs::draw(cx, area, index, state.reading);
         }
         BookTab::Statistics => {}
     }

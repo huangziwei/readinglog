@@ -706,8 +706,8 @@ impl Stats {
     /// [`Self::book_places`], each run a pair of whole per cents. A sitting
     /// stating no run holds an empty list.
     pub fn book_stretches(&self, book: usize) -> Vec<Vec<(i64, i64)>> {
-        /// One sitting's runs, keyed by the instant it closed, so the band's
-        /// bars stand in the order [`Stats::book_places`] puts its marks.
+        /// One sitting's runs, keyed by the instant it closed. The key orders
+        /// them as [`Stats::book_places`] orders its marks.
         type Closed = ((i64, i64), Vec<(i64, i64)>);
         let mut out: Vec<Closed> = self
             .book_sittings(book)
@@ -723,7 +723,7 @@ impl Stats {
 
     /// Each reading of one book: the first and last day it was read on. A day
     /// in `BookStat::restarted_on` opens a reading and closes the one before
-    /// it, so every reading but the standing one was carried to the end.
+    /// it. Only the last entry can name a reading left open.
     pub fn book_readings(&self, book: usize) -> Vec<(i64, i64)> {
         let Some(stat) = self.books.get(book) else {
             return Vec::new();
@@ -748,11 +748,12 @@ impl Stats {
         out
     }
 
-    /// One book's reading cut by the clock hour it happened in, as
-    /// [`Stats::hours_over`] cuts a span of days.
-    pub fn book_hours(&self, book: usize) -> [i64; 24] {
+    /// One book's reading over `days` cut by the clock hour it happened in, as
+    /// [`Stats::hours_over`] cuts a span of days. The span is one reading of
+    /// the book, off [`Stats::book_readings`].
+    pub fn book_hours(&self, book: usize, days: std::ops::RangeInclusive<i64>) -> [i64; 24] {
         let mut out = [0i64; 24];
-        for sitting in self.book_sittings(book) {
+        for sitting in self.book_sittings(book).filter(|s| days.contains(&s.day)) {
             for (hour, secs) in &sitting.hours {
                 out[(*hour as usize).min(23)] += secs;
             }
@@ -1868,7 +1869,11 @@ pub(crate) mod tests {
                 // the bars belong to the wrong sittings.
                 assert_eq!(stats.book_stretches(at).len() as i64, book.sittings);
                 assert_eq!(stats.book_days(at).len() as i64, book.days);
-                assert_eq!(stats.book_hours(at).iter().sum::<i64>(), book.seconds);
+                let whole = i64::MIN..=i64::MAX;
+                assert_eq!(
+                    stats.book_hours(at, whole).iter().sum::<i64>(),
+                    book.seconds
+                );
                 assert_eq!(
                     stats.book_days(at).iter().map(|(_, s)| s).sum::<i64>(),
                     book.seconds

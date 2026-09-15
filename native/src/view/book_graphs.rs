@@ -3,11 +3,11 @@
 //! the day it was read in.
 
 use crate::date;
-use crate::lang::{self, Strings};
+use crate::lang::Strings;
 use crate::settings::WeekStart;
 use crate::ui::charts;
 use crate::ui::chrome;
-use crate::ui::paint::{self, DARK, INK, Rect};
+use crate::ui::paint::{self, INK, PALE, Rect};
 use crate::ui::theme::Theme;
 
 use super::{Ctx, Hit};
@@ -18,11 +18,8 @@ const WHOLE_BOOK: i64 = 100;
 /// One hour of the clock in this many is named, as `alltime::trends` names it.
 const HOURS_NAMED: usize = 3;
 
-/// The list of readings takes at most one in this many of the page's height.
+/// The reading row takes at most one in this many of the page's height.
 const LISTED: i32 = 2;
-
-/// The most readings the list holds before it pages.
-const ROWS: usize = 3;
 
 /// How wide a column of the days band may fall before the strip steps up to a
 /// coarser one.
@@ -71,7 +68,7 @@ impl Grain {
     }
 
     /// What a column opening on `day` is called. A strip reaching over a new
-    /// year states one, so two columns a year apart never read alike.
+    /// year states one, and two columns a year apart never read alike.
     fn name(self, day: i64, year: bool, s: &Strings) -> String {
         let (y, m, _) = date::civil_from_days(day);
         match (self, year) {
@@ -106,8 +103,8 @@ fn strip(
 }
 
 /// "Aug 6 – Oct 22, 2024", or both years where the two fall in different ones.
-/// A reading still going states the day it opened and no day it closed; one
-/// carried through in a day states that day alone.
+/// A `whole` of false states the day it opened and no day it closed; `from`
+/// meeting `to` states that day alone.
 fn spanned(from: i64, to: i64, whole: bool, s: &Strings) -> String {
     if !whole {
         return format!("{} –", date::year_day(from, s));
@@ -130,9 +127,9 @@ fn whole(at: usize, reads: usize, finished: bool) -> bool {
     at + 1 < reads || finished
 }
 
-/// The whole box under the head row: the readings listed, then the one picked
-/// drawn out under them.
-pub fn draw(cx: &mut Ctx, area: Rect, index: usize, on: Option<usize>, from_row: usize) {
+/// The whole box under the head row: the reading picked, then that reading
+/// drawn out under it.
+pub fn draw(cx: &mut Ctx, area: Rect, index: usize, on: Option<usize>) {
     let s = cx.s();
     let reads = cx.stats.book_readings(index);
     let Some((on, (from, to))) = picked(on, &reads) else {
@@ -142,28 +139,20 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, on: Option<usize>, from_row:
     let head = chrome::section_height(cx.text, theme);
     let line = line(cx);
     let room = (area.h / LISTED - head).max(line);
-    let shown = reads.len().min(ROWS);
-    let pitch = (room / shown as i32).clamp(line, theme.row_h);
-    let (top, rest) = area.split_top(head + pitch * shown as i32 + theme.gap * 2);
-    listed(cx, top, index, &reads, on, pitch, from_row);
+    let pitch = room.clamp(line, theme.row_h);
+    let (top, rest) = area.split_top(head + pitch + theme.gap * 2);
+    listed(cx, top, index, &reads, on, pitch);
 
-    let hours = cx.stats.book_hours(index);
+    // `from..=to` is the picked reading's first day and its last, which
+    // `days`, `sat` and `book_hours` are all cut to.
+    let hours = cx.stats.book_hours(index, from..=to);
     let clock = hours.iter().any(|secs| *secs > 0);
     let rows = rest.rows(2 + clock as i32, cx.theme.gap * 2);
     let theme: &Theme = cx.theme;
     let carried = whole(on, reads.len(), cx.stats.books[index].finished);
     let said = spanned(from, to, carried, s);
-    // One reading needs no number, and nothing to tell it from.
-    let head = match reads.len() {
-        1 => s.the_days.to_string(),
-        _ => format!(
-            "{} · {}",
-            s.the_days,
-            lang::counted(s.nth_reading, on as i64 + 1)
-        ),
-    };
     let strip = Strip::of(cx, index, rows[0].w, from, to);
-    let inner = chrome::heading_stating(cx.fb, cx.text, theme, rows[0], &head, Some(&said));
+    let inner = chrome::heading_stating(cx.fb, cx.text, theme, rows[0], s.the_days, Some(&said));
     days(cx, inner, &strip, s);
     let inner = chrome::heading_stating(cx.fb, cx.text, theme, rows[1], s.where_you_sat, None);
     sat(cx, inner, index, &strip, from, to);
@@ -186,105 +175,58 @@ fn line(cx: &mut Ctx) -> i32 {
     cx.text.line_height() as i32
 }
 
-/// Each reading on its own row, newest first, the picked one inked black. A
-/// reading carried through the end of the book takes a filled mark. The rows
-/// page [`ROWS`] at a time, as one day's books do.
-fn listed(
-    cx: &mut Ctx,
-    area: Rect,
-    index: usize,
-    reads: &[(i64, i64)],
-    on: usize,
-    pitch: i32,
-    from_row: usize,
-) {
+/// The reading picked: its span at the left, the seconds it took at the right,
+/// closed by a rule. One reading fills the band, and `‹ ›` step between them.
+fn listed(cx: &mut Ctx, area: Rect, index: usize, reads: &[(i64, i64)], on: usize, pitch: i32) {
     let s = cx.s();
     let theme: &Theme = cx.theme;
-    let title = lang::counted(s.read_through_band, reads.len() as i64);
     let bar = Rect::new(
         area.x,
         area.y,
         area.w,
         chrome::section_height(cx.text, theme),
     );
-    let inner = chrome::heading_stating(cx.fb, cx.text, theme, area, &title, None);
+    let title = s.read_through_band;
+    let inner = chrome::heading_stating(cx.fb, cx.text, theme, area, title, None);
+    if reads.len() > 1 {
+        let of = format!("{} / {}", on + 1, reads.len());
+        let last = reads.len() - 1;
+        super::daybooks::pager(
+            cx,
+            bar,
+            &of,
+            &[
+                Hit::Reading(on.saturating_sub(1)),
+                Hit::Reading((on + 1).min(last)),
+            ],
+        );
+    }
     let days = cx.stats.book_days(index);
-    let finished = cx.stats.books[index].finished;
+    let (opened, closed) = reads[on];
+    let secs: i64 = days
+        .iter()
+        .filter(|(day, _)| *day >= opened && *day <= closed)
+        .map(|(_, secs)| secs)
+        .sum();
     let script = cx.ui_script();
     line(cx);
     let cap = cx.text.cap_height() as i32;
-    let side = cap * 2 / 3;
-    // The list runs newest first, so a row's place counts back from the last.
-    let deep = reads.len().min(ROWS);
-    let from_row = from_row.min(super::last_page_at(reads.len(), deep));
-    let to_row = (from_row + deep).min(reads.len());
-    if reads.len() > deep {
-        super::daybooks::pager(cx, bar, from_row, to_row, reads.len(), deep, &|at| {
-            Hit::ReadingsPage(at)
-        });
-    }
-    for (down, place) in (from_row..to_row).enumerate() {
-        let at = reads.len() - 1 - place;
-        let (opened, closed) = reads[at];
-        let row = Rect::new(inner.x, inner.y + down as i32 * pitch, inner.w, pitch);
-        if row.bottom() > inner.bottom() {
-            break;
-        }
-        let secs: i64 = days
-            .iter()
-            .filter(|(day, _)| *day >= opened && *day <= closed)
-            .map(|(_, secs)| secs)
-            .sum();
-        let carried = whole(at, reads.len(), finished);
-        let baseline = row.y + (pitch + cap) / 2;
-        let mark = Rect::new(row.x, baseline - side, side, side);
-        match carried {
-            true => paint::fill_rgb(cx.fb, mark, cx.palette.bar()),
-            false => paint::stroke(cx.fb, mark, DARK, theme.rule()),
-        }
-        let ink = match at == on {
-            true => INK,
-            false => DARK,
-        };
-        let span = spanned(opened, closed, carried, s);
-        let said = match reads.len() {
-            1 => span,
-            _ => format!("{}   {span}", at + 1),
-        };
-        let x = mark.right() + theme.gap;
-        cx.text.draw_inked(script, cx.fb, x, baseline, &said, ink);
-        let (rest, spark) = row.split_left(row.w - row.w / 5);
-        let over = date::duration(secs, s);
-        let w = cx.text.measure_width(&over) as i32;
-        cx.text
-            .draw_inked(script, cx.fb, rest.right() - w, baseline, &over, ink);
-        let tall = (cap * 3 / 2).min(pitch - 2);
-        let strip = Rect::new(
-            spark.x + theme.gap,
-            baseline - tall,
-            spark.w - theme.gap,
-            tall,
-        );
-        sparkline(cx, strip, &days, opened, closed);
-        cx.hit(Hit::Reading(at), row);
-    }
+    let row = Rect::new(inner.x, inner.y, inner.w, pitch);
+    let baseline = row.y + (pitch + cap) / 2;
+    let carried = whole(on, reads.len(), cx.stats.books[index].finished);
+    let said = spanned(opened, closed, carried, s);
+    cx.text
+        .draw_inked(script, cx.fb, row.x, baseline, &said, INK);
+    let over = date::duration(secs, s);
+    let w = cx.text.measure_width(&over) as i32;
+    cx.text
+        .draw_inked(script, cx.fb, row.right() - w, baseline, &over, INK);
+    // The rule closes the band the air over the heading's cap opens it by.
+    let air = baseline - row.y - cap;
+    paint::hline(cx.fb, area.x, baseline + air, area.w, PALE, theme.rule());
 }
 
-/// One reading's own days, small enough to stand on a row of the list.
-fn sparkline(cx: &mut Ctx, area: Rect, days: &[(i64, i64)], from: i64, to: i64) {
-    let (values, _, _) = strip(days, from, to, area.w, cx.week);
-    let top = values.iter().copied().max().unwrap_or(0).max(1);
-    let ink = cx.palette.bar();
-    for (secs, cell) in values.iter().zip(area.columns(values.len() as i32, 0)) {
-        let h = (area.h as i64 * secs / top) as i32;
-        if h > 0 {
-            let bar = Rect::new(cell.x, area.bottom() - h, cell.w.max(1), h);
-            paint::fill_rgb(cx.fb, bar, ink);
-        }
-    }
-}
-
-/// The one strip a reading's two bands are both drawn on, so their columns and
+/// The one strip a reading's two bands are both drawn on. Their columns and
 /// their axis stand in the same places.
 struct Strip {
     values: Vec<i64>,
@@ -471,7 +413,7 @@ mod tests {
         assert_eq!(spanned(open, close, true, s), "Aug 6, 2024 – Aug 7, 2026");
         // A reading carried through in a day states that day once.
         assert_eq!(spanned(open, open, true, s), "Aug 6, 2024");
-        // One still going states no day it closed on.
+        // A `whole` of false states no day it closed on.
         assert_eq!(spanned(open, close, false, s), "Aug 6, 2024 –");
     }
 
@@ -498,9 +440,24 @@ mod tests {
     #[test]
     fn the_clock_holds_every_hour_this_book_was_read_in() {
         let stats = read(&[Some(0.10), Some(0.40)], &[]);
-        let hours = stats.book_hours(0);
+        let hours = stats.book_hours(0, i64::MIN..=i64::MAX);
         assert_eq!(hours[1], 3600, "both sittings fell in the same hour");
         assert_eq!(hours.iter().sum::<i64>(), 3600);
         assert_eq!(hours.len(), 24);
+    }
+
+    /// [`Stats::book_hours`] over one reading's span holds that reading's
+    /// seconds and no others.
+    #[test]
+    fn the_clock_holds_only_the_hours_of_the_reading_picked() {
+        let stats = read(&[Some(0.10), Some(0.40)], &[]);
+        let days = stats.book_days(0);
+        assert_eq!(days.len(), 2, "a day each");
+        let whole = stats.book_hours(0, i64::MIN..=i64::MAX);
+        for (day, secs) in &days {
+            let cut = stats.book_hours(0, *day..=*day);
+            assert_eq!(cut.iter().sum::<i64>(), *secs, "day {day}");
+            assert!(cut.iter().sum::<i64>() < whole.iter().sum::<i64>());
+        }
     }
 }

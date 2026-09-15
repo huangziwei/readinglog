@@ -97,34 +97,30 @@ pub fn paged(cx: &mut Ctx, area: Rect, day: i64, from: usize) {
     let from = from.min(super::last_page_at(read.len(), deep));
     let to = (from + deep).min(read.len());
     if read.len() > deep {
-        pager(cx, bar, from, to, read.len(), deep, &Hit::ListPage);
+        let last = super::last_page_at(read.len(), deep);
+        let of = format!("{}–{to} {} {}", from + 1, cx.s().of, read.len());
+        pager(
+            cx,
+            bar,
+            &of,
+            &[
+                Hit::ListPage(from.saturating_sub(deep)),
+                Hit::ListPage((from + deep).min(last)),
+            ],
+        );
     }
     draw_noting(cx, inner, day, &read[from..to]);
 }
 
-/// `from`–`to` of `count` at the right of the list's heading, a chip either
-/// side of it stepping by `deep` and carrying the index it opens at. The two
-/// straddle the count, each its own target.
-pub(super) fn pager(
-    cx: &mut Ctx,
-    head: Rect,
-    from: usize,
-    to: usize,
-    count: usize,
-    deep: usize,
-    page: &dyn Fn(usize) -> Hit,
-) {
+/// `of` at the right of the list's heading, a chip either side of it taking
+/// `steps` in the order written. The two straddle `of`, each its own target.
+pub(super) fn pager(cx: &mut Ctx, head: Rect, of: &str, steps: &[Hit; 2]) {
     let theme: &Theme = cx.theme;
-    let last = super::last_page_at(count, deep);
-    let of = format!("{}–{to} {} {count}", from + 1, cx.s().of);
     let row = chrome::heading_row(cx.text, theme, head);
     let script = cx.ui_script();
     cx.text.set_px(theme.small_px);
-    let said = cx.text.measure_width(&of) as i32;
-    let steps = [
-        ("‹", page(from.saturating_sub(deep))),
-        ("›", page((from + deep).min(last))),
-    ];
+    let said = cx.text.measure_width(of) as i32;
+    let steps = [("‹", steps[0]), ("›", steps[1])];
     let chips: Vec<i32> = steps
         .iter()
         .map(|(label, _)| cx.text.measure_width_in(script, label) as i32 + theme.gap * 2)
@@ -138,7 +134,7 @@ pub(super) fn pager(
 
     cx.text.set_px(theme.small_px);
     let baseline = row.center_y() + cx.text.cap_height() as i32 / 2;
-    cx.text.draw(cx.fb, x, baseline, &of, false);
+    cx.text.draw(cx.fb, x, baseline, of, false);
     x += said + air;
     heading_chip(cx, row, x, steps[1].0, steps[1].1, chips[1]);
 }
