@@ -1,6 +1,6 @@
 //! The two annotation sources joined: the `.sdr` rare sidecar is the roster of
 //! marks that exist now, `My Clippings.txt` the journal of every write ever.
-//! Neither is a superset, and a union of them draws marks the reader deleted.
+//! Neither is a superset, and their union holds deleted marks.
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -24,8 +24,7 @@ const CUT: char = '…';
 pub enum State {
     /// A sidecar record carries this stamp: the mark is in the book now.
     Live,
-    /// The book's sidecar was in a position to say so and does not carry it:
-    /// the reader made this mark and then deleted it.
+    /// A sidecar in a position to carry this mark does not.
     Retired,
     /// No sidecar could say either way.
     #[default]
@@ -65,8 +64,7 @@ pub struct Mark {
     /// later pass re-resolves it when the catalog finally does.
     pub extent: i64,
     /// The title as the source stated it, kept even once `extent` names a
-    /// record: it is what a re-read joins on, and it outlives the book being
-    /// deleted from the device.
+    /// record: it is what a re-read joins on, and it outlives `extent`.
     pub title: String,
     pub kind: Kind,
     /// `YYYY-MM-DDTHH:MM:SS`, device-local, as a sitting stores its own.
@@ -84,8 +82,8 @@ pub struct Mark {
     pub location: i64,
     /// The publisher's page label the clipping carried, empty where none.
     pub page: String,
-    /// One of the eleven `AnnotationColor` names, where the sidecar stated
-    /// one. Empty otherwise — the clippings file never carries a colour.
+    /// One of the eleven `AnnotationColor` names a sidecar states, empty
+    /// where none. `My Clippings.txt` carries no colour.
     pub colour: String,
     /// The words: a note's whole text, and [`EXCERPT`] characters of a
     /// highlight's.
@@ -102,6 +100,34 @@ impl Mark {
     /// The day this mark was made, as a day count.
     pub fn day(&self) -> Option<i64> {
         date::parse_day(date::day_of(&self.at))
+    }
+
+    /// What names this mark across passes: the fields a clipping states, which
+    /// stand whether or not a sidecar can be read.
+    pub fn named(&self) -> (&str, Kind, &str, i64) {
+        (&self.at, self.kind, &self.title, self.location)
+    }
+
+    /// Take from `held` every sidecar field this mark states none of:
+    /// `start`, `end`, `colour`, `extent` and a state over
+    /// [`State::Unconfirmed`]. [`covering`] pairs a note by `start`.
+    pub fn keep_from(&mut self, held: &Mark) {
+        if self.start < 0 && held.start >= 0 {
+            self.start = held.start;
+            self.end = held.end;
+        }
+        if self.colour.is_empty() {
+            self.colour.clone_from(&held.colour);
+        }
+        if self.page.is_empty() {
+            self.page.clone_from(&held.page);
+        }
+        if self.extent == 0 {
+            self.extent = held.extent;
+        }
+        if self.state == State::Unconfirmed {
+            self.state = held.state;
+        }
     }
 
     /// How far apart in stamp this mark and `other` are, for choosing between
@@ -190,9 +216,8 @@ pub struct Merge {
     pub held: usize,
 }
 
-/// **Bump with every change that would give different rows over unchanged
-/// files**, or the new join never reaches a device whose files have not
-/// moved.
+/// **Bump with every change giving different rows over unchanged files**:
+/// [`gate`] holds the join back on files that have not moved.
 const RULES: u32 = 6;
 
 /// What a pass must have seen for the rows it wrote to still stand.
@@ -229,15 +254,15 @@ pub fn gate(clips: &Path, survey: &Survey) -> Gate {
     }
 }
 
-/// Whether [`fold`] would read anything: the answer [`crate::sidecar::read`]
-/// has to be paid for, taken before paying it.
+/// Whether [`fold`] reads anything, answered before [`crate::sidecar::read`]
+/// is paid for.
 pub fn wants(store: &Store, clips: &Path, survey: &Survey) -> bool {
     store.gate != Some(gate(clips, survey))
 }
 
 /// Join the two sources into `store`, replacing every `a` row. `records` is
-/// `My Clippings.txt` already parsed, since the launch reads it once for here
-/// and [`crate::identify::rescue_from`]. Nothing is read while the gate holds.
+/// `My Clippings.txt` parsed once for here and
+/// [`crate::identify::rescue_from`]. Nothing is read while [`gate`] holds.
 pub fn fold(
     store: &mut Store,
     clips: &Path,
@@ -265,8 +290,7 @@ pub fn fold(
             State::Unconfirmed => out.unconfirmed += 1,
         }
     }
-    // A retired row is one the reader took out of the book: counted here,
-    // stored nowhere.
+    // A `State::Retired` row is counted here and stored nowhere.
     let held: Vec<Mark> = marks
         .into_iter()
         .filter(|m| m.state.is_in_the_book())
@@ -310,11 +334,10 @@ impl Held<'_> {
     }
 }
 
-/// [`fold`]'s arithmetic, over sources already read.
+/// [`fold`]'s arithmetic, over `records` and `shelf` as read.
 fn merged(records: &[Clipping], shelf: &Shelf, books: &[BookRecord], clock: &Clock) -> Vec<Mark> {
-    // Both ways into `books`, built once. Reaching a record by scanning
-    // instead is a pass over every record per roster and per clipping, and the
-    // title arm folds every record's title on each of them.
+    // Both ways into `books`, built once: a scan costs a pass over every
+    // record per roster and per clipping.
     let by_stem = stems(books);
     let by_title = titles(books);
     let mut held: Vec<Held> = shelf
@@ -373,8 +396,8 @@ fn merged(records: &[Clipping], shelf: &Shelf, books: &[BookRecord], clock: &Clo
         out.push(one(clip, *named, *found, &held));
     }
     // Every sidecar record no clipping speaks for is a mark the file cannot
-    // reach — handwriting, which `ClippingsManager.C` refuses, or a clippings
-    // file the reader emptied. It exists, so it is stored, without words.
+    // reach — handwriting, which `ClippingsManager.C` refuses, or an emptied
+    // `My Clippings.txt`. It is stored without words.
     for at in &held {
         for (i, annotation) in at.roster.annotations.iter().enumerate() {
             if at.claimed[i] {
@@ -398,9 +421,8 @@ fn merged(records: &[Clipping], shelf: &Shelf, books: &[BookRecord], clock: &Clo
             });
         }
     }
-    // The bodies are compared whole and only then cut: two highlights that
-    // differ past the excerpt are two marks, and cutting first would make an
-    // extended selection identical to the revision it replaced.
+    // The bodies are compared whole and cut after: two highlights differing
+    // past [`EXCERPT`] are two marks.
     settle(out)
         .into_iter()
         .map(|mut mark| {
@@ -410,8 +432,8 @@ fn merged(records: &[Clipping], shelf: &Shelf, books: &[BookRecord], clock: &Clo
         .collect()
 }
 
-/// The second join, for a rebuilt sidecar whose restamped records no longer
-/// meet the clippings: within one book and one kind, equal counts of leftovers
+/// The second join, for a rebuilt sidecar whose restamped records miss the
+/// clippings: within one book and one kind, equal counts of leftovers
 /// pair k-th to k-th in reading order, and unequal counts pair nothing.
 fn in_order(
     records: &[Clipping],
@@ -488,9 +510,8 @@ fn one(
                 mark.extent = book.extent;
             }
         }
-        // Absence only means deletion where a sidecar was in a position to
-        // say so. A book with none, or one whose sidecar would not parse,
-        // says nothing at all.
+        // Absence means deletion only where a sidecar is in a position to
+        // say so. A book with none, or an unparsed one, says nothing.
         None => {
             let roster = held
                 .iter()
@@ -552,9 +573,9 @@ fn instant(at: &str) -> Option<i64> {
     Some(day * 86_400 + date::secs_of(at))
 }
 
-/// The offsets the device stood on, measured off the one instant it wrote
-/// twice: `My Clippings.txt` in wall clock, the rare sidecar in epoch
-/// milliseconds. Best-supported first, and never below [`SUPPORT`].
+/// The offsets measured off the one instant written twice: `My Clippings.txt`
+/// in wall clock, the sidecar in epoch milliseconds. Best-supported first, and
+/// never below [`SUPPORT`].
 fn offsets_seen(records: &[Clipping], shelf: &Shelf) -> Vec<i64> {
     // The file's instants by kind, ascending, so one record reads only the
     // clippings a clock could reach — never the whole file.
@@ -595,8 +616,7 @@ fn offsets_seen(records: &[Clipping], shelf: &Shelf) -> Vec<i64> {
 const SUPPORT: usize = 2;
 
 /// `(instant, offset)` per record the two files agree about. Must run before
-/// any pass that places a true epoch on the device's clock, [`merged`]
-/// included.
+/// any pass placing a true epoch on [`Clock`], [`merged`] included.
 pub fn clocks_seen(records: &[Clipping], shelf: &Shelf) -> Vec<(i64, i64)> {
     let offsets = offsets_seen(records, shelf);
     if offsets.is_empty() {
@@ -661,8 +681,8 @@ fn stem_of(location: &str) -> &str {
     }
 }
 
-/// `body` as the store keeps it: whole where the words are the reader's own,
-/// and [`EXCERPT`] characters where they are the book's.
+/// `body` as the store keeps it: whole for [`Kind::Note`], and
+/// [`EXCERPT`] characters for the book's own words.
 fn bounded(kind: Kind, body: &str) -> String {
     if kind.is_the_readers_own() || body.chars().count() <= EXCERPT {
         return body.to_string();
@@ -673,8 +693,8 @@ fn bounded(kind: Kind, body: &str) -> String {
 }
 
 /// The rows one merge came to, deduplicated by the sidecar's `(start, end)`
-/// where it stated one and by `(title, kind, body)` otherwise. **Never by the
-/// display location**, which is ~150 positions wide and shared by real marks.
+/// where it stated one, and by `(title, kind, body)` without. **Never by
+/// `Mark::location`**, ~150 positions wide and shared by real marks.
 fn settle(mut marks: Vec<Mark>) -> Vec<Mark> {
     // Earliest first, so the row kept is the one stating when the mark was
     // made and the bodies that follow are the later words.
@@ -703,8 +723,8 @@ fn settle(mut marks: Vec<Mark>) -> Vec<Mark> {
                 .find(|&held| words_hold(&out[held], &mark)),
         };
         match at {
-            // The row already held opened the mark; the later one only
-            // restates its words, which is what the reader last wrote.
+            // The held row opened the mark; the later one restates its
+            // words.
             Some(at) if !mark.body.is_empty() => out[at].body = mark.body,
             Some(_) => {}
             None => {
@@ -719,9 +739,8 @@ fn settle(mut marks: Vec<Mark>) -> Vec<Mark> {
             }
         }
     }
-    // A retired or unconfirmed row the sidecar's own words hold is that
-    // annotation's earlier write. Only a row under the same book and kind can
-    // hold it, which `under` already names.
+    // A row under `State::Retired` or `State::Unconfirmed` whose words
+    // a sidecar holds is an earlier write, and `under` names it.
     let keep: Vec<bool> = out
         .iter()
         .map(|m| {
@@ -770,7 +789,7 @@ mod tests {
 
     use crate::sidecar::Annotation;
 
-    /// A `b` record for a book on the device.
+    /// A `b` record carrying `p_location`.
     fn book(extent: i64, title: &str, file: &str) -> BookRecord {
         BookRecord {
             extent,
@@ -894,8 +913,8 @@ mod tests {
 
     #[test]
     fn a_mark_the_reader_deleted_is_retired_and_not_a_ghost() {
-        // A bookmark is a marker the reader clears once it has done its job,
-        // so the clippings file keeps it and no sidecar holds one.
+        // `My Clippings.txt` keeps a cleared bookmark; no sidecar holds
+        // one.
         let books = [book(1000, "A Book", "A Book")];
         let shelf = shelf_of(vec![roster("A Book", true, Vec::new())]);
         let got = merge(
@@ -979,9 +998,8 @@ mod tests {
 
     #[test]
     fn an_extended_selection_is_one_mark_at_the_words_it_became() {
-        // The reader dragged the handle, so the file carries the passage twice
-        // with the shorter inside the longer. That is one mark, and what
-        // stands is the sidecar's own — the words the book holds now.
+        // A dragged handle files the passage twice, the shorter inside
+        // the longer. One mark stands, at the sidecar\'s own words.
         let books = [book(1000, "觀念史研究", "觀念史研究")];
         let shelf = shelf_of(vec![roster(
             "觀念史研究",
@@ -1128,9 +1146,8 @@ mod tests {
 
     #[test]
     fn a_book_re_downloaded_keeps_the_words_its_new_sidecar_lost() {
-        // A new `.sdr` restamps `created`, so it no longer meets the clipping
-        // appended the first time round. One leftover each side of one book
-        // and kind, so the pairing is forced.
+        // A new `.sdr` restamps `created` past the clipping appended
+        // first. One leftover each side of one book and kind.
         let books = [book(1000, "A Book", "A Book")];
         let shelf = shelf_of(vec![roster(
             "A Book",
@@ -1204,8 +1221,8 @@ mod tests {
 
     #[test]
     fn leftovers_pair_up_the_book_and_never_by_their_stamps() {
-        // Three of each, and the sidecar's stamps run in the opposite order
-        // to the reader's: the pairing is by place in the book, not by time.
+        // Three of each, the sidecar\'s stamps in the opposite order: the
+        // pairing is by place in the book, not by stamp.
         let books = [book(1000, "A Book", "A Book")];
         let shelf = shelf_of(vec![roster(
             "A Book",
@@ -1282,8 +1299,8 @@ mod tests {
             stems(&books).get(named).map(|&at| books[at].extent),
             Some(1000)
         );
-        // The bridge is the whole stem, never a prefix of it: two copies of
-        // one book differ only in the hash the reader appended.
+        // The bridge is the whole stem, never a prefix: two copies of one
+        // book differ only in the appended hash.
         assert!(
             !stems(&books).contains_key("[An Author] A Book (2011).ffffffff"),
             "a stem that only shares a prefix names no book"

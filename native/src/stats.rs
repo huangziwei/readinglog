@@ -702,10 +702,9 @@ impl Stats {
             .collect()
     }
 
-    /// The runs of the book each sitting covered: one entry per
-    /// [`Self::book_sittings`], ascending, in step with [`Self::book_places`],
-    /// each run a pair of whole per cents. A sitting the record states no run
-    /// for holds an empty list, and the band draws its place as a mark.
+    /// One entry per [`Self::book_sittings`], ascending and in step with
+    /// [`Self::book_places`], each run a pair of whole per cents. A sitting
+    /// stating no run holds an empty list.
     pub fn book_stretches(&self, book: usize) -> Vec<Vec<(i64, i64)>> {
         /// One sitting's runs, keyed by the instant it closed, so the band's
         /// bars stand in the order [`Stats::book_places`] puts its marks.

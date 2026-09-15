@@ -14,8 +14,7 @@ use super::power::{Awake, is_state_change};
 pub const SESSION_GAP_SECS: i64 = 30 * 60;
 
 /// How far the wall clock may step back inside a run before the run is cut.
-/// The clock only moves backwards when the device changes zone, and a run
-/// spanning that would book one clock hour twice.
+/// A run spanning a backward step books one clock hour twice.
 const CLOCK_BACK_SECS: i64 = 60;
 
 /// How far a session's opening counter may outrun the wall clock.
@@ -94,7 +93,7 @@ fn paged_secs(standing_secs: i64) -> i64 {
 /// How a session's seconds were arrived at, ranked best first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Measure {
-    /// The span of the device's own `TotalTime` counter.
+    /// The span of `TotalTime`.
     #[default]
     Counted,
     /// What `TotalTime` credits, plus the pages left out of it whose own rate
@@ -129,9 +128,8 @@ impl Measure {
     }
 }
 
-/// A run of the book read without navigating away from it: where the reader
-/// stood when it opened, and where they stood when it closed, each as a
-/// fraction of the book. `to` behind `from` is a stretch read backwards.
+/// One run of a book: the place it opened at and the place it closed at, each
+/// a fraction of `Session::end_position`. `to` under `from` runs backwards.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Stretch {
     pub from: f64,
@@ -147,7 +145,7 @@ pub struct Session {
     /// The book's own end position, this sitting's fingerprint for its book.
     pub end_position: i64,
     pub seconds: i64,
-    /// Screens advanced, at whatever font size the device was set to.
+    /// Screens advanced, at the font size each was drawn at.
     pub page_turns: i64,
     pub words: i64,
     /// Seconds read per clock hour, ascending, summing to [`Self::seconds`].
@@ -158,16 +156,13 @@ pub struct Session {
     pub asin: Option<String>,
     /// How far into the book the sitting ended, as a fraction, off `%Left`.
     pub progress: Option<f64>,
-    /// The runs of the book this sitting covered, in the order they were read,
-    /// each a pair of fractions. Empty where the log states no place, which is
-    /// every sitting older than the log and every sitting on a reader stack
-    /// that logs one summary at close.
+    /// The runs this sitting covered, in reading order. Empty where no line
+    /// stated a place.
     pub stretches: Vec<Stretch>,
-    /// The seconds the device stated were left in the book as it closed, off
-    /// `NewTimeLeft`.
+    /// Seconds left in the book as it closed, off `NewTimeLeft`.
     pub time_left: Option<i64>,
-    /// The rate the device stated for this book as the sitting closed, off
-    /// `TotalWPM`, in whole words a minute.
+    /// The rate off `TotalWPM` as the sitting closed, in whole words a
+    /// minute.
     pub stated_wpm: Option<i64>,
     /// Seconds this run's turn lines credit, each page's own `IntervalTime`
     /// through [`credits`]. Zero where no turn line states an interval.
@@ -187,16 +182,15 @@ pub struct Session {
     /// value, under the test that admits their words.
     pub covered: f64,
     /// The book's own reading counter where this run began and where it was
-    /// last seen. Both or neither: a run the device never counted has none.
+    /// last seen. Both or neither: an uncounted run states neither.
     pub start_counter_ms: Option<i64>,
     pub end_counter_ms: Option<i64>,
-    /// The same two readings of the device's own word counter. `end_words`
-    /// beside `end_counter_ms` is the pair a sidecar's `timer.model` states.
+    /// The same two readings of `TotalWords`. `end_words` beside
+    /// `end_counter_ms` is the pair a sidecar's `timer.model` states.
     pub start_words: Option<i64>,
     pub end_words: Option<i64>,
-    /// Seconds the device's clock stood ahead of UTC when this sitting was
-    /// read out of the log, set by `Store::absorb` and unstated on a sitting
-    /// no pass caught up with. No log line carries a zone.
+    /// Seconds ahead of UTC at the pass that read this sitting, set by
+    /// `Store::absorb`. No log line carries a zone.
     pub tz_offset_s: Option<i64>,
 }
 
@@ -205,6 +199,10 @@ impl Session {
     /// `fresh` states nothing for. Answers whether anything moved.
     pub fn remeasure(&mut self, fresh: &Session) -> bool {
         let was = self.clone();
+        // A pass that saw more of this run states the later close.
+        if fresh.ended_at > self.ended_at {
+            self.ended_at = fresh.ended_at.clone();
+        }
         self.seconds = fresh.seconds;
         self.page_turns = fresh.page_turns;
         self.words = fresh.words;
@@ -222,10 +220,8 @@ impl Session {
         self.end_words = fresh.end_words.or(self.end_words);
         self.asin = fresh.asin.clone().or_else(|| self.asin.clone());
         self.progress = fresh.progress.or(self.progress);
-        // Only a heal calls this, and a heal parses from an empty watermark, so
-        // `fresh` always saw this sitting from its own opening place. A pass
-        // that sees less of a sitting never reaches here: `Store::absorb` drops
-        // and replaces a sitting from its own start, or leaves it untouched.
+        // `Store::heal_from` is the one caller, parsing from an empty
+        // watermark, and `fresh` opens where this sitting opens.
         if !fresh.stretches.is_empty() {
             self.stretches = fresh.stretches.clone();
         }
@@ -262,7 +258,7 @@ struct Opened {
 
 /// Where a session begins: the counters it resumes from and the instant it
 /// started at — an `OpenBook` that vouched for them, or a midnight cut.
-/// `counter_ms` is absent on a book the device does not time; `at` is not.
+/// `counter_ms` is absent on an untimed book; `at` is not.
 struct Start {
     counter_ms: Option<i64>,
     /// The word counter at that same instant, where it is known.
@@ -380,8 +376,8 @@ struct Open {
     asin: Option<String>,
     /// The last `%Left` a line stated for this book.
     progress: Option<f64>,
-    /// The runs of the book closed so far, and the one still open: where it
-    /// began, where it was last seen, and whether a page has been turned in it.
+    /// The runs closed so far, and the one open: its opening place, its last
+    /// place, and whether a turn fell inside it.
     stretches: Vec<Stretch>,
     open_stretch: Option<(f64, f64, bool)>,
     /// The last `NewTimeLeft` a line stated for this book.
@@ -438,16 +434,13 @@ impl Open {
         }
     }
 
-    /// Fold in a place the log stated, `jumped` saying whether the reader got
-    /// there by navigating. A jump closes the run it lands in and opens a new
-    /// one where it landed; a page turn extends the one standing. Only a turn
-    /// opens a run, so two jumps together — or a footer tap on the way to one —
-    /// state no run of their own.
+    /// Fold `at` into the runs. A `jumped` place closes the open run and opens
+    /// one at `at`; any other place extends the open run and marks it turned.
+    /// [`Open::covered`] drops a run holding no turn.
     fn place(&mut self, at: f64, jumped: bool) {
         match self.open_stretch {
-            // The run closes where the reader last *stood*, not where the jump
-            // put them: a jump line states its destination, and the page it
-            // left is the one the line before it stated.
+            // `to` holds the place of the line before this one, which is the
+            // page left; `at` is the destination.
             Some((from, to, turned)) if jumped => {
                 if turned {
                     self.stretches.push(Stretch { from, to });
@@ -459,8 +452,8 @@ impl Open {
         }
     }
 
-    /// The runs this sitting covered, the one still open closed at its last
-    /// place. A run no page was turned in is not a run of the book.
+    /// [`Open::stretches`] with the open run closed at its last place. A run
+    /// holding no turn is left out.
     fn covered(&self) -> Vec<Stretch> {
         let mut out = self.stretches.clone();
         if let Some((from, to, true)) = self.open_stretch {
@@ -734,7 +727,7 @@ fn stepped(now: i64, prev: i64) -> bool {
     now - prev > SESSION_GAP_SECS || prev - now > CLOCK_BACK_SECS
 }
 
-/// Book `advance_ms` against the clock hours the device was awake in. `from`
+/// Book `advance_ms` against the clock hours [`Awake`] holds. `from`
 /// and `to` bracket an interval a page was open across; the advance splits
 /// between [`Awake`]'s stretches in it, or takes the whole where it names none.
 fn credit_awake(
@@ -767,7 +760,7 @@ fn credit_awake(
     }
 }
 
-/// A bounded total across the hours the device was awake for it.
+/// A bounded total across the hours [`Awake`] holds.
 fn spread(awake: &Awake, from: &Moment, to: &Moment, seconds: i64) -> Vec<(u8, i64)> {
     let mut hours_ms = [0; 24];
     credit_awake(&mut hours_ms, awake, from, to, seconds * 1000);
@@ -1010,7 +1003,7 @@ fn percent_left(line: &str, book: i64) -> Option<f64> {
     })
 }
 
-/// The seconds the device states are left in `book`, off the payload naming it.
+/// The seconds left in `book`, off the payload naming it.
 /// [`line::time_left`] reads the book's own figure past the chapter's.
 fn time_left(line: &str, book: i64) -> Option<i64> {
     payloads(line).find_map(|p| match end_position(p) {
@@ -1090,8 +1083,8 @@ mod tests {
             .collect()
     }
 
-    /// The run the reader's own example states: 0 to 10, then back to 5 and on
-    /// to 8, then a jump to 10 and on to 12 — with nothing joining 8 to 10.
+    /// 0 to 10, back to 5 and on to 8, then 10 to 12: three runs, and no run
+    /// spanning 8 to 10.
     #[test]
     fn a_jump_cuts_the_run_of_the_book_and_a_page_turn_opens_one() {
         assert_eq!(
@@ -1705,7 +1698,7 @@ mod tests {
         }
     }
 
-    /// The page the device counted: `(ms, words)` against `Credit`.
+    /// A counted page: `(ms, words)` as a `Credit`.
     fn counted(ms: i64, words: i64) -> Credit {
         Credit {
             counted_ms: ms,

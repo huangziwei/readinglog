@@ -490,7 +490,7 @@ mod tests {
         let reads = readings(5, &[20_003]);
         assert_eq!(picked(None, &reads), Some((1, (20_003, 20_004))));
         assert_eq!(picked(Some(0), &reads), Some((0, (20_000, 20_002))));
-        // A picked row the record no longer holds falls back to the last.
+        // An `on` past the last reading falls back to it.
         assert_eq!(picked(Some(9), &reads), Some((1, (20_003, 20_004))));
         assert_eq!(picked(None, &[]), None);
     }

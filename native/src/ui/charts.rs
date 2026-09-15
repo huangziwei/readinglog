@@ -342,16 +342,9 @@ pub fn columns(
 const STOPS: [i64; 5] = [0, 25, 50, 75, 100];
 const NAMED: [i64; 3] = [0, 50, 100];
 
-/// Where the `deep` sittings of one column stand: the step between them, how
-/// wide each draws, and where the first opens.
-///
-/// They stand shoulder to shoulder in time order, a half-mark apart, and the
-/// cluster is only as wide as the sittings in it — never a share of the column,
-/// which would smear a day's sittings across the axis until they stopped
-/// reading as that day. It is centred on the column and **never reaches past
-/// it**: a column with fewer pixels than it has sittings cannot show them apart
-/// at all, and they take its one centre, which is what every mark did before
-/// this band drew runs.
+/// The step between the `deep` sittings of `cell`, how wide each draws, and
+/// where the first opens. The step is `side` and half its air, the cluster is
+/// centred on `cell`, and a `deep` over `cell.w` takes one centre.
 fn cluster(cell: Rect, deep: i32, side: i32) -> (i32, i32, i32) {
     let air = (side / 2).max(1);
     if deep > cell.w {
@@ -375,16 +368,8 @@ pub struct Sat {
 }
 
 /// Where each of `at` sat, on a scale of 0 to `ceiling`, over `count` columns
-/// cut and named exactly as [`columns`] cuts and names the same strip.
-///
-/// A run draws as a bar from where it opened to where it closed, and one
-/// shorter than its own mark draws as the mark — which is also what a sitting
-/// with no run at all draws, so a record stating only where its sittings ended
-/// is a row of marks and nothing is lost. The sittings sharing a column stand
-/// shoulder to shoulder in time order, a half-mark apart, the cluster centred
-/// on the column and never reaching past it; each states a foot on the axis,
-/// because a sitting cut by a jump draws more than one bar and the bars are
-/// therefore not the sittings.
+/// [`columns`] cuts and names. A run draws as a bar between its two places; one
+/// under `side` tall, and a [`Sat`] holding none, draw the mark.
 #[allow(clippy::too_many_arguments)]
 pub fn scatter(
     fb: &mut Framebuffer,
@@ -1412,9 +1397,7 @@ mod tests {
                     assert!(mark >= 1, "side {side} wide {wide} deep {deep}");
                     let last = left + step * (deep - 1);
                     let inside = left >= cell.x && last + mark <= cell.right();
-                    // A column narrower than the mark itself cannot hold even
-                    // one; there the cluster is centred and overhangs equally,
-                    // which is exactly what a lone mark already did.
+                    // A `wide` over `cell.w` centres and overhangs equally.
                     let cramped = mark > wide;
                     assert!(
                         inside || cramped,

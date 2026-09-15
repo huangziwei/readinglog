@@ -219,10 +219,9 @@ pub struct Observation {
     pub refused: bool,
     pub page_turn: bool,
     pub closes: bool,
-    /// Whether the reader reached this place by navigating rather than by
-    /// turning a page — the timer's own `GoToPosition`, and the `TapOnFooter`
-    /// that opens the control one is made from. The place stated beside it is
-    /// where the jump *landed*; the page it left is `ScreenStart`/`ScreenEnd`.
+    /// Whether the line names `GoToPosition` or `TapOnFooter`. Its own
+    /// position fields state where the jump landed; `ScreenStart` and
+    /// `ScreenEnd` state the page it left.
     pub jumped: bool,
 }
 
