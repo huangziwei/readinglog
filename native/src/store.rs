@@ -770,27 +770,41 @@ impl Store {
         on: &mut dyn FnMut(usize, usize),
     ) -> usize {
         let got = source::collect_from(live, chunks, dumps, "", on);
+        // `whole` parses under no floor and no `c` row: `Self::barred` holds
+        // over what merges, below, and not over what this corrects.
         let mut whole = Store {
             ends: self.ends.clone(),
             counters: self.counters.clone(),
-            cleared: self.cleared.clone(),
-            floor: self.floor.clone(),
             ..Store::default()
         };
         whole.absorb(&got.lines, "");
         let mut healed = 0;
+        // `added` holds the fresh rows that corrected none.
+        let mut added: Vec<Session> = Vec::new();
         for fresh in &whole.sessions {
-            let held = self
+            // One book opens one run on a second and closes one on a second.
+            // A midnight cut seeds `started_at` at the boundary; `ended_at`
+            // names such a run.
+            let at = self
                 .sessions
-                .iter_mut()
-                .find(|s| s.started_at == fresh.started_at && s.end_position == fresh.end_position);
-            if let Some(held) = held
-                && held.remeasure(fresh)
-            {
-                healed += 1;
+                .iter()
+                .position(|s| {
+                    s.end_position == fresh.end_position && s.started_at == fresh.started_at
+                })
+                .or_else(|| {
+                    self.sessions.iter().position(|s| {
+                        s.end_position == fresh.end_position && s.ended_at == fresh.ended_at
+                    })
+                });
+            match at {
+                Some(at) if self.sessions[at].remeasure(fresh) => healed += 1,
+                Some(_) => {}
+                None => added.push(fresh.clone()),
             }
         }
-        // `merge` keeps the stored copy of a row it holds twice, the remeasured one.
+        // `merge` takes no row [`Self::floor`] or a `c` row holds back.
+        whole.sessions = added;
+        whole.sessions.retain(|s| !self.barred(s));
         self.merge(&whole);
         self.mark = self.mark.clone().max(whole.mark);
         healed
@@ -4537,8 +4551,7 @@ m	260911:115340	7200
         };
         let back = Store::from_text(&store.text());
         assert_eq!(back.sessions[0].stretches, runs);
-        // The column is the last, so an older reader of a newer row keeps
-        // every field before it.
+        // The column stands last, past every field an older row holds.
         assert!(store.text().contains("\t500-800,1000-1234,9000-8700"));
         assert!(read_stretches("").is_empty());
         assert!(read_stretches("nonsense").is_empty());
@@ -4837,6 +4850,80 @@ m	260911:115340	7200
         assert_eq!(store.marks.len(), 1, "one mark, not two");
         assert_eq!(store.marks[0].start, 246_588);
         assert_eq!(store.marks[0].state, State::Live);
+    }
+
+    /// [`Store::heal_from`] corrects a row held under [`Store::floor`], the
+    /// shape [`Store::wipe`] and a restore leave, and adds none.
+    #[test]
+    fn a_heal_corrects_a_held_row_standing_under_the_floor() {
+        let dir = scratch("heal-under-floor");
+        let live = dir.join("messages");
+        std::fs::write(
+            &live,
+            format!(
+                "{}\n{}\n",
+                page("260807:101501", 7_390_020),
+                page("260807:101543", 7_431_463)
+            ),
+        )
+        .expect("a log to read");
+
+        let mut store = Store {
+            sessions: vec![Session {
+                started_at: "2026-08-07T10:15:01".into(),
+                ended_at: "2026-08-07T10:15:43".into(),
+                end_position: 148_207,
+                seconds: 9,
+                ..Session::default()
+            }],
+            mark: "260807:101543".into(),
+            mark_offset: None,
+            // Past every line `live` holds.
+            floor: "260810:120000".into(),
+            ..Store::default()
+        };
+        let healed = store.heal_from(&live, &dir.join("none"), &dir.join("none"), &mut |_, _| {});
+
+        assert_eq!(healed, 1, "the held row was corrected");
+        assert_eq!(store.sessions.len(), 1, "and no row was added under it");
+        assert_eq!(store.sessions[0].seconds, 41);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A run cut at midnight opens the next at the boundary. `ended_at`
+    /// names the run a held row and the parse disagree about `started_at` on.
+    #[test]
+    fn a_heal_reaches_a_run_whose_open_a_midnight_cut_moved() {
+        let dir = scratch("heal-midnight");
+        let live = dir.join("messages");
+        std::fs::write(
+            &live,
+            format!(
+                "{}\n{}\n",
+                page("260807:101501", 7_390_020),
+                page("260807:101543", 7_431_463)
+            ),
+        )
+        .expect("a log to read");
+
+        let mut store = Store {
+            sessions: vec![Session {
+                // The open a watermark pass states.
+                started_at: "2026-08-07T10:15:30".into(),
+                ended_at: "2026-08-07T10:15:43".into(),
+                end_position: 148_207,
+                seconds: 9,
+                ..Session::default()
+            }],
+            mark: "260807:101543".into(),
+            mark_offset: None,
+            ..Store::default()
+        };
+        store.heal_from(&live, &dir.join("none"), &dir.join("none"), &mut |_, _| {});
+
+        assert_eq!(store.sessions.len(), 1, "one run, one row");
+        assert_eq!(store.sessions[0].seconds, 41);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
