@@ -21,7 +21,7 @@ If this is your first ever homebrew Kindle extension, you can just copy the whol
 
 ## Update
 
-Use the Update button within the app via WIFI, or repeat the install procedure manually with a newer version. OTA update will always install the latest version, manual install can roll back to any releases.
+Use the Update button within the `config` tab in the app via WIFI, when possible. If it doesn't work, update it manually by copying the `extensions/readinglog/bin` to `/mnt/us/extensions/readinglog/bin`, **not the whole `readinglog/` folder**, otherwise you will remove the `sessions.tsv` file and existing backups and lost all parsed data.
 
 ## Build from source
 
