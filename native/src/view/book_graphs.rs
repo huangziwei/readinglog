@@ -25,7 +25,7 @@ const LISTED: i32 = 2;
 const THINNEST: i32 = 4;
 
 /// A run of days holding nothing is cut where it runs at least this long.
-const GAP: i64 = 14;
+const GAP: i64 = 3;
 
 /// A run is cut where it also covers this many times `usual`.
 const UNUSUAL: i64 = 3;
@@ -155,8 +155,8 @@ fn cut_to(
     held.expect("a grain")
 }
 
-/// The reading's own rhythm: the median run of days between one day of `days`
-/// inside `from..=to` and the next, never under one.
+/// The reading's own rhythm: the median of `day[i + 1] - day[i]` over the days
+/// of `days` inside `from..=to`, never under one.
 fn usual(days: &[(i64, i64)], from: i64, to: i64) -> i64 {
     let read: Vec<i64> = days
         .iter()
@@ -557,8 +557,8 @@ mod tests {
         let slowly = rhythm(1, 12, 12, 0);
         assert_eq!(cut(&slowly), (12 * 11 + 1, 0, vec![]));
         // And a run under `GAP` is never cut however unlike the rhythm it is.
-        let a_week_off = rhythm(2, 5, 1, 12);
-        assert_eq!(cut(&a_week_off), (22, 0, vec![]));
+        let a_few_days_off = rhythm(2, 5, 1, 2);
+        assert_eq!(cut(&a_few_days_off), (12, 0, vec![]));
     }
 
     /// The grain is asked after the runs are cut.
