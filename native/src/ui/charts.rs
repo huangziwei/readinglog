@@ -8,7 +8,7 @@ use crate::lang::Strings;
 use crate::settings::WeekStart;
 
 use super::chrome;
-use super::paint::{self, DARK, INK, LIGHT, PALE, Palette, Rect};
+use super::paint::{self, DARK, INK, LIGHT, PALE, Palette, Rect, WHITE};
 use super::text::TextRenderer;
 use super::theme::Theme;
 
@@ -245,9 +245,158 @@ pub fn hour_shape(fb: &mut Framebuffer, area: Rect, hours: &[i64; 24], peak: i64
     }
 }
 
-/// How a column's own figure is set, as the rows it takes. An empty answer
-/// states nothing, which is what a bar that is not there carries.
+/// A column's own figure, as the rows it is set in; empty for none.
 pub type Figure<'a> = &'a dyn Fn(i64) -> Vec<String>;
+
+/// Where a strip of columns was cut: the columns standing for a run with
+/// nothing in them, how long each run was, and how wide a break column stands
+/// against an ordinary one. A break column carries no bar.
+#[derive(Clone, Copy)]
+pub struct Breaks<'a> {
+    pub at: &'a [usize],
+    pub said: &'a [String],
+    pub share: f32,
+}
+
+impl Breaks<'_> {
+    /// A strip with nothing cut out of it, which is every row but the days of
+    /// one reading.
+    pub const NONE: Breaks<'static> = Breaks {
+        at: &[],
+        said: &[],
+        share: 1.0,
+    };
+
+    fn holds(&self, at: usize) -> bool {
+        self.at.contains(&at)
+    }
+
+    /// How long the run a break column stands for was, as the column's own
+    /// figure: it is set and spaced with the row's figures, never over them.
+    fn figure(&self, at: usize) -> Option<&String> {
+        let nth = self.at.iter().position(|b| *b == at)?;
+        self.said.get(nth)
+    }
+
+    /// The columns a break falls between, in the order they are named.
+    fn flanks(&self, last: usize) -> Vec<usize> {
+        let mut out: Vec<usize> = Vec::new();
+        for at in self.at {
+            out.extend(at.checked_sub(1));
+            out.extend((*at < last).then_some(at + 1));
+        }
+        out.retain(|at| !self.holds(*at));
+        out
+    }
+}
+
+/// The cells of a strip `count` wide, where a break column takes
+/// [`Breaks::share`] of an ordinary one. Every other cell is the same width,
+/// and the row fills `area` either way.
+fn cells_of(area: Rect, count: usize, gap: i32, breaks: &Breaks) -> Vec<Rect> {
+    if breaks.at.is_empty() {
+        return area.columns(count as i32, gap);
+    }
+    let room = (area.w - gap * (count as i32 - 1)).max(1) as f32;
+    let weight = |at: usize| match breaks.holds(at) {
+        true => breaks.share,
+        false => 1.0,
+    };
+    let whole: f32 = (0..count).map(weight).sum();
+    let mut out = Vec::with_capacity(count);
+    let mut x = area.x as f32;
+    for at in 0..count {
+        let wide = room * weight(at) / whole;
+        out.push(Rect::new(
+            x.round() as i32,
+            area.y,
+            (wide.round() as i32).max(1),
+            area.h,
+        ));
+        x += wide + gap as f32;
+    }
+    out
+}
+
+/// The width of the ordinary cells of [`cells_of`] — what a bar and a figure
+/// are cut to, a break column carrying neither.
+fn ordinary(cells: &[Rect], breaks: &Breaks) -> i32 {
+    cells
+        .iter()
+        .enumerate()
+        .find(|(at, _)| !breaks.holds(*at))
+        .map_or(1, |(_, cell)| cell.w)
+}
+
+/// Every break of a strip marked astride `axis`, with the run it swallowed
+/// stated over the mark in [`DARK`] at [`Theme::small_px`], standing clear of
+/// every box in `taken`.
+#[allow(clippy::too_many_arguments)]
+fn cuts(
+    fb: &mut Framebuffer,
+    text: &mut TextRenderer,
+    theme: &Theme,
+    cells: &[Rect],
+    axis: i32,
+    line: i32,
+    taken: &[(i32, i32)],
+    breaks: &Breaks,
+) {
+    for (nth, at) in breaks.at.iter().enumerate() {
+        let Some(cell) = cells.get(*at) else {
+            continue;
+        };
+        slashes(fb, theme, *cell, axis, line);
+        let Some(said) = breaks.said.get(nth) else {
+            continue;
+        };
+        // Where `draw_figure` stands a figure, over the mark for a bar.
+        text.set_px(theme.small_px);
+        let w = text.measure_width(said) as i32;
+        let x = stands_clear(cell.x + (cell.w - w) / 2, w, *cell, theme.gap, taken);
+        let baseline = axis - line / 2 - inset(theme) / 2;
+        text.draw_inked(crate::font::Script::Unknown, fb, x, baseline, said, DARK);
+    }
+}
+
+/// Where a run's length `w` wide opens: centred on `cell`, stepped off every
+/// box of `taken` it runs into.
+fn stands_clear(x: i32, w: i32, cell: Rect, gap: i32, taken: &[(i32, i32)]) -> i32 {
+    let mut x = x;
+    for (at, wide) in taken {
+        if x >= at + wide + gap || at >= &(x + w + gap) {
+            continue;
+        }
+        x = match *at < cell.x + cell.w / 2 {
+            true => at + wide + gap,
+            false => at - gap - w,
+        };
+    }
+    x
+}
+
+/// The mark itself: two strokes leaning right, `tall` high and centred on `y`.
+/// What is cleared under them is the rule at `y` and no more.
+fn slashes(fb: &mut Framebuffer, theme: &Theme, cell: Rect, y: i32, tall: i32) {
+    let thick = theme.rule().max(2);
+    let lean = (tall as f32 * 0.40).round() as i32;
+    let step = lean + thick * 2;
+    let top = y - tall / 2;
+    let clear = (thick * 3).max(3);
+    paint::fill(fb, Rect::new(cell.x, y - clear / 2, cell.w, clear), WHITE);
+    let x = cell.x + (cell.w - (step + lean + thick)) / 2;
+    for nth in 0..2 {
+        slant(fb, x + step * nth, top, lean, tall, thick);
+    }
+}
+
+/// One stroke of [`slashes`], leaning `lean` to the right over its height.
+fn slant(fb: &mut Framebuffer, x: i32, y: i32, lean: i32, tall: i32, thick: i32) {
+    for row in 0..tall {
+        let dx = lean * (tall - 1 - row) / (tall - 1).max(1);
+        paint::fill(fb, Rect::new(x + dx, y + row, thick, 1), DARK);
+    }
+}
 
 /// A row of columns, one per entry in `values`, each carrying its own figure.
 /// `every` names one bucket of the axis in that many, and `highlight` accents
@@ -265,6 +414,7 @@ pub fn columns(
     every: usize,
     highlight: Option<usize>,
     ceiling: Option<i64>,
+    breaks: &Breaks,
 ) {
     if values.is_empty() {
         return;
@@ -274,15 +424,31 @@ pub fn columns(
     let (band, foot) = area.split_top((area.h - line - theme.gap / 2).max(1));
     let max = scale(values, ceiling);
     let gap = cell_gap(theme, values.len());
-    let cell_w = band.columns(values.len() as i32, gap)[0].w;
+    let laid = cells_of(band, values.len(), gap, breaks);
+    let cell_w = ordinary(&laid, breaks);
     let cut = Cut {
         h: band.h,
         line,
         bar_w: bar_width(theme, cell_w),
         cell_w,
+        break_w: breaks
+            .at
+            .first()
+            .and_then(|at| laid.get(*at))
+            .map_or(cell_w, |cell| cell.w),
         gap,
     };
-    let set = settle(theme, values, max, &cut, figure, &mut |px, said| {
+    // A break column states the run it swallowed where a bar states its own
+    // figure: one size for the two, and one reckoning of the room they take.
+    let rows: Vec<Vec<String>> = values
+        .iter()
+        .enumerate()
+        .map(|(at, value)| match breaks.figure(at) {
+            Some(said) => vec![said.clone()],
+            None => figure(*value),
+        })
+        .collect();
+    let set = settle(theme, values, max, &cut, &rows, breaks, &mut |px, said| {
         text.set_px(px);
         text.measure_width(said) as i32
     });
@@ -295,7 +461,7 @@ pub fn columns(
         band.w,
         (band.h - set.head).max(1),
     );
-    let cells = plot.columns(values.len() as i32, gap);
+    let cells = cells_of(plot, values.len(), gap, breaks);
     paint::hline(fb, plot.x, plot.bottom(), plot.w, LIGHT, 1);
     let bars: Vec<Rect> = values
         .iter()
@@ -321,15 +487,21 @@ pub fn columns(
     }
     // The figures come after every bar of the row: one reaching over its own
     // cell stands on its neighbours, never under them.
+    let mut taken: Vec<(i32, i32)> = Vec::new();
     for (at, bar) in bars.iter().enumerate() {
-        if !set.said[at].is_empty() {
+        // A break column's own figure is the run it swallowed, which stands
+        // with the mark and not with the bars.
+        if !set.said[at].is_empty() && !breaks.holds(at) {
+            taken.push(figure_box(text, band, *bar, &set, at));
             draw_figure(fb, text, theme, band, *bar, &set, at);
         }
     }
 
+    cuts(fb, text, theme, &cells, plot.bottom(), line, &taken, breaks);
+
     text.set_px(theme.small_px);
     let baseline = foot.y + line;
-    for (x, name) in named(&cells, every, theme.gap, &axis, &mut |said| {
+    for (x, name) in named(&cells, every, theme.gap, breaks, &axis, &mut |said| {
         text.measure_width(said) as i32
     }) {
         text.draw(fb, x, baseline, &name, false);
@@ -337,8 +509,7 @@ pub fn columns(
 }
 
 /// The shares of its ceiling a scatter rules, and the ones it names. A name
-/// stands inside the plot and under the marks, so it costs the strip no width
-/// and the axis stays the one [`columns`] cuts.
+/// stands inside the plot and under the marks.
 const STOPS: [i64; 5] = [0, 25, 50, 75, 100];
 const NAMED: [i64; 3] = [0, 50, 100];
 
@@ -383,6 +554,7 @@ pub fn scatter(
     every: usize,
     ceiling: i64,
     stop: &dyn Fn(i64) -> String,
+    breaks: &Breaks,
 ) {
     if count == 0 {
         return;
@@ -394,11 +566,13 @@ pub fn scatter(
     let side = (theme.rule() * 4).max(7);
     let over = cap + theme.gap / 2;
     let plot = Rect::new(band.x, band.y + over, band.w, (band.h - over).max(1));
-    let cells = plot.columns(count as i32, cell_gap(theme, count));
+    let cells = cells_of(plot, count, cell_gap(theme, count), breaks);
     let at_share = |share: i64| plot.bottom() - (plot.h as i64 * share / 100) as i32;
     for share in STOPS {
         paint::hline(fb, plot.x, at_share(share), plot.w, PALE, 1);
     }
+    // A break's mark stands under the shares named beside it.
+    cuts(fb, text, theme, &cells, plot.bottom(), line, &[], breaks);
     // The names stand at the closing end, clear of the low places a reading
     // opens on, and go down before the marks, which stand over them.
     for share in NAMED {
@@ -452,8 +626,9 @@ pub fn scatter(
             }
         }
     }
+    text.set_px(theme.small_px);
     let baseline = foot.y + line;
-    for (x, name) in named(&cells, every, theme.gap, &axis, &mut |said| {
+    for (x, name) in named(&cells, every, theme.gap, breaks, &axis, &mut |said| {
         text.measure_width(said) as i32
     }) {
         text.draw(fb, x, baseline, &name, false);
@@ -461,7 +636,7 @@ pub fn scatter(
 }
 
 /// The air between two columns of a strip that many wide.
-fn cell_gap(theme: &Theme, count: usize) -> i32 {
+pub fn cell_gap(theme: &Theme, count: usize) -> i32 {
     match count > 16 {
         true => 2,
         false => theme.gap / 2,
@@ -482,31 +657,100 @@ fn named(
     cells: &[Rect],
     every: usize,
     gap: i32,
+    breaks: &Breaks,
     axis: &dyn Fn(usize) -> String,
     width: &mut dyn FnMut(&str) -> i32,
 ) -> Vec<(i32, String)> {
     let Some(last) = cells.len().checked_sub(1) else {
         return Vec::new();
     };
+    // A name centred on the first or the last cell keeps inside the row.
+    let (left, right) = (cells[0].x, cells[last].right());
+    let (flanking, held) = flanking(cells, gap, breaks, axis, width);
     let mut marks: Vec<usize> = (0..cells.len()).step_by(every.max(1)).collect();
     if marks.last() != Some(&last) {
         marks.push(last);
     }
-    // A name centred on the first or the last cell keeps inside the row.
-    let (left, right) = (cells[0].x, cells[last].right());
     let mut out: Vec<(i32, String)> = Vec::new();
     let mut reach = i32::MAX;
     for at in marks.into_iter().rev() {
+        // A break column is never named, and the two days it falls between
+        // take their place in `flanking`.
+        if breaks.holds(at) || flanking.iter().any(|(named, _)| *named == at) {
+            continue;
+        }
         let name = axis(at);
         let w = width(&name);
         let x = (cells[at].x + (cells[at].w - w) / 2).clamp(left, (right - w).max(left));
-        if out.last().is_some_and(|(_, last)| *last == name) || x + w + gap > reach {
+        let fouls = |(hx, hw): &(i32, i32)| x < hx + hw + gap && *hx < x + w + gap;
+        if held.iter().any(fouls)
+            || out.last().is_some_and(|(_, last)| *last == name)
+            || x + w + gap > reach
+        {
             continue;
         }
         reach = x;
         out.push((x, name));
     }
+    out.extend(flanking.into_iter().map(|(_, placed)| placed));
     out
+}
+
+/// A name the axis has placed: its column, its x, and what it reads.
+type Placed = (usize, (i32, String));
+
+/// The boxes on the axis a break holds, each an x and a width.
+type Held = Vec<(i32, i32)>;
+
+/// The day a run stopped on and the day it opened again, pushed clear of the
+/// mark between them, and every box on the axis a break holds: its own column
+/// and those two names.
+fn flanking(
+    cells: &[Rect],
+    gap: i32,
+    breaks: &Breaks,
+    axis: &dyn Fn(usize) -> String,
+    width: &mut dyn FnMut(&str) -> i32,
+) -> (Vec<Placed>, Held) {
+    let Some(last) = cells.len().checked_sub(1) else {
+        return (Vec::new(), Vec::new());
+    };
+    let (left, right) = (cells[0].x, cells[last].right());
+    let mut held: Held = breaks
+        .at
+        .iter()
+        .filter_map(|at| cells.get(*at))
+        .map(|cell| (cell.x, cell.w))
+        .collect();
+    let mut out: Vec<Placed> = Vec::new();
+    for at in breaks.flanks(last) {
+        let name = axis(at);
+        let w = width(&name);
+        // The mark's own column walls a name wider than its own cell.
+        let mut room = (left, right);
+        for cut in breaks
+            .at
+            .iter()
+            .filter_map(|b| cells.get(*b).map(|c| (*b, *c)))
+        {
+            match (cut.0.checked_sub(1) == Some(at), cut.0 + 1 == at) {
+                (true, _) => room.1 = room.1.min(cut.1.x - gap),
+                (_, true) => room.0 = room.0.max(cut.1.right() + gap),
+                _ => {}
+            }
+        }
+        let x = (cells[at].x + (cells[at].w - w) / 2).clamp(room.0, (room.1 - w).max(room.0));
+        let x = x.clamp(left, (right - w).max(left));
+        if held
+            .iter()
+            .any(|(hx, hw)| x < hx + hw + gap && *hx < x + w + gap)
+        {
+            continue;
+        }
+        held.push((x, w));
+        out.push((at, (x, name)));
+    }
+    (out, held)
 }
 
 /// The room a row of columns is cut to: the height the bars are drawn into,
@@ -517,13 +761,14 @@ struct Cut {
     line: i32,
     bar_w: i32,
     cell_w: i32,
+    /// The width of a break column, `cell_w` for every other column.
+    break_w: i32,
     gap: i32,
 }
 
 /// How a row of columns states its figures.
 struct Figures {
-    /// What each bar states, in the lines it is set in. An empty answer states
-    /// nothing.
+    /// What each bar states, in the lines it is set in; empty for none.
     said: Vec<Vec<String>>,
     /// Whether each figure stands inside its own bar, in place of over it.
     inside: Vec<bool>,
@@ -558,14 +803,14 @@ fn settle(
     values: &[i64],
     max: i64,
     cut: &Cut,
-    figure: Figure,
+    rows: &[Vec<String>],
+    breaks: &Breaks,
     width: &mut dyn FnMut(f32, &str) -> i32,
 ) -> Figures {
-    let rows: Vec<Vec<String>> = values.iter().map(|value| figure(*value)).collect();
     let placed = |plot_h: i32| -> (Vec<Vec<String>>, Vec<bool>) {
         values
             .iter()
-            .zip(&rows)
+            .zip(rows)
             .map(|(value, said)| {
                 let h = (plot_h as i64 * value / max) as i32;
                 match holds(theme, h, cut.line, said.len()) {
@@ -586,7 +831,7 @@ fn settle(
             .unzip()
     };
     let (said, inside) = placed(cut.h);
-    let room = rooms(theme, cut, &said, &inside);
+    let room = rooms(theme, cut, &said, &inside, breaks);
     let (px, fits) = sized(theme, &said, &|at| room[at], width);
     if fits {
         return Figures {
@@ -604,7 +849,7 @@ fn settle(
     let head = cut.line * lines + inset(theme) / 2;
     let (flat, _) = placed(cut.h - head);
     let over = vec![false; values.len()];
-    let room = rooms(theme, cut, &flat, &over);
+    let room = rooms(theme, cut, &flat, &over, breaks);
     let (px, fits) = sized(theme, &flat, &|at| room[at], width);
     if fits {
         return Figures {
@@ -616,8 +861,7 @@ fn settle(
         };
     }
 
-    thinned(theme, values, max, cut, &rows, width)
-        .unwrap_or_else(|| Figures::none(values.len(), px))
+    thinned(theme, values, max, cut, rows, width).unwrap_or_else(|| Figures::none(values.len(), px))
 }
 
 /// The figures spread evenly across the row, as many as the width carries: the
@@ -682,13 +926,23 @@ fn thinned(
 /// The width each figure of the row has: a figure `inside` its bar has the
 /// bar's own, and one over a bar the run of cells reaching to the nearest
 /// figure either side of it.
-fn rooms(theme: &Theme, cut: &Cut, said: &[Vec<String>], inside: &[bool]) -> Vec<i32> {
+fn rooms(
+    theme: &Theme,
+    cut: &Cut,
+    said: &[Vec<String>],
+    inside: &[bool],
+    breaks: &Breaks,
+) -> Vec<i32> {
     let stated: Vec<usize> = (0..said.len()).filter(|at| !said[*at].is_empty()).collect();
     said.iter()
         .enumerate()
         .map(|(at, lines)| {
             if lines.is_empty() {
                 return cut.cell_w;
+            }
+            // A break column was cut as wide as its own figure takes.
+            if breaks.holds(at) {
+                return cut.break_w - cut.gap;
             }
             if inside[at] {
                 return cut.bar_w - theme.gap / 2;
@@ -773,8 +1027,7 @@ fn figure_px(
     chrome::shrink_to_fit(theme.small_px, floor, &lines, &|i| room(at[i]), width)
 }
 
-/// How far under [`Theme::small_px`] a figure may be set. A figure gives up
-/// size a long way before it gives up being on the page at all.
+/// How far under [`Theme::small_px`] a figure may be set.
 const FIGURE_FLOOR: f32 = 0.45;
 
 /// Whether every figure of `said` measures within the `room` it stands in. A
@@ -787,6 +1040,24 @@ fn all_fit(
     said.iter()
         .enumerate()
         .all(|(at, lines)| lines.iter().all(|line| width(line) <= room(at)))
+}
+
+/// Where the figure of the column at `at` opens, and how wide it draws.
+fn figure_box(
+    text: &mut TextRenderer,
+    band: Rect,
+    bar: Rect,
+    set: &Figures,
+    at: usize,
+) -> (i32, i32) {
+    text.set_px(set.px);
+    let w = set.said[at]
+        .iter()
+        .map(|row| text.measure_width(row) as i32)
+        .max()
+        .unwrap_or(0);
+    let x = (bar.x + (bar.w - w) / 2).clamp(band.x, (band.right() - w).max(band.x));
+    (x, w)
 }
 
 /// The figure bar `at` carries, centred on the bar: at its head where it
@@ -976,10 +1247,20 @@ mod tests {
                         line,
                         bar_w: bar_width(&theme, cell_w),
                         cell_w,
+                        break_w: cell_w,
                         gap,
                     };
                     let max = *values.iter().max().expect("a bar");
-                    let set = settle(&theme, &values, max, &cut, figure, &mut stub_width);
+                    let rows: Vec<Vec<String>> = values.iter().map(|v| figure(*v)).collect();
+                    let set = settle(
+                        &theme,
+                        &values,
+                        max,
+                        &cut,
+                        &rows,
+                        &Breaks::NONE,
+                        &mut stub_width,
+                    );
                     // A cell holding the widest figure of the row at the
                     // smallest size type is set at states every one of them.
                     let floor = theme.small_px * FIGURE_FLOOR;
@@ -1044,10 +1325,20 @@ mod tests {
             line,
             bar_w: theme.row_h,
             cell_w: theme.row_h * 2,
+            break_w: theme.row_h * 2,
             gap: theme.gap / 2,
         };
         let figure: Figure = &|secs| vec![format!("{}h", secs / 3600), "30m".into()];
-        let set = settle(&theme, &[3600], 3600, &cut, figure, &mut stub_width);
+        let rows = vec![figure(3600)];
+        let set = settle(
+            &theme,
+            &[3600],
+            3600,
+            &cut,
+            &rows,
+            &Breaks::NONE,
+            &mut stub_width,
+        );
         assert_eq!(set.said[0], vec!["1h30m".to_string()], "onto one line");
         assert!(set.inside[0], "inside the bar it is too wide to stand over");
         assert_eq!(set.head, 0, "and the band keeps no air for it");
@@ -1291,6 +1582,7 @@ mod tests {
                 line,
                 bar_w: bar_width(&theme, cell_w),
                 cell_w,
+                break_w: cell_w,
                 gap: 2,
             };
             // A bar this narrow holds no figure at the smallest size type is
@@ -1299,7 +1591,16 @@ mod tests {
             assert!(stub_width(floor, "80%") > cut.bar_w - theme.gap / 2);
 
             let max = *values.iter().max().expect("a bar");
-            let set = settle(&theme, &values, max, &cut, figure, &mut stub_width);
+            let rows: Vec<Vec<String>> = values.iter().map(|v| figure(*v)).collect();
+            let set = settle(
+                &theme,
+                &values,
+                max,
+                &cut,
+                &rows,
+                &Breaks::NONE,
+                &mut stub_width,
+            );
             let stated: Vec<usize> = (0..bars).filter(|at| !set.said[*at].is_empty()).collect();
             assert!(set.step >= 2, "{w}x{h}: step {}", set.step);
             // The two ends always state theirs, with more between them.
@@ -1344,9 +1645,14 @@ mod tests {
         // `days` names three days across five cells.
         let days = ["Aug 28", "Aug 31", "Sep 1", "Sep 1", "Sep 7"];
         let cells = Rect::new(0, 0, 1200, 300).columns(days.len() as i32, 6);
-        let stated = named(&cells, 1, 12, &|at| days[at].to_string(), &mut |said| {
-            stub_width(24.0, said)
-        });
+        let stated = named(
+            &cells,
+            1,
+            12,
+            &Breaks::NONE,
+            &|at| days[at].to_string(),
+            &mut |said| stub_width(24.0, said),
+        );
         let said: Vec<&str> = stated.iter().map(|(_, name)| name.as_str()).collect();
         assert_eq!(said, ["Sep 7", "Sep 1", "Aug 31", "Aug 28"]);
         // "Sep 1" stands over the rightmost cell carrying it.
@@ -1359,10 +1665,63 @@ mod tests {
         // `same` names one day over six cells and states it once.
         let same = ["Aug 30"; 6];
         let cells = Rect::new(0, 0, 1200, 300).columns(same.len() as i32, 6);
-        let stated = named(&cells, 1, 12, &|at| same[at].to_string(), &mut |said| {
-            stub_width(24.0, said)
-        });
+        let stated = named(
+            &cells,
+            1,
+            12,
+            &Breaks::NONE,
+            &|at| same[at].to_string(),
+            &mut |said| stub_width(24.0, said),
+        );
         assert_eq!(stated.len(), 1);
+    }
+
+    /// A break holds its own column on the axis, and the two days it falls
+    /// between are named clear of the mark.
+    #[test]
+    fn a_break_keeps_the_day_it_stopped_on_and_the_day_it_opened_again() {
+        let names: Vec<String> = (0..21).map(|at| format!("Jul {}", at + 1)).collect();
+        let said: Vec<String> = vec!["392d".into()];
+        let breaks = Breaks {
+            at: &[10],
+            said: &said,
+            share: 1.0,
+        };
+        let band = Rect::new(40, 0, 1186, 300);
+        let cells = cells_of(band, names.len(), 2, &breaks);
+        let stated = named(
+            &cells,
+            5,
+            12,
+            &breaks,
+            &|at| names[at].clone(),
+            &mut |said| stub_width(24.0, said),
+        );
+        let read: Vec<&str> = stated.iter().map(|(_, name)| name.as_str()).collect();
+        assert!(read.contains(&"Jul 10"), "the day it stopped on: {read:?}");
+        assert!(
+            read.contains(&"Jul 12"),
+            "the day it opened again: {read:?}"
+        );
+        assert!(!read.contains(&"Jul 11"), "the break column is never named");
+        // Neither of the two reaches over the column the mark stands in.
+        let cut = cells[10];
+        for (x, name) in &stated {
+            let w = stub_width(24.0, name);
+            let clears = x + w <= cut.x || *x >= cut.right();
+            assert!(clears, "`{name}` at {x}+{w} stands on the mark");
+        }
+        // And with nothing cut, the row names what it always named.
+        let plain = band.columns(names.len() as i32, 2);
+        let before = named(
+            &plain,
+            5,
+            12,
+            &Breaks::NONE,
+            &|at| names[at].clone(),
+            &mut |said| stub_width(24.0, said),
+        );
+        assert!(before.iter().any(|(_, name)| name == "Jul 11"));
     }
 
     #[test]
@@ -1371,9 +1730,14 @@ mod tests {
         let names: Vec<String> = (0..29).map(|at| format!("{}月22日", at % 12 + 1)).collect();
         let band = Rect::new(40, 0, 1186, 300);
         let cells = band.columns(names.len() as i32, 2);
-        let stated = named(&cells, 7, 12, &|at| names[at].clone(), &mut |said| {
-            stub_width(24.0, said)
-        });
+        let stated = named(
+            &cells,
+            7,
+            12,
+            &Breaks::NONE,
+            &|at| names[at].clone(),
+            &mut |said| stub_width(24.0, said),
+        );
         assert!(!stated.is_empty());
         for (x, name) in &stated {
             let w = stub_width(24.0, name);
@@ -1384,8 +1748,7 @@ mod tests {
     }
 
     /// A cluster reaching into the days either side is the one way this band
-    /// can lie about *when*, and at sixteen sittings to a column no render can
-    /// be read closely enough to settle it.
+    /// can lie about *when*.
     #[test]
     fn a_cluster_of_sittings_never_leaves_its_column() {
         // Every panel's own mark, and the narrowest column any strip cuts.
@@ -1419,9 +1782,14 @@ mod tests {
         let names: Vec<String> = (0..25).map(|at| format!("{at:02}")).collect();
         let cells = Rect::new(0, 0, 1200, 300).columns(names.len() as i32, 2);
         for every in [1usize, 3, 6, 24, 40] {
-            let stated = named(&cells, every, 12, &|at| names[at].clone(), &mut |said| {
-                stub_width(20.0, said)
-            });
+            let stated = named(
+                &cells,
+                every,
+                12,
+                &Breaks::NONE,
+                &|at| names[at].clone(),
+                &mut |said| stub_width(20.0, said),
+            );
             assert_eq!(
                 stated.first().map(|(_, name)| name.as_str()),
                 Some("24"),

@@ -15,15 +15,20 @@ use super::{Ctx, Hit};
 /// The per cent a mark at the top of the scatter stands for.
 const WHOLE_BOOK: i64 = 100;
 
-/// One hour of the clock in this many is named, as `alltime::trends` names it.
+/// One hour of the clock in this many is named.
 const HOURS_NAMED: usize = 3;
 
 /// The reading row takes at most one in this many of the page's height.
 const LISTED: i32 = 2;
 
-/// How wide a column of the days band may fall before the strip steps up to a
-/// coarser one.
+/// A column narrower than this steps the strip up to a coarser grain.
 const THINNEST: i32 = 4;
+
+/// A run of days holding nothing is cut where it runs at least this long.
+const GAP: i64 = 14;
+
+/// A run is cut where it also covers this many times `usual`.
+const UNUSUAL: i64 = 3;
 
 /// What one column of a strip of days covers.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -34,12 +39,15 @@ enum Grain {
 }
 
 impl Grain {
-    /// The coarsest column a span of `days` needs to come under `most`.
-    fn for_span(days: i64, most: i64) -> Grain {
-        match (days <= most, days / 7 < most) {
-            (true, _) => Grain::Day,
-            (_, true) => Grain::Week,
-            _ => Grain::Month,
+    /// Finest first: a strip takes the first of these its columns fit in.
+    const ALL: [Grain; 3] = [Grain::Day, Grain::Week, Grain::Month];
+
+    /// About how many days one column of this grain covers.
+    fn days(self) -> i64 {
+        match self {
+            Grain::Day => 1,
+            Grain::Week => 7,
+            Grain::Month => 30,
         }
     }
 
@@ -67,8 +75,8 @@ impl Grain {
         out
     }
 
-    /// What a column opening on `day` is called. A strip reaching over a new
-    /// year states one, and two columns a year apart never read alike.
+    /// What a column opening on `day` is called. A `year` of true states the
+    /// year with every name.
     fn name(self, day: i64, year: bool, s: &Strings) -> String {
         let (y, m, _) = date::civil_from_days(day);
         match (self, year) {
@@ -79,27 +87,85 @@ impl Grain {
     }
 }
 
-/// A strip of seconds over `from..=to`, no column narrower than [`THINNEST`].
+/// A strip of seconds over `from..=to` at one grain, with every run of columns
+/// holding nothing that covers `floor` days or more cut down to one column.
+/// The run a break stands for is measured in days at every grain.
 fn strip(
     days: &[(i64, i64)],
     from: i64,
     to: i64,
-    wide: i32,
+    grain: Grain,
+    floor: i64,
     week: WeekStart,
-) -> (Vec<i64>, Vec<i64>, Grain) {
-    let most = (wide / THINNEST).max(2) as i64;
-    let grain = Grain::for_span(to - from + 1, most);
-    let edges = grain.edges(from, to, week);
-    let mut values = vec![0i64; edges.len().max(1)];
-    let last = values.len() - 1;
-    for (day, secs) in days {
+) -> (Vec<i64>, Vec<i64>, Vec<usize>, Vec<i64>) {
+    let bins = grain.edges(from, to, week);
+    let mut secs = vec![0i64; bins.len().max(1)];
+    let last = secs.len() - 1;
+    for (day, seconds) in days {
         if *day < from || *day > to {
             continue;
         }
-        let at = edges.partition_point(|edge| edge <= day).saturating_sub(1);
-        values[at.min(last)] += secs;
+        let at = bins.partition_point(|edge| edge <= day).saturating_sub(1);
+        secs[at.min(last)] += seconds;
     }
-    (values, edges, grain)
+    let (mut values, mut edges) = (Vec::new(), Vec::new());
+    let (mut breaks, mut ran) = (Vec::new(), Vec::new());
+    let mut at = 0;
+    while at < secs.len() {
+        let run = match secs[at] {
+            0 => secs[at..].iter().take_while(|s| **s == 0).count(),
+            _ => 0,
+        };
+        let held = run as i64 * grain.days();
+        // A run at either end of the strip is the span's own edge, never a break.
+        if held >= floor && at > 0 && at + run < secs.len() {
+            breaks.push(values.len());
+            ran.push(held);
+            values.push(0);
+            edges.push(bins[at]);
+            at += run;
+            continue;
+        }
+        values.push(secs[at]);
+        edges.push(bins[at]);
+        at += 1;
+    }
+    (values, edges, breaks, ran)
+}
+
+/// The columns a strip takes: the finest grain whose count comes under `most`
+/// once its runs are cut.
+fn cut_to(
+    days: &[(i64, i64)],
+    from: i64,
+    to: i64,
+    most: usize,
+    week: WeekStart,
+) -> (Vec<i64>, Vec<i64>, Vec<usize>, Vec<i64>, Grain) {
+    let floor = GAP.max(usual(days, from, to) * UNUSUAL);
+    let mut held = None;
+    for grain in Grain::ALL {
+        let (values, edges, breaks, ran) = strip(days, from, to, grain, floor, week);
+        let fits = values.len() <= most;
+        held = Some((values, edges, breaks, ran, grain));
+        if fits {
+            break;
+        }
+    }
+    held.expect("a grain")
+}
+
+/// The reading's own rhythm: the median run of days between one day of `days`
+/// inside `from..=to` and the next, never under one.
+fn usual(days: &[(i64, i64)], from: i64, to: i64) -> i64 {
+    let read: Vec<i64> = days
+        .iter()
+        .map(|(day, _)| *day)
+        .filter(|day| (from..=to).contains(day))
+        .collect();
+    let mut gaps: Vec<i64> = read.windows(2).map(|two| two[1] - two[0]).collect();
+    gaps.sort_unstable();
+    gaps.get(gaps.len() / 2).copied().unwrap_or(1).max(1)
 }
 
 /// "Aug 6 – Oct 22, 2024", or both years where the two fall in different ones.
@@ -143,8 +209,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, on: Option<usize>) {
     let (top, rest) = area.split_top(head + pitch + theme.gap * 2);
     listed(cx, top, index, &reads, on, pitch);
 
-    // `from..=to` is the picked reading's first day and its last, which
-    // `days`, `sat` and `book_hours` are all cut to.
+    // `days`, `sat` and `book_hours` are all cut to `from..=to`.
     let hours = cx.stats.book_hours(index, from..=to);
     let clock = hours.iter().any(|secs| *secs > 0);
     let rows = rest.rows(2 + clock as i32, cx.theme.gap * 2);
@@ -232,20 +297,72 @@ struct Strip {
     values: Vec<i64>,
     edges: Vec<i64>,
     grain: Grain,
-    /// Whether the strip reaches over a new year, which every name then states.
+    /// Whether the strip reaches over a new year, which every name states.
     year: bool,
     every: usize,
+    /// The columns standing for a run the strip cut, how long each ran, and
+    /// how wide they draw.
+    breaks: Vec<usize>,
+    said: Vec<String>,
+    share: f32,
 }
 
 impl Strip {
-    fn of(cx: &Ctx, index: usize, wide: i32, from: i64, to: i64) -> Strip {
-        let (values, edges, grain) = strip(&cx.stats.book_days(index), from, to, wide, cx.week);
-        Strip {
+    /// The strip one reading draws on, at the finest grain whose columns fit
+    /// `wide` once its runs are cut.
+    fn of(cx: &mut Ctx, index: usize, wide: i32, from: i64, to: i64) -> Strip {
+        let s = cx.s();
+        let days = cx.stats.book_days(index);
+        let most = (wide / THINNEST).max(2) as usize;
+        let (values, edges, breaks, ran, grain) = cut_to(&days, from, to, most, cx.week);
+        let mut strip = Strip {
             every: (values.len() / 4).max(1),
             year: date::civil_from_days(from).0 != date::civil_from_days(to).0,
+            said: ran
+                .iter()
+                .map(|run| s.days_plain.replace("{d}", &run.to_string()))
+                .collect(),
+            share: 1.0,
             values,
             edges,
             grain,
+            breaks,
+        };
+        strip.share = strip.share_of(cx, wide);
+        strip
+    }
+
+    /// How wide a break column stands against an ordinary one, never under one
+    /// column. A strip `count` wide cuts a break of `share`
+    /// `room * share / (count - 1 + share)` wide.
+    fn share_of(&self, cx: &mut Ctx, wide: i32) -> f32 {
+        if self.breaks.is_empty() {
+            return 1.0;
+        }
+        cx.text.set_px(cx.theme.small_px);
+        let widest = self
+            .said
+            .iter()
+            .map(|said| cx.text.measure_width(said) as i32)
+            .max()
+            .unwrap_or(0);
+        let count = self.values.len().max(1) as i32;
+        let gap = charts::cell_gap(cx.theme, self.values.len());
+        let room = (wide - gap * (count - 1)).max(1);
+        let want = widest + cx.theme.gap * 2;
+        // A run needing a third of the row keeps one column.
+        if want * 3 >= room {
+            return 1.0;
+        }
+        (want * (count - 1)) as f32 / (room - want) as f32
+    }
+
+    /// Where this strip was cut, as `charts` takes it.
+    fn breaks(&self) -> charts::Breaks<'_> {
+        charts::Breaks {
+            at: &self.breaks,
+            said: &self.said,
+            share: self.share,
         }
     }
 
@@ -277,6 +394,7 @@ fn days(cx: &mut Ctx, area: Rect, strip: &Strip, s: &'static Strings) {
         strip.every,
         None,
         None,
+        &strip.breaks(),
     );
 }
 
@@ -315,6 +433,7 @@ fn sat(cx: &mut Ctx, area: Rect, index: usize, strip: &Strip, from: i64, to: i64
         strip.every,
         WHOLE_BOOK,
         &|share| s.percent_plain.replace("{d}", &share.to_string()),
+        &strip.breaks(),
     );
 }
 
@@ -387,17 +506,90 @@ mod tests {
     fn a_strip_steps_up_a_grain_rather_than_draw_a_column_too_thin_to_see() {
         let week = WeekStart::Monday;
         let days: Vec<(i64, i64)> = (0..400).map(|d| (20_000 + d, 1800)).collect();
+        let most = |wide: i32| (wide / THINNEST).max(2) as usize;
         // Forty days in 400px is a column a day; four hundred is not.
-        let (values, _, grain) = strip(&days, 20_000, 20_039, 400, week);
+        let (values, _, _, _, grain) = cut_to(&days, 20_000, 20_039, most(400), week);
         assert_eq!((values.len(), grain == Grain::Day), (40, true));
-        let (_, _, grain) = strip(&days, 20_000, 20_399, 400, week);
+        let (_, _, _, _, grain) = cut_to(&days, 20_000, 20_399, most(400), week);
         assert_eq!(grain, Grain::Week);
-        let (_, _, grain) = strip(&days, 20_000, 22_000, 400, week);
+        let (_, _, _, _, grain) = cut_to(&days, 20_000, 22_000, most(400), week);
         assert_eq!(grain, Grain::Month);
         // Every second of the span lands in a column, wherever it is cut.
         for wide in [40, 120, 400] {
-            let (values, _, _) = strip(&days, 20_000, 20_399, wide, week);
+            let (values, _, _, _, _) = cut_to(&days, 20_000, 20_399, most(wide), week);
             assert_eq!(values.iter().sum::<i64>(), 400 * 1800);
+        }
+    }
+
+    /// The days a book was read on: `runs` runs of `run` days `on` days
+    /// apart, with `off` days holding nothing between one run and the next.
+    fn rhythm(runs: usize, run: i64, on: i64, off: i64) -> Vec<(i64, i64)> {
+        let mut out: Vec<(i64, i64)> = Vec::new();
+        let mut day = 20_000;
+        for nth in 0..runs {
+            if nth > 0 {
+                day += off;
+            }
+            for step in 0..run {
+                out.push((day, 1800));
+                if step + 1 < run {
+                    day += on;
+                }
+            }
+            day += 1;
+        }
+        out
+    }
+
+    /// A run is cut where it is both long and unlike the reading around it.
+    #[test]
+    fn a_run_is_cut_only_where_it_is_long_and_unlike_the_reading() {
+        let week = WeekStart::Monday;
+        let cut = |days: &[(i64, i64)]| {
+            let (from, to) = (days[0].0, days[days.len() - 1].0);
+            let (values, _, breaks, ran, _) = cut_to(days, from, to, 400, week);
+            (values.len(), breaks.len(), ran)
+        };
+        // Five days, 34 off, five days: one cut, and 44 columns become 11.
+        let put_down = rhythm(2, 5, 1, 34);
+        assert_eq!(cut(&put_down), (11, 1, vec![34]));
+        // A day every twelve keeps every column: the gap is this rhythm.
+        let slowly = rhythm(1, 12, 12, 0);
+        assert_eq!(cut(&slowly), (12 * 11 + 1, 0, vec![]));
+        // And a run under `GAP` is never cut however unlike the rhythm it is.
+        let a_week_off = rhythm(2, 5, 1, 12);
+        assert_eq!(cut(&a_week_off), (22, 0, vec![]));
+    }
+
+    /// The grain is asked after the runs are cut.
+    #[test]
+    fn the_grain_steps_only_after_the_runs_are_cut() {
+        let week = WeekStart::Monday;
+        let days = rhythm(2, 20, 1, 380);
+        let (from, to) = (days[0].0, days[days.len() - 1].0);
+        // 420 days of span, but only 40 of them were read on.
+        assert_eq!(to - from + 1, 420);
+        let (values, _, breaks, ran, grain) = cut_to(&days, from, to, 100, week);
+        assert_eq!((values.len(), breaks.len(), ran), (41, 1, vec![380]));
+        assert_eq!(grain, Grain::Day, "the span alone would have said weeks");
+        // A row too narrow for 41 columns steps the grain and holds the cut.
+        let (values, _, breaks, _, grain) = cut_to(&days, from, to, 20, week);
+        assert_eq!(breaks.len(), 1);
+        assert!(values.len() <= 20, "{} columns", values.len());
+        assert_eq!(grain, Grain::Week);
+    }
+
+    /// Every second of the reading lands in a column, cut or not, and a break
+    /// column carries none of them.
+    #[test]
+    fn a_cut_strip_holds_every_second_the_reading_held() {
+        let days = rhythm(3, 4, 1, 60);
+        let (from, to) = (days[0].0, days[days.len() - 1].0);
+        let (values, _, breaks, _, _) = cut_to(&days, from, to, 400, WeekStart::Monday);
+        assert_eq!(values.iter().sum::<i64>(), 12 * 1800);
+        assert_eq!(breaks.len(), 2);
+        for at in breaks {
+            assert_eq!(values[at], 0, "a break column carries no bar");
         }
     }
 

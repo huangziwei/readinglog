@@ -263,6 +263,8 @@ pub struct Strings {
     pub percent_reached: &'static str,
     /// The figure on a bar. `{d}` is that figure, rounded.
     pub percent_plain: &'static str,
+    /// The run of days a `//` on the day axis stands for. `{d}` is that run.
+    pub days_plain: &'static str,
     /// The restart control, its question, and what that question states.
     pub restart: &'static str,
     pub restart_ask: &'static str,
@@ -324,8 +326,7 @@ pub struct Strings {
     pub figures_row: &'static str,
     pub figures_device: &'static str,
     pub figures_app: &'static str,
-    /// The button on that row, standing apart from its two values: read every
-    /// log again and measure each sitting in them.
+    /// The button on that row: read every log again and measure each sitting.
     pub figures_heal: &'static str,
     /// The question it puts up first, its note naming the minutes and what
     /// moves, and the answer that runs it.
@@ -347,9 +348,7 @@ pub struct Strings {
     /// unidentified row and the covers row below it are both set with them.
     pub chip_show: &'static str,
     pub chip_hide: &'static str,
-    /// The button on the unidentified row, standing apart from its two values:
-    /// read the logs, the catalog and the sidecars again, and name what they
-    /// name.
+    /// The button on the unidentified row: name the books again.
     pub unnamed_retry: &'static str,
     /// The question it puts up first, its note naming the minutes and what
     /// moves, and the answer that runs it.
@@ -365,8 +364,7 @@ pub struct Strings {
     pub retry_files: &'static str,
     pub retry_named: &'static str,
     pub retry_none: &'static str,
-    /// The row hiding every book no jacket can be drawn for, set with the same
-    /// two chips.
+    /// The row hiding every book no jacket can be drawn for.
     pub uncovered_row: &'static str,
     /// `{d} sitting[s]` and `{d} book[s]`, which the record heading's own
     /// figure and the dialogs below count with.
@@ -399,9 +397,7 @@ pub struct Strings {
     pub delete_ask: &'static str,
     pub delete_note: &'static str,
     pub delete_do: &'static str,
-    /// What the archives beside the record take on disk, stated on the
-    /// recorded row. `{size}` is the total. They are never taken away on the
-    /// app's own account, and the figure stands on the row.
+    /// What the archives beside the record take on disk. `{size}` is the total.
     pub n_archived: &'static str,
     /// Emptying the record, keeping an archive first. `{what}` is what goes,
     /// `{file}` the archive's name, `{size}` how large it is.
@@ -420,8 +416,7 @@ pub struct Strings {
     pub rebuild_ask: &'static str,
     pub rebuild_note: &'static str,
     pub rebuild_do: &'static str,
-    /// The banner headline over the log pass. `reset_row` and `restore_do`
-    /// head the other two.
+    /// The banner headline over the log pass.
     pub rebuild_head: &'static str,
     /// The line under that headline while each of the three runs.
     pub wipe_doing: &'static str,
@@ -579,6 +574,7 @@ const ENGLISH: Strings = Strings {
                   progress, the time, the sittings and the days read do not change.",
     percent_reached: "at {d}%",
     percent_plain: "{d}%",
+    days_plain: "{d}d",
     restart: "Restart",
     restart_ask: "Restart this book?",
     restart_note: "The Finished mark comes off, the progress goes back to 0%, and the \
@@ -852,6 +848,7 @@ const GERMAN: Strings = Strings {
                   unverändert.",
     percent_reached: "bei {d} %",
     percent_plain: "{d} %",
+    days_plain: "{d}d",
     restart: "Neu beginnen",
     restart_ask: "Dieses Buch neu beginnen?",
     restart_note: "Die Markierung Fertig wird entfernt, der Fortschritt geht auf 0 % \
@@ -1123,6 +1120,7 @@ const JAPANESE: Strings = Strings {
     unmark_note: "読了の棚から外れ、ライブラリでも未読になります。進捗、読んだ時間、回数、日数は変わりません。",
     percent_reached: "{d}%まで",
     percent_plain: "{d}%",
+    days_plain: "{d}日",
     restart: "最初から",
     restart_ask: "この本を最初から読みますか？",
     restart_note: "読了の印が外れ、進捗は0%に戻り、本は最初から開きます。ハイライトとメモ、\
@@ -1374,6 +1372,7 @@ const SIMPLIFIED: Strings = Strings {
     unmark_note: "本书将离开已读完书架，图书馆中也标记为未读。进度、已读的时间、次数与天数不变。",
     percent_reached: "至{d}%",
     percent_plain: "{d}%",
+    days_plain: "{d}天",
     restart: "重新开始",
     restart_ask: "从头重读这本书？",
     restart_note: "读完标记将被取消，进度归零，本书将从头打开。标注与笔记，\
@@ -1632,6 +1631,7 @@ const TRADITIONAL: Strings = Strings {
     unmark_note: "本書將離開已讀完書架，圖書館中也標記為未讀。進度、已讀的時間、次數與天數不變。",
     percent_reached: "至{d}%",
     percent_plain: "{d}%",
+    days_plain: "{d}天",
     restart: "重新開始",
     restart_ask: "從頭重讀這本書？",
     restart_note: "讀完標記將被取消，進度歸零，本書將從頭開啟。標註與筆記，\
@@ -1968,9 +1968,8 @@ mod tests {
 
     #[test]
     fn every_dialog_states_its_whole_case_in_every_language() {
-        // The narrowest panel at the largest text, which is where a clamp
-        // bites first. `ui::dialog` boxes the note in `area.w - gap * 6`, less
-        // `gap * 3` of padding on each side.
+        // `ui::dialog` boxes the note in `area.w - gap * 6`, less `gap * 3` of
+        // padding on each side.
         let theme = crate::ui::theme::Theme::sized(1264, 1680, crate::settings::TextSize::Large);
         let inner = crate::ui::chrome::content_box(&theme).w - theme.gap * 12;
 

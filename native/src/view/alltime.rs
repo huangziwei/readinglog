@@ -1,6 +1,6 @@
 //! All Time, in two pages: a board of four rows of three figures, three of them
 //! carrying a hit box, and Trends, the record folded onto a day, a week and a
-//! year. One line at the head of each pages between them, as does a swipe.
+//! year. An arrow at the head of each page steps onto the other.
 
 use crate::date;
 use crate::lang::Strings;
@@ -60,8 +60,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, page: usize) {
 const BACK: &str = "‹";
 const FORWARD: &str = "›";
 
-/// The height of the line at the head of a page, which the board sets what the
-/// record covers in.
+/// The height of the line at the head of a page.
 fn edge_height(theme: &Theme) -> i32 {
     theme.small_px as i32 + theme.gap * 2
 }
@@ -76,8 +75,7 @@ fn edges(cx: &mut Ctx, line: Rect, left: Option<&str>, right: Option<&str>) {
     let baseline = line.y + cx.text.cap_height() as i32;
     for (said, at_left) in [(left, true), (right, false)] {
         let Some(said) = said else { continue };
-        // An arrow takes the size the span pages set theirs at; a name sits
-        // with the line's own type.
+        // An arrow takes `Theme::head_px`; a name takes the line's own type.
         let arrow = said == BACK || said == FORWARD;
         cx.text.set_px(match arrow {
             true => theme.head_px,
@@ -90,8 +88,7 @@ fn edges(cx: &mut Ctx, line: Rect, left: Option<&str>, right: Option<&str>) {
         };
         cx.text.draw_in(script, cx.fb, x, baseline, said, false);
         if arrow {
-            // The hit box reaches past the arrow's own width, as it does on
-            // the span pages.
+            // The hit box reaches past the arrow's own width.
             let reach = line.w / 6;
             let at = match at_left {
                 true => line.x,
@@ -168,6 +165,7 @@ pub(super) fn band(
         every,
         fold.busiest,
         None,
+        &charts::Breaks::NONE,
     );
 }
 
@@ -179,8 +177,7 @@ pub(super) fn duration_rows(secs: i64, s: &Strings) -> Vec<String> {
         return Vec::new();
     }
     let space = if s.unit_space { " " } else { "" };
-    // Rounded, as [`date::duration`] is: a bar and the heading over it state
-    // the same seconds and must state them alike.
+    // Rounded, as [`date::duration`] is.
     let (hours, mins) = date::hours_and_minutes(secs);
     let hour = format!("{hours}{space}{}", s.hours);
     let min = format!("{mins}{space}{}", s.minutes);
@@ -229,12 +226,11 @@ fn sittings(cx: &mut Ctx, area: Rect) {
         6,
         busiest,
         None,
+        &charts::Breaks::NONE,
     );
 }
 
-/// The length the band at `at` opens at, for the axis under it. `at` counts
-/// from `first`, per [`crate::stats::Stats::first_band`]. The last band
-/// states a `+`.
+/// The length the band at `at` opens at, counting from `first`.
 fn sitting_name(at: usize, first: usize, floor: SittingFloor, s: &Strings) -> String {
     // `floor.label` names the band the scale opens on.
     if at == 0 {
@@ -262,8 +258,7 @@ fn finished_books(cx: &Ctx) -> Vec<usize> {
 /// The twelve figures, row by row.
 fn cells(cx: &Ctx) -> Vec<Cell> {
     let s = cx.s();
-    // The board states what the whole record came to, the same way a span
-    // page states its own days.
+    // The board states what the whole record came to.
     let all = cx.stats.tally(cx.stats.opened(cx.today)..=cx.today);
     let sittings = (cx.stats.sittings.len() as i64).max(1);
     let books = cx.stats.book_count() as i64;
