@@ -1,6 +1,6 @@
-//! Reading one syslog line. The reading-timer lines are a flat `key:value,`
-//! list inside `;`-terminated payloads, each headed by an event name. The
-//! `fastmetrics` records beside them carry a JSON-ish body.
+//! Reading one syslog line. [`payloads`] splits a reading-timer line into
+//! `;`-terminated payloads of `key:value,` fields, each headed by an event
+//! name; [`field_text`] and [`field_num`] read a `fastmetrics` record's body.
 
 use crate::date;
 
@@ -50,8 +50,7 @@ pub fn stamp(line: &str) -> Option<Moment> {
     })
 }
 
-/// The `YYMMDD:HHMMSS` a line begins with, or `None`. Log prefixes and dump
-/// filenames share this shape and compare as strings.
+/// The `YYMMDD:HHMMSS` `line` begins with, or `None`.
 pub fn line_stamp(line: &str) -> Option<&str> {
     stamp(line).map(|_| &line[..13])
 }
@@ -76,9 +75,8 @@ pub fn log_stamp(iso: &str) -> Option<String> {
         .then_some(out)
 }
 
-/// A whole-number field of a reading-timer payload. The name must start a
-/// field — the line's separator or a `,`. `Time` does not match inside
-/// `IntervalTime`.
+/// A whole-number field of a reading-timer payload. `name` starts a field,
+/// after a `,`, a `:`, or nothing.
 pub fn field(line: &str, name: &str) -> Option<i64> {
     let bytes = line.as_bytes();
     // `name` and the `:` after it, matched without building the needle.
@@ -97,9 +95,8 @@ pub fn field(line: &str, name: &str) -> Option<i64> {
     rest[..end].parse().ok()
 }
 
-/// The payloads a line carries, each `<Event>,<fields>` with the event name
-/// possibly missing. One payload's counter stands beside that payload's book
-/// and no other.
+/// The payloads `line` carries, each `<Event>,<fields>` stating one book's
+/// counter, its event name possibly missing.
 pub fn payloads(line: &str) -> impl Iterator<Item = &str> {
     line.split_once("Information::")
         .map_or("", |(_, rest)| rest)
@@ -107,9 +104,19 @@ pub fn payloads(line: &str) -> impl Iterator<Item = &str> {
         .filter(|p| !p.is_empty())
 }
 
-/// Each place `text` states a value for `name`, in order. `name` carries the
-/// `:` ending it and starts a field: the byte before it is a `,`, a `:`, or
-/// nothing.
+/// The fields of the last page event `payload` states, from its last
+/// `PageStartPos` on, past the tail of any earlier event; `payload` whole
+/// where it names no `PageStartPos`.
+pub fn last_event(payload: &str) -> &str {
+    const START: &str = "PageStartPos:";
+    match fields(payload, START).last() {
+        Some(at) => &payload[at - START.len()..],
+        None => payload,
+    }
+}
+
+/// Each place `text` states a value for `name`, in order. `name` carries its
+/// `:` and starts a field, after a `,`, a `:`, or nothing.
 fn fields<'a>(text: &'a str, name: &'static str) -> impl Iterator<Item = usize> + 'a {
     let bytes = text.as_bytes();
     text.match_indices(name).filter_map(move |(at, _)| {
@@ -128,8 +135,7 @@ fn stated(text: &str, at: usize) -> Option<(&str, i64)> {
     if !kind.ends_with("Position") {
         return None;
     }
-    // `from`..`end` is the last digit run of `tail`. It opens `tail` or follows
-    // a `:` or a ` `.
+    // `tail[from..end]`: its last digit run, opening `tail` or after `:` or ` `.
     let end = tail.rfind(|c: char| c.is_ascii_digit())? + 1;
     let from = tail[..end]
         .rfind(|c: char| !c.is_ascii_digit())
@@ -168,7 +174,7 @@ pub fn time_left(payload: &str) -> Option<i64> {
 
 /// The book a whole line is about, from whichever of its payloads names one.
 pub fn book_position(line: &str) -> Option<i64> {
-    payloads(line).find_map(end_position)
+    payloads(line).map(last_event).find_map(end_position)
 }
 
 /// Every `NextTOCEntryPosition` `line` states, and the [`end_position`] of each
@@ -184,7 +190,7 @@ pub fn toc_and_book(line: &str) -> (Vec<i64>, Vec<i64>) {
             let (_, position) = stated(payload, at)?;
             Some(position)
         }));
-        book.extend(end_position(payload));
+        book.extend(end_position(last_event(payload)));
     }
     (toc, book)
 }
@@ -208,46 +214,39 @@ pub struct Observation {
     /// The book's running reading counter, in milliseconds.
     pub total_ms: Option<i64>,
     pub words: Option<i64>,
-    /// How long this one page stood, in milliseconds. Stated on every turn
-    /// line, including the ones `refused` keeps out of `total_ms`.
+    /// Milliseconds the page stood, stated on every turn line, `refused` or not.
     pub interval_ms: Option<i64>,
     /// The words on the page `interval_ms` measured.
     pub interval_words: Option<i64>,
-    /// Whether the line carries a `SkipAvgReason`, keeping `interval_ms` out of
-    /// `total_ms`. Three reasons occur: `Sample out of range` for a rate
-    /// outside [40, 900], `RTC_PrevPage` and `RTC_Close` for the event alone.
+    /// Whether the line carries a `SkipAvgReason`, keeping `interval_ms` out.
     pub refused: bool,
     pub page_turn: bool,
     pub closes: bool,
-    /// Whether the line names `GoToPosition` or `TapOnFooter`. Its own
-    /// position fields state where the jump landed; `ScreenStart` and
-    /// `ScreenEnd` state the page it left.
+    /// Whether the line names `GoToPosition` or `TapOnFooter`, landing where it states.
     pub jumped: bool,
 }
 
-/// Read a line as an observation of some book's reading counter, or `None`. A
-/// line qualifies on what it carries: a counter beside an end position. A
-/// mangled payload keeps its fields and loses its event name.
+/// Read `line` as an observation of some book's reading counter, or `None`.
+/// `line` qualifies on a counter beside an end position, named or not.
 pub fn observation(line: &str) -> Option<Observation> {
     let page_turn = names(line, "NextPage");
     let closes = names(line, "CloseBook");
     let jumped = names(line, "GoToPosition") || names(line, "TapOnFooter");
-    // A named page event with no counter marks a turn. `TotalTime` is absent
-    // from the uncredited ones.
+    // `named` page events observe their book without a `TotalTime`.
     let named = page_turn || closes || names(line, "PreviousPage") || names(line, "GoToPosition");
-    // The payload holding the counter, or — for those uncredited events — any
-    // that at least says which book.
-    let chosen = payloads(line)
+    let events = || payloads(line).map(last_event);
+    // The payload stating a counter, else for `named` any stating a book.
+    let chosen = events()
         .find(|p| field(p, "TotalTime").is_some() && end_position(p).is_some())
         .or_else(|| {
             named
-                .then(|| payloads(line).find(|p| end_position(p).is_some()))
+                .then(|| events().find(|p| end_position(p).is_some()))
                 .flatten()
         })
         // A payload carrying `CurrentPos` and an end position, with no
         // `TotalTime` and no name — the whole record of an untimed sitting.
         .or_else(|| {
-            payloads(line).find(|p| {
+            events().find(|p| {
                 end_position(p).is_some()
                     && fields(p, "CurrentPos:").any(|at| stated(p, at).is_some())
             })
@@ -282,6 +281,20 @@ pub fn opened_at_counter(line: &str) -> Option<i64> {
         .parse::<i64>()
         .ok()
         .map(|s| s * 1000)
+}
+
+/// Whether `line` is a `Reading_Resumed` restarting the page interval: reason
+/// 2, the screensaver lifting, or 8, a return from another application.
+pub fn resumed(line: &str) -> bool {
+    let Some(rest) = line.split_once("Reading_Resumed,Reason:").map(|(_, r)| r) else {
+        return false;
+    };
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    rest[..end]
+        .parse::<i64>()
+        .is_ok_and(|reason| reason & (2 | 8) != 0)
 }
 
 /// Where `"<name>"` opens in `line`, quotes included, without building the
@@ -325,8 +338,7 @@ pub fn from_book(line: &str) -> Option<i64> {
 }
 
 /// Map each book's per-line `EndPos` fingerprint to its [`from_book`], with
-/// `pending` dropped around an open and a close. Only a timer line states any
-/// of this; the rest are passed over on the family alone.
+/// `pending` dropped around an open and a close.
 pub fn frombook_map<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<(i64, i64)> {
     let mut map: Vec<(i64, i64)> = Vec::new();
     let mut pending: Option<i64> = None;
@@ -352,8 +364,8 @@ pub fn frombook_map<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<(i64, 
     map
 }
 
-/// The highest reading counter each `EndPos` was logged with:
-/// `(end position, TotalTime, TotalWords)`. `timer.model` holds the same pair.
+/// The highest reading counter each `EndPos` was logged with, as
+/// `(end position, TotalTime, TotalWords)`.
 pub fn counter_map<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<(i64, i64, i64)> {
     let mut map: Vec<(i64, i64, i64)> = Vec::new();
     for line in events {
@@ -484,6 +496,54 @@ mod tests {
         assert_eq!(opened_at_counter(PAGE), None);
     }
 
+    /// A KPP flush at a sleep: the tail of an earlier page event, its chapter
+    /// group first, ahead of the whole of the latest.
+    #[test]
+    fn a_flush_is_read_off_its_last_page_event() {
+        let line = "260925:132253 cvm[17451]: I ReadingTimerController:Information::\
+            CurrentPagePosDiff:54,TimeForPage:5.656,\
+            NextTOCEntryPosition:YJPosition: AXcDAAAAAAAA:136580,NextTOCEntryLength:8,\
+            CurrentPos:YJPosition: AYUqAAAAAAAA:134437,EndPos:YJPosition: AXcDAAAAAAAA:136580,\
+            PosLeft:2143,PageStartPos:YJPosition: AYgqAAAPAAAA:134492,IntervalTime:4650,\
+            IntervalWords:94,SkipAvgReason:Sample out of range,TotalTime:5000460,\
+            TotalWords:44539,CurrentPos:YJPosition: AYgqAAAPAAAA:134492,\
+            EndPos:YJPosition: AfCDAQAQAAAA:2546710,PosLeft:2412218,%Left:0.927,\
+            NextTOCEntryPosition:YJPosition: AXcDAAAAAAAA:136580,NextTOCEntryLength:8,\
+            CurrentPos:YJPosition: AYgqAAAPAAAA:134492,EndPos:YJPosition: AXcDAAAAAAAA:136580,\
+            PosLeft:2088;Reading_Interrupted,Reason:1;";
+        let obs = observation(line).expect("the latest event's counter and book");
+        assert_eq!(obs.position, 2_546_710);
+        assert_eq!(obs.total_ms, Some(5_000_460));
+        assert_eq!(obs.words, Some(44_539));
+        assert_eq!(book_position(line), Some(2_546_710));
+        // `last_event` reads `PAGE` from its `PageStartPos` on, and `place` whole.
+        assert_eq!(
+            last_event(PAGE),
+            PAGE.split_once("NextPage,Verdict:Processed,").unwrap().1
+        );
+        let place = "CurrentPos:HTMLPosition:7731097,EndPos:HTMLPosition:19886489,PosLeft:1;";
+        assert_eq!(last_event(place), place);
+    }
+
+    #[test]
+    fn a_wake_is_a_resume_the_timer_restarts_its_interval_at() {
+        let resume = |reason: i64| {
+            format!(
+                "260929:233443 cvm[6397]: I ReadingTimerController:Information::Reading_Resumed,Reason:{reason};"
+            )
+        };
+        assert!(resumed(&resume(2)), "the screensaver lifting");
+        assert!(resumed(&resume(8)), "back from another application");
+        assert!(!resumed(&resume(64)), "the resume behind an open");
+        assert!(!resumed(&resume(32)));
+        assert!(!resumed(
+            "260929:233443 cvm[6397]: I ReadingTimerController:Information::Handling Reading event :2: reason :2"
+        ));
+        assert!(!resumed(
+            "260929:223131 cvm[6397]: I ReadingTimerController:Information::Reading_Interrupted,Reason:1;"
+        ));
+    }
+
     #[test]
     fn a_metrics_body_gives_up_quoted_and_unquoted_values() {
         let rec = "260814:111900 fastmetrics[1]: D fastmetrics: SchemaName[ereader_book_consume_content], Fields[{ \t\"context\" : \"Book:Reading\", \t\"words_count\" : 217, \t\"span_type\" : \"Text\" } ]. :";
@@ -500,7 +560,7 @@ mod tests {
         assert_eq!(frombook_map([open, info]), vec![(938_016, 938_018)]);
         assert_eq!(from_book(info), Some(938_018));
         assert_eq!(from_book(PAGE), None);
-        // An open with no BookEndPosition of its own inherits nothing.
+        // `PAGE` after `open` inherits nothing of `info`.
         assert_eq!(frombook_map([info, open, PAGE]), vec![(938_016, 938_018)]);
     }
 
@@ -508,7 +568,7 @@ mod tests {
     fn a_close_ends_the_reach_of_the_book_end_it_states() {
         let info = "260811:072948 java[1]: I ReadingTimerController:Information::BookEndPosition.FromBook:YJPosition: AZI/AAAAAAAA:938018,CurrentPos:YJPosition: AWUDAAAAAAAA:2,EndPos:YJPosition: Aag/AACDAQAA:938016,PosLeft:938014;";
         let close = "260811:073010 java[1]: I ReadingTimerController:Information::CloseBook,CurrentPos:YJPosition: AWUDAAAAAAAA:2,EndPos:YJPosition: Aag/AACDAQAA:938016,PosLeft:938014;";
-        // The close states the closing book's own position and is paired.
+        // `close` states the closing book's own position and is paired.
         assert_eq!(frombook_map([info, close]), vec![(938_016, 938_018)]);
         // `PAGE` is another book at 148207, and takes nothing from the close.
         assert_eq!(
