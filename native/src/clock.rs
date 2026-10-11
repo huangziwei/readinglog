@@ -1,21 +1,21 @@
-//! The offsets the device's clock has stood on, over time. A firmware keeps one
-//! zone file and replaces it whole, so [`crate::zone`] answers only for today;
-//! placing a true epoch on the device's clock needs the offset that stood then.
+//! The offsets the Kindle's clock has stood on, over time. One zone file stands
+//! at a time and is replaced whole: [`crate::zone`] answers only for today, and
+//! placing a true epoch on the Kindle's clock needs the offset that stood then.
 
-/// The furthest from UTC a device clock is ever set. Past this a difference
+/// The furthest from UTC a Kindle clock is ever set. Past this a difference
 /// between two stamps is two different instants, not one instant in two
 /// frames.
 pub const BOUND_SECS: i64 = 14 * 3600;
 
-/// Offsets are whole minutes. A Kindle set by hand sits at `+02:01`, so a
-/// whole-*hour* test would refuse a real clock.
+/// Offsets are whole minutes. `+02:01` is a clock set by hand, and a
+/// whole-*hour* test refuses it.
 pub const STEP_SECS: i64 = 60;
 
 pub fn plausible(offset: i64) -> bool {
     offset.abs() <= BOUND_SECS && offset % STEP_SECS == 0
 }
 
-/// The offsets the device has stood on, as `(the instant it was first seen
+/// The offsets the Kindle has stood on, as `(the instant it was first seen
 /// at, the offset)`. Ascending by instant, and never two rows running at one
 /// offset.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -56,7 +56,7 @@ impl Clock {
 
     /// Fold `seen` in, sorted and collapsed so a run at one offset is one row,
     /// answering whether anything moved. Observations are only ever added: a
-    /// pass that saw nothing is not the device changing zone.
+    /// pass that saw nothing is not the Kindle changing zone.
     pub fn observe(&mut self, mut seen: Vec<(i64, i64)>) -> bool {
         seen.extend_from_slice(&self.seen);
         seen.retain(|(_, offset)| plausible(*offset));
@@ -81,15 +81,15 @@ impl Clock {
     }
 }
 
-/// [`Clock::offset_at`], falling back to the zone file standing now where the
-/// record has seen nothing — which is right for a device that has not moved.
+/// [`Clock::offset_at`], falling back to the zone file's offset at this instant where the
+/// record has seen nothing — which is right for a Kindle that has not moved.
 pub fn offset_at(clock: &Clock, epoch: i64) -> Option<i64> {
     clock
         .offset_at(epoch)
         .or_else(|| crate::zone::offset_at(epoch))
 }
 
-/// An epoch second as the `YYYY-MM-DDTHH:MM:SS` the device would have written
+/// An epoch second as the `YYYY-MM-DDTHH:MM:SS` the Kindle writes
 /// for it, on the clock it stood on then. Empty where no day can be named.
 pub fn stamp(clock: &Clock, epoch: i64) -> String {
     let placed = match offset_at(clock, epoch) {
@@ -106,7 +106,7 @@ pub fn stamp(clock: &Clock, epoch: i64) -> String {
 mod tests {
     use super::*;
 
-    /// A fortnight at +6 between two stretches at +2.
+    /// A fortnight at +6 between two spans at +2.
     fn travelled() -> Clock {
         let mut clock = Clock::default();
         assert!(clock.observe(vec![
@@ -144,14 +144,14 @@ mod tests {
         );
         assert_eq!(clock.offset_at(1_787_650_000), Some(21_600));
         assert_eq!(clock.offset_at(1_788_950_000), Some(7200));
-        // Under the first row, the earliest clock the device is known to have
-        // stood on rather than the one it stands on today.
+        // Under the first row, the earliest clock the Kindle is known to have
+        // stood on, not the one it stands on today.
         assert_eq!(clock.offset_at(1_700_000_000), Some(7200));
         assert_eq!(Clock::default().offset_at(1_786_050_000), None);
     }
 
     #[test]
-    fn only_a_clock_a_device_could_stand_on_is_taken() {
+    fn only_a_clock_a_kindle_could_stand_on_is_taken() {
         assert!(plausible(7260), "+02:01, set a minute fast by hand");
         assert!(plausible(-4 * 3600 - 30 * 60));
         assert!(!plausible(15 * 3600), "past the bound");
@@ -189,7 +189,7 @@ mod tests {
         assert_eq!(
             crate::date::local_at(1_787_650_000, Some(7200)).map(|(d, s)| crate::date::stamp(d, s)),
             Some("2026-08-25T11:26:40".into()),
-            "the same instant on the clock the device stands on today"
+            "the same instant on the clock the Kindle stands on today"
         );
     }
 }

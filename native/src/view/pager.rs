@@ -1,5 +1,5 @@
-//! The pager along a page's foot: which stretch is showing, and the marks that
-//! step or jump. Every screen paged from its foot stands on this, so the foot
+//! The pager along a page's foot: which page is showing, and the marks that
+//! step or jump. Every screen paged from its foot stands on this: the foot
 //! reads the same wherever it is met.
 
 use crate::ui::chrome;
@@ -68,13 +68,13 @@ pub fn draw(cx: &mut Ctx, foot: Rect, label: &str, open: [bool; 2], ends: [Hit; 
     // The steps hold the white either side of `label`, clear of the jumps.
     let back = between(foot.x + reach, middle, reach);
     let on = between(middle + width, foot.right() - reach, reach);
-    let marks = [
+    let highlights = [
         (foot.x, JUMP_FIRST, open[0].then_some(ends[0])),
         (back, STEP_BACK, open[0].then_some(Hit::Prev)),
         (on, STEP_ON, open[1].then_some(Hit::Next)),
         (foot.right() - reach, JUMP_LAST, open[1].then_some(ends[1])),
     ];
-    for (x, said, hit) in marks {
+    for (x, said, hit) in highlights {
         mark(cx, foot, x, said, hit);
     }
     cx.text.set_px(theme.small_px);

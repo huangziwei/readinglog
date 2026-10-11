@@ -10,8 +10,8 @@ pub mod book_graphs;
 pub mod books;
 pub mod config;
 pub mod daybooks;
+pub mod highlights;
 pub mod home;
-pub mod marks;
 pub mod pager;
 pub mod rhythm;
 pub mod search;
@@ -37,15 +37,15 @@ pub enum Hit {
     Book(usize),
     /// One of the open book's own three tabs.
     BookTab(BookTab),
-    /// Where the open book's list of marks opens, as an index into it.
-    MarksPage(usize),
-    /// A passage the search found: the book it was marked in, and the row's
-    /// place in that book's own list of marks.
-    Mark(usize, usize),
+    /// Where the open book's list of highlights opens, as an index into it.
+    HighlightsPage(usize),
+    /// A passage the search found: the book it was highlighted in, and the row's
+    /// place in that book's own list of highlights.
+    Highlight(usize, usize),
     /// Open a book through `open::uri`, by its index in [`Stats::books`].
     /// Leaves the app, as [`Hit::Exit`] does.
     Open(usize),
-    /// Ask to set `BookRecord::finished` on a book, by its index in
+    /// Ask to set `Book::finished` on a book, by its index in
     /// [`Stats::books`] and the value a tap sets. [`Hit::Answer`] answers it.
     Finished(usize, bool),
     /// Ask to read a book again, by its index in [`Stats::books`].
@@ -62,24 +62,15 @@ pub enum Hit {
     Language(Lang),
     WeekStart(WeekStart),
     TextSize(crate::settings::TextSize),
-    /// Whether a total counts reading on books the catalog names none of.
-    ShowUnnamed(bool),
-    /// Whether a book no jacket can be drawn for is listed at all.
+    /// Whether a total counts reading on unidentified books.
+    ShowUnidentified(bool),
+    /// Whether a book no cover can be drawn for is listed at all.
     ShowUncovered(bool),
-    /// Ask before reading the logs, the catalog and the sidecars again, to
-    /// name the books nothing on the record names yet.
-    Retry,
-    /// The answer to that question.
-    Retried,
-    /// Ask before reading every log again and re-measuring each sitting.
-    Heal,
-    /// The answer to that question.
-    Healed,
     /// The colours the charts are drawn in.
     ColorScheme(crate::settings::ColorScheme),
-    /// Where a book's own figures come from.
-    Figures(crate::settings::Figures),
-    /// The shortest run a total counts as reading.
+    /// Where a book's own stats come from.
+    StatsFrom(crate::settings::StatsFrom),
+    /// The shortest sitting a total counts as reading.
     SittingFloor(crate::settings::SittingFloor),
     /// Go looking for a newer release.
     Update,
@@ -94,7 +85,7 @@ pub enum Hit {
     /// Where a book list opens, as an index into it. The screen drawing the
     /// list holds the index inside the list: a step past either end is no step.
     ListPage(usize),
-    /// The books tab, narrowed to one shelf and one stretch of days.
+    /// The books tab, narrowed to one shelf and one span of days.
     Shelved(Shelf, Option<Window>),
     /// Where the Books list opens, as an index into it.
     BooksPage(usize),
@@ -112,7 +103,7 @@ pub enum Hit {
     Search,
     /// A tap on the search field, which raises the keyboard.
     SearchField,
-    /// The mark in the field's right end: it takes the query off, and closes
+    /// The cross in the field's right end: it takes the query off, and closes
     /// the search where there is none to take.
     SearchClear,
     /// Where the results open, as an index into them.
@@ -120,26 +111,26 @@ pub enum Hit {
     /// Ask what should become of one book's reading, by its index in
     /// [`Stats::books`]. Answered by [`Hit::ClearBook`] or [`Hit::ForgetBook`].
     Clear(usize),
-    /// Take one book's reading, keeping its record.
+    /// Take one book's reading, keeping the book.
     ClearBook(usize),
-    /// Take one book's reading and its record together.
+    /// Take one book's reading, and forget the book too.
     ForgetBook(usize),
-    /// Ask to empty the whole record. The flag is whether an archive is
+    /// Ask to reset the whole record. The flag is whether a backup is
     /// written first.
-    Wipe(bool),
-    /// Empty it, as [`Hit::Wipe`] asked.
-    Wiped(bool),
-    /// Write an archive of the record, taking nothing away.
+    Reset(bool),
+    /// Reset it, as [`Hit::Reset`] asked.
+    ResetDone(bool),
+    /// Write a backup of the record, taking nothing away.
     BackUp,
-    /// List the archives over the config page.
+    /// List the backups over the config page.
     Backups,
     /// Where that list is paged to, as an index into it.
     BackupsPage(usize),
     /// Take the list down.
     BackupsClose,
-    /// Ask what to do with one archive, by its place in `backup::list`.
+    /// Ask what to do with one backup, by its place in `backup::list`.
     Restore(usize),
-    /// Take it back.
+    /// Restore it.
     Restored(usize),
     /// Take it off disk.
     Deleted(usize),
@@ -152,96 +143,37 @@ pub enum Hit {
 /// gathered when it went up: nothing is walked while the dialog is drawn.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Confirm {
-    pub about: About,
+    pub about: Act,
     /// What the question is about, counted when it went up.
     pub sittings: usize,
     pub books: usize,
-    /// The archive to be written, or the space a wipe gives back.
+    /// The backup to be written, or the space a reset gives back.
     pub bytes: u64,
-    /// The archive's name, where the question names one.
+    /// The backup's name, where the question names one.
     pub named: String,
 }
 
-/// What a [`Confirm`] asks about: a reset, or one of the two passes over the
-/// device's logs.
+/// Which act on the whole record a [`Confirm`] asks about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum About {
-    Reset(Reset),
-    /// Measure every sitting the logs reach again.
-    Heal,
-    /// Read every source of identity again.
-    Retry,
-}
-
-/// Which reset a [`Confirm`] asks about.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Reset {
-    /// Empty the record; the flag is whether an archive is kept.
-    Wipe(bool),
-    /// Take the archive at this place in `backup::list` back.
+pub enum Act {
+    /// Empty the record; the flag is whether a backup is kept.
+    Reset(bool),
+    /// Restore the backup at this place in `backup::list`.
     Restore(usize),
     /// Read every log again.
     Rebuild,
 }
 
-impl Reset {
-    /// The headline and the note a banner over this reset draws. The headline
+impl Act {
+    /// The headline and the note a banner over this act draws. The headline
     /// names the act: `reset_row`, `restore_do`, `rebuild_head`.
     pub fn doing(self, s: &Strings) -> (String, Vec<String>) {
         let (headline, said) = match self {
-            Reset::Wipe(_) => (s.reset_row, s.wipe_doing),
-            Reset::Restore(_) => (s.restore_do, s.restore_doing),
-            Reset::Rebuild => (s.rebuild_head, s.rebuild_doing),
+            Act::Reset(_) => (s.reset_row, s.reset_doing),
+            Act::Restore(_) => (s.restore_do, s.restore_doing),
+            Act::Rebuild => (s.rebuild_head, s.rebuild_doing),
         };
         (headline.into(), vec![said.into()])
-    }
-}
-
-/// What the banner over a retry is saying.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Retrying {
-    /// Running, with every log to read before the books' own files.
-    Logs,
-    /// Running over those files alone, the logs holding no counter the record
-    /// is missing.
-    Files,
-    /// Over, having named this many books.
-    Named(usize),
-}
-
-impl Retrying {
-    /// The headline naming the act, and what stands under it: the pass, with
-    /// how long it runs where that is the long one, else what it came to.
-    pub fn banner(self, s: &Strings) -> (&'static str, Vec<String>) {
-        let said = match self {
-            Retrying::Logs => vec![s.retry_logs.to_string(), s.retry_minutes.to_string()],
-            Retrying::Files => vec![s.retry_files.to_string()],
-            Retrying::Named(0) => vec![s.retry_none.to_string()],
-            Retrying::Named(named) => vec![crate::lang::counted(s.retry_named, named as i64)],
-        };
-        (s.retry_head, said)
-    }
-}
-
-/// The pass [`Hit::Heal`] runs, as its banner states it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Healing {
-    /// Running, with every log left to read.
-    Logs,
-    /// Over, having moved the figures of this many stored sittings.
-    Done(usize),
-}
-
-impl Healing {
-    /// The headline naming the act, and what stands under it: the pass, with
-    /// how long it runs, else what it came to.
-    pub fn banner(self, s: &Strings) -> (&'static str, Vec<String>) {
-        let said = match self {
-            Healing::Logs => vec![s.heal_doing.to_string(), s.retry_minutes.to_string()],
-            Healing::Done(0) => vec![s.heal_none.to_string()],
-            Healing::Done(healed) => vec![crate::lang::counted(s.heal_done, healed as i64)],
-        };
-        (s.heal_head, said)
     }
 }
 
@@ -249,11 +181,11 @@ impl Healing {
 /// out and [`Hit::Dismiss`] takes down.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ask {
-    /// Give up the book's place and its mark, and hand it back at its start.
+    /// Give up the book's progress and its mark, and hand it back at its start.
     Restart,
-    /// Set `BookRecord::finished` to the value carried.
+    /// Set `Book::finished` to the value carried.
     Mark(bool),
-    /// Put this book's reading back to zero, keeping the record or not. Its
+    /// Put this book's reading back to zero, keeping the book or not. Its
     /// two answers are their own hits, being two different acts.
     Clear,
 }
@@ -264,14 +196,14 @@ pub enum BookTab {
     /// What the reading came to, as figures and rows.
     #[default]
     Statistics,
-    /// The reading drawn: the place, the journey and the clock.
+    /// The reading drawn: the progress, the journey and the clock.
     Graphs,
-    /// The book's marked passages, most recent first.
-    Marks,
+    /// The book's highlights, most recent first.
+    Highlights,
 }
 
 impl BookTab {
-    pub const ALL: [BookTab; 3] = [BookTab::Statistics, BookTab::Graphs, BookTab::Marks];
+    pub const ALL: [BookTab; 3] = [BookTab::Statistics, BookTab::Graphs, BookTab::Highlights];
 
     /// What this page is called, in the interface's own language.
     pub fn label(self, lang: Lang) -> &'static str {
@@ -279,7 +211,7 @@ impl BookTab {
         match self {
             BookTab::Statistics => s.statistics,
             BookTab::Graphs => s.graphs_tab,
-            BookTab::Marks => s.marks_tab,
+            BookTab::Highlights => s.highlights_tab,
         }
     }
 }
@@ -357,9 +289,9 @@ impl Search {
 pub enum Shelf {
     #[default]
     All,
-    /// Books the catalog states read through.
+    /// Books the library states read through.
     Finished,
-    /// Books the catalog states short of read through.
+    /// Books the library states short of read through.
     Unfinished,
 }
 
@@ -443,7 +375,7 @@ impl Way {
     }
 }
 
-/// How wide a stretch of days the Rhythm screen draws around the one showing.
+/// How wide a span of days the Rhythm screen draws around the one showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Span {
     /// Everything the record holds, which a board of figures states.
@@ -474,7 +406,7 @@ impl Span {
     pub fn days(self, day: i64, week: WeekStart) -> std::ops::RangeInclusive<i64> {
         let (year, month, _) = date::civil_from_days(day);
         match self {
-            // Every day the store can hold: the epoch opens it.
+            // Every day the record can hold: the epoch opens it.
             Span::AllTime => 0..=day,
             Span::Week => {
                 let first = day - week.column_of(date::weekday(day)) as i64;
@@ -528,7 +460,7 @@ impl Span {
     }
 }
 
-/// The stretch a book list is narrowed to: a span, and a day inside it. A book
+/// The window a book list is narrowed to: a span, and a day inside it. A book
 /// belongs to the window where the day it was last put down falls in
 /// [`Self::days`], which is the rule `Stats::finished_over` counts by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -543,7 +475,7 @@ impl Window {
     }
 
     /// What the chip stating this window reads, which is short enough for a
-    /// chip and names the year wherever the stretch is smaller than one.
+    /// chip and names the year wherever the span is smaller than one.
     pub fn name(self, week: WeekStart, s: &Strings) -> String {
         let (year, month, _) = date::civil_from_days(self.day);
         let at = (month - 1).clamp(0, 11) as usize;
@@ -586,7 +518,7 @@ pub struct State {
     pub asked: Option<(usize, Ask)>,
     /// The question over the config page, with the figures it states.
     pub confirm: Option<Confirm>,
-    /// The archives listed over the config page, and how far down.
+    /// The backups listed over the config page, and how far down.
     pub backups: Option<usize>,
     /// Which page of the config screen is showing.
     pub config_page: usize,
@@ -598,7 +530,7 @@ pub struct State {
     pub book_search: Option<Search>,
     /// Which books the Books screen lists.
     pub shelf: Shelf,
-    /// The stretch that list is narrowed to.
+    /// The window that list is narrowed to.
     pub window: Option<Window>,
     /// The order it lists them in, which a tab change keeps.
     pub sort: Sort,
@@ -615,10 +547,10 @@ pub struct State {
     pub list_from: usize,
     /// Which of the open book's two pages is showing.
     pub book_tab: BookTab,
-    /// How far down that book's list of marks has been paged.
-    pub marks_from: usize,
+    /// How far down that book's list of highlights has been paged.
+    pub highlights_from: usize,
     /// Which end that list opens at, which opening another book keeps.
-    pub marks_way: Way,
+    pub highlights_way: Way,
     /// Which of the open book's readings the Graphs tab draws, counted from
     /// the first. `None` takes the standing one.
     pub reading: Option<usize>,
@@ -648,8 +580,8 @@ impl State {
             alltime_page: 0,
             list_from: 0,
             book_tab: BookTab::default(),
-            marks_from: 0,
-            marks_way: Way::default(),
+            highlights_from: 0,
+            highlights_way: Way::default(),
             reading: None,
         }
     }
@@ -659,7 +591,7 @@ impl State {
     pub fn open_book(&mut self, book: usize) {
         self.book = Some(book);
         self.book_tab = BookTab::default();
-        self.marks_from = 0;
+        self.highlights_from = 0;
         self.reading = None;
         self.book_search = None;
         if let Some(search) = self.search.as_mut() {
@@ -689,13 +621,13 @@ impl State {
         self.searching_slot().as_mut()
     }
 
-    /// Open `book` at the passage standing `at` in `Stats::marked`'s order, of
-    /// `of` marks, which is where a search result leads. The tab's own order
-    /// may differ, so `at` is read through it.
-    pub fn open_mark(&mut self, book: usize, at: usize, of: usize) {
+    /// Open `book` at the passage standing `at` in `Stats::highlights`'s order, of
+    /// `of` highlights, which is where a search result leads. The tab's own order
+    /// may differ, and `at` is read through it.
+    pub fn open_highlight(&mut self, book: usize, at: usize, of: usize) {
         self.open_book(book);
-        self.book_tab = BookTab::Marks;
-        self.marks_from = self.marks_way.place(at, of);
+        self.book_tab = BookTab::Highlights;
+        self.highlights_from = self.highlights_way.place(at, of);
     }
 
     /// Show `tab` of the open book. Answers whether that moved anywhere.
@@ -704,15 +636,15 @@ impl State {
             return false;
         }
         self.book_tab = tab;
-        self.marks_from = 0;
+        self.highlights_from = 0;
         true
     }
 
-    /// Turn the open book's list of marks over, which opens it at the head
+    /// Turn the open book's list of highlights over, which opens it at the head
     /// again.
-    pub fn flip_marks(&mut self) {
-        self.marks_way = self.marks_way.flipped();
-        self.marks_from = 0;
+    pub fn flip_highlights(&mut self) {
+        self.highlights_way = self.highlights_way.flipped();
+        self.highlights_from = 0;
     }
 
     /// Go to `tab`, closing any book, day or shelf open over it. Answers
@@ -743,7 +675,7 @@ impl State {
         self.alltime_page = 0;
         self.list_from = 0;
         self.book_tab = BookTab::default();
-        self.marks_from = 0;
+        self.highlights_from = 0;
         self.reading = None;
         true
     }
@@ -769,7 +701,7 @@ impl State {
     }
 }
 
-/// `read` with every book no jacket can be drawn for left out, where the
+/// `read` with every book no cover can be drawn for left out, where the
 /// config page hides them. Nothing is taken off a total: the reading stands,
 /// and only the row naming it goes.
 pub fn covered(stats: &Stats, uncovered: bool, read: &mut Vec<(usize, i64)>) {
@@ -780,8 +712,8 @@ pub fn covered(stats: &Stats, uncovered: bool, read: &mut Vec<(usize, i64)>) {
 
 /// `s.n_highlights` and `s.n_notes` counted and joined by ` · `, each dropped
 /// where its count is zero. Empty where both are.
-pub fn marks_said(s: &Strings, (marked, notes): (usize, usize)) -> String {
-    let said = [(marked, s.n_highlights), (notes, s.n_notes)];
+pub fn highlights_said(s: &Strings, (highlights, notes): (usize, usize)) -> String {
+    let said = [(highlights, s.n_highlights), (notes, s.n_notes)];
     said.iter()
         .filter(|(n, _)| *n > 0)
         .map(|(n, one)| crate::lang::counted(one, *n as i64))
@@ -789,21 +721,21 @@ pub fn marks_said(s: &Strings, (marked, notes): (usize, usize)) -> String {
         .join(" · ")
 }
 
-/// `author` at the left of `area` and `marked` at its right, both set at
-/// [`Theme::small_px`]. `author` is cut to the width `marked` leaves.
+/// `author` at the left of `area` and `highlights` at its right, both set at
+/// [`Theme::small_px`]. `author` is cut to the width `highlights` leaves.
 pub fn under_title(
     cx: &mut Ctx,
     area: Rect,
     baseline: i32,
     script: crate::font::Script,
     author: &str,
-    marked: &str,
+    highlights: &str,
 ) {
     let theme = cx.theme;
     cx.text.set_px(theme.small_px);
-    let counts = match marked.is_empty() {
+    let counts = match highlights.is_empty() {
         true => 0,
-        false => cx.text.measure_width(marked) as i32,
+        false => cx.text.measure_width(highlights) as i32,
     };
     let room = (area.w - counts - theme.gap * 2).max(1);
     let said = cx.text.wrap_and_clamp_in(script, author, room as u32, 1);
@@ -817,7 +749,7 @@ pub fn under_title(
     );
     if counts > 0 {
         cx.text
-            .draw(cx.fb, area.right() - counts, baseline, marked, false);
+            .draw(cx.fb, area.right() - counts, baseline, highlights, false);
     }
 }
 
@@ -842,9 +774,9 @@ pub struct Ctx<'a> {
     pub theme: &'a Theme,
     pub lang: Lang,
     pub week: WeekStart,
-    /// Where a book's own figures come from.
-    pub figures: crate::settings::Figures,
-    /// Whether a book no jacket can be drawn for is listed at all.
+    /// Where a book's own stats come from.
+    pub stats_from: crate::settings::StatsFrom,
+    /// Whether a book no cover can be drawn for is listed at all.
     pub uncovered: bool,
     /// What the charts draw in, from `crate::ui::paint::Palette::for_panel`.
     pub palette: crate::ui::paint::Palette,
@@ -852,9 +784,9 @@ pub struct Ctx<'a> {
     /// The local day, and the second of it.
     pub today: i64,
     pub now: i64,
-    /// Whether the record stands on a floor. The one thing a screen asks it:
-    /// an empty list is a first run or a reset, and the two read differently.
-    pub floored: bool,
+    /// Whether the record was reset. The one thing a screen asks it:
+    /// an empty list is a first launch or a reset, and the two read differently.
+    pub was_reset: bool,
     pub hits: Vec<(Hit, Rect)>,
 }
 
@@ -869,7 +801,7 @@ impl Ctx<'_> {
     }
 
     /// The convention this screen's own labels are set in — a book's title
-    /// keeps the convention its catalog entry names, whatever this is.
+    /// keeps the convention its library entry names, whatever this is.
     pub fn ui_script(&self) -> crate::font::Script {
         crate::font::Script::of_language(self.lang.language_tag())
     }
@@ -959,41 +891,41 @@ mod tests {
     }
 
     #[test]
-    fn a_book_opens_on_its_statistics_and_steps_onto_its_marks() {
+    fn a_book_opens_on_its_statistics_and_steps_onto_its_highlights() {
         // The book screen is one track: the statistics page, then each page of
-        // its marks. Stepping is what walks it, and stepping off either end
+        // its highlights. Stepping is what walks it, and stepping off either end
         // does nothing — the screen is left by a tab.
         let mut s = State::new(third());
         s.open_book(3);
         assert_eq!(s.book_tab, BookTab::Statistics);
-        assert_eq!(s.marks_from, 0);
+        assert_eq!(s.highlights_from, 0);
 
-        assert!(s.go_in_book(BookTab::Marks));
-        assert!(!s.go_in_book(BookTab::Marks), "already there");
-        s.marks_from = 5;
-        // Coming back to the statistics opens the marks at their head again.
+        assert!(s.go_in_book(BookTab::Highlights));
+        assert!(!s.go_in_book(BookTab::Highlights), "already there");
+        s.highlights_from = 5;
+        // Coming back to the statistics opens the highlights at their head again.
         assert!(s.go_in_book(BookTab::Statistics));
-        assert_eq!(s.marks_from, 0);
+        assert_eq!(s.highlights_from, 0);
 
         // And another book opens on its own statistics, whatever the last one
         // was left showing.
-        s.go_in_book(BookTab::Marks);
-        s.marks_from = 5;
+        s.go_in_book(BookTab::Highlights);
+        s.highlights_from = 5;
         s.open_book(4);
         assert_eq!(s.book_tab, BookTab::Statistics);
-        assert_eq!(s.marks_from, 0);
+        assert_eq!(s.highlights_from, 0);
     }
 
     #[test]
     fn a_tab_change_keeps_the_order_and_the_scope_and_takes_the_search_off() {
         let mut s = State::new(third());
         s.sort = Sort::Time;
-        s.scope = Scope::Marks;
+        s.scope = Scope::Highlights;
         s.search = Some(Search::default());
         assert!(s.go(Tab::Rhythm));
         assert!(s.search.is_none(), "the search is over the Books tab");
         assert_eq!(s.sort, Sort::Time, "the order is the reader's own answer");
-        assert_eq!(s.scope, Scope::Marks, "and so is the scope");
+        assert_eq!(s.scope, Scope::Highlights, "and so is the scope");
     }
 
     #[test]
@@ -1004,37 +936,40 @@ mod tests {
             keyboard: true,
             ..Search::default()
         });
-        s.open_mark(4, 7, 12);
+        s.open_highlight(4, 7, 12);
         assert_eq!(s.book, Some(4));
-        assert_eq!(s.book_tab, BookTab::Marks);
-        assert_eq!(s.marks_from, 7, "the book opens on the passage tapped");
+        assert_eq!(s.book_tab, BookTab::Highlights);
+        assert_eq!(s.highlights_from, 7, "the book opens on the passage tapped");
         // The keyboard comes down under the book, as it does for any book
         // opened out of the results.
         assert_eq!(s.search.as_ref().map(|search| search.keyboard), Some(false));
         // The same passage, counted from the other end, where the book's own
         // list is turned over.
-        s.marks_way = Way::Up;
-        s.open_mark(4, 7, 12);
-        assert_eq!(s.marks_from, 4, "the passage is the fifth from the front");
+        s.highlights_way = Way::Up;
+        s.open_highlight(4, 7, 12);
+        assert_eq!(
+            s.highlights_from, 4,
+            "the passage is the fifth from the front"
+        );
     }
 
     #[test]
-    fn turning_the_marks_over_opens_the_list_at_its_head() {
+    fn turning_the_highlights_over_opens_the_list_at_its_head() {
         let mut s = State::new(third());
         s.open_book(3);
-        s.go_in_book(BookTab::Marks);
-        s.marks_from = 6;
-        assert_eq!(s.marks_way, Way::Down, "newest first to start");
-        s.flip_marks();
-        assert_eq!(s.marks_way, Way::Up);
-        assert_eq!(s.marks_from, 0, "a turned list opens at its own head");
+        s.go_in_book(BookTab::Highlights);
+        s.highlights_from = 6;
+        assert_eq!(s.highlights_way, Way::Down, "newest first to start");
+        s.flip_highlights();
+        assert_eq!(s.highlights_way, Way::Up);
+        assert_eq!(s.highlights_from, 0, "a turned list opens at its own head");
         // And back, which is the only other place the caret leads.
-        s.flip_marks();
-        assert_eq!(s.marks_way, Way::Down);
-        // The order is the reader's, so opening another book keeps it.
-        s.flip_marks();
+        s.flip_highlights();
+        assert_eq!(s.highlights_way, Way::Down);
+        // The order is the reader's: opening another book keeps it.
+        s.flip_highlights();
         s.open_book(5);
-        assert_eq!(s.marks_way, Way::Up);
+        assert_eq!(s.highlights_way, Way::Up);
     }
 
     #[test]
@@ -1047,7 +982,7 @@ mod tests {
                 assert_eq!(Way::Up.place(drawn, of), at, "{at} of {of}");
             }
         }
-        // A book with no marks names no row either way.
+        // A book with no highlights names no row either way.
         assert_eq!(Way::Up.place(0, 0), 0);
     }
 
@@ -1081,7 +1016,7 @@ mod tests {
     }
 
     #[test]
-    fn a_state_opens_on_the_day_the_device_is_in() {
+    fn a_state_opens_on_the_day_the_kindle_is_in() {
         let s = State::new(third());
         assert_eq!(s.day, third());
         assert_eq!(s.span, Span::AllTime);
@@ -1160,7 +1095,7 @@ mod tests {
     }
 
     #[test]
-    fn a_window_names_its_stretch_and_the_year_it_falls_in() {
+    fn a_window_names_its_span_and_the_year_it_falls_in() {
         let day = third();
         let (en, ja) = (Lang::English.strings(), Lang::Japanese.strings());
         let week = WeekStart::Monday;
@@ -1178,7 +1113,7 @@ mod tests {
             day: date::days_from_civil(2025, 12, 30),
         };
         assert_eq!(turn.name(week, en), "2026 W1");
-        // The stretch a window covers is the span's own.
+        // The days a window covers are the span's own.
         for span in Span::CALENDAR {
             let window = Window { span, day };
             assert_eq!(window.days(week), span.days(day, week));
@@ -1191,7 +1126,7 @@ mod tests {
         let mut s = State::new(third());
         s.go(Tab::Config);
         s.confirm = Some(Confirm {
-            about: About::Reset(Reset::Wipe(true)),
+            about: Act::Reset(true),
             sittings: 12,
             books: 3,
             bytes: 0,

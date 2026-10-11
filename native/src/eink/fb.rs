@@ -368,7 +368,7 @@ impl Framebuffer {
         // request, uncapped.
         let max_req_bytes = conn.maximum_request_bytes().max(4096);
         // One line of everything the surface resolved to. Every part of it is
-        // the same on every launch of one build on one device, so it belongs
+        // the same on every launch of one build on one Kindle: it belongs
         // in the log's header block and not in the body.
         let said = format!(
             "{root_said} mapped={mapped} drawing {xres}x{yres} stride={wire_stride} \
@@ -569,7 +569,7 @@ impl Framebuffer {
     }
 
     /// Presents the rows of `rect`, converting the backing to the wire pixel
-    /// format per band. `waveform` is ignored.
+    /// format per band. `_waveform` is ignored.
     pub fn send_update(&mut self, rect: MxcfbRect, _waveform: u32) -> Result<u32> {
         let Some(surface) = self.surface.as_mut() else {
             return Ok(0);

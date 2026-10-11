@@ -1,18 +1,17 @@
-//! `vocab.db`, the Vocabulary Builder's record of every word looked up while
+//! `vocab.db`, the Vocabulary Builder's list of every word looked up while
 //! reading. A lookup names its book by title and author and adds the content
-//! key and a position; nothing here reaches the store.
+//! key and a position; nothing here reaches the record.
 
 use std::path::Path;
 
 use crate::clock::Clock;
 
-/// The database, one for the whole device. `VBSqlConstants.DATABASE_PATH`,
-/// the same literal on 5.16, 5.18 and 5.19.
+/// The database, one for the whole Kindle, at one path on 5.16, 5.18 and 5.19.
 pub const VOCAB_DB: &str = "/mnt/us/system/vocabulary/vocab.db";
 
-/// `LOOKUPS` joined to the book it names. `DictionaryCardProvider` writes one
-/// row per in-book dictionary lookup and nothing rotates, caps or purges the
-/// table, so it outlives the book.
+/// `LOOKUPS` joined to the book it names: one row per in-book dictionary
+/// lookup. Nothing rotates, caps or purges the table, and it outlives the
+/// book.
 const QUERY: &str = "select coalesce(b.title, ''), coalesce(b.authors, ''), \
      coalesce(b.asin, ''), coalesce(l.pos, ''), coalesce(l.timestamp, 0) \
      from LOOKUPS l join BOOK_INFO b on b.id = l.book_key \
@@ -21,34 +20,34 @@ const QUERY: &str = "select coalesce(b.title, ''), coalesce(b.authors, ''), \
 /// One dictionary lookup, and the book it was made in.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Lookup {
-    /// `LOOKUPS.timestamp` as `YYYY-MM-DDTHH:MM:SS` on the device's own clock,
+    /// `LOOKUPS.timestamp` as `YYYY-MM-DDTHH:MM:SS` on the Kindle's own clock,
     /// which is the form a sitting is stored under. Empty where the value
     /// names no instant.
     pub at: String,
-    /// `BOOK_INFO.title`, which is `BookMetadata.getTitle()`.
+    /// `BOOK_INFO.title`, the book's own title.
     pub title: String,
-    /// `BOOK_INFO.authors`, which is `BookMetadata.kv()`.
+    /// `BOOK_INFO.authors`, the joined author list.
     pub author: String,
-    /// `BOOK_INFO.asin`, the content key `BookRecord::cde_key` also holds.
+    /// `BOOK_INFO.asin`, the content key `Book::cde_key` also holds.
     /// Empty where the book carried none.
     pub key: String,
     /// `LOOKUPS.pos`, on the `extent` axis. Negative where it named none.
     pub pos: i64,
 }
 
-/// Every lookup the device holds. Empty where there is no database.
+/// Every lookup the Kindle holds. Empty where there is no database.
 pub fn read(clock: &Clock) -> Vec<Lookup> {
     read_from(Path::new(VOCAB_DB), clock)
 }
 
 /// [`read`] against a named file, empty where there is none — asking
-/// `sqlite3` for one would make it. The device's `VOCAB_BUILDER` switch gates
-/// only *new* rows, so nothing here consults it.
+/// `sqlite3` for one makes it. The Kindle's Vocabulary Builder switch gates
+/// only *new* rows, and nothing here consults it.
 pub fn read_from(db: &Path, clock: &Clock) -> Vec<Lookup> {
     if !db.exists() {
         return Vec::new();
     }
-    let Some(rows) = crate::catalog::ask(db, QUERY, "vocab") else {
+    let Some(rows) = crate::library::ask(db, QUERY, "vocab") else {
         return Vec::new();
     };
     rows.iter()
@@ -57,7 +56,7 @@ pub fn read_from(db: &Path, clock: &Clock) -> Vec<Lookup> {
 }
 
 fn parse_row(row: &str, clock: &Clock) -> Option<Lookup> {
-    let mut f = row.split(crate::catalog::COL);
+    let mut f = row.split(crate::library::COL);
     let mut next = || f.next().unwrap_or_default();
     let title = next().to_string();
     if title.is_empty() {
@@ -77,7 +76,7 @@ fn parse_row(row: &str, clock: &Clock) -> Option<Lookup> {
 }
 
 /// `LOOKUPS.pos` as a number on the `extent` axis — the trailing integer of
-/// `Position.oy()` whichever stack wrote it, and **not** the display location
+/// the position whichever stack wrote it, and **not** the display location
 /// a clipping's label carries. Negative where there is none.
 fn position(pos: &str) -> i64 {
     pos.rsplit(':')
@@ -86,9 +85,9 @@ fn position(pos: &str) -> i64 {
         .unwrap_or(-1)
 }
 
-/// `LOOKUPS.timestamp` — `new Date().getTime()`, epoch milliseconds — as the
-/// `YYYY-MM-DDTHH:MM:SS` a sitting is stored under. On the clock the device
-/// stood on **then**: `Store::name_from` brackets this inside a sitting.
+/// `LOOKUPS.timestamp`, epoch milliseconds, as the
+/// `YYYY-MM-DDTHH:MM:SS` a sitting is stored under. On the clock the Kindle
+/// stood on **then**: `Record::identify_from` brackets this inside a sitting.
 fn stamp(clock: &Clock, ms: i64) -> String {
     crate::clock::stamp(clock, ms.div_euclid(1_000))
 }
@@ -98,9 +97,9 @@ mod tests {
     use super::*;
     use std::process::Command;
 
-    /// A `vocab.db` holding the tables `VBSqlConstants` names, built here
-    /// rather than shipped, the way `catalog::tests::fixture` builds a
-    /// catalog.
+    /// A `vocab.db` holding the Vocabulary Builder's tables, built here
+    /// and not shipped, the way `library::tests::fixture` builds a
+    /// library.
     fn fixture(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("readinglog-vocab-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -138,7 +137,7 @@ mod tests {
     fn a_lookup_carries_its_books_title_key_and_a_position() {
         let db = fixture("read");
         let got = read_from(&db, &Clock::default());
-        // The orphan names no `BOOK_INFO` row, so the join drops it.
+        // The orphan names no `BOOK_INFO` row: the join drops it.
         assert_eq!(got.len(), 3, "a lookup with no book was kept");
         assert_eq!(got[0].title, "A Book");
         assert_eq!(got[0].author, "An Author");
@@ -154,7 +153,7 @@ mod tests {
     fn a_timestamp_reads_as_the_local_wall_clock_a_sitting_is_stored_under() {
         let db = fixture("stamp");
         let got = read_from(&db, &Clock::default());
-        // The zone is the device's, so only the shape is fixed here.
+        // The zone is the Kindle's: only the shape is fixed here.
         assert_eq!(got[0].at.len(), 19);
         assert_eq!(&got[0].at[4..5], "-");
         assert_eq!(&got[0].at[10..11], "T");
@@ -183,7 +182,7 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         let db = dir.join("vocab.db");
         assert!(read_from(&db, &Clock::default()).is_empty());
-        assert!(!db.exists(), "a device file was made to read it");
+        assert!(!db.exists(), "a database file was made to read it");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

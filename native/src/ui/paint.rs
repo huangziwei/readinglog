@@ -120,9 +120,9 @@ impl Palette {
     }
 }
 
-/// The eleven colours `AnnotationColor` names on 5.19, and the neutral a mark
+/// The eleven colours a sidecar names on 5.19, and the neutral a highlight
 /// stating none, or a name this table does not hold, takes.
-const MARK_COLOURS: [(&str, [u8; 3]); 11] = [
+const HIGHLIGHT_COLOURS: [(&str, [u8; 3]); 11] = [
     ("orange", [0xF5, 0xA6, 0x23]),
     ("yellow", [0xF3, 0xCE, 0x2B]),
     ("blue", [0x4A, 0x90, 0xD9]),
@@ -136,13 +136,13 @@ const MARK_COLOURS: [(&str, [u8; 3]); 11] = [
     ("default", [DARK; 3]),
 ];
 
-/// What the bar beside a marked passage is drawn in: the colour the sidecar
-/// stated, and [`DARK`] on a panel drawing grey or for a mark stating none.
-pub fn mark_colour(name: &str, coloured: bool) -> [u8; 3] {
+/// What the bar beside a highlighted passage is drawn in: the colour the sidecar
+/// stated, and [`DARK`] on a panel drawing grey or for a highlight stating none.
+pub fn highlight_colour(name: &str, coloured: bool) -> [u8; 3] {
     if !coloured {
         return [DARK; 3];
     }
-    MARK_COLOURS
+    HIGHLIGHT_COLOURS
         .iter()
         .find(|(held, _)| *held == name)
         .map_or([DARK; 3], |(_, rgb)| *rgb)

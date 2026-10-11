@@ -1,20 +1,20 @@
-//! An invented library: a shelf in three scripts and [`DAYS`] of reading over
-//! it. Every number comes off [`Rng`], seeded once: the same picture on
+//! An invented library: books in three scripts and [`DAYS`] of reading over
+//! them. Every number comes off [`Rng`], seeded once: the same picture on
 //! every run.
 
 use std::path::Path;
 
-use readinglog_native::annotate::{Mark, State};
 use readinglog_native::clippings::Kind;
 use readinglog_native::date;
-use readinglog_native::log::session::{Measure, Session, Stretch};
-use readinglog_native::store::{BookRecord, FINISHED_PERCENT, Named, Store};
+use readinglog_native::highlights::{Highlight, State};
+use readinglog_native::log::sitting::{Measure, Sitting, Stretch};
+use readinglog_native::record::{self, FINISHED_PERCENT, IdentifiedBy, Record};
 
 /// Days of reading laid down behind the day being drawn.
 pub const DAYS: i64 = 1150;
 
-/// The [`SHELF`] slot `BookRecord::finished` is set on.
-const MARKED: usize = 7;
+/// The [`LIBRARY`] slot `Book::finished` is set on.
+const HIGHLIGHTED: usize = 7;
 
 /// The book read end to end twice, and the one part way through the reading
 /// after its own.
@@ -26,13 +26,13 @@ const READING_AGAIN: usize = 2;
 const MANY: usize = 11;
 const TIMES: usize = 8;
 
-/// The [`SHELF`] slots the device holds no jacket for: a Latin title, a Han
+/// The [`LIBRARY`] slots the Kindle holds no cover for: a Latin title, a Han
 /// one, and a title too long for the box it stands in: what a cover box says
 /// without a cover is drawn in every shape it takes.
-const UNJACKETED: [usize; 3] = [3, 6, 7];
+const UNCOVERED: [usize; 3] = [3, 6, 7];
 
-/// A book on the shelf, and the stretch of days it was read over.
-struct Shelved {
+/// A book in the library, and the span of days it was read over.
+struct Listed {
     title: &'static str,
     author: &'static str,
     language: &'static str,
@@ -40,123 +40,123 @@ struct Shelved {
     /// Days back from the last day drawn that the book was opened.
     opened: i64,
     /// How many days its reading runs for.
-    runs: i64,
+    days: i64,
 }
 
 /// Titles from one word to a line and a half, in three scripts, at every stage
 /// from opened yesterday to all but finished.
-const SHELF: &[Shelved] = &[
-    Shelved {
+const LIBRARY: &[Listed] = &[
+    Listed {
         title: "The Salt Road Companion",
         author: "Beatrix Oyelaran",
         language: "en",
         percent: 100.0,
         opened: 1140,
-        runs: 210,
+        days: 210,
     },
-    Shelved {
+    Listed {
         title: "静かな海の測量",
         author: "三好あかり",
         language: "ja",
         percent: 100.0,
         opened: 1010,
-        runs: 190,
+        days: 190,
     },
-    Shelved {
+    Listed {
         title: "第二座橋",
         author: "陳望之",
         language: "zh-Hant",
         percent: 93.0,
         opened: 870,
-        runs: 240,
+        days: 240,
     },
-    Shelved {
+    Listed {
         title: "Notes Toward a Theory of Weather",
         author: "Aurelio Sandoval",
         language: "en",
         percent: 100.0,
         opened: 700,
-        runs: 200,
+        days: 200,
     },
-    Shelved {
+    Listed {
         title: "长夜行车",
         author: "邹允",
         language: "zh-Hans",
         percent: 58.0,
         opened: 560,
-        runs: 180,
+        days: 180,
     },
-    Shelved {
+    Listed {
         title: "The Cartographer's Apprentice",
         author: "Nell Hargreave",
         language: "en",
         percent: 100.0,
         opened: 470,
-        runs: 150,
+        days: 150,
     },
-    Shelved {
+    Listed {
         title: "沒有名字的河：一段流域史與它的居民",
         author: "周牧",
         language: "zh-Hant",
         percent: 71.0,
         opened: 420,
-        runs: 260,
+        days: 260,
     },
-    Shelved {
+    Listed {
         title: "A Complete History of Nothing in Particular, with Notes and an Index, Volume 1",
         author: "Margaret Ellery",
         language: "en",
         percent: 46.0,
         opened: 360,
-        runs: 330,
+        days: 330,
     },
-    Shelved {
+    Listed {
         title: "ねむらない街の図鑑 ～第一巻～",
         author: "白鳥ゆかり",
         language: "ja",
         percent: 88.0,
         opened: 300,
-        runs: 120,
+        days: 120,
     },
-    Shelved {
+    Listed {
         title: "Writing the Slow Chase",
         author: "Iris Vandermeer",
         language: "en",
         percent: 100.0,
         opened: 240,
-        runs: 70,
+        days: 70,
     },
-    Shelved {
+    Listed {
         title: "灰的重量",
         author: "何允之",
         language: "zh-Hans",
         percent: 34.0,
         opened: 150,
-        runs: 130,
+        days: 130,
     },
-    Shelved {
+    Listed {
         title: "The Ninth Winter and Other Stories",
         author: "Cordelia Nash",
         language: "en",
         percent: 62.0,
         opened: 96,
-        runs: 90,
+        days: 90,
     },
-    Shelved {
+    Listed {
         title: "夢遊症候群",
         author: "林素",
         language: "zh-Hant",
         percent: 19.0,
         opened: 40,
-        runs: 40,
+        days: 40,
     },
-    Shelved {
+    Listed {
         title: "Interval",
         author: "Tomas Reidy",
         language: "en",
         percent: 3.0,
         opened: 2,
-        runs: 3,
+        days: 3,
     },
 ];
 
@@ -194,10 +194,10 @@ impl Rng {
     }
 }
 
-/// A stand-in jacket for the book at `slot`, 217x330.
+/// A stand-in cover for the book at `slot`, 217x330.
 ///
 /// Two bands and a block.
-fn jacket(dir: &Path, slot: usize) -> String {
+fn cover(dir: &Path, slot: usize) -> String {
     let (w, h) = (217u32, 330u32);
     let hue = [
         [200u8, 40, 40],
@@ -220,13 +220,13 @@ fn jacket(dir: &Path, slot: usize) -> String {
         }
     }
     let path = dir.join(format!("cover{slot}.png"));
-    img.save(&path).expect("a written jacket");
+    img.save(&path).expect("a written cover");
     path.display().to_string()
 }
 
 /// One sitting of `secs`, opening `at` seconds into `day`, its seconds booked
 /// to each clock hour it crosses.
-fn sitting(day: i64, at: i64, secs: i64, extent: i64, measure: Measure) -> Session {
+fn sitting(day: i64, at: i64, secs: i64, extent: i64, measure: Measure) -> Sitting {
     let (y, m, d) = date::civil_from_days(day);
     let stamp = |secs: i64| {
         let secs = secs.min(86_399);
@@ -247,7 +247,7 @@ fn sitting(day: i64, at: i64, secs: i64, extent: i64, measure: Measure) -> Sessi
         cursor = till;
     }
     let turns = secs / 42;
-    Session {
+    Sitting {
         started_at: stamp(at),
         ended_at: stamp(at + secs),
         end_position: extent,
@@ -258,7 +258,7 @@ fn sitting(day: i64, at: i64, secs: i64, extent: i64, measure: Measure) -> Sessi
         measure,
         asin: None,
         progress: None,
-        ..Session::default()
+        ..Sitting::default()
     }
 }
 
@@ -271,61 +271,61 @@ const BINGE_OPENS: i64 = 8;
 
 /// One day of [`BINGE_BOOKS`] short sittings, in place of whatever
 /// [`library`] left on it. Every sitting stays under half an hour.
-fn binge(store: &mut Store, day: i64) {
-    store
-        .sessions
+fn binge(record: &mut Record, day: i64) {
+    record
+        .sittings
         .retain(|s| date::parse_day(date::day_of(&s.started_at)) != Some(day));
     for slot in 0..BINGE_BOOKS {
         let at = (BINGE_OPENS + slot as i64) * 3600 + 600;
         let secs = 60 * (18 + (slot as i64 * 7) % 9);
-        let extent = store.books[slot].extent;
-        store
-            .sessions
+        let extent = record.books[slot].extent;
+        record
+            .sittings
             .push(sitting(day, at, secs, extent, Measure::Counted));
     }
 }
 
-/// The shelf, and [`DAYS`] of reading over it ending on `last`.
-pub fn library(last: i64, art: &Path) -> Store {
-    let mut store = Store::default();
-    for (slot, book) in SHELF.iter().enumerate() {
-        store.books.push(BookRecord {
+/// [`LIBRARY`], and [`DAYS`] of reading over it ending on `last`.
+pub fn library(last: i64, covers: &Path) -> Record {
+    let mut record = Record::default();
+    for (slot, book) in LIBRARY.iter().enumerate() {
+        record.books.push(record::Book {
             extent: 100_000 + slot as i64,
             cde_key: format!("KEY{slot}"),
             cde_type: "EBOK".into(),
             title: book.title.into(),
             author: book.author.into(),
-            thumbnail: match UNJACKETED.contains(&slot) {
+            thumbnail: match UNCOVERED.contains(&slot) {
                 true => String::new(),
-                false => jacket(art, slot),
+                false => cover(covers, slot),
             },
             language: book.language.into(),
             percent: book.percent,
-            // The device's own counter for this book: the whole of `percent`,
+            // The Kindle's own counter for this book: the whole of `percent`,
             // at a rate putting a full read at eight hours.
             timer_covered: book.percent.max(0.0) / 100.0,
             timer_words: (120_000.0 * book.percent.max(0.0) / 100.0) as i64,
             timer_ms: (8.0 * 3600.0 * 1000.0 * book.percent.max(0.0) / 100.0) as i64,
-            on_device: slot % 5 != 4,
+            on_kindle: slot % 5 != 4,
             cover: String::new(),
             // A title with a space in it, which `open::uri` escapes.
             location: match slot % 5 != 4 {
                 true => format!("/mnt/us/documents/{}.kfx", book.title),
                 false => String::new(),
             },
-            // `Store::remember` marks a book its place states read through;
-            // this one is `MARKED`, short of `FINISHED_PERCENT`.
-            finished: slot == MARKED || book.percent >= FINISHED_PERCENT,
+            // `Record::remember` marks a book its progress states read through;
+            // this one is `HIGHLIGHTED`, short of `FINISHED_PERCENT`.
+            finished: slot == HIGHLIGHTED || book.percent >= FINISHED_PERCENT,
             restart: None,
             restarted_on: Vec::new(),
             read_state: -1,
             kept: false,
-            named_by: Named::Catalog,
+            identified_by: IdentifiedBy::Library,
         });
     }
 
     let mut rng = Rng(0x5EED_1D0C);
-    // A fortnight with the device shut, somewhere in the spring.
+    // A fortnight with the Kindle shut, somewhere in the spring.
     let shut = last - rng.between(150, 250);
     for back in (0..DAYS).rev() {
         let day = last - back;
@@ -338,10 +338,10 @@ pub fn library(last: i64, art: &Path) -> Store {
         if rng.upto(10) < if weekend { 1 } else { 3 } {
             continue;
         }
-        let open: Vec<usize> = SHELF
+        let open: Vec<usize> = LIBRARY
             .iter()
             .enumerate()
-            .filter(|(_, b)| (b.opened - b.runs..b.opened).contains(&back))
+            .filter(|(_, b)| (b.opened - b.days..b.opened).contains(&back))
             .map(|(slot, _)| slot)
             .collect();
         if open.is_empty() {
@@ -354,7 +354,7 @@ pub fn library(last: i64, art: &Path) -> Store {
         let mut booked: Vec<i64> = Vec::new();
         for _ in 0..count {
             let slot = open[rng.upto(open.len() as i64) as usize];
-            let extent = store.books[slot].extent;
+            let extent = record.books[slot].extent;
             let hour = CLOCK[rng.upto(CLOCK.len() as i64) as usize];
             let at = hour * 3600 + rng.upto(3600);
             // One sitting to an hour, and none running past midnight.
@@ -371,29 +371,31 @@ pub fn library(last: i64, art: &Path) -> Store {
                 true => Measure::Paged,
                 false => Measure::Counted,
             };
-            store.sessions.push(sitting(day, at, secs, extent, measure));
+            record
+                .sittings
+                .push(sitting(day, at, secs, extent, measure));
         }
     }
-    binge(&mut store, last - BINGE_DAY);
-    ghosts(&mut store, last);
-    store
-        .sessions
+    binge(&mut record, last - BINGE_DAY);
+    ghosts(&mut record, last);
+    record
+        .sittings
         .sort_by(|a, b| a.started_at.cmp(&b.started_at));
-    climb(&mut store);
-    marked(&mut store, last);
-    reread(&mut store);
-    store
+    climb(&mut record);
+    highlighted(&mut record, last);
+    reread(&mut record);
+    record
 }
 
 /// The books read end to end before, laid down after the seeded loop so a shot
 /// drawing none stays pixel-identical.
-fn reread(store: &mut Store) {
+fn reread(record: &mut Record) {
     for slot in [REREAD, READING_AGAIN, MANY] {
-        let Some(extent) = store.books.get(slot).map(|b| b.extent) else {
+        let Some(extent) = record.books.get(slot).map(|b| b.extent) else {
             continue;
         };
-        let days: Vec<i64> = store
-            .sessions
+        let days: Vec<i64> = record
+            .sittings
             .iter()
             .filter(|s| s.end_position == extent)
             .filter_map(|s| date::parse_day(date::day_of(&s.started_at)))
@@ -401,24 +403,24 @@ fn reread(store: &mut Store) {
         // Each climb after the first opens on the day the book was begun
         // again, as [`climb`] cuts them.
         let over = (days.len() as f64 / times(slot)).ceil().max(1.0) as usize;
-        let Some(record) = store.books.get_mut(slot) else {
+        let Some(book) = record.books.get_mut(slot) else {
             continue;
         };
-        record.restarted_on = (1..times(slot) as usize)
+        book.restarted_on = (1..times(slot) as usize)
             .filter_map(|n| days.get(n * over).copied())
             .collect();
         if slot == READING_AGAIN {
-            record.finished = false;
+            book.finished = false;
         }
     }
 }
 
-/// The marks `store` holds, laid down after the seeded loop: a shot drawing no
-/// mark stays pixel-identical. Nothing here is [`State::Retired`]: no device
-/// writes a store holding one.
-fn marked(store: &mut Store, last: i64) {
+/// The highlights `record` holds, laid down after the seeded loop: a shot drawing no
+/// highlight stays pixel-identical. Nothing here is [`State::Retired`]: no fresh
+/// record holds one.
+fn highlighted(record: &mut Record, last: i64) {
     /// `(slot, kind, state, through the book, the day it was made, the words)`.
-    const MARKS: &[(usize, Kind, State, f64, i64, &str)] = &[
+    const HIGHLIGHTS: &[(usize, Kind, State, f64, i64, &str)] = &[
         (
             0,
             Kind::Highlight,
@@ -510,7 +512,7 @@ fn marked(store: &mut Store, last: i64) {
             200,
             "第二座橋建成那年，河水改道了。",
         ),
-        // Slot 5 is the deep one: enough marks, and enough of them noted, that
+        // Slot 5 is the deep one: enough highlights, and enough of them noted, that
         // the list pages on every panel. A book of one or two and a book of a
         // dozen are different pictures and both have to hold.
         (
@@ -610,7 +612,7 @@ fn marked(store: &mut Store, last: i64) {
             "There is no word in the harbour dialect for a journey that ends where it began, and no shortage of them.",
         ),
         // Slot 13 is read on the last day drawn, and the day's own list states
-        // what was marked on it.
+        // what was highlighted on it.
         (
             13,
             Kind::Highlight,
@@ -703,15 +705,15 @@ fn marked(store: &mut Store, last: i64) {
             "End before the running does.",
         ),
     ];
-    for (slot, kind, state, through, back, body) in MARKS {
-        let Some(book) = store.books.get(*slot) else {
+    for (slot, kind, state, through, back, body) in HIGHLIGHTS {
+        let Some(book) = record.books.get(*slot) else {
             continue;
         };
         let start = (book.extent as f64 * through) as i64;
-        // A mark no sidecar placed has no position at all — only the display
+        // A highlight no sidecar placed has no position at all — only the display
         // location the clipping named, which is on another axis.
         let placed = *state != State::Unconfirmed;
-        store.marks.push(Mark {
+        record.highlights.push(Highlight {
             extent: book.extent,
             title: book.title.clone(),
             kind: *kind,
@@ -729,7 +731,7 @@ fn marked(store: &mut Store, last: i64) {
                 (false, _) => -1,
             },
             location: start / 150,
-            // A book carrying publisher pages states all three places; one
+            // A book carrying publisher pages states all three positions; one
             // without states the two its sources named.
             page: match slot % 2 {
                 0 => (start / 3_000).to_string(),
@@ -742,11 +744,11 @@ fn marked(store: &mut Store, last: i64) {
             body: (*body).into(),
         });
     }
-    store.marks.sort_by(|a, b| a.at.cmp(&b.at));
+    record.highlights.sort_by(|a, b| a.at.cmp(&b.at));
 }
 
-/// The [`SHELF`] slots [`climb`] reads more than once: their places climb,
-/// drop to the front of the book and climb again. [`RESTARTED`] never reached
+/// The [`LIBRARY`] slots [`climb`] reads more than once: their progress climbs,
+/// drops to the front of the book and climbs again. [`RESTARTED`] never reached
 /// the end; the rest carried every reading but the last through it.
 const TWICE: [usize; 3] = [RESTARTED, REREAD, READING_AGAIN];
 const RESTARTED: usize = 12;
@@ -760,17 +762,17 @@ fn times(slot: usize) -> f64 {
     }
 }
 
-/// Give each sitting the place its book stood at as it ended: an even climb
-/// over that book's own sittings, ending at the record's `percent`. A sitting
+/// Give each sitting the progress its book stood at as it ended: an even climb
+/// over that book's own sittings, ending at the book's `percent`. A sitting
 /// [`ghosts`] left names no book and keeps `None`; [`RESTARTED`] climbs twice.
-fn climb(store: &mut Store) {
-    for slot in 0..store.books.len() {
-        let (extent, percent) = (store.books[slot].extent, store.books[slot].percent);
+fn climb(record: &mut Record) {
+    for slot in 0..record.books.len() {
+        let (extent, percent) = (record.books[slot].extent, record.books[slot].percent);
         if percent < 0.0 {
             continue;
         }
-        let at: Vec<usize> = (0..store.sessions.len())
-            .filter(|&i| store.sessions[i].end_position == extent)
+        let at: Vec<usize> = (0..record.sittings.len())
+            .filter(|&i| record.sittings[i].end_position == extent)
             .collect();
         let count = at.len() as f64;
         let over = (count / times(slot)).ceil().max(1.0);
@@ -783,8 +785,8 @@ fn climb(store: &mut Store) {
                 true => 100.0,
                 false => percent,
             };
-            let place = (peak / 100.0 * step / over).min(1.0);
-            store.sessions[*i].progress = Some(place);
+            let progress = (peak / 100.0 * step / over).min(1.0);
+            record.sittings[*i].progress = Some(progress);
             // A sitting covers the ground between where the one before it left
             // off and where it ends — except every fifth, which dips into the
             // front matter first and carries on, the shape a jump leaves.
@@ -792,7 +794,7 @@ fn climb(store: &mut Store) {
                 true => 0.0,
                 false => stood,
             };
-            store.sessions[*i].stretches = match n % 5 == 4 && opened < place {
+            record.sittings[*i].stretches = match n % 5 == 4 && opened < progress {
                 true => vec![
                     Stretch {
                         from: 0.01,
@@ -800,61 +802,61 @@ fn climb(store: &mut Store) {
                     },
                     Stretch {
                         from: opened,
-                        to: place,
+                        to: progress,
                     },
                 ],
                 false => vec![Stretch {
                     from: opened,
-                    to: place,
+                    to: progress,
                 }],
             };
-            stood = place;
+            stood = progress;
         }
     }
 }
 
 /// [`library`] with `keep` of the last day's sittings left on it.
-pub fn thinned(last: i64, art: &Path, keep: usize) -> Store {
-    let mut store = library(last, art);
+pub fn thinned(last: i64, covers: &Path, keep: usize) -> Record {
+    let mut record = library(last, covers);
     let mut seen = 0usize;
-    store.sessions.retain(|s| {
+    record.sittings.retain(|s| {
         if date::parse_day(date::day_of(&s.started_at)) != Some(last) {
             return true;
         }
         seen += 1;
         seen <= keep
     });
-    store
+    record
 }
 
 /// [`library`] with a second binge on the last day itself, which is the day
 /// Today draws: a day of more books than one page of the list holds.
-pub fn crowded(last: i64, art: &Path) -> Store {
-    let mut store = library(last, art);
-    binge(&mut store, last);
+pub fn crowded(last: i64, covers: &Path) -> Record {
+    let mut record = library(last, covers);
+    binge(&mut record, last);
     // The second binge lands past [`library`]'s own call, and each of its
-    // sittings takes a place here.
-    climb(&mut store);
-    store
+    // sittings takes its progress here.
+    climb(&mut record);
+    record
 }
 
-/// The day [`library`] lays the binge on, for a run ending on `last`.
+/// The day [`library`] lays the binge on, for reading ending on `last`.
 pub fn binge_day(last: i64) -> i64 {
     last - BINGE_DAY
 }
 
-/// Books keyed by an extent no record carries.
+/// Books keyed by an extent the record holds no book for.
 const GHOSTS: i64 = 5;
 
 /// Days between one day of ghost sittings and the next.
 const GHOST_EVERY: i64 = 3;
 
-/// The first ghost extent, past every extent [`library`] gives the shelf.
+/// The first ghost extent, past every extent [`library`] gives its books.
 const GHOST_KEY: i64 = 640_000;
 
 /// One to three ghost sittings on every [`GHOST_EVERY`]th day, today included:
 /// a total no list of books adds up to.
-fn ghosts(store: &mut Store, last: i64) {
+fn ghosts(record: &mut Record, last: i64) {
     for back in (0..DAYS).step_by(GHOST_EVERY as usize).chain([BINGE_DAY]) {
         let day = last - back;
         let round = back / GHOST_EVERY;
@@ -862,8 +864,8 @@ fn ghosts(store: &mut Store, last: i64) {
             let key = GHOST_KEY + (round + which) % GHOSTS;
             let at = (17 + which) * 3600 + 600;
             let secs = 60 * (12 + (back * 7 + which * 13) % 48);
-            store
-                .sessions
+            record
+                .sittings
                 .push(sitting(day, at, secs, key, Measure::Counted));
         }
     }

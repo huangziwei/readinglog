@@ -529,18 +529,17 @@ fn cluster(cell: Rect, deep: i32, side: i32) -> (i32, i32, i32) {
     )
 }
 
-/// One sitting on a scatter: the column it falls in, the place it left the
-/// book at, and the runs of the book it covered — each a pair of places on the
-/// same scale. A sitting the record states no run for draws its place alone.
-pub struct Sat {
+/// One sitting on a scatter: its column, the progress it ended at, and the
+/// stretches it covered, each a pair of progress on the same scale.
+pub struct Sitting {
     pub column: usize,
-    pub place: i64,
-    pub runs: Vec<(i64, i64)>,
+    pub progress: i64,
+    pub stretches: Vec<(i64, i64)>,
 }
 
 /// Where each of `at` sat, on a scale of 0 to `ceiling`, over `count` columns
-/// [`columns`] cuts and names. A run draws as a bar between its two places; one
-/// under `side` tall, and a [`Sat`] holding none, draw the mark.
+/// [`columns`] cuts and names. A stretch draws as a bar between its two ends;
+/// one under `side` tall, and a [`Sitting`] holding none, draw the mark.
 #[allow(clippy::too_many_arguments)]
 pub fn scatter(
     fb: &mut Framebuffer,
@@ -548,7 +547,7 @@ pub fn scatter(
     theme: &Theme,
     palette: Palette,
     area: Rect,
-    at: &[Sat],
+    at: &[Sitting],
     count: usize,
     axis: impl Fn(usize) -> String,
     every: usize,
@@ -582,8 +581,9 @@ pub fn scatter(
         text.draw_inked(crate::font::Script::Unknown, fb, x, baseline, &said, LIGHT);
     }
     let ink = palette.deep();
-    let at_place =
-        |place: i64| plot.bottom() - (plot.h as i64 * place.clamp(0, ceiling) / ceiling) as i32;
+    let at_progress = |progress: i64| {
+        plot.bottom() - (plot.h as i64 * progress.clamp(0, ceiling) / ceiling) as i32
+    };
     let air = (side / 2).max(1);
     let mut from = 0;
     while from < at.len() {
@@ -598,26 +598,26 @@ pub fn scatter(
             continue;
         };
         let (step, wide, left) = cluster(*cell, held.len() as i32, side);
-        for (nth, sat) in held.iter().enumerate() {
+        for (nth, sitting) in held.iter().enumerate() {
             let x = left + step * nth as i32;
             paint::fill_rgb(
                 fb,
                 Rect::new(x, plot.bottom() + air, wide, theme.rule()),
                 ink,
             );
-            let mark = |fb: &mut Framebuffer, place: i64| {
+            let mark = |fb: &mut Framebuffer, progress: i64| {
                 paint::fill_rgb(
                     fb,
-                    Rect::new(x, at_place(place) - side / 2, wide, side),
+                    Rect::new(x, at_progress(progress) - side / 2, wide, side),
                     ink,
                 )
             };
-            if sat.runs.is_empty() {
-                mark(fb, sat.place);
+            if sitting.stretches.is_empty() {
+                mark(fb, sitting.progress);
                 continue;
             }
-            for (opened, closed) in &sat.runs {
-                let (a, b) = (at_place(*opened), at_place(*closed));
+            for (opened, closed) in &sitting.stretches {
+                let (a, b) = (at_progress(*opened), at_progress(*closed));
                 let (top, tall) = (a.min(b), (a - b).abs());
                 match tall < side {
                     true => mark(fb, *closed),
@@ -1216,16 +1216,16 @@ mod tests {
             0 => Vec::new(),
             n => vec![n.to_string()],
         };
-        static PLACE: fn(i64) -> Vec<String> = |at| vec![format!("{at}%")];
+        static PROGRESS: fn(i64) -> Vec<String> = |at| vec![format!("{at}%")];
         vec![
             ((0..24).map(|at| at * 300).collect(), &SPAN as Figure),
             ((0..7).map(|at| 3600 + at * 900).collect(), &SPAN),
             ((0..12).map(|at| 40 * 3600 + at * 3600).collect(), &SPAN),
             ((0..25).map(|at| (260 >> at).max(1)).collect(), &COUNTED),
-            // A book's place, one bar a sitting: the densest row drawn, and
+            // A book's progress, one bar a sitting: the densest row drawn, and
             // the only one whose length the record decides.
-            ((0..32).map(|at| at * 3).collect(), &PLACE),
-            ((0..60).map(|at| at + 20).collect(), &PLACE),
+            ((0..32).map(|at| at * 3).collect(), &PROGRESS),
+            ((0..60).map(|at| at + 20).collect(), &PROGRESS),
         ]
     }
 
@@ -1627,10 +1627,10 @@ mod tests {
 
     #[test]
     fn a_bounded_quantity_fills_its_band_at_the_bound() {
-        // `places` tops out at 8 of a bound of 100.
-        let places = [6i64, 6, 7, 8, 8];
-        assert_eq!(scale(&places, Some(100)), 100);
-        assert_eq!(scale(&places, None), 8);
+        // `progress` tops out at 8 of a bound of 100.
+        let progress = [6i64, 6, 7, 8, 8];
+        assert_eq!(scale(&progress, Some(100)), 100);
+        assert_eq!(scale(&progress, None), 8);
         assert_eq!(scale(&[1, 55, 100], Some(100)), 100);
         // 140 over a `ceiling` of 100 scales to 140.
         assert_eq!(scale(&[40, 140], Some(100)), 140);

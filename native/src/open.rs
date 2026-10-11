@@ -1,4 +1,4 @@
-//! [`ask`] writes a `file://` URI built from the catalog's `p_location` into
+//! [`ask`] writes a `file://` URI built from the library's `p_location` into
 //! [`REQUEST`], which `bin/readinglog.sh` files once this process has left
 //! the screen.
 
@@ -11,7 +11,7 @@ pub const REQUEST: &str = "open";
 /// Which end of the book [`ask`] asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum At {
-    /// The place [`uri`] alone lands on.
+    /// The position [`uri`] alone lands on.
     #[default]
     Left,
     /// The book's own start, which `bin/readinglog.sh` opens at.

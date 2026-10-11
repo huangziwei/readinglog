@@ -1,6 +1,6 @@
 //! `.sdr` sidecar directories. Each holds a **frequent** sidecar, rewritten on
 //! every turn and carrying `timer.model`, and a **rare** one written when an
-//! annotation is made and carrying the roster of what the book still holds.
+//! annotation is made and carrying the roster of what the book holds.
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -26,23 +26,23 @@ const SUPERSEDED: &str = ".bad_file";
 /// The suffix on a sidecar half written.
 const PARTIAL: &str = ".tmp";
 
-/// How long the profile infix is: `BaseProfileImpl.cHj()` writes 32 lowercase
-/// hex characters between the book's stem and the suffix.
+/// How long the profile infix is: 32 lowercase hex characters between the
+/// book's stem and the suffix.
 const INFIX_LEN: usize = 32;
 
-/// The record holding the annotations a book still carries.
+/// The object holding the annotations a book carries.
 const ANNOTATION_CACHE: &str = "annotation.cache.object";
 
-/// The record inside it holding one kind's annotations.
+/// The object inside it holding one kind's annotations.
 const ANNOTATION_TREE: &str = "saved.avl.interval.tree";
 
-/// What every annotation record's name opens with.
+/// What every annotation object's name opens with.
 const ANNOTATION: &str = "annotation.personal.";
 
 /// How deep under [`DOCUMENTS_DIR`] [`collect`] descends.
 const MAX_DEPTH: usize = 4;
 
-/// The record holding `TotalTime` and `TotalWords`.
+/// The object holding `TotalTime` and `TotalWords`.
 const TIMER_MODEL: &str = "timer.model";
 
 /// Magic bytes every sidecar opens with.
@@ -101,7 +101,7 @@ pub enum Value {
     Short(i16),
     Float([u8; 4]),
     Byte(u8),
-    /// `DataOutputStream.writeChar` is a UTF-16 code unit: **two** bytes, on
+    /// A UTF-16 code unit: **two** bytes, on
     /// every firmware. Reading one shifts everything after it by a byte and
     /// costs the whole file.
     Char(u16),
@@ -142,7 +142,7 @@ impl Value {
     }
 }
 
-/// A named node: a record type, and the values that make it up.
+/// A named node: an object type, and the values that make it up.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Object {
     pub name: String,
@@ -151,7 +151,7 @@ pub struct Object {
 
 /// A parsed sidecar.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Store {
+pub struct Krds {
     /// Format version from the header.
     pub version: i64,
     pub roots: Vec<Object>,
@@ -227,7 +227,7 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// `readUTF`'s payload: **modified** UTF-8, not what `String::from_utf8`
+/// A string's payload: **modified** UTF-8, not what `String::from_utf8`
 /// reads. `U+0000` is `C0 80` and anything above `U+FFFF` a surrogate pair,
 /// both of which a note body reaches. A lone surrogate becomes `U+FFFD`.
 fn modified_utf8(raw: &[u8]) -> Option<String> {
@@ -261,7 +261,7 @@ fn modified_utf8(raw: &[u8]) -> Option<String> {
     Some(String::from_utf16_lossy(&units))
 }
 
-impl Store {
+impl Krds {
     /// Read a sidecar.
     pub fn parse(bytes: &[u8]) -> Result<Self, KrdsError> {
         let mut r = Reader { b: bytes, i: 0 };
@@ -292,8 +292,8 @@ impl Store {
     }
 }
 
-/// The one field an annotation record's subclass writes, which subclass being
-/// the record's own name: a colour, a note's text, the id handwriting is filed
+/// The one field an annotation object's subclass writes, which subclass being
+/// the object's own name: a colour, a note's text, the id handwriting is filed
 /// under, or nothing at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Sixth {
@@ -316,9 +316,9 @@ fn sixth(kind: Kind) -> Sixth {
     }
 }
 
-/// One annotation as `AnnotationImpl.a` wrote it: five fields and the sixth
-/// its subclass adds. Anchors are held verbatim and taken **by their place**,
-/// since each reader stack writes a shape of its own.
+/// One annotation: five fields and the sixth
+/// its subclass adds. Anchors are held verbatim and taken **by their place**:
+/// their shape differs per reader stack.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Annotation {
     pub kind: Kind,
@@ -326,7 +326,7 @@ pub struct Annotation {
     pub start: String,
     /// Field 2, the end anchor.
     pub end: String,
-    /// Field 3, `created`, epoch milliseconds on the device's own clock. This
+    /// Field 3, `created`, epoch milliseconds on the Kindle's own clock. This
     /// is the instant a clipping's `Added on` names, to the second.
     pub created: i64,
     /// Field 4, `modified`. Equal to `created` until the annotation is edited.
@@ -334,8 +334,8 @@ pub struct Annotation {
     /// Field 5, `<tags>\u{FFFC}<flags>` verbatim. `0\u{FFFC}0` is the
     /// ordinary case: no tags and no flags.
     pub flags: String,
-    /// Field 6 where `kind` writes a colour: one of the eleven
-    /// `AnnotationColor` names. Empty on every other kind.
+    /// Field 6 where `kind` writes a colour: one of the eleven colour
+    /// names. Empty on every other kind.
     pub colour: String,
     /// Field 6 where `kind` writes typed words. Empty on every other kind, and
     /// never the book's text: no sidecar holds that.
@@ -382,30 +382,30 @@ pub struct Counter {
     /// `timer.model`'s `TotalWords`.
     pub words: i64,
     /// `timer.model`'s fourth value: the share of the book `total_ms` and
-    /// `words` were gathered over, which `ReadingTimerModel` divides by.
+    /// `words` were gathered over, the divisor of the Kindle's own time left.
     pub covered: f64,
 }
 
 /// `timer.model`'s `TotalTime`, `TotalWords` and covered share: its values 1,
 /// 2 and 3. A file stating no fourth value reads a zero share.
-fn counters(store: &Store) -> Option<(i64, i64, f64)> {
-    let model = store.root(TIMER_MODEL)?;
+fn counters(krds: &Krds) -> Option<(i64, i64, f64)> {
+    let model = krds.root(TIMER_MODEL)?;
     let total_ms = model.values.get(1)?.as_long()?;
     let words = model.values.get(2)?.as_long()?;
     let covered = model.values.get(3).and_then(Value::as_double);
     Some((total_ms, words, covered.unwrap_or(0.0)))
 }
 
-/// What one `.sdr` directory's **rare** sidecar states about its book's marks:
-/// the roster of what that book still carries.
+/// What one `.sdr` directory's **rare** sidecar states about its book's highlights:
+/// the roster of what that book carries.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Roster {
     /// The `.sdr` directory's name without its suffix: the book's own file,
-    /// which is `catalog::Book::location` with its last suffix cut.
+    /// which is `library::Book::location` with its last suffix cut.
     pub file: String,
-    /// Whether the sidecar could say what still exists: present, parsed, and
-    /// naming an `annotation.cache.object`. **An empty cache counts** — the
-    /// writer states none that way, and absence is only a deletion under it.
+    /// Whether the sidecar could say what exists: present, parsed, and
+    /// naming an `annotation.cache.object`. **An empty cache counts** — it is
+    /// how none is stated, and absence is only a deletion under it.
     pub trusted: bool,
     /// Every annotation it holds, in the order the trees were written.
     pub annotations: Vec<Annotation>,
@@ -413,7 +413,7 @@ pub struct Roster {
 
 /// What one walk of `documents` found: both halves of every sidecar.
 #[derive(Debug, Default, Clone, PartialEq)]
-pub struct Shelf {
+pub struct Sidecars {
     /// `timer.model`'s counters, ascending by file.
     pub counters: Vec<Counter>,
     /// What the rare sidecars hold, ascending by file. One entry per `.sdr`,
@@ -469,15 +469,15 @@ pub fn survey(documents: &Path) -> Survey {
 
 /// Every sidecar under `documents`, book file present or not; one that will
 /// not parse is printed and skipped. One walk answers both halves. `counters`
-/// is the frequent half, which only [`crate::store::Store::recover`] reads.
-pub fn read(documents: &Path, counters: bool) -> Shelf {
+/// is the frequent half, which only [`crate::record::Record::recover`] reads.
+pub fn read(documents: &Path, counters: bool) -> Sidecars {
     let mut dirs = Vec::new();
     collect(documents, 0, &mut dirs);
-    // The profile the shelf belongs to is whichever infix most of its rare
-    // sidecars carry — the device does not write it anywhere a reader can
-    // ask. A directory holding one file of another profile then keeps its own.
+    // The profile the sidecars belong to is whichever infix most of the rare
+    // ones carry — no file names it outright.
+    // A directory holding one file of another profile then keeps its own.
     let profile = profile_of(&dirs);
-    let mut out = Shelf::default();
+    let mut out = Sidecars::default();
     for (sdr, file) in dirs {
         if counters && let Some(counter) = read_counter(&sdr, &file) {
             out.counters.push(counter);
@@ -516,8 +516,8 @@ fn collect(dir: &Path, depth: usize, out: &mut Vec<(PathBuf, String)>) {
 /// The counters in `sdr`'s frequent sidecar, or `None` where it holds none.
 fn read_counter(sdr: &Path, file: &str) -> Option<Counter> {
     let at = frequent(sdr)?;
-    let store = open_sidecar(&at)?;
-    let (total_ms, words, covered) = counters(&store)?;
+    let krds = open_sidecar(&at)?;
+    let (total_ms, words, covered) = counters(&krds)?;
     Some(Counter {
         file: file.to_string(),
         total_ms,
@@ -536,10 +536,10 @@ fn read_roster(sdr: &Path, file: &str, profile: Option<&str>) -> Roster {
     let Some(at) = rare(sdr, profile) else {
         return out;
     };
-    let Some(store) = open_sidecar(&at) else {
+    let Some(krds) = open_sidecar(&at) else {
         return out;
     };
-    let Some(cache) = store.root(ANNOTATION_CACHE) else {
+    let Some(cache) = krds.root(ANNOTATION_CACHE) else {
         return out;
     };
     out.trusted = true;
@@ -549,7 +549,7 @@ fn read_roster(sdr: &Path, file: &str, profile: Option<&str>) -> Roster {
 
 /// The file at `at`, parsed, with whatever went wrong printed and nothing
 /// raised: one unreadable sidecar must never cost the walk.
-fn open_sidecar(at: &Path) -> Option<Store> {
+fn open_sidecar(at: &Path) -> Option<Krds> {
     let bytes = match std::fs::read(at) {
         Ok(bytes) => bytes,
         Err(err) => {
@@ -557,8 +557,8 @@ fn open_sidecar(at: &Path) -> Option<Store> {
             return None;
         }
     };
-    match Store::parse(&bytes) {
-        Ok(store) => Some(store),
+    match Krds::parse(&bytes) {
+        Ok(krds) => Some(krds),
         Err(err) => {
             eprintln!("!! sidecar: {} — {err}", at.display());
             None
@@ -567,16 +567,15 @@ fn open_sidecar(at: &Path) -> Option<Store> {
 }
 
 /// Every annotation an `annotation.cache.object` holds. The count and type
-/// codes are stepped over and every [`ANNOTATION_TREE`] read, which is also
-/// what reads the empty record, since that carries no count at all.
+/// codes are stepped over and every [`ANNOTATION_TREE`] read: the same walk
+/// reads the empty cache, which carries no count at all.
 fn annotations(cache: &Object) -> Vec<Annotation> {
     let mut out = Vec::new();
     for tree in cache.values.iter().filter_map(Value::as_object) {
         if tree.name != ANNOTATION_TREE {
             continue;
         }
-        // `SavedAnnotationAVLTree.a` writes `writeInt(size)` and then the
-        // records; the records are the objects.
+        // A count, and then the annotations, each one an object.
         out.extend(
             tree.values
                 .iter()
@@ -587,11 +586,11 @@ fn annotations(cache: &Object) -> Vec<Annotation> {
     out
 }
 
-/// One `annotation.personal.*` record, read **positionally**. `None` where the
+/// One `annotation.personal.*` object, read **positionally**. `None` where the
 /// name is not one of the twelve, or a field is missing or of the wrong type.
-fn one(record: &Object) -> Option<Annotation> {
-    let kind = Kind::from_stored(record.name.strip_prefix(ANNOTATION)?)?;
-    let text = |at: usize| match record.values.get(at) {
+fn one(object: &Object) -> Option<Annotation> {
+    let kind = Kind::from_stored(object.name.strip_prefix(ANNOTATION)?)?;
+    let text = |at: usize| match object.values.get(at) {
         Some(Value::Utf8(said)) => Some(said.clone().unwrap_or_default()),
         _ => None,
     };
@@ -605,8 +604,8 @@ fn one(record: &Object) -> Option<Annotation> {
         kind,
         start: text(0)?,
         end: text(1)?,
-        created: record.values.get(2)?.as_long()?,
-        modified: record.values.get(3)?.as_long()?,
+        created: object.values.get(2)?.as_long()?,
+        modified: object.values.get(3)?.as_long()?,
         flags: text(4).unwrap_or_default(),
         colour,
         body,
@@ -621,11 +620,11 @@ fn frequent(sdr: &Path) -> Option<PathBuf> {
 }
 
 /// The rare sidecar inside `sdr`: `profile`'s infix, else any infix, else
-/// whatever is there. A directory can hold two, so **glob and choose**; never
+/// whatever is there. A directory can hold two: **glob and choose**; never
 /// construct the name.
 fn rare(sdr: &Path, profile: Option<&str>) -> Option<PathBuf> {
     let mut found = files_in(sdr, &RARE);
-    // Ranked worst first, so the last is the one to take.
+    // Ranked worst first: the last is the one to take.
     found.sort_by_key(|(name, path)| {
         let infix = infix_of(name);
         let rank = match (&infix, profile) {
@@ -656,7 +655,7 @@ fn files_in(sdr: &Path, suffixes: &[&str]) -> Vec<(String, PathBuf)> {
         .collect()
 }
 
-/// The 32 lowercase hex characters `BaseProfileImpl.cHj()` writes between a
+/// The 32 lowercase hex characters between a
 /// sidecar's stem and its suffix, and `None` for a name carrying none.
 fn infix_of(name: &str) -> Option<String> {
     let stem = name.rsplit_once('.').map(|(head, _)| head).unwrap_or(name);
@@ -667,8 +666,8 @@ fn infix_of(name: &str) -> Option<String> {
         .then(|| tail.to_string())
 }
 
-/// The profile most of the shelf's rare sidecars were written by, and `None`
-/// where none carries an infix. A tie takes the lowest, so two runs answer
+/// The profile most of the rare sidecars were written by, and `None`
+/// where none carries an infix. A tie takes the lowest: two walks answer
 /// alike.
 fn profile_of(dirs: &[(PathBuf, String)]) -> Option<String> {
     let mut seen: Vec<String> = dirs
@@ -694,8 +693,8 @@ mod tests {
     use super::*;
 
     // Whole sidecars as bytes, in the firmware writers' own field order.
-    // **Keep them as bytes**: an encoder written here would agree with the
-    // reader whatever either did, and prove nothing about the format.
+    // **Keep them as bytes**: an encoder written here agrees with the
+    // reader whatever either does, and proves nothing about the format.
 
     /// Every kind the 5.19 writers name, one tree each.
     const KINDS: &str = concat!(
@@ -769,7 +768,7 @@ mod tests {
         "efbfbc300300000d74657374206f6e207369646c65ffffff",
     );
 
-    /// A note body above the BMP: `writeUTF` emits a six-byte surrogate pair.
+    /// A note body above the BMP: a six-byte surrogate pair.
     const EMOJI_NOTE: &str = concat!(
         "00000000001ab1260200000000000000010100000001fe000017616e6e6f746174696f6e",
         "2e63616368652e6f626a65637401000000010100000002fe00001773617665642e61766c",
@@ -779,7 +778,7 @@ mod tests {
         "0530efbfbc30030000116772656174206c696e6520eda0bdedb4a5ffffff",
     );
 
-    /// A record carrying a `char`, which is two bytes on the wire.
+    /// An object carrying a `char`, which is two bytes on the wire.
     const HAS_CHAR: &str = concat!(
         "00000000001ab1260200000000000000010100000002fe00000a736f6d652e73746f7265",
         "0900410100000007fffe000017616e6e6f746174696f6e2e63616368652e6f626a656374",
@@ -854,19 +853,19 @@ mod tests {
     }
 
     /// The annotations one fixture holds.
-    fn marks(hexed: &str) -> Vec<Annotation> {
-        let store = Store::parse(&fixture(hexed)).expect("a sidecar");
-        annotations(store.root(ANNOTATION_CACHE).expect("an annotation cache"))
+    fn highlights(hexed: &str) -> Vec<Annotation> {
+        let krds = Krds::parse(&fixture(hexed)).expect("a sidecar");
+        annotations(krds.root(ANNOTATION_CACHE).expect("an annotation cache"))
     }
 
-    /// A KRDS container holding `records`, each a name and a list of longs.
-    fn sidecar(records: &[(&str, &[i64])]) -> Vec<u8> {
+    /// A KRDS container holding `objects`, each a name and a list of longs.
+    fn sidecar(objects: &[(&str, &[i64])]) -> Vec<u8> {
         let mut out = Vec::from(SIGNATURE);
         out.push(T_LONG);
         out.extend_from_slice(&1i64.to_be_bytes());
         out.push(T_INT);
-        out.extend_from_slice(&(records.len() as i32).to_be_bytes());
-        for (name, values) in records {
+        out.extend_from_slice(&(objects.len() as i32).to_be_bytes());
+        for (name, values) in objects {
             out.push(T_OBJECT_BEGIN);
             out.push(0);
             out.extend_from_slice(&(name.len() as u16).to_be_bytes());
@@ -880,7 +879,7 @@ mod tests {
         out
     }
 
-    /// One record whose values are laid out by the caller, type bytes and all.
+    /// One object whose values are laid out by the caller, type bytes and all.
     fn raw_sidecar(name: &str, body: &[u8]) -> Vec<u8> {
         let mut out = Vec::from(SIGNATURE);
         out.push(T_LONG);
@@ -917,8 +916,8 @@ mod tests {
     #[test]
     fn a_sidecar_states_the_counter_the_log_states_on_every_turn() {
         let bytes = sidecar(&[("timer.model", &[0, 3_198_932, 30_965])]);
-        let store = Store::parse(&bytes).expect("a sidecar");
-        assert_eq!(counters(&store), Some((3_198_932, 30_965, 0.0)));
+        let krds = Krds::parse(&bytes).expect("a sidecar");
+        assert_eq!(counters(&krds), Some((3_198_932, 30_965, 0.0)));
     }
 
     /// `timer.model`'s fourth value is a `T_DOUBLE`: the share of the book its
@@ -934,49 +933,48 @@ mod tests {
         body.push(T_DOUBLE);
         body.extend_from_slice(&0.005_617_f64.to_be_bytes());
         let bytes = raw_sidecar("timer.model", &body);
-        let store = Store::parse(&bytes).expect("a sidecar");
-        let (ms, words, covered) = counters(&store).expect("the counter");
+        let krds = Krds::parse(&bytes).expect("a sidecar");
+        let (ms, words, covered) = counters(&krds).expect("the counter");
         assert_eq!((ms, words), (341_149, 1_909));
         assert!((covered - 0.005_617).abs() < 1e-12, "covered {covered}");
     }
 
     #[test]
-    fn a_record_the_file_does_not_hold_is_not_an_error() {
+    fn an_object_the_file_does_not_hold_is_not_an_error() {
         // A book opened and never read: `lpr` alone, no timer.
         let bytes = sidecar(&[("lpr", &[0])]);
-        let store = Store::parse(&bytes).expect("a sidecar");
-        assert_eq!(counters(&store), None);
+        let krds = Krds::parse(&bytes).expect("a sidecar");
+        assert_eq!(counters(&krds), None);
     }
 
     #[test]
     fn a_file_that_is_not_a_sidecar_is_refused_rather_than_read() {
-        assert_eq!(Store::parse(b"not a sidecar"), Err(KrdsError::NotASidecar));
+        assert_eq!(Krds::parse(b"not a sidecar"), Err(KrdsError::NotASidecar));
         let mut short = Vec::from(SIGNATURE);
         short.push(T_LONG);
         assert!(matches!(
-            Store::parse(&short),
+            Krds::parse(&short),
             Err(KrdsError::Truncated { .. })
         ));
     }
 
     #[test]
     fn a_char_is_two_bytes_and_everything_after_one_stays_in_place() {
-        // `ObjectWriter.writeChar` emits the type byte and then
-        // `DataOutputStream.writeChar`, which is a UTF-16 code unit. Reading
-        // one byte shifts the rest of the file by one and loses all of it.
-        let store = Store::parse(&fixture(HAS_CHAR)).expect("a sidecar");
-        let held = store.root("some.store").expect("the record with the char");
+        // A `char` is its type byte and then a UTF-16 code unit. Reading one byte
+        // shifts the rest of the file by one and loses all of it.
+        let krds = Krds::parse(&fixture(HAS_CHAR)).expect("a sidecar");
+        let held = krds.root("some.store").expect("the object with the char");
         assert_eq!(held.values[0], Value::Char(u16::from(b'A')));
         assert_eq!(held.values[1], Value::Int(7));
-        // And the record after it still reads.
-        assert_eq!(marks(HAS_CHAR).len(), 1);
+        // And the object after it reads whole.
+        assert_eq!(highlights(HAS_CHAR).len(), 1);
     }
 
     #[test]
     fn a_note_body_above_the_bmp_costs_nothing() {
-        // `writeUTF` is Java *modified* UTF-8: an astral character is a
+        // A string is Java *modified* UTF-8: an astral character is a
         // six-byte surrogate pair, which `String::from_utf8` refuses.
-        let held = marks(EMOJI_NOTE);
+        let held = highlights(EMOJI_NOTE);
         assert_eq!(held.len(), 1);
         assert_eq!(held[0].kind, Kind::Note);
         assert_eq!(held[0].body, "great line \u{1F525}");
@@ -1003,8 +1001,8 @@ mod tests {
     }
 
     #[test]
-    fn every_record_the_writers_name_is_read_under_its_own_kind() {
-        let held = marks(KINDS);
+    fn every_object_the_writers_name_is_read_under_its_own_kind() {
+        let held = highlights(KINDS);
         let kinds: Vec<Kind> = held.iter().map(|a| a.kind).collect();
         assert_eq!(kinds.len(), Kind::ALL.len());
         for kind in Kind::ALL {
@@ -1012,7 +1010,7 @@ mod tests {
         }
         // The sixth field per kind: a colour, the note's own words, or
         // nothing at all.
-        let of = |kind: Kind| held.iter().find(|a| a.kind == kind).expect("a record");
+        let of = |kind: Kind| held.iter().find(|a| a.kind == kind).expect("an annotation");
         assert_eq!(of(Kind::Highlight).colour, "yellow");
         assert_eq!(of(Kind::Bookmark).colour, "dark_blue");
         assert_eq!(of(Kind::Circle).colour, "green");
@@ -1027,8 +1025,8 @@ mod tests {
     }
 
     #[test]
-    fn a_record_states_its_place_and_its_two_instants() {
-        let held = marks(COLOURED);
+    fn an_object_states_its_place_and_its_two_instants() {
+        let held = highlights(COLOURED);
         assert_eq!(held.len(), 3);
         let first = &held[0];
         assert_eq!(first.kind, Kind::Highlight);
@@ -1042,15 +1040,15 @@ mod tests {
 
     #[test]
     fn an_anchor_is_read_by_its_shape_and_never_by_a_guess_at_its_stack() {
-        // A bare integer is what `HTMLPosition`, `MobiPosition` and
-        // `TopazPosition` write.
-        let held = marks(INT_ANCHOR);
+        // A bare integer is what `HTMLPosition` and the Mobipocket and
+        // Topaz positions write.
+        let held = highlights(INT_ANCHOR);
         assert_eq!(held.len(), 1);
         assert_eq!(held[0].start_position(), Some(82_107));
         assert_eq!(held[0].end_position(), Some(82_514));
-        // `PDFPosition` writes a page and a point, which is on no position
+        // A PDF anchor is a page and a point, on no position
         // axis at all. `start_position` states none for it.
-        let held = marks(PDF_ANCHOR);
+        let held = highlights(PDF_ANCHOR);
         assert_eq!(held.len(), 1);
         assert_eq!(held[0].start, "3 100 200 0");
         assert_eq!(held[0].start_position(), None);
@@ -1058,9 +1056,9 @@ mod tests {
 
     #[test]
     fn the_colour_vocabulary_is_carried_verbatim() {
-        // `AnnotationColor` names eleven on 5.19. Nothing here reads them, so
-        // whatever the record states is what is stored.
-        let held = marks(SCRIBE);
+        // Eleven colours exist on 5.19. Nothing here reads them:
+        // whatever the annotation states is what is stored.
+        let held = highlights(SCRIBE);
         let colours: Vec<&str> = held.iter().map(|a| a.colour.as_str()).collect();
         assert_eq!(colours, ["green", "default", "dark_blue", ""]);
         assert_eq!(held[3].kind, Kind::Underline);
@@ -1068,11 +1066,11 @@ mod tests {
 
     #[test]
     fn an_empty_cache_is_the_writer_saying_the_book_carries_none() {
-        // `AnnotationCacheObject.a` returns before writing its count when no
-        // tree is left. The record is there, holding nothing — which is what
+        // A cache with no tree left carries no count.
+        // The cache object is there, holding nothing — which is what
         // lets an absence be read as a deletion.
-        let store = Store::parse(&fixture(EMPTY_CACHE)).expect("a sidecar");
-        let cache = store.root(ANNOTATION_CACHE).expect("the record");
+        let krds = Krds::parse(&fixture(EMPTY_CACHE)).expect("a sidecar");
+        let cache = krds.root(ANNOTATION_CACHE).expect("the cache object");
         assert!(cache.values.is_empty());
         assert!(annotations(cache).is_empty());
     }
@@ -1116,8 +1114,8 @@ mod tests {
             sidecar(&[("timer.model", &[0, 999, 999])]),
         )
         .expect("the superseded file");
-        // A superseded rare file parses and holds an empty cache; taking one
-        // for the live sidecar would state that book carries nothing.
+        // A superseded rare file parses and holds an empty cache; taken
+        // for the live sidecar, it states that book carries nothing.
         std::fs::write(sdr.join("book.yjr.bad_file"), fixture(EMPTY_CACHE))
             .expect("the superseded rare file");
         std::fs::write(sdr.join("book.yjr.tmp"), fixture(EMPTY_CACHE)).expect("a half-written one");
@@ -1155,7 +1153,7 @@ mod tests {
 
     #[test]
     fn a_directory_holding_two_rare_files_takes_the_profiles_own() {
-        // `ReaderPermanentState.a`'s migration leaves the bare-named file
+        // A migration leaves the bare-named file
         // beside the profile-named one, and a second reading profile writes
         // its own. Never construct the name — glob, and choose.
         let root = scratch("two-rare");
@@ -1164,7 +1162,7 @@ mod tests {
         std::fs::write(sdr.join("Timequake.yjr"), fixture(EMPTY_CACHE)).expect("the bare one");
         std::fs::write(sdr.join(format!("Timequake{INFIX}.yjr")), fixture(COLOURED))
             .expect("the profile's own");
-        // A second book, so the shelf's own profile is the one to prefer.
+        // A second book: the sidecars' own profile is the one to prefer.
         lay_out(&root, "Another", ".yjr", &fixture(KINDS));
         let found = read(&root, true);
         let held = found
@@ -1178,7 +1176,7 @@ mod tests {
     }
 
     #[test]
-    fn the_profile_is_whichever_infix_most_of_the_shelf_carries() {
+    fn the_profile_is_whichever_infix_most_of_the_sidecars_carry() {
         let root = scratch("profiles");
         for book in ["one", "two", "three"] {
             lay_out(&root, book, ".yjr", &fixture(EMPTY_CACHE));

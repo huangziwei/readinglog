@@ -3,7 +3,7 @@
 //! same read on its own.
 
 /// The byte every message this build writes and reads opens with. libdbus
-/// marshals in the sender's own order, and every device here is little.
+/// marshals in the sender's own order, and every Kindle here is little.
 const LITTLE: u8 = b'l';
 
 /// The protocol version every message carries.

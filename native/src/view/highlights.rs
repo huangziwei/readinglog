@@ -1,10 +1,10 @@
 //! One book's highlights and notes, at whichever end [`super::Way`]
-//! opens the list. `Mark::body` comes from the clippings file and `Mark::start`
-//! from the `.sdr` sidecar; [`place`] states each on its own axis.
+//! opens the list. `Highlight::body` comes from the clippings file and `Highlight::start`
+//! from the `.sdr` sidecar; [`positions`] states each on its own axis.
 
-use crate::annotate::Mark;
 use crate::clippings::Kind;
 use crate::font::Script;
+use crate::highlights::Highlight;
 use crate::lang::Strings;
 use crate::stats::BookStat;
 use crate::stats::Stats;
@@ -20,7 +20,7 @@ use super::{Ctx, Hit, Search, Way, pager, search};
 const BAR: &str = " | ";
 const DOT: &str = " · ";
 
-/// What a book with no place for a mark states in place of one.
+/// What a highlight with no position states in place of one.
 const DASH: &str = "—";
 
 /// The most passage lines one row of a [`Layout::found`] list shows.
@@ -29,21 +29,22 @@ const WINDOW_LINES: usize = 4;
 /// The most lines a row's `title` takes, wrapped to the row's own width.
 const NAME_LINES: usize = 3;
 
-/// One row of a list of marks: `mark`, the `note` written on it, and the
+/// One row of a list of highlights: `highlight`, the `note` written on it, and the
 /// `title`, `language` and `extent` of the book it was made in.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct Row {
     /// The book, by its index in `Stats::books`.
     pub book: usize,
-    /// The row's place in the book's `Stats::marked` list, where its Marks tab opens.
+    /// The row's place in the book's `Stats::book_highlights` list, where its
+    /// Highlights tab opens.
     pub at: usize,
-    pub mark: Mark,
-    pub note: Option<Mark>,
+    pub highlight: Highlight,
+    pub note: Option<Highlight>,
     /// The book's title, standing over the row in a list running across books.
     pub title: String,
-    /// The book's catalog language, which picks the face the words are set in.
+    /// The book's library language, which picks the face the words are set in.
     pub language: String,
-    /// The book's extent, which the percentage is measured against.
+    /// The book's extent, which the progress is measured against.
     pub extent: i64,
 }
 
@@ -52,13 +53,13 @@ impl Row {
         book: usize,
         at: usize,
         record: &BookStat,
-        mark: &Mark,
-        note: Option<&Mark>,
+        highlight: &Highlight,
+        note: Option<&Highlight>,
     ) -> Self {
         Self {
             book,
             at,
-            mark: mark.clone(),
+            highlight: highlight.clone(),
             note: note.cloned(),
             title: record.title.clone(),
             language: record.language.clone(),
@@ -130,7 +131,7 @@ impl Metrics {
         theme.gap + air(theme) + self.body_cap
     }
 
-    /// The rule `paint::mark_colour` draws beside those lines, as its head and
+    /// The rule `paint::highlight_colour` draws beside those lines, as its head and
     /// height from the head of the block. [`air`] stands over the first line's
     /// cap and under the last line's baseline.
     fn ruled(self, theme: &Theme, lines: usize) -> (i32, i32) {
@@ -171,7 +172,7 @@ fn window_lines(m: Metrics, theme: &Theme, high: i32) -> usize {
     lines
 }
 
-/// The most passage lines one row can take in a box `h` tall. A `mark.body`
+/// The most passage lines one row can take in a box `h` tall. A `highlight.body`
 /// running past it is ellipsized there.
 fn lines_in(m: Metrics, theme: &Theme, h: i32) -> usize {
     let mut lines = 1;
@@ -181,7 +182,7 @@ fn lines_in(m: Metrics, theme: &Theme, h: i32) -> usize {
     lines
 }
 
-/// Where each page of `book`'s marks opens in `area`, ascending from 0, and
+/// Where each page of `book`'s highlights opens in `area`, ascending from 0, and
 /// empty for a book carrying none. [`draw`] and the page step read this one
 /// list; `search` names the passages it holds.
 pub fn pages(
@@ -207,13 +208,13 @@ pub fn pages(
     openings(text, theme, &held, &at, inner.h)
 }
 
-/// One book's own rows, most recently marked first, as its list holds them.
+/// One book's own rows, most recently made first, as its list holds them.
 fn rows(stats: &Stats, book: usize, record: &BookStat) -> Vec<Row> {
     stats
-        .marked(book)
+        .book_highlights(book)
         .iter()
         .enumerate()
-        .map(|(at, m)| Row::new(book, at, record, m.mark, m.note))
+        .map(|(at, m)| Row::new(book, at, record, m.highlight, m.note))
         .collect()
 }
 
@@ -230,7 +231,7 @@ fn listing(
     let mut held = rows(stats, book, record);
     if let Some(needle) = query.map(search::Needle::of) {
         held.retain(|row| {
-            needle.holds(&row.mark.body)
+            needle.holds(&row.highlight.body)
                 || row
                     .note
                     .as_ref()
@@ -292,7 +293,7 @@ fn list_box(text: &mut TextRenderer, theme: &Theme, area: Rect) -> Rect {
     rest.split_top(chrome::section_height(text, theme)).1
 }
 
-/// One book's marks under their own heading, in `order` and opened at `from`,
+/// One book's highlights under their own heading, in `order` and opened at `from`,
 /// which is held inside the list. `search` names the passages listed, opens
 /// the list at its own `from`, and floors the box while the keyboard stands.
 pub fn draw(
@@ -305,7 +306,7 @@ pub fn draw(
 ) {
     let theme: &Theme = cx.theme;
     let s = cx.s();
-    // `Stats::marked` sets the kinds that are here and which note belongs
+    // `Stats::book_highlights` sets the kinds that are here and which note belongs
     // under which passage; `order` sets which end the list opens at.
     let Some(record) = cx.stats.books.get(book).cloned() else {
         return;
@@ -322,10 +323,10 @@ pub fn draw(
         let script = cx.ui_script();
         let baseline = inner.y + theme.gap + cx.text.cap_height() as i32;
         // An empty list under a query holding nothing is a book with no
-        // marks of its own.
+        // highlights of its own.
         let said = match query.is_some_and(|query| !query.is_empty()) {
-            true => s.nothing_marked,
-            false => s.marks_none,
+            true => s.no_highlights_here,
+            false => s.no_highlights_in_book,
         };
         cx.text
             .draw_in(script, cx.fb, inner.x, baseline, said, false);
@@ -345,7 +346,7 @@ pub fn draw(
         let last = opens.last().copied().unwrap_or(0);
         let steps = match search {
             Some(_) => [Hit::SearchPage(0), Hit::SearchPage(last)],
-            None => [Hit::MarksPage(0), Hit::MarksPage(last)],
+            None => [Hit::HighlightsPage(0), Hit::HighlightsPage(last)],
         };
         pager::draw(
             cx,
@@ -364,7 +365,7 @@ pub fn draw(
         row(cx, box_of, held, &at);
         // A row a search found opens the book's own list at that passage.
         if search.is_some() {
-            cx.hit(Hit::Mark(held.book, held.at), box_of);
+            cx.hit(Hit::Highlight(held.book, held.at), box_of);
         }
         // A rule between rows, and none under the last.
         if n + 1 < shown.len() {
@@ -464,11 +465,11 @@ fn wrapped(text: &mut TextRenderer, theme: &Theme, at: &Layout, held: &Row) -> W
     // wraps whole, and [`opens_at`] reads every line of it.
     let (said, opens) = match at.needle {
         None => (
-            text.wrap_and_clamp_in(script, &held.mark.body, room, at.lines),
+            text.wrap_and_clamp_in(script, &held.highlight.body, room, at.lines),
             0,
         ),
         Some(needle) => {
-            let every = text.wrap_and_clamp_in(script, &held.mark.body, room, usize::MAX);
+            let every = text.wrap_and_clamp_in(script, &held.highlight.body, room, usize::MAX);
             let opens = opens_at(&every, needle);
             (window(text, script, every, opens, at.lines, room), opens)
         }
@@ -487,7 +488,7 @@ fn wrapped(text: &mut TextRenderer, theme: &Theme, at: &Layout, held: &Row) -> W
 }
 
 /// The lines of `every` a row shows: `lines` of them from `opens`, the last
-/// marked where the passage runs on past the window.
+/// ending in [`MORE`] where the passage runs on past the window.
 fn window(
     text: &mut TextRenderer,
     script: Script,
@@ -581,8 +582,8 @@ pub(super) fn height(text: &mut TextRenderer, theme: &Theme, at: &Layout, held: 
     at.m.row(theme, w.name.len(), w.said.len(), w.noted.len())
 }
 
-/// One mark: `title` where `at.named`, `mark.body` behind a rule in
-/// `mark.colour`, the `note` under that, and [`label`] with `Mark::day` below
+/// One highlight: `title` where `at.named`, `highlight.body` behind a rule in
+/// `highlight.colour`, the `note` under that, and [`label`] with `Highlight::day` below
 /// both. The rule stands on `area`'s left margin and the words end at its right.
 pub(super) fn row(cx: &mut Ctx, area: Rect, held: &Row, at: &Layout) {
     let theme: &Theme = cx.theme;
@@ -602,9 +603,9 @@ pub(super) fn row(cx: &mut Ctx, area: Rect, held: &Row, at: &Layout) {
     }
     let top = area.y + w.name.len() as i32 * m.small;
 
-    // An empty `mark.colour` takes `paint::mark_colour`'s neutral.
+    // An empty `highlight.colour` takes `paint::highlight_colour`'s neutral.
     let coloured = paint::is_coloured(&cx.palette);
-    let ink = paint::mark_colour(&held.mark.colour, coloured);
+    let ink = paint::highlight_colour(&held.highlight.colour, coloured);
     let quoted = m.quoted(theme, w.said.len());
     let (from, deep) = m.ruled(theme, w.said.len());
     paint::fill_rgb(
@@ -644,10 +645,10 @@ pub(super) fn row(cx: &mut Ctx, area: Rect, held: &Row, at: &Layout) {
     cx.text.set_px(theme.small_px);
     let ui = cx.ui_script();
     let baseline = top + quoted + m.noted(theme, w.noted.len()) + theme.gap * 2 + m.cap;
-    let said = label(&held.mark, held.extent, s);
+    let said = label(&held.highlight, held.extent, s);
     cx.text.draw_in(ui, cx.fb, area.x, baseline, &said, false);
     // The day it was made, against the right edge.
-    if let Some(day) = held.mark.day() {
+    if let Some(day) = held.highlight.day() {
         let when = crate::date::year_day(day, s);
         let w = cx.text.measure_width_in(ui, &when) as i32;
         cx.text
@@ -671,24 +672,28 @@ fn heading(cx: &mut Ctx, book: usize) -> String {
     cut.first().cloned().unwrap_or_default()
 }
 
-/// What a row's label reads: where the mark falls and what kind it is —
+/// What a row's label reads: where the highlight falls and what kind it is —
 /// `Location 608 | Highlight`. The day stands at the other end of the line.
-fn label(mark: &Mark, extent: i64, s: &Strings) -> String {
-    format!("{}{BAR}{}", place(mark, extent, s), kind_name(mark.kind, s))
+fn label(highlight: &Highlight, extent: i64, s: &Strings) -> String {
+    format!(
+        "{}{BAR}{}",
+        positions(highlight, extent, s),
+        kind_name(highlight.kind, s)
+    )
 }
 
-/// `mark.page`, `mark.location` and `mark.through(extent)`, [`DOT`]-joined in
+/// `highlight.page`, `highlight.location` and `highlight.through(extent)`, [`DOT`]-joined in
 /// that order, each standing only where its own source stated it. Three axes,
-/// and none converts to another; a mark stating none takes [`DASH`].
-fn place(mark: &Mark, extent: i64, s: &Strings) -> String {
+/// and none converts to another; a highlight stating none takes [`DASH`].
+fn positions(highlight: &Highlight, extent: i64, s: &Strings) -> String {
     let mut said: Vec<String> = Vec::with_capacity(3);
-    if !mark.page.is_empty() {
-        said.push(format!("{} {}", s.at_page, mark.page));
+    if !highlight.page.is_empty() {
+        said.push(format!("{} {}", s.at_page, highlight.page));
     }
-    if mark.location >= 0 {
-        said.push(format!("{} {}", s.at_location, mark.location));
+    if highlight.location >= 0 {
+        said.push(format!("{} {}", s.at_location, highlight.location));
     }
-    if let Some(through) = mark.through(extent) {
+    if let Some(through) = highlight.through(extent) {
         said.push(
             s.percent_plain
                 .replace("{d}", &format!("{:.0}", through * 100.0)),
@@ -718,7 +723,7 @@ pub fn kind_name(kind: Kind, s: &Strings) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::annotate::State;
+    use crate::highlights::State;
     use crate::lang::Lang;
     use crate::ui::theme::tests::PANELS;
 
@@ -726,8 +731,8 @@ mod tests {
         Lang::English.strings()
     }
 
-    fn mark(state: State, start: i64, location: i64) -> Mark {
-        Mark {
+    fn highlight(state: State, start: i64, location: i64) -> Highlight {
+        Highlight {
             extent: 1_000,
             title: "A Book".into(),
             kind: Kind::Highlight,
@@ -743,25 +748,28 @@ mod tests {
     }
 
     #[test]
-    fn a_row_states_every_place_its_sources_named() {
-        // The page and the location come off the clipping, the percentage
+    fn a_row_states_every_position_its_sources_named() {
+        // The page and the location come off the clipping, the progress
         // off the sidecar's own position: 330 of 1000.
-        let mut held = mark(State::Live, 330, 111);
+        let mut held = highlight(State::Live, 330, 111);
         held.page = "15".into();
-        assert_eq!(place(&held, 1_000, en()), "page 15 · Location 111 · 33%");
+        assert_eq!(
+            positions(&held, 1_000, en()),
+            "page 15 · Location 111 · 33%"
+        );
     }
 
     #[test]
-    fn a_place_no_source_named_is_never_derived_from_another() {
-        // `mark.location` is on another axis than `mark.start`.
-        let held = mark(State::Unconfirmed, -1, 111);
-        assert_eq!(place(&held, 1_000, en()), "Location 111");
-        // A sidecar record no clipping speaks for has the fraction alone.
-        let mut held = mark(State::Live, 330, -1);
-        assert_eq!(place(&held, 1_000, en()), "33%");
+    fn a_position_no_source_named_is_never_derived_from_another() {
+        // `highlight.location` is on another axis than `highlight.start`.
+        let held = highlight(State::Unconfirmed, -1, 111);
+        assert_eq!(positions(&held, 1_000, en()), "Location 111");
+        // A sidecar annotation no clipping speaks for has the fraction alone.
+        let mut held = highlight(State::Live, 330, -1);
+        assert_eq!(positions(&held, 1_000, en()), "33%");
         // And a book whose extent nothing states says nothing at all.
         held.location = -1;
-        assert_eq!(place(&held, 0, en()), DASH);
+        assert_eq!(positions(&held, 0, en()), DASH);
     }
 
     #[test]
@@ -839,7 +847,7 @@ mod tests {
 
     #[test]
     fn a_query_names_the_passages_of_one_book_and_no_other() {
-        let stats = crate::stats::tests::marked_shelf();
+        let stats = crate::stats::tests::highlighted_books();
         let record = stats.books[0].clone();
         let recent = Way::Down;
         // The whole book with no query, and with one that holds nothing.

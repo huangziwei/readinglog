@@ -1,5 +1,5 @@
-//! Books by title or author, and marks by the words in them: [`field`]
-//! carries the query, [`listed`] and [`listed_marks`] name what it found, and
+//! Books by title or author, and highlights by the words in them: [`field`]
+//! carries the query, [`listed`] and [`listed_highlights`] name what it found, and
 //! [`results_box`] holds the rows the Books list draws.
 
 use crate::hanfold;
@@ -10,9 +10,9 @@ use crate::ui::paint::{self, INK, Rect};
 use crate::ui::text::TextRenderer;
 use crate::ui::theme::Theme;
 
-use super::{Ctx, Hit, Search, books, marks, pager};
+use super::{Ctx, Hit, Search, books, highlights, pager};
 
-/// Half the width of [`field`]'s mark, as a share of its height.
+/// Half the width of [`field`]'s cross, as a share of its height.
 const CROSS: f32 = 0.19;
 
 /// The head [`field`] stands in, and the box left below it: the Books list's
@@ -59,51 +59,55 @@ impl Needle {
         body.contains(&self.said) || hanfold::fold(&body).contains(&self.folded)
     }
 
-    /// Whether a body already lowercased and folded — [`Stats::folded`] holds
-    /// one per mark — holds it. Same answer as [`Self::holds`], without the
+    /// Whether a body lowercased and folded — [`Stats::folded`] holds
+    /// one per highlight — holds it. Same answer as [`Self::holds`], without the
     /// allocation and the per-character walk that one pays on every keystroke.
     pub(super) fn holds_folded(&self, folded: &str) -> bool {
         self.said.is_empty() || folded.contains(&self.folded)
     }
 }
 
-/// The marks `query` names, across every book, most recently marked first:
-/// those whose `mark.body` or `note.body` [`Needle::holds`]. An empty `query`
-/// names every mark, and `uncovered` is the filter [`listed`] takes.
-pub fn listed_marks<'a>(stats: &'a Stats, query: &str, uncovered: bool) -> Vec<Across<'a>> {
+/// The highlights `query` names, across every book, most recently made first:
+/// those whose `highlight.body` or `note.body` [`Needle::holds`]. An empty `query`
+/// names every highlight, and `uncovered` is the filter [`listed`] takes.
+pub fn listed_highlights<'a>(stats: &'a Stats, query: &str, uncovered: bool) -> Vec<Across<'a>> {
     let needle = Needle::of(query);
     stats
-        .marked_across()
+        .highlights_across()
         .into_iter()
         .filter(|row| uncovered || stats.books.get(row.book).is_some_and(BookStat::has_cover))
         .filter(|row| {
-            // The mark's own body is folded once per `Stats::build`; a note is
+            // The highlight's own body is folded once per `Stats::build`; a note is
             // rare enough to fold where it is asked about.
             let body = match stats.folded.get(row.held).and_then(Option::as_deref) {
                 Some(folded) => needle.holds_folded(folded),
-                None => needle.holds(&row.mark.body),
+                None => needle.holds(&row.highlight.body),
             };
             body || row.note.is_some_and(|n| needle.holds(&n.body))
         })
         .collect()
 }
 
-/// What [`listed_marks`] found, as the rows a list of marks is drawn from.
-fn mark_rows(stats: &Stats, query: &str, uncovered: bool) -> Vec<marks::Row> {
-    listed_marks(stats, query, uncovered)
+/// What [`listed_highlights`] found, as the rows a list of highlights is drawn from.
+fn highlight_rows(stats: &Stats, query: &str, uncovered: bool) -> Vec<highlights::Row> {
+    listed_highlights(stats, query, uncovered)
         .into_iter()
         .filter_map(|found| {
             let record = stats.books.get(found.book)?;
-            Some(marks::Row::new(
-                found.book, found.at, record, found.mark, found.note,
+            Some(highlights::Row::new(
+                found.book,
+                found.at,
+                record,
+                found.highlight,
+                found.note,
             ))
         })
         .collect()
 }
 
-/// Where each page of the marks `search` named opens, which is the step a page
+/// Where each page of the highlights `search` named opens, which is the step a page
 /// button takes. Every row is measured, each being as tall as its own words.
-pub fn mark_pages(
+pub fn highlight_pages(
     text: &mut TextRenderer,
     theme: &Theme,
     stats: &Stats,
@@ -111,10 +115,10 @@ pub fn mark_pages(
     search: &Search,
     uncovered: bool,
 ) -> Vec<usize> {
-    let held = mark_rows(stats, &search.query, uncovered);
+    let held = highlight_rows(stats, &search.query, uncovered);
     let inner = rows_box(theme, area, search.keyboard);
-    let at = marks::Layout::of(text, theme, inner, true).found(theme, inner.h, &search.query);
-    marks::openings(text, theme, &held, &at, inner.h)
+    let at = highlights::Layout::of(text, theme, inner, true).found(theme, inner.h, &search.query);
+    highlights::openings(text, theme, &held, &at, inner.h)
 }
 
 /// The box the rows are drawn into: the page under [`field`], floored at the
@@ -161,7 +165,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, search: &Search, scope: Scope) {
     let taken = scope_chips(cx, head, scope);
     let hint = match scope {
         Scope::Books => cx.s().search_hint,
-        Scope::Marks => cx.s().search_hint_marks,
+        Scope::Highlights => cx.s().search_hint_highlights,
     };
     field(
         cx,
@@ -172,7 +176,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, search: &Search, scope: Scope) {
     );
     match scope {
         Scope::Books => shelf(cx, area, search),
-        Scope::Marks => marked(cx, area, search),
+        Scope::Highlights => highlighted(cx, area, search),
     }
 }
 
@@ -183,7 +187,8 @@ fn scope_chips(cx: &mut Ctx, area: Rect, on: Scope) -> i32 {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
     let s = cx.s();
-    let options: Vec<(&str, crate::font::Script)> = vec![(s.books, script), (s.marks_tab, script)];
+    let options: Vec<(&str, crate::font::Script)> =
+        vec![(s.books, script), (s.highlights_tab, script)];
     let placed = chrome::chip_layout(cx.text, theme, &options, None, area.w);
     let wide = placed.iter().map(Rect::right).max().unwrap_or(0);
     let at = Rect::new(area.right() - wide, area.y, wide, area.h);
@@ -229,19 +234,20 @@ fn shelf(cx: &mut Ctx, area: Rect, search: &Search) {
     }
 }
 
-/// The marks the query named, most recently marked first: every row as tall
+/// The highlights the query named, most recently made first: every row as tall
 /// as its own words, paged the way one book's own list is.
-fn marked(cx: &mut Ctx, area: Rect, search: &Search) {
+fn highlighted(cx: &mut Ctx, area: Rect, search: &Search) {
     let theme: &Theme = cx.theme;
     let box_ = results_box(theme, area, search.keyboard);
-    let held = mark_rows(cx.stats, &search.query, cx.uncovered);
+    let held = highlight_rows(cx.stats, &search.query, cx.uncovered);
     if held.is_empty() {
-        nothing(cx, box_, cx.s().nothing_marked);
+        nothing(cx, box_, cx.s().no_highlights_here);
         return;
     }
     let inner = rows_box(theme, area, search.keyboard);
-    let at = marks::Layout::of(cx.text, theme, inner, true).found(theme, inner.h, &search.query);
-    let opens = marks::openings(cx.text, theme, &held, &at, inner.h);
+    let at =
+        highlights::Layout::of(cx.text, theme, inner, true).found(theme, inner.h, &search.query);
+    let opens = highlights::openings(cx.text, theme, &held, &at, inner.h);
     // The page showing opens at the last opening at or before `search.from`.
     let page = opens.iter().rposition(|o| *o <= search.from).unwrap_or(0);
     let from = opens.get(page).copied().unwrap_or(0);
@@ -250,10 +256,10 @@ fn marked(cx: &mut Ctx, area: Rect, search: &Search) {
     let shown = &held[from..to];
     let mut y = inner.y;
     for (n, row) in shown.iter().enumerate() {
-        let high = marks::height(cx.text, theme, &at, row);
+        let high = highlights::height(cx.text, theme, &at, row);
         let box_of = Rect::new(inner.x, y, inner.w, high);
-        marks::row(cx, box_of, row, &at);
-        cx.hit(Hit::Mark(row.book, row.at), box_of);
+        highlights::row(cx, box_of, row, &at);
+        cx.hit(Hit::Highlight(row.book, row.at), box_of);
         // A rule between rows, and none under the last.
         if n + 1 < shown.len() {
             paint::hline(
@@ -284,7 +290,7 @@ fn marked(cx: &mut Ctx, area: Rect, search: &Search) {
 }
 
 /// An outline over `at`, `books::magnifier` at its left end and
-/// [`Hit::SearchClear`]'s mark at its right. `query` and `preedit` are set
+/// [`Hit::SearchClear`]'s cross at its right. `query` and `preedit` are set
 /// tail-first, the caret after them; `hint` stands for both empty.
 pub(super) fn field(cx: &mut Ctx, at: Rect, query: &str, preedit: &str, hint: &str) {
     let theme: &Theme = cx.theme;
@@ -357,7 +363,7 @@ fn nothing(cx: &mut Ctx, area: Rect, said: &str) {
 mod tests {
     use super::*;
     use crate::stats::BookStat;
-    use crate::stats::tests::marked_shelf;
+    use crate::stats::tests::highlighted_books;
     use crate::ui::theme::tests::PANELS;
 
     /// Two books sharing no word.
@@ -415,12 +421,12 @@ mod tests {
 
     #[test]
     fn a_passage_is_found_across_the_scripts_too() {
-        let mut stats = marked_shelf();
-        stats.marks[2].body = "萬國博覽會".into();
-        let found = listed_marks(&stats, "万国", true);
+        let mut stats = highlighted_books();
+        stats.highlights[2].body = "萬國博覽會".into();
+        let found = listed_highlights(&stats, "万国", true);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].book, 1);
-        assert_eq!(listed_marks(&stats, "萬國", true).len(), 1);
+        assert_eq!(listed_highlights(&stats, "萬國", true).len(), 1);
     }
 
     #[test]
@@ -457,82 +463,82 @@ mod tests {
 
     #[test]
     fn a_query_names_a_passage_by_its_own_words_or_by_the_note_on_it() {
-        let stats = marked_shelf();
-        let found = listed_marks(&stats, "sky", true);
+        let stats = highlighted_books();
+        let found = listed_highlights(&stats, "sky", true);
         assert_eq!(found.len(), 1);
         assert_eq!((found[0].book, found[0].at), (0, 0));
         // The note written on that passage, which the passage itself does not
         // hold, names the same row.
-        let found = listed_marks(&stats, "BORROWED", true);
+        let found = listed_highlights(&stats, "BORROWED", true);
         assert_eq!(found.len(), 1);
         assert_eq!((found[0].book, found[0].at), (0, 0));
         // The other book's passage, in its own script.
-        let found = listed_marks(&stats, "港", true);
+        let found = listed_highlights(&stats, "港", true);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].book, 1);
-        assert!(listed_marks(&stats, "zzz", true).is_empty());
+        assert!(listed_highlights(&stats, "zzz", true).is_empty());
     }
 
     #[test]
-    fn an_empty_query_names_every_marked_passage_and_never_a_bookmark() {
-        let stats = marked_shelf();
-        let found = listed_marks(&stats, "", true);
-        assert_eq!(stats.marks.len(), 4);
+    fn an_empty_query_names_every_highlighted_passage_and_never_a_bookmark() {
+        let stats = highlighted_books();
+        let found = listed_highlights(&stats, "", true);
+        assert_eq!(stats.highlights.len(), 4);
         assert_eq!(found.len(), 2);
-        assert!(found.iter().all(|row| row.mark.kind.marks_a_passage()));
+        assert!(found.iter().all(|row| row.highlight.kind.spans_a_passage()));
     }
 
     #[test]
     fn a_word_in_two_books_names_both_of_them_newest_first() {
-        let stats = marked_shelf();
-        let found = listed_marks(&stats, "port", true);
+        let stats = highlighted_books();
+        let found = listed_highlights(&stats, "port", true);
         assert_eq!(found.iter().map(|row| row.book).collect::<Vec<_>>(), [1, 0]);
     }
 
     #[test]
-    fn a_book_the_shelf_leaves_out_takes_its_marks_with_it() {
-        let mut stats = marked_shelf();
+    fn a_book_the_shelf_leaves_out_takes_its_highlights_with_it() {
+        let mut stats = highlighted_books();
         stats.books[1].thumbnail.clear();
-        assert_eq!(listed_marks(&stats, "port", false).len(), 1);
-        assert_eq!(listed_marks(&stats, "port", true).len(), 2);
+        assert_eq!(listed_highlights(&stats, "port", false).len(), 1);
+        assert_eq!(listed_highlights(&stats, "port", true).len(), 2);
     }
 
     /// `Stats::folded` must answer exactly what folding at the keystroke
     /// answered, Traditional against Simplified included, and a `Stats` built
-    /// without it must still come to the same rows.
+    /// without it must come to the same rows.
     #[test]
     fn the_folded_body_answers_what_folding_at_the_keystroke_answered() {
         let queries = ["port", "PORT", "", "臺灣", "台湾", "nothing here"];
 
-        let bare = marked_shelf();
+        let bare = highlighted_books();
         assert!(bare.folded.is_empty(), "the fixture holds no folded bodies");
 
-        let mut held = marked_shelf();
+        let mut held = highlighted_books();
         held.folded = held
-            .marks
+            .highlights
             .iter()
             .map(|m| Some(crate::hanfold::fold(&m.body.to_lowercase()).into_owned()))
             .collect();
 
-        for (at, mark) in held.marks.iter().enumerate() {
+        for (at, highlight) in held.highlights.iter().enumerate() {
             for query in queries {
                 let needle = Needle::of(query);
                 assert_eq!(
                     needle.holds_folded(held.folded[at].as_deref().expect("a folded body")),
-                    needle.holds(&mark.body),
+                    needle.holds(&highlight.body),
                     "{query:?} against {:?}",
-                    mark.body,
+                    highlight.body,
                 );
             }
         }
 
-        // The fast path and the fallback name the same marks.
+        // The fast path and the fallback name the same highlights.
         for query in queries {
-            let with: Vec<usize> = listed_marks(&held, query, true)
+            let with: Vec<usize> = listed_highlights(&held, query, true)
                 .iter()
                 .map(|r| r.held)
                 .collect();
-            let without: Vec<usize> = listed_marks(&bare, query, true)
+            let without: Vec<usize> = listed_highlights(&bare, query, true)
                 .iter()
                 .map(|r| r.held)
                 .collect();

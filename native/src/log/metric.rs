@@ -1,10 +1,10 @@
-//! The `fastmetrics` records written beside the reading timer, for every book
+//! The `fastmetrics` metrics written beside the reading timer, for every book
 //! including the ones the timer declines to count. Bracketed in the marker
 //! strings: `ereader_open_book` prefixes `..._failure_backup`.
 
 use super::line::{field_num, field_text};
 
-/// What every one of [`METRIC_MARKERS`] opens with: the `fastmetrics` record
+/// What every one of [`METRIC_MARKERS`] opens with: the `fastmetrics` metric
 /// head, which is what says a line carries a JSON-ish body at all.
 pub const SCHEMA: &str = "SchemaName[ereader_";
 
@@ -19,13 +19,13 @@ pub const METRIC_MARKERS: [&str; 8] = [
     "SchemaName[ereader_reader_page_turn_latency_ops]",
 ];
 
-/// What one record contributes to the run open around it. The records name no
-/// book: they state a page and a turn for the run the reading-timer lines
+/// What one metric contributes to the sitting open around it. The metrics name no
+/// book: they state a page and a turn for the sitting the reading-timer lines
 /// track.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Metric {
     /// `ereader_book_consume_content`: a page, with the words on it and the span
-    /// it covers. A redraw repeats `start`; a record naming neither place
+    /// it covers. A redraw repeats `start`; a metric naming neither position
     /// reads -1. `end` less `start` is the page's own share of the book.
     Page { words: i64, start: i64, end: i64 },
     /// A forward turn.
@@ -36,7 +36,7 @@ pub enum Metric {
     Close,
 }
 
-/// Read a line as a `fastmetrics` record.
+/// Read a line as a `fastmetrics` metric.
 pub fn metric(line: &str) -> Option<Metric> {
     if line.contains(METRIC_MARKERS[2]) {
         return Some(Metric::Page {
@@ -49,7 +49,7 @@ pub fn metric(line: &str) -> Option<Metric> {
         return Some(Metric::Close);
     }
     if line.contains(METRIC_MARKERS[3]) || line.contains(METRIC_MARKERS[4]) {
-        // The two records carrying an `action_id`, one per reader stack.
+        // The two metrics carrying an `action_id`, one per reader stack.
         // `ereader_content_point` carries a `point_type` and no action.
         return match field_text(line, "action_id") {
             Some(a) if a.starts_with("Next") => Some(Metric::Forward),
@@ -60,8 +60,8 @@ pub fn metric(line: &str) -> Option<Metric> {
     None
 }
 
-/// The `cde_key` a record states for the book it is about, which the
-/// reading-timer lines redact. The catalog's own `p_cdeKey`; `N/A` stands
+/// The `cde_key` a metric states for the book it is about, which the
+/// reading-timer lines redact. The library's own `p_cdeKey`; `N/A` stands
 /// for a book with no key.
 pub fn cde_key(line: &str) -> Option<&str> {
     // `SCHEMA` heads every one of `METRIC_MARKERS`, in one search.
@@ -81,7 +81,7 @@ mod tests {
     /// `cde_key` stands on [`SCHEMA`] alone, which is only sound while every
     /// marker is written under it.
     #[test]
-    fn every_metric_marker_opens_with_the_record_head() {
+    fn every_metric_marker_opens_with_the_metric_head() {
         for marker in METRIC_MARKERS {
             assert!(marker.starts_with(SCHEMA), "{marker}");
         }
@@ -104,7 +104,7 @@ mod tests {
     const NO_KEY: &str = r#"260814:112035 fastmetrics[9842]: D fastmetrics: Emitting a new record. SchemaName[ereader_reader_latency_ops], Fields[{ 	"cde_key" : "N/A", 	"op_name" : "OpenBook" } ]. :"#;
 
     #[test]
-    fn a_page_record_carries_the_words_on_it_and_the_span_it_covers() {
+    fn a_page_metric_carries_the_words_on_it_and_the_span_it_covers() {
         let read = |w| metric(&page(w));
         assert_eq!(
             read(217),
@@ -138,13 +138,13 @@ mod tests {
     }
 
     #[test]
-    fn a_record_that_is_not_one_of_the_eight_contributes_nothing() {
+    fn a_metric_that_is_not_one_of_the_eight_contributes_nothing() {
         assert_eq!(metric(LATENCY), None);
         assert_eq!(metric("260814:112035 cvm[1]: I something else"), None);
     }
 
     #[test]
-    fn a_latency_record_names_the_book_the_timer_redacts() {
+    fn a_latency_metric_names_the_book_the_timer_redacts() {
         assert_eq!(cde_key(LATENCY), Some("B00OKPCRLG"));
         assert_eq!(cde_key(NO_KEY), None);
         assert_eq!(

@@ -220,9 +220,9 @@ pub fn unpack(zip: &Path, marker: &str, dest: &Path) -> Result<usize> {
 
 /// What goes into an archive under one name.
 pub enum Source<'a> {
-    /// Bytes already in hand.
+    /// Bytes in hand.
     Bytes(&'a [u8]),
-    /// A file, read one entry at a time so a cache of jackets is never held
+    /// A file, read one entry at a time so a cache of covers is never held
     /// whole in memory.
     File(&'a Path),
 }
@@ -681,8 +681,8 @@ mod tests {
     #[test]
     fn what_the_writer_puts_in_the_reader_takes_out() {
         let dir = tmpdir("written");
-        let jacket = dir.join("cover.jpg");
-        fs::write(&jacket, vec![0xABu8; 5_000]).unwrap();
+        let cover = dir.join("cover.jpg");
+        fs::write(&cover, vec![0xABu8; 5_000]).unwrap();
         let record = b"#readinglog\t2\nm\t260906:010231\n".to_vec();
 
         let zip = dir.join("backup.zip");
@@ -690,7 +690,7 @@ mod tests {
             &zip,
             &[
                 ("sessions.tsv".to_string(), Source::Bytes(&record)),
-                ("covers/B00OKPCRLG.jpg".to_string(), Source::File(&jacket)),
+                ("covers/B00OKPCRLG.jpg".to_string(), Source::File(&cover)),
             ],
         )
         .expect("an archive");

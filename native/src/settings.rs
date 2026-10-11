@@ -90,37 +90,37 @@ impl ColorScheme {
     }
 }
 
-/// The figures `view::book` states.
+/// Where the stats `view::book` states come from.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Figures {
+pub enum StatsFrom {
     /// `timer.model`'s counters, `TotalWPM` and `NewTimeLeft`.
-    #[default]
-    Device,
+    Kindle,
     /// The sittings `BookStat` totals.
+    #[default]
     App,
 }
 
-impl Figures {
-    pub const ALL: [Figures; 2] = [Figures::Device, Figures::App];
+impl StatsFrom {
+    pub const ALL: [StatsFrom; 2] = [StatsFrom::Kindle, StatsFrom::App];
 
     fn token(self) -> &'static str {
         match self {
-            Figures::Device => "device",
-            Figures::App => "app",
+            StatsFrom::Kindle => "device",
+            StatsFrom::App => "app",
         }
     }
 
     fn of_token(token: &str) -> Option<Self> {
-        Figures::ALL.into_iter().find(|f| f.token() == token)
+        StatsFrom::ALL.into_iter().find(|f| f.token() == token)
     }
 }
 
-/// The shortest run `stats::Stats::build` counts as reading. A run under it
+/// The shortest sitting `stats::Stats::build` counts as reading. A sitting under it
 /// carries no `Stats::sittings` entry and no total; its book keeps a row in
 /// `Stats::books`, at zero.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SittingFloor {
-    /// Every run, however short.
+    /// Every sitting, however short.
     All,
     #[default]
     OneMinute,
@@ -136,7 +136,7 @@ impl SittingFloor {
         SittingFloor::FifteenMinutes,
     ];
 
-    /// The minutes a run must reach.
+    /// The minutes a sitting must reach.
     pub fn minutes(self) -> i64 {
         match self {
             SittingFloor::All => 0,
@@ -228,17 +228,17 @@ pub enum Scope {
     #[default]
     Books,
     /// Passages and the notes written on them, through
-    /// `view::search::listed_marks`.
-    Marks,
+    /// `view::search::listed_highlights`.
+    Highlights,
 }
 
 impl Scope {
-    pub const ALL: [Scope; 2] = [Scope::Books, Scope::Marks];
+    pub const ALL: [Scope; 2] = [Scope::Books, Scope::Highlights];
 
     fn token(self) -> &'static str {
         match self {
             Scope::Books => "books",
-            Scope::Marks => "marks",
+            Scope::Highlights => "marks",
         }
     }
 
@@ -255,12 +255,12 @@ pub struct Settings {
     pub text_size: TextSize,
     /// The colours `ui::charts` draws in.
     pub color_scheme: ColorScheme,
-    /// The figures `view::book` states.
-    pub figures: Figures,
-    /// The shortest run `Stats::build` counts as reading.
+    /// Where the stats `view::book` states come from.
+    pub stats_from: StatsFrom,
+    /// The shortest sitting `Stats::build` counts as reading.
     pub sitting_floor: SittingFloor,
-    /// Whether `Stats` totals hold sittings no `BookRecord` names.
-    pub show_unnamed: bool,
+    /// Whether `Stats` totals hold sittings on unidentified books.
+    pub show_unidentified: bool,
     /// Whether `view::books::listed` keeps a book failing `BookStat::has_cover`.
     pub show_uncovered: bool,
     /// Which list the search opens on, which is the one it last showed.
@@ -277,9 +277,9 @@ impl Settings {
             week_start: WeekStart::default(),
             text_size: TextSize::default(),
             color_scheme: ColorScheme::default(),
-            figures: Figures::default(),
+            stats_from: StatsFrom::default(),
             sitting_floor: SittingFloor::default(),
-            show_unnamed: true,
+            show_unidentified: true,
             show_uncovered: true,
             scope: Scope::default(),
             unknown: Vec::new(),
@@ -335,8 +335,8 @@ impl Settings {
                     }
                 }
                 "figures" => {
-                    if let Some(from) = Figures::of_token(value) {
-                        out.figures = from;
+                    if let Some(from) = StatsFrom::of_token(value) {
+                        out.stats_from = from;
                     }
                 }
                 "sitting_floor" => {
@@ -344,7 +344,7 @@ impl Settings {
                         out.sitting_floor = floor;
                     }
                 }
-                "show_unnamed" => out.show_unnamed = value != "no",
+                "show_unnamed" => out.show_unidentified = value != "no",
                 "show_uncovered" => out.show_uncovered = value != "no",
                 "scope" => {
                     if let Some(scope) = Scope::of_token(value) {
@@ -364,13 +364,16 @@ impl Settings {
         out.push_str(&format!("week_start={}\n", self.week_start.token()));
         out.push_str(&format!("text_size={}\n", self.text_size.token()));
         out.push_str(&format!("color_scheme={}\n", self.color_scheme.token()));
-        out.push_str(&format!("figures={}\n", self.figures.token()));
+        out.push_str(&format!("figures={}\n", self.stats_from.token()));
         out.push_str(&format!("sitting_floor={}\n", self.sitting_floor.token()));
         let yes_no = |set: bool| match set {
             true => "yes",
             false => "no",
         };
-        out.push_str(&format!("show_unnamed={}\n", yes_no(self.show_unnamed)));
+        out.push_str(&format!(
+            "show_unnamed={}\n",
+            yes_no(self.show_unidentified)
+        ));
         out.push_str(&format!("show_uncovered={}\n", yes_no(self.show_uncovered)));
         out.push_str(&format!("scope={}\n", self.scope.token()));
         for line in &self.unknown {
@@ -393,7 +396,7 @@ impl Settings {
                 Err(err) => eprintln!("!! settings: {} not written: {err}", path.display()),
             }
         }
-        eprintln!("?? settings: nowhere to write; this run keeps them");
+        eprintln!("?? settings: nowhere to write; this launch keeps them");
     }
 }
 
@@ -402,10 +405,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_reader_who_never_opened_the_page_gets_the_device_s_language() {
+    fn a_reader_who_never_opened_the_page_gets_the_kindles_language() {
         let s = Settings::new(Lang::Japanese);
         assert_eq!(s.language, Lang::Japanese);
         assert_eq!(s.week_start, WeekStart::Monday);
+        assert_eq!(s.stats_from, StatsFrom::App);
         // A path naming no file.
         let missing = Settings::load_from(Path::new("/nonexistent/settings"), Lang::German);
         assert_eq!(missing.language, Lang::German);
@@ -418,16 +422,16 @@ mod tests {
         s.week_start = WeekStart::Sunday;
         s.text_size = TextSize::Large;
         s.color_scheme = ColorScheme::TobiKogane;
-        s.figures = Figures::App;
-        s.show_unnamed = false;
+        s.stats_from = StatsFrom::Kindle;
+        s.show_unidentified = false;
         s.show_uncovered = false;
         let back = Settings::parse(&s.to_text(), Lang::English);
         assert_eq!(back.language, Lang::TraditionalChinese);
         assert_eq!(back.week_start, WeekStart::Sunday);
         assert_eq!(back.text_size, TextSize::Large);
         assert_eq!(back.color_scheme, ColorScheme::TobiKogane);
-        assert_eq!(back.figures, Figures::App);
-        assert!(!back.show_unnamed);
+        assert_eq!(back.stats_from, StatsFrom::Kindle);
+        assert!(!back.show_unidentified);
         assert!(!back.show_uncovered);
     }
 
@@ -467,7 +471,7 @@ mod tests {
         // Text with no `sitting_floor` line.
         let old = Settings::parse("language=e\nfigures=app\n", Lang::English);
         assert_eq!(old.sitting_floor, SittingFloor::OneMinute);
-        assert_eq!(old.figures, Figures::App, "the rest still reads");
+        assert_eq!(old.stats_from, StatsFrom::App, "the rest still reads");
         // A token `of_token` answers `None` for keeps the default.
         for token in ["", "1", "60", "none", "2m"] {
             let odd = Settings::parse(&format!("sitting_floor={token}\n"), Lang::English);
@@ -510,23 +514,23 @@ mod tests {
     }
 
     #[test]
-    fn the_unnamed_books_are_counted_until_the_page_says_otherwise() {
-        assert!(Settings::new(Lang::English).show_unnamed);
+    fn the_unidentified_books_are_counted_until_the_page_says_otherwise() {
+        assert!(Settings::new(Lang::English).show_unidentified);
         // Text with no `show_unnamed` line.
-        assert!(Settings::parse("language=e\n", Lang::English).show_unnamed);
-        assert!(!Settings::parse("show_unnamed=no\n", Lang::English).show_unnamed);
-        assert!(Settings::parse("show_unnamed=yes\n", Lang::English).show_unnamed);
+        assert!(Settings::parse("language=e\n", Lang::English).show_unidentified);
+        assert!(!Settings::parse("show_unnamed=no\n", Lang::English).show_unidentified);
+        assert!(Settings::parse("show_unnamed=yes\n", Lang::English).show_unidentified);
     }
 
     #[test]
-    fn a_book_with_no_jacket_is_listed_until_the_page_says_otherwise() {
+    fn a_book_with_no_cover_is_listed_until_the_page_says_otherwise() {
         assert!(Settings::new(Lang::English).show_uncovered);
         // Text with no `show_uncovered` line.
         assert!(Settings::parse("language=e\n", Lang::English).show_uncovered);
         assert!(!Settings::parse("show_uncovered=no\n", Lang::English).show_uncovered);
-        // `show_uncovered` and `show_unnamed` are separate fields.
+        // `show_uncovered` and `show_unidentified` are separate fields.
         let hidden = Settings::parse("show_uncovered=no\n", Lang::English);
-        assert!(hidden.show_unnamed, "hiding one hid the other");
+        assert!(hidden.show_unidentified, "hiding one hid the other");
     }
 
     #[test]
@@ -535,8 +539,8 @@ mod tests {
         // A file written before the scope existed.
         let old = Settings::parse("language=e\nshow_uncovered=no\n", Lang::English);
         assert_eq!(old.scope, Scope::Books);
-        let marks = Settings::parse("scope=marks\n", Lang::English);
-        assert_eq!(marks.scope, Scope::Marks);
+        let highlights = Settings::parse("scope=marks\n", Lang::English);
+        assert_eq!(highlights.scope, Scope::Highlights);
         // A token `of_token` answers `None` for keeps the default.
         let odd = Settings::parse("scope=highlights\n", Lang::English);
         assert_eq!(odd.scope, Scope::Books);

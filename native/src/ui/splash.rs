@@ -109,12 +109,12 @@ pub fn step(template: &str, done: usize, total: usize) -> String {
         .replace("{n}", &total.to_string())
 }
 
-/// The lines under the headline, for a store at `mark`.
+/// The lines under the headline, for a record at `watermark`.
 ///
-/// An empty `mark` names a store that has read no log line.
-pub fn note(mark: &str, s: &Strings) -> Vec<String> {
-    match mark.is_empty() {
-        true => vec![s.first_run_1.into(), s.first_run_2.into()],
+/// An empty `watermark` names a record that has read no log line.
+pub fn note(watermark: &str, s: &Strings) -> Vec<String> {
+    match watermark.is_empty() {
+        true => vec![s.first_launch_1.into(), s.first_launch_2.into()],
         false => vec![s.catching_up.into()],
     }
 }

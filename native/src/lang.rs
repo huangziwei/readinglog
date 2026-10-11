@@ -198,12 +198,12 @@ pub struct Strings {
     pub shelf_unfinished: &'static str,
     /// The line for a shelf with no books.
     pub nothing_on_the_shelf: &'static str,
-    /// The same, for a search over the marks that named none.
-    pub nothing_marked: &'static str,
+    /// The same, for a search over the highlights that matched none.
+    pub no_highlights_here: &'static str,
     /// What stands in the search field before anything is typed.
     pub search_hint: &'static str,
-    /// The same, where the search is over the marks.
-    pub search_hint_marks: &'static str,
+    /// The same, where the search is over the highlights.
+    pub search_hint_highlights: &'static str,
     /// The three list orders.
     pub by_recent: &'static str,
     pub by_time: &'static str,
@@ -248,7 +248,7 @@ pub struct Strings {
     /// How many times a book has been read end to end, and its figure.
     pub read_through_row: &'static str,
     pub n_times: &'static str,
-    pub on_the_device: &'static str,
+    pub on_the_kindle: &'static str,
     /// The long form, and the short one drawn beside `restart`.
     pub continue_reading: &'static str,
     pub continue_short: &'static str,
@@ -259,7 +259,7 @@ pub struct Strings {
     pub mark_unfinished: &'static str,
     pub unmark_ask: &'static str,
     pub unmark_note: &'static str,
-    /// The place a book stood at as a span ended. `{d}` is that figure.
+    /// The progress a book stood at as a span ended. `{d}` is that figure.
     pub percent_reached: &'static str,
     /// The figure on a bar. `{d}` is that figure, rounded.
     pub percent_plain: &'static str,
@@ -282,12 +282,12 @@ pub struct Strings {
     pub read: &'static str,
     pub left: &'static str,
     /// The book screen's three tabs, each set in a third of the strip.
-    /// `marks_tab` carries a count after it and holds one word.
+    /// `highlights_tab` carries a count after it and holds one word.
     pub statistics: &'static str,
     pub graphs_tab: &'static str,
-    pub marks_tab: &'static str,
-    /// What stands over the marks for a book carrying none.
-    pub marks_none: &'static str,
+    pub highlights_tab: &'static str,
+    /// What stands over the highlights for a book carrying none.
+    pub no_highlights_in_book: &'static str,
     /// What a book's row in a list says it carries, joined by `·` where it
     /// carries both. `{d}` is filled by [`counted`].
     pub n_highlights: &'static str,
@@ -296,7 +296,7 @@ pub struct Strings {
     pub at_location: &'static str,
     /// Before the publisher's page label, where the book carries one.
     pub at_page: &'static str,
-    /// The seven kinds a mark can be, as a row's own label states them. The
+    /// The seven kinds a highlight can be, as a row's own label states them. The
     /// five a `.sdr` alone carries share [`Strings::kind_other`].
     pub kind_bookmark: &'static str,
     pub kind_highlight: &'static str,
@@ -308,11 +308,11 @@ pub struct Strings {
     pub kind_other: &'static str,
 
     // Splash.
-    pub first_run_1: &'static str,
-    pub first_run_2: &'static str,
+    pub first_launch_1: &'static str,
+    pub first_launch_2: &'static str,
     pub catching_up: &'static str,
     /// The line under a banner counting files: `{d}` files behind it, of
-    /// `{n}` to open. `step_logs` counts logs, `step_files` archive entries.
+    /// `{n}` to open. `step_logs` counts logs, `step_files` backup entries.
     pub step_logs: &'static str,
     pub step_files: &'static str,
 
@@ -322,49 +322,20 @@ pub struct Strings {
     pub the_calendar: &'static str,
     pub language_row: &'static str,
     pub week_starts_on: &'static str,
-    /// The row naming where a book's figures come from, and its two chips.
-    pub figures_row: &'static str,
-    pub figures_device: &'static str,
-    pub figures_app: &'static str,
-    /// The button on that row: read every log again and measure each sitting.
-    pub figures_heal: &'static str,
-    /// The question it puts up first, its note naming the minutes and what
-    /// moves, and the answer that runs it.
-    pub heal_ask: &'static str,
-    pub heal_note: &'static str,
-    pub heal_do: &'static str,
-    /// Its banner: the headline over the pass, the line under it while it
-    /// runs, and the two the outcome is stated in. `heal_done` counts.
-    pub heal_head: &'static str,
-    pub heal_doing: &'static str,
-    pub heal_done: &'static str,
-    pub heal_none: &'static str,
-    /// The record section, and the row counting unnamed books.
+    /// The row naming where a book's stats come from, and its two chips.
+    pub stats_from_row: &'static str,
+    pub stats_from_kindle: &'static str,
+    pub stats_from_app: &'static str,
+    /// The record section, and the row counting unidentified books.
     pub the_record: &'static str,
     /// The row `SittingFloor::label` fills the values of.
     pub sitting_floor_row: &'static str,
-    pub unnamed_row: &'static str,
+    pub unidentified_row: &'static str,
     /// Show and Hide, the two answers a row that hides something takes: the
     /// unidentified row and the covers row below it are both set with them.
     pub chip_show: &'static str,
     pub chip_hide: &'static str,
-    /// The button on the unidentified row: name the books again.
-    pub unnamed_retry: &'static str,
-    /// The question it puts up first, its note naming the minutes and what
-    /// moves, and the answer that runs it.
-    pub retry_ask: &'static str,
-    pub retry_note: &'static str,
-    pub retry_go: &'static str,
-    /// Its banner: the headline over the pass, the two lines under a pass that
-    /// reads the logs, the one under a pass that reads the books' own files
-    /// alone, and the two the outcome is stated in. `retry_named` counts.
-    pub retry_head: &'static str,
-    pub retry_logs: &'static str,
-    pub retry_minutes: &'static str,
-    pub retry_files: &'static str,
-    pub retry_named: &'static str,
-    pub retry_none: &'static str,
-    /// The row hiding every book no jacket can be drawn for.
+    /// The row hiding every book no cover can be drawn for.
     pub uncovered_row: &'static str,
     /// `{d} sitting[s]` and `{d} book[s]`, which the record heading's own
     /// figure and the dialogs below count with.
@@ -374,41 +345,41 @@ pub struct Strings {
     pub reset_row: &'static str,
     pub reset_keep: &'static str,
     pub reset_none: &'static str,
-    /// The restore row, and the chip offering the logs.
-    pub restore_row: &'static str,
-    pub restore_logs: &'static str,
-    /// The two chips beside it: one writes an archive, one lists them.
+    /// The backups row, and the chip offering a rebuild from the logs.
+    pub backups_row: &'static str,
+    pub rebuild: &'static str,
+    /// The two chips beside it: one writes a backup, one lists them.
     pub back_up: &'static str,
-    pub bring_back: &'static str,
-    /// The archive list: how many files it holds, the way out, and the second
-    /// line of a row the archive states nothing on.
+    pub restore: &'static str,
+    /// The backup list: how many files it holds, the way out, and the second
+    /// line of a row the backup states nothing on.
     pub n_files: &'static str,
     pub close: &'static str,
     pub backup_silent: &'static str,
-    /// The second line of a row the archive does state: `{n}` sittings over
+    /// The second line of a row the backup does state: `{n}` sittings over
     /// `{from}` to `{to}`, and the note where the record holds all of it.
     pub backup_holds: &'static str,
     pub backup_whole: &'static str,
-    /// Writing an archive: the banner over it, and what it came to.
-    pub export_doing: &'static str,
-    pub export_done: &'static str,
-    pub export_failed: &'static str,
-    /// Taking an archive off disk. `{file}` is its name, `{size}` its weight.
+    /// Writing a backup: the banner over it, and what it came to.
+    pub back_up_doing: &'static str,
+    pub back_up_done: &'static str,
+    pub back_up_failed: &'static str,
+    /// Taking a backup off disk. `{file}` is its name, `{size}` its weight.
     pub delete_ask: &'static str,
     pub delete_note: &'static str,
     pub delete_do: &'static str,
-    /// What the archives beside the record take on disk. `{size}` is the total.
-    pub n_archived: &'static str,
-    /// Emptying the record, keeping an archive first. `{what}` is what goes,
-    /// `{file}` the archive's name, `{size}` how large it is.
-    pub wipe_ask: &'static str,
-    pub wipe_note: &'static str,
-    pub wipe_do: &'static str,
+    /// What the backups beside the record take on disk. `{size}` is the total.
+    pub n_in_backups: &'static str,
+    /// Emptying the record, keeping a backup first. `{what}` is what goes,
+    /// `{file}` the backup's name, `{size}` how large it is.
+    pub reset_keep_ask: &'static str,
+    pub reset_keep_note: &'static str,
+    pub reset_keep_do: &'static str,
     /// Emptying it keeping nothing. `{what}` and `{size}` as above.
-    pub nowipe_ask: &'static str,
-    pub nowipe_note: &'static str,
-    pub nowipe_do: &'static str,
-    /// Taking an archive back. `{what}` is what it holds, `{file}` its name.
+    pub reset_none_ask: &'static str,
+    pub reset_none_note: &'static str,
+    pub reset_none_do: &'static str,
+    /// Restoring a backup. `{what}` is what it holds, `{file}` its name.
     pub restore_ask: &'static str,
     pub restore_note: &'static str,
     pub restore_do: &'static str,
@@ -419,7 +390,7 @@ pub struct Strings {
     /// The banner headline over the log pass.
     pub rebuild_head: &'static str,
     /// The line under that headline while each of the three runs.
-    pub wipe_doing: &'static str,
+    pub reset_doing: &'static str,
     pub restore_doing: &'static str,
     pub rebuild_doing: &'static str,
     /// The book screen's own control, and the question it puts up. `{what}` is
@@ -429,17 +400,17 @@ pub struct Strings {
     pub clear_note: &'static str,
     /// Added to that note where the longest streak moves: `{a}` to `{b}` days.
     pub streak_note: &'static str,
-    /// Its two answers: the record stays, or it goes as well.
+    /// Its two answers: the book stays, or it goes as well.
     pub clear_keep: &'static str,
     pub clear_forget: &'static str,
     /// What the Books list says with nothing to list: before any reading, and
     /// after a reset. `{t}` is a duration.
     pub no_reading_yet: &'static str,
     pub nothing_since_reset: &'static str,
-    pub unnamed_only: &'static str,
+    pub unidentified_only: &'static str,
     /// `{n} unidentified · {duration}`, closing a list of books.
     pub unidentified: &'static str,
-    /// What a cover box says where no jacket can be drawn in it and the title
+    /// What a cover box says where no cover can be drawn in it and the title
     /// stands beside it.
     pub no_cover: &'static str,
     pub text_size: &'static str,
@@ -527,9 +498,9 @@ const ENGLISH: Strings = Strings {
     shelf_finished: "Finished",
     shelf_unfinished: "Unfinished",
     nothing_on_the_shelf: "No books here.",
-    nothing_marked: "No highlights here.",
+    no_highlights_here: "No highlights here.",
     search_hint: "Search title or author",
-    search_hint_marks: "Search highlights or notes",
+    search_hint_highlights: "Search highlights or notes",
     by_recent: "Recent",
     by_time: "Time",
     by_progress: "Progress",
@@ -561,7 +532,7 @@ const ENGLISH: Strings = Strings {
     finished_on: "Finished on",
     read_through_row: "Read through",
     n_times: "{d} time[s]",
-    on_the_device: "On the device",
+    on_the_kindle: "On the Kindle",
     continue_reading: "Continue reading",
     continue_short: "Continue",
     mark_finished: "Mark Finished",
@@ -589,8 +560,8 @@ const ENGLISH: Strings = Strings {
     the_clock: "THE CLOCK",
     statistics: "Statistics",
     graphs_tab: "Graphs",
-    marks_tab: "Highlights",
-    marks_none: "Nothing marked in this book yet.",
+    highlights_tab: "Highlights",
+    no_highlights_in_book: "No highlights in this book yet.",
     n_highlights: "{d} highlight[s]",
     n_notes: "{d} note[s]",
     at_location: "Location",
@@ -602,91 +573,73 @@ const ENGLISH: Strings = Strings {
     kind_underline: "Underline",
     kind_circle: "Circle",
     kind_asterisk: "Asterisk",
-    kind_other: "Mark",
+    kind_other: "Other",
     read: "read",
     left: "left",
 
-    first_run_1: "First run: every log the device still holds",
-    first_run_2: "is read once. This can take a few minutes.",
+    first_launch_1: "First launch: every log the Kindle still holds",
+    first_launch_2: "is read once. This can take a few minutes.",
     catching_up: "Reading what the log has added.",
     step_logs: "log {d} of {n}",
     step_files: "file {d} of {n}",
 
-    figures_row: "Use stats from",
-    figures_device: "Device",
-    figures_app: "App",
-    figures_heal: "Heal",
-    heal_ask: "Measure every sitting again?",
-    heal_note: "Every log the device still holds is read from the start, which takes a few minutes. Each sitting the logs still reach is measured again and its figures replaced. Reading older than the logs is left as it stands.",
-    heal_do: "Measure them",
-    heal_head: "Measure the sittings again",
-    heal_doing: "Reading every log the device still holds.",
-    heal_done: "{d} sitting[s] measured again.",
-    heal_none: "Nothing the logs reach has changed.",
+    stats_from_row: "Use stats from",
+    stats_from_kindle: "Kindle",
+    stats_from_app: "App",
     the_record: "THE RECORD",
     sitting_floor_row: "Count a sitting from",
-    unnamed_row: "Unidentified books",
+    unidentified_row: "Unidentified books",
     chip_show: "Show",
     chip_hide: "Hide",
-    unnamed_retry: "Retry",
-    retry_ask: "Look for the missing titles again?",
-    retry_note: "Every source that can name a book is read again, the device's logs among them, which takes a few minutes. A book with a title keeps it; only the unidentified ones change.",
-    retry_go: "Look again",
-    retry_head: "Identify the books",
-    retry_logs: "Reading the logs, then the books' own files.",
-    retry_minutes: "This can take a few minutes.",
-    retry_files: "Reading the books' own files.",
-    retry_named: "{d} book[s] identified.",
-    retry_none: "Nothing new could be identified.",
     uncovered_row: "Books without a cover",
     n_sittings: "{d} sitting[s]",
     n_books: "{d} book[s]",
     reset_row: "Reset",
     reset_keep: "Back up first",
     reset_none: "No backup",
-    restore_row: "Backups",
-    restore_logs: "From the logs",
+    backups_row: "Backups",
+    rebuild: "From the logs",
     back_up: "Back up",
-    bring_back: "Bring back",
+    restore: "Restore",
     n_files: "{n} files · {size}",
     close: "Close",
     backup_silent: "States nothing about itself",
     backup_holds: "{n} sittings · {from} to {to}",
     backup_whole: "all of it in the record",
-    export_doing: "Writing a copy of the record.",
-    export_done: "Backed up to {file}, {size}.",
-    export_failed: "Nothing was written.",
+    back_up_doing: "Writing a copy of the record.",
+    back_up_done: "Backed up to {file}, {size}.",
+    back_up_failed: "Nothing was written.",
     delete_ask: "Delete this backup?",
     delete_note: "{file} goes off the Kindle for good, freeing {size}. The \
                   record itself is not touched.",
     delete_do: "Delete",
-    n_archived: "{size} in backups",
-    wipe_ask: "Back up, then reset?",
-    wipe_note: "{what}, with every cover held, are copied into {file}, {size}. \
-                The record then starts empty from today. To bring it back, tap \
-                it under Backups.",
-    wipe_do: "Back up and reset",
-    nowipe_ask: "Reset without a backup?",
-    nowipe_note: "{what} and every cover held are deleted, and no copy is kept. \
+    n_in_backups: "{size} in backups",
+    reset_keep_ask: "Back up, then reset?",
+    reset_keep_note: "{what}, with every cover held, are copied into {file}, {size}. \
+                The record then starts empty from today. To restore it, tap it \
+                under Backups.",
+    reset_keep_do: "Back up and reset",
+    reset_none_ask: "Reset without a backup?",
+    reset_none_note: "{what} and every cover held are deleted, and no copy is kept. \
                   It frees {size}. Your Kindle's own logs are not touched, and \
                   about a month of them can be read again. Reading older than \
                   that, and books no longer in your library, cannot come back.",
-    nowipe_do: "Reset, no backup",
-    restore_ask: "Bring this back?",
+    reset_none_do: "Reset, no backup",
+    restore_ask: "Restore this backup?",
     restore_note: "{file} holds {what}. Whatever the record already has is \
                    left as it stands, so nothing is counted twice. The backup \
                    itself stays on the Kindle.",
     restore_do: "Restore",
     rebuild_ask: "Read the Kindle's logs again?",
-    rebuild_note: "Every log the device still holds is read from the start, \
+    rebuild_note: "Every log the Kindle still holds is read from the start, \
                    which takes a few minutes. Nothing you have now is lost. \
                    Reading older than the logs, and books taken off the record \
                    one at a time, do not come back.",
     rebuild_do: "Read them",
-    rebuild_head: "Restore from the logs",
-    wipe_doing: "Resetting the record.",
-    restore_doing: "Bringing the backup back.",
-    rebuild_doing: "Reading every log the device still holds.",
+    rebuild_head: "Rebuild from the logs",
+    reset_doing: "Resetting the record.",
+    restore_doing: "Restoring the backup.",
+    rebuild_doing: "Reading every log the Kindle still holds.",
     clear: "Clear",
     clear_ask: "Clear this book's reading?",
     clear_note: "{what} go, and the book goes back to 0%. Keeping it leaves it \
@@ -697,11 +650,11 @@ const ENGLISH: Strings = Strings {
     clear_keep: "Keep the book",
     clear_forget: "Forget it too",
     no_reading_yet: "No reading yet. Open a book, read a few pages, then come \
-                     back — the log starts from the day this first runs.",
+                     back — the log starts from the day of the first launch.",
     nothing_since_reset: "Nothing read since the record was reset. Open a book \
                           and it starts again from here.",
-    unnamed_only: "{t} read, on books the catalog names none of. A book is \
-                   listed once the device has said what it is.",
+    unidentified_only: "{t} read, on books the library names none of. A book is \
+                   listed once the Kindle has said what it is.",
     unidentified: "unidentified",
     no_cover: "No cover",
     interface: "INTERFACE",
@@ -800,9 +753,9 @@ const GERMAN: Strings = Strings {
     shelf_finished: "Fertig",
     shelf_unfinished: "Offen",
     nothing_on_the_shelf: "Keine Bücher hier.",
-    nothing_marked: "Keine Markierungen hier.",
+    no_highlights_here: "Keine Markierungen hier.",
     search_hint: "Titel oder Autor suchen",
-    search_hint_marks: "Markierungen oder Notizen suchen",
+    search_hint_highlights: "Markierungen oder Notizen suchen",
     by_recent: "Zuletzt",
     by_time: "Zeit",
     by_progress: "Fortschritt",
@@ -834,7 +787,7 @@ const GERMAN: Strings = Strings {
     finished_on: "Beendet am",
     read_through_row: "Ganz gelesen",
     n_times: "{d}-mal",
-    on_the_device: "Auf dem Gerät",
+    on_the_kindle: "Auf dem Kindle",
     continue_reading: "Weiterlesen",
     continue_short: "Weiter",
     mark_finished: "Als fertig markieren",
@@ -842,7 +795,7 @@ const GERMAN: Strings = Strings {
     mark_note: "Es kommt in das Regal Fertig, und die Bibliothek markiert es als gelesen. \
                 Fortschritt, gelesene Zeit, Sitzungen und Tage bleiben unverändert.",
     mark_unfinished: "Als offen markieren",
-    unmark_ask: "Markierung Fertig entfernen?",
+    unmark_ask: "Nicht mehr als fertig markieren?",
     unmark_note: "Es verlässt das Regal Fertig, und die Bibliothek markiert es als \
                   ungelesen. Fortschritt, gelesene Zeit, Sitzungen und Tage bleiben \
                   unverändert.",
@@ -851,7 +804,7 @@ const GERMAN: Strings = Strings {
     days_plain: "{d}d",
     restart: "Neu beginnen",
     restart_ask: "Dieses Buch neu beginnen?",
-    restart_note: "Die Markierung Fertig wird entfernt, der Fortschritt geht auf 0 % \
+    restart_note: "Das Buch gilt nicht mehr als fertig, der Fortschritt geht auf 0 % \
                    zurück, und das Buch öffnet sich am Anfang. Markierungen und Notizen \
                    bleiben erhalten, ebenso gelesene Zeit, Sitzungen und Tage.",
     cancel: "Abbrechen",
@@ -863,8 +816,8 @@ const GERMAN: Strings = Strings {
     the_clock: "DIE UHRZEIT",
     statistics: "Statistik",
     graphs_tab: "Grafiken",
-    marks_tab: "Markierungen",
-    marks_none: "In diesem Buch ist noch nichts markiert.",
+    highlights_tab: "Markierungen",
+    no_highlights_in_book: "In diesem Buch gibt es noch keine Markierungen.",
     n_highlights: "{d} Markierung[en]",
     n_notes: "{d} Notiz[en]",
     at_location: "Position",
@@ -876,81 +829,73 @@ const GERMAN: Strings = Strings {
     kind_underline: "Unterstreichung",
     kind_circle: "Kreis",
     kind_asterisk: "Sternchen",
-    kind_other: "Markierung",
+    kind_other: "Sonstige",
     read: "gelesen",
     left: "übrig",
 
-    first_run_1: "Erster Start: jedes Protokoll auf dem Gerät",
-    first_run_2: "wird einmal gelesen. Das dauert einige Minuten.",
+    first_launch_1: "Erster Start: jedes Protokoll auf dem Kindle",
+    first_launch_2: "wird einmal gelesen. Das dauert einige Minuten.",
     catching_up: "Liest, was dazugekommen ist.",
     step_logs: "Protokoll {d} von {n}",
     step_files: "Datei {d} von {n}",
 
-    figures_row: "Werte von",
-    figures_device: "Gerät",
-    figures_app: "App",
-    figures_heal: "Nachmessen",
-    heal_ask: "Jede Sitzung neu messen?",
-    heal_note: "Jedes Protokoll, das das Gerät noch hat, wird von vorn gelesen — das dauert einige Minuten. Jede Sitzung, die die Protokolle noch erreichen, wird neu gemessen und ihre Werte ersetzt. Ältere Sitzungen bleiben, wie sie sind.",
-    heal_do: "Neu messen",
-    heal_head: "Sitzungen neu messen",
-    heal_doing: "Liest jedes Protokoll auf dem Gerät.",
-    heal_done: "{d} Sitzung[en] neu gemessen.",
-    heal_none: "In den Protokollen hat sich nichts geändert.",
+    stats_from_row: "Statistik aus",
+    stats_from_kindle: "Kindle",
+    stats_from_app: "App",
     the_record: "DIE AUFZEICHNUNG",
     n_sittings: "{d} Sitzung[en]",
     n_books: "{d} Titel",
     reset_row: "Zurücksetzen",
     reset_keep: "Erst sichern",
     reset_none: "Ohne Sicherung",
-    restore_row: "Sicherungen",
-    restore_logs: "Aus den Protokollen",
+    backups_row: "Sicherungen",
+    rebuild: "Aus den Protokollen",
     back_up: "Sichern",
-    bring_back: "Zurückholen",
+    restore: "Wiederherstellen",
     n_files: "{n} Dateien · {size}",
     close: "Schließen",
     backup_silent: "Sagt nichts über sich selbst",
     backup_holds: "{n} Sitzungen · {from} bis {to}",
-    backup_whole: "alles davon im Verzeichnis",
-    export_doing: "Eine Kopie des Verzeichnisses wird geschrieben.",
-    export_done: "Gesichert in {file}, {size}.",
-    export_failed: "Es wurde nichts geschrieben.",
+    backup_whole: "alles davon in der Aufzeichnung",
+    back_up_doing: "Eine Kopie der Aufzeichnung wird geschrieben.",
+    back_up_done: "Gesichert in {file}, {size}.",
+    back_up_failed: "Es wurde nichts geschrieben.",
     delete_ask: "Diese Sicherung löschen?",
     delete_note: "{file} verschwindet endgültig vom Kindle und gibt {size} \
-                  frei. Das Verzeichnis selbst bleibt unberührt.",
+                  frei. Die Aufzeichnung selbst bleibt unberührt.",
     delete_do: "Löschen",
-    n_archived: "{size} in Sicherungen",
-    wipe_ask: "Erst sichern, dann zurücksetzen?",
-    wipe_note: "{what} werden mit allen Titelbildern nach {file} kopiert, \
+    n_in_backups: "{size} in Sicherungen",
+    reset_keep_ask: "Erst sichern, dann zurücksetzen?",
+    reset_keep_note: "{what} werden mit allen Covern nach {file} kopiert, \
                 {size}. Die Aufzeichnung beginnt dann leer ab heute. Zum \
-                Zurückholen unter Sicherungen antippen.",
-    wipe_do: "Zurücksetzen",
-    nowipe_ask: "Ohne Sicherung zurücksetzen?",
-    nowipe_note: "{what} und alle Titelbilder werden ohne Kopie gelöscht, das \
+                Wiederherstellen unter Sicherungen antippen.",
+    reset_keep_do: "Zurücksetzen",
+    reset_none_ask: "Ohne Sicherung zurücksetzen?",
+    reset_none_note: "{what} und alle Cover werden ohne Kopie gelöscht, das \
                   gibt {size} frei. Die Protokolle des Kindle bleiben \
                   unberührt; etwa ein Monat lässt sich erneut lesen. Ältere \
                   Lesezeit und Bücher außerhalb der Bibliothek nicht.",
-    nowipe_do: "Ohne Sicherung",
-    restore_ask: "Das zurückholen?",
+    reset_none_do: "Ohne Sicherung",
+    restore_ask: "Diese Sicherung wiederherstellen?",
     restore_note: "{file} enthält {what}. Was die Aufzeichnung schon hat, \
                    bleibt unverändert, also wird nichts doppelt gezählt. Die \
                    Sicherung selbst bleibt auf dem Kindle.",
-    restore_do: "Zurückholen",
+    restore_do: "Wiederherstellen",
     rebuild_ask: "Die Protokolle erneut lesen?",
-    rebuild_note: "Jedes Protokoll auf dem Gerät wird von vorn gelesen, was \
+    rebuild_note: "Jedes Protokoll auf dem Kindle wird von vorn gelesen, was \
                    einige Minuten dauert. Nichts Vorhandenes geht verloren. \
                    Ältere Lesezeit und einzeln entfernte Bücher kommen nicht \
                    zurück.",
     rebuild_do: "Erneut lesen",
-    rebuild_head: "Aus den Protokollen zurückholen",
-    wipe_doing: "Setzt die Aufzeichnung zurück.",
-    restore_doing: "Holt die Sicherung zurück.",
-    rebuild_doing: "Liest jedes Protokoll auf dem Gerät.",
+    rebuild_head: "Aus den Protokollen neu aufbauen",
+    reset_doing: "Setzt die Aufzeichnung zurück.",
+    restore_doing: "Stellt die Sicherung wieder her.",
+    rebuild_doing: "Liest jedes Protokoll auf dem Kindle.",
     clear: "Löschen",
     clear_ask: "Die Zeiten dieses Buches löschen?",
     clear_note: "{what} werden gelöscht, und das Buch steht wieder bei 0 %. \
                  Bleibt es, steht es ohne Werte auf den Listen; wird es \
-                 vergessen, gehen auch Titel, Autor und Bild. Eine Kopie wird \
+                 vergessen, gehen auch Titel, Autor und Cover. Eine Kopie wird \
                  vorher gesichert.",
     streak_note: "Längste Serie: von {a} auf {b} Tage.",
     clear_keep: "Buch behalten",
@@ -960,22 +905,12 @@ const GERMAN: Strings = Strings {
                      Starts.",
     nothing_since_reset: "Seit dem Zurücksetzen nichts gelesen. Öffne ein Buch, \
                           dann beginnt es hier von vorn.",
-    unnamed_only: "{t} gelesen, auf Büchern, die der Katalog nicht benennt. Ein \
-                   Buch wird gelistet, sobald das Gerät sagt, welches es ist.",
+    unidentified_only: "{t} gelesen, auf Büchern, die die Bibliothek nicht benennt. Ein \
+                   Buch wird gelistet, sobald der Kindle sagt, welches es ist.",
     sitting_floor_row: "Sitzung zählt ab",
-    unnamed_row: "Unbekannte Bücher",
+    unidentified_row: "Unbekannte Bücher",
     chip_show: "Zeigen",
     chip_hide: "Verbergen",
-    unnamed_retry: "Wiederholen",
-    retry_ask: "Erneut nach den fehlenden Titeln suchen?",
-    retry_note: "Jede Quelle, die ein Buch benennen kann, wird erneut gelesen, die Protokolle des Geräts eingeschlossen — das dauert einige Minuten. Ein Buch mit Titel behält ihn; nur die unbekannten ändern sich.",
-    retry_go: "Erneut suchen",
-    retry_head: "Bücher erkennen",
-    retry_logs: "Liest die Protokolle, dann die Dateien der Bücher.",
-    retry_minutes: "Das dauert einige Minuten.",
-    retry_files: "Liest die Dateien der Bücher.",
-    retry_named: "{d} Titel erkannt.",
-    retry_none: "Nichts Neues erkannt.",
     uncovered_row: "Bücher ohne Cover",
     unidentified: "unbekannt",
     no_cover: "Kein Cover",
@@ -1075,9 +1010,9 @@ const JAPANESE: Strings = Strings {
     shelf_finished: "読了",
     shelf_unfinished: "未読了",
     nothing_on_the_shelf: "該当する本はありません。",
-    nothing_marked: "該当するハイライトはありません。",
+    no_highlights_here: "該当するハイライトはありません。",
     search_hint: "題名か著者で検索",
-    search_hint_marks: "ハイライトかメモで検索",
+    search_hint_highlights: "ハイライトかメモで検索",
     by_recent: "最近",
     by_time: "時間",
     by_progress: "進捗",
@@ -1109,7 +1044,7 @@ const JAPANESE: Strings = Strings {
     finished_on: "読了日",
     read_through_row: "通読",
     n_times: "{d}回",
-    on_the_device: "端末内",
+    on_the_kindle: "Kindle内",
     continue_reading: "続きを読む",
     continue_short: "続き",
     mark_finished: "読了にする",
@@ -1134,8 +1069,8 @@ const JAPANESE: Strings = Strings {
     the_clock: "時間帯",
     statistics: "統計",
     graphs_tab: "グラフ",
-    marks_tab: "ハイライト",
-    marks_none: "この本にはまだ何も記されていません。",
+    highlights_tab: "ハイライト",
+    no_highlights_in_book: "この本にはまだハイライトがありません。",
     n_highlights: "ハイライト{d}",
     n_notes: "メモ{d}",
     at_location: "位置",
@@ -1147,98 +1082,80 @@ const JAPANESE: Strings = Strings {
     kind_underline: "下線",
     kind_circle: "囲み",
     kind_asterisk: "アスタリスク",
-    kind_other: "マーク",
+    kind_other: "その他",
     read: "読了",
     left: "残り",
 
-    first_run_1: "初回起動：端末に残るすべての記録を",
-    first_run_2: "一度読み込みます。数分かかります。",
+    first_launch_1: "初回起動：Kindleに残るすべての記録を",
+    first_launch_2: "一度読み込みます。数分かかります。",
     catching_up: "追加された記録を読み込み中。",
     step_logs: "ログ {d}/{n}",
     step_files: "ファイル {d}/{n}",
 
-    figures_row: "数値の取得元",
-    figures_device: "端末",
-    figures_app: "アプリ",
-    figures_heal: "再計測",
-    heal_ask: "すべての読書を計測し直しますか？",
-    heal_note: "端末に残っているログをすべて最初から読み直すため、数分かかります。ログが届く範囲の読書はすべて計測し直され、数値が置き換わります。ログより古い記録はそのままです。",
-    heal_do: "計測し直す",
-    heal_head: "読書を再計測",
-    heal_doing: "端末に残っているログを読み直しています。",
-    heal_done: "{d}回を再計測しました。",
-    heal_none: "ログの範囲に変わりはありません。",
+    stats_from_row: "統計の取得元",
+    stats_from_kindle: "Kindle",
+    stats_from_app: "アプリ",
     the_record: "記録",
     n_sittings: "{d}回",
     n_books: "{d}冊",
     reset_row: "リセット",
-    reset_keep: "先に保存",
-    reset_none: "保存しない",
-    restore_row: "バックアップ",
-    restore_logs: "ログから",
-    back_up: "書き出す",
-    bring_back: "取り込む",
+    reset_keep: "先にバックアップ",
+    reset_none: "バックアップしない",
+    backups_row: "バックアップ",
+    rebuild: "ログから",
+    back_up: "今すぐバックアップ",
+    restore: "復元",
     n_files: "{n} 件 · {size}",
     close: "閉じる",
     backup_silent: "内容の記載なし",
-    backup_holds: "{n} セッション · {from}〜{to}",
+    backup_holds: "{n} 回 · {from}〜{to}",
     backup_whole: "すべて記録済み",
-    export_doing: "記録のコピーを書き出しています。",
-    export_done: "{file} に保存しました（{size}）。",
-    export_failed: "何も書き出されませんでした。",
+    back_up_doing: "記録のコピーを書き出しています。",
+    back_up_done: "{file} にバックアップしました（{size}）。",
+    back_up_failed: "何も書き出されませんでした。",
     delete_ask: "このバックアップを削除しますか？",
     delete_note: "{file} を Kindle から完全に削除し、{size} を解放します。記録\
                   そのものはそのまま残ります。",
     delete_do: "削除",
-    n_archived: "バックアップ {size}",
-    wipe_ask: "保存してからリセットしますか？",
-    wipe_note: "{what}と表紙をすべて {file} に保存します（{size}）。記録は今日から空で始まります。\
-                戻すときはバックアップから選んでください。",
-    wipe_do: "保存してリセット",
-    nowipe_ask: "保存せずにリセットしますか？",
-    nowipe_note: "{what}と表紙をすべて削除し、控えは残りません。{size}の空きができます。\
+    n_in_backups: "バックアップ {size}",
+    reset_keep_ask: "バックアップしてからリセットしますか？",
+    reset_keep_note: "{what}と表紙をすべて {file} に保存します（{size}）。記録は今日から空で始まります。\
+                復元するときはバックアップから選んでください。",
+    reset_keep_do: "バックアップ後リセット",
+    reset_none_ask: "バックアップせずにリセットしますか？",
+    reset_none_note: "{what}と表紙をすべて削除し、控えは残りません。{size}の空きができます。\
                   Kindle自身のログには触れないので、約1か月分は読み直せます。\
                   それより古い読書と、ライブラリにない本は戻りません。",
-    nowipe_do: "保存せずリセット",
-    restore_ask: "これを戻しますか？",
+    reset_none_do: "リセットのみ",
+    restore_ask: "このバックアップを復元しますか？",
     restore_note: "{file} には{what}が入っています。すでにある記録はそのままなので、二重には数えません。\
                    バックアップ自体は Kindle に残ります。",
-    restore_do: "戻す",
+    restore_do: "復元する",
     rebuild_ask: "Kindleのログを読み直しますか？",
-    rebuild_note: "端末に残っているログを最初から読み直します。数分かかります。\
+    rebuild_note: "Kindleに残っているログを最初から読み直します。数分かかります。\
                    今ある記録が失われることはありません。ログより古い読書と、\
                    1冊ずつ記録から外した本は戻りません。",
     rebuild_do: "読み直す",
-    rebuild_head: "ログから戻す",
-    wipe_doing: "記録をリセットしています。",
-    restore_doing: "バックアップを記録に戻しています。",
-    rebuild_doing: "端末に残っているログを読み直しています。",
+    rebuild_head: "ログから作り直す",
+    reset_doing: "記録をリセットしています。",
+    restore_doing: "バックアップを復元しています。",
+    rebuild_doing: "Kindleに残っているログを読み直しています。",
     clear: "消去",
     clear_ask: "この本の読書記録を消去しますか？",
     clear_note: "{what}を削除し、進捗は0%に戻ります。本を残せば数値のない状態で一覧に残り、\
-                 一緒に消せば題名・著者・表紙も消えます。控えは先に保存されます。",
+                 一緒に消せば題名・著者・表紙も消えます。先にバックアップが作られます。",
     streak_note: "最長連続日数は{a}日から{b}日になります。",
     clear_keep: "本は残す",
     clear_forget: "本も消す",
     no_reading_yet: "まだ読書がありません。本を開いて数ページ読んでから戻ってきてください。\
                      記録は初回起動の日から始まります。",
     nothing_since_reset: "リセット後の読書はまだありません。本を開けば、ここから始まります。",
-    unnamed_only: "{t}の読書がありますが、カタログが本を特定していません。\
-                   端末が本を認識すると一覧に並びます。",
+    unidentified_only: "{t}の読書がありますが、ライブラリが本を特定していません。\
+                   Kindleが本を認識すると一覧に並びます。",
     sitting_floor_row: "計時下限",
-    unnamed_row: "不明な本",
+    unidentified_row: "不明な本",
     chip_show: "表示",
     chip_hide: "非表示",
-    unnamed_retry: "再試行",
-    retry_ask: "見つからない書名をもう一度探しますか？",
-    retry_note: "本を特定できる情報源をすべて読み直します。端末のログも含むため数分かかります。書名のある本はそのまま、不明な本だけが変わります。",
-    retry_go: "もう一度探す",
-    retry_head: "本を特定する",
-    retry_logs: "ログと本のファイルを読んでいます。",
-    retry_minutes: "数分かかります。",
-    retry_files: "本のファイルを読んでいます。",
-    retry_named: "{d}冊を特定しました。",
-    retry_none: "新たに特定できた本はありません。",
     uncovered_row: "表紙のない本",
     unidentified: "冊が不明",
     no_cover: "表紙なし",
@@ -1259,7 +1176,7 @@ const JAPANESE: Strings = Strings {
     update_check: "今すぐ確認",
     update_asking: "GitHub に問い合わせ中…",
     update_downloading: "ダウンロード中…",
-    update_checking: "この端末で動くか確認中…",
+    update_checking: "このKindleで動くか確認中…",
     update_placing: "入れ替え中…",
     update_tap_to_stop: "タップで中止",
     update_up_to_date: "最新です",
@@ -1327,9 +1244,9 @@ const SIMPLIFIED: Strings = Strings {
     shelf_finished: "已读完",
     shelf_unfinished: "未读完",
     nothing_on_the_shelf: "没有符合的书。",
-    nothing_marked: "没有符合的标注。",
+    no_highlights_here: "没有符合的标注。",
     search_hint: "搜索书名或作者",
-    search_hint_marks: "搜索标注或笔记",
+    search_hint_highlights: "搜索标注或笔记",
     by_recent: "最近",
     by_time: "时长",
     by_progress: "进度",
@@ -1361,7 +1278,7 @@ const SIMPLIFIED: Strings = Strings {
     finished_on: "读完于",
     read_through_row: "通读",
     n_times: "{d}遍",
-    on_the_device: "在设备上",
+    on_the_kindle: "在 Kindle 上",
     continue_reading: "继续阅读",
     continue_short: "继续",
     mark_finished: "标记读完",
@@ -1386,8 +1303,8 @@ const SIMPLIFIED: Strings = Strings {
     the_clock: "时段",
     statistics: "统计",
     graphs_tab: "图表",
-    marks_tab: "标注",
-    marks_none: "这本书还没有任何标记。",
+    highlights_tab: "标注",
+    no_highlights_in_book: "这本书还没有任何标注。",
     n_highlights: "标注{d}",
     n_notes: "笔记{d}",
     at_location: "位置",
@@ -1399,70 +1316,62 @@ const SIMPLIFIED: Strings = Strings {
     kind_underline: "下划线",
     kind_circle: "圈注",
     kind_asterisk: "星标",
-    kind_other: "标记",
+    kind_other: "其他",
     read: "已读",
     left: "剩余",
 
-    first_run_1: "首次运行：设备上保留的每份记录",
-    first_run_2: "都会读取一次，需要几分钟。",
+    first_launch_1: "首次启动：Kindle 上保留的每份记录",
+    first_launch_2: "都会读取一次，需要几分钟。",
     catching_up: "正在读取新增的记录。",
     step_logs: "日志 {d}/{n}",
     step_files: "文件 {d}/{n}",
 
-    figures_row: "数据来源",
-    figures_device: "设备",
-    figures_app: "应用",
-    figures_heal: "重新测量",
-    heal_ask: "重新测量每一次阅读？",
-    heal_note: "设备上还留着的每份日志都会从头读起，需要几分钟。日志还涵盖的每一次阅读都会重新测量并覆写其数字。比日志更早的记录维持原样。",
-    heal_do: "重新测量",
-    heal_head: "重新测量各次阅读",
-    heal_doing: "正在重新读取设备上的日志。",
-    heal_done: "已重新测量 {d}次。",
-    heal_none: "日志所及的记录没有变动。",
+    stats_from_row: "统计来源",
+    stats_from_kindle: "Kindle",
+    stats_from_app: "应用",
     the_record: "记录",
     n_sittings: "{d}次",
     n_books: "{d}本",
     reset_row: "重置",
     reset_keep: "先备份",
     reset_none: "不备份",
-    restore_row: "备份",
-    restore_logs: "从日志读取",
-    back_up: "导出",
-    bring_back: "导入",
+    backups_row: "备份",
+    rebuild: "从日志重建",
+    back_up: "立即备份",
+    restore: "恢复",
     n_files: "{n} 个文件 · {size}",
     close: "关闭",
     backup_silent: "未说明内容",
     backup_holds: "{n} 次阅读 · {from} 至 {to}",
     backup_whole: "已全部读回记录",
-    export_doing: "正在写出记录的副本。",
-    export_done: "已备份至 {file}，{size}。",
-    export_failed: "未写出任何内容。",
+    back_up_doing: "正在写出记录的副本。",
+    back_up_done: "已备份至 {file}，{size}。",
+    back_up_failed: "未写出任何内容。",
     delete_ask: "删除这个备份？",
     delete_note: "{file} 将从 Kindle 上彻底删除，释放 {size}。记录本身不受影响。",
     delete_do: "删除",
-    n_archived: "备份占 {size}",
-    wipe_ask: "先备份再重置？",
-    wipe_note: "{what}和所有封面会存入 {file}（{size}）。记录随后从今天起为空。\
-                要取回，请在备份中点选。",
-    wipe_do: "备份并重置",
-    nowipe_ask: "不备份就重置？",
-    nowipe_note: "{what}和所有封面都会删除，不留副本，可腾出 {size}。\
+    n_in_backups: "备份占 {size}",
+    reset_keep_ask: "先备份再重置？",
+    reset_keep_note: "{what}和所有封面会存入 {file}（{size}）。记录随后从今天起为空。\
+                要恢复，请在备份中点选。",
+    reset_keep_do: "备份并重置",
+    reset_none_ask: "不备份就重置？",
+    reset_none_note: "{what}和所有封面都会删除，不留副本，可腾出 {size}。\
                   Kindle 自己的日志不会被动到，其中约一个月可以重新读取。\
-                  更早的阅读，以及已不在书库中的书，无法恢复。",
-    nowipe_do: "不备份重置",
-    restore_ask: "取回这一份？",
+                  更早的阅读，以及已不在图书馆中的书，无法恢复。",
+    reset_none_do: "不备份重置",
+    restore_ask: "恢复这份备份？",
     restore_note: "{file} 中有{what}。记录里已有的内容保持不变，因此不会重复计入。\
                    这份备份本身会留在 Kindle 上。",
-    restore_do: "取回",
+    restore_do: "恢复",
     rebuild_ask: "重新读取 Kindle 日志？",
-    rebuild_note: "设备上仍保留的日志会从头读一遍，需要几分钟。现有记录不会丢失。\
+    rebuild_note: "Kindle 上仍保留的日志会从头读一遍，需要几分钟。现有记录不会丢失。\
                    比日志更早的阅读，以及逐本从记录中移除的书，不会回来。",
     rebuild_do: "重新读取",
-    rebuild_head: "从日志取回",
-    wipe_doing: "正在重置记录。",
-    restore_doing: "正在取回备份。",
-    rebuild_doing: "正在重新读取设备上的日志。",
+    rebuild_head: "从日志重建",
+    reset_doing: "正在重置记录。",
+    restore_doing: "正在恢复备份。",
+    rebuild_doing: "正在重新读取 Kindle 上的日志。",
     clear: "清除",
     clear_ask: "清除这本书的阅读记录？",
     clear_note: "将删除{what}，进度回到 0%。保留书籍时，它仍在列表中，只是没有任何数值；\
@@ -1470,23 +1379,13 @@ const SIMPLIFIED: Strings = Strings {
     streak_note: "最长连续天数将从 {a} 天变为 {b} 天。",
     clear_keep: "保留书籍",
     clear_forget: "一并移除",
-    no_reading_yet: "还没有阅读记录。打开一本书读几页再回来——日志从首次运行当天开始。",
+    no_reading_yet: "还没有阅读记录。打开一本书读几页再回来——日志从首次启动当天开始。",
     nothing_since_reset: "重置后还没有阅读。打开一本书，就从这里重新开始。",
-    unnamed_only: "已读 {t}，但目录未能指明是哪些书。设备识别出书名后就会列出。",
+    unidentified_only: "已读 {t}，但图书馆未能指明是哪些书。Kindle 识别出书名后就会列出。",
     sitting_floor_row: "计时下限",
-    unnamed_row: "未识别的书",
+    unidentified_row: "未识别的书",
     chip_show: "显示",
     chip_hide: "隐藏",
-    unnamed_retry: "重试",
-    retry_ask: "再次寻找缺少的书名？",
-    retry_note: "每个能认出书的来源都会重读一次，包括设备上的日志，需要几分钟。已有书名的书保持不变，只有未识别的会改动。",
-    retry_go: "再找一次",
-    retry_head: "识别书籍",
-    retry_logs: "正在读取日志和书籍文件。",
-    retry_minutes: "需要几分钟。",
-    retry_files: "正在读取书籍文件。",
-    retry_named: "已识别 {d}本。",
-    retry_none: "没有新识别出的书。",
     uncovered_row: "没有封面的书",
     unidentified: "本未识别",
     no_cover: "无封面",
@@ -1586,9 +1485,9 @@ const TRADITIONAL: Strings = Strings {
     shelf_finished: "已讀完",
     shelf_unfinished: "未讀完",
     nothing_on_the_shelf: "沒有符合的書。",
-    nothing_marked: "沒有符合的標註。",
+    no_highlights_here: "沒有符合的標註。",
     search_hint: "搜尋書名或作者",
-    search_hint_marks: "搜尋標註或筆記",
+    search_hint_highlights: "搜尋標註或筆記",
     by_recent: "最近",
     by_time: "時長",
     by_progress: "進度",
@@ -1620,7 +1519,7 @@ const TRADITIONAL: Strings = Strings {
     finished_on: "讀完於",
     read_through_row: "通讀",
     n_times: "{d}遍",
-    on_the_device: "在裝置上",
+    on_the_kindle: "在 Kindle 上",
     continue_reading: "繼續閱讀",
     continue_short: "繼續",
     mark_finished: "標記讀完",
@@ -1645,8 +1544,8 @@ const TRADITIONAL: Strings = Strings {
     the_clock: "時段",
     statistics: "統計",
     graphs_tab: "圖表",
-    marks_tab: "標註",
-    marks_none: "這本書還沒有任何標記。",
+    highlights_tab: "標註",
+    no_highlights_in_book: "這本書還沒有任何標註。",
     n_highlights: "標註{d}",
     n_notes: "筆記{d}",
     at_location: "位置",
@@ -1658,70 +1557,62 @@ const TRADITIONAL: Strings = Strings {
     kind_underline: "底線",
     kind_circle: "圈註",
     kind_asterisk: "星號",
-    kind_other: "標記",
+    kind_other: "其他",
     read: "已讀",
     left: "剩餘",
 
-    first_run_1: "首次執行：裝置上保留的每份記錄",
-    first_run_2: "都會讀取一次，需要幾分鐘。",
+    first_launch_1: "首次啟動：Kindle 上保留的每份記錄",
+    first_launch_2: "都會讀取一次，需要幾分鐘。",
     catching_up: "正在讀取新增的記錄。",
     step_logs: "日誌 {d}/{n}",
     step_files: "檔案 {d}/{n}",
 
-    figures_row: "數據來源",
-    figures_device: "裝置",
-    figures_app: "應用",
-    figures_heal: "重新測量",
-    heal_ask: "重新測量每一次閱讀？",
-    heal_note: "裝置上還留著的每份日誌都會從頭讀起，需要幾分鐘。日誌還涵蓋的每一次閱讀都會重新測量並覆寫其數字。比日誌更早的紀錄維持原樣。",
-    heal_do: "重新測量",
-    heal_head: "重新測量各次閱讀",
-    heal_doing: "正在重新讀取裝置上的日誌。",
-    heal_done: "已重新測量 {d}次。",
-    heal_none: "日誌所及的紀錄沒有變動。",
+    stats_from_row: "統計來源",
+    stats_from_kindle: "Kindle",
+    stats_from_app: "應用",
     the_record: "記錄",
     n_sittings: "{d}次",
     n_books: "{d}本",
     reset_row: "重設",
     reset_keep: "先備份",
     reset_none: "不備份",
-    restore_row: "備份",
-    restore_logs: "從日誌讀取",
-    back_up: "匯出",
-    bring_back: "匯入",
+    backups_row: "備份",
+    rebuild: "從日誌重建",
+    back_up: "立即備份",
+    restore: "還原",
     n_files: "{n} 個檔案 · {size}",
     close: "關閉",
     backup_silent: "未說明內容",
     backup_holds: "{n} 次閱讀 · {from} 至 {to}",
     backup_whole: "已全部讀回記錄",
-    export_doing: "正在寫出記錄的副本。",
-    export_done: "已備份至 {file}，{size}。",
-    export_failed: "未寫出任何內容。",
+    back_up_doing: "正在寫出記錄的副本。",
+    back_up_done: "已備份至 {file}，{size}。",
+    back_up_failed: "未寫出任何內容。",
     delete_ask: "刪除這個備份？",
     delete_note: "{file} 將從 Kindle 上徹底刪除，釋放 {size}。記錄本身不受影響。",
     delete_do: "刪除",
-    n_archived: "備份佔 {size}",
-    wipe_ask: "先備份再重設？",
-    wipe_note: "{what}和所有封面會存入 {file}（{size}）。記錄隨後從今天起為空。\
-                要取回，請在備份中點選。",
-    wipe_do: "備份並重設",
-    nowipe_ask: "不備份就重設？",
-    nowipe_note: "{what}和所有封面都會刪除，不留副本，可騰出 {size}。\
+    n_in_backups: "備份佔 {size}",
+    reset_keep_ask: "先備份再重設？",
+    reset_keep_note: "{what}和所有封面會存入 {file}（{size}）。記錄隨後從今天起為空。\
+                要還原，請在備份中點選。",
+    reset_keep_do: "備份並重設",
+    reset_none_ask: "不備份就重設？",
+    reset_none_note: "{what}和所有封面都會刪除，不留副本，可騰出 {size}。\
                   Kindle 自己的日誌不會被動到，其中約一個月可以重新讀取。\
-                  更早的閱讀，以及已不在書庫中的書，無法復原。",
-    nowipe_do: "不備份重設",
-    restore_ask: "取回這一份？",
+                  更早的閱讀，以及已不在圖書館中的書，無法復原。",
+    reset_none_do: "不備份重設",
+    restore_ask: "還原這份備份？",
     restore_note: "{file} 中有{what}。記錄裡已有的內容保持不變，因此不會重複計入。\
                    這份備份本身會留在 Kindle 上。",
-    restore_do: "取回",
+    restore_do: "還原",
     rebuild_ask: "重新讀取 Kindle 日誌？",
-    rebuild_note: "裝置上仍保留的日誌會從頭讀一遍，需要幾分鐘。現有記錄不會遺失。\
+    rebuild_note: "Kindle 上仍保留的日誌會從頭讀一遍，需要幾分鐘。現有記錄不會遺失。\
                    比日誌更早的閱讀，以及逐本從記錄中移除的書，不會回來。",
     rebuild_do: "重新讀取",
-    rebuild_head: "從日誌取回",
-    wipe_doing: "正在重設記錄。",
-    restore_doing: "正在取回備份。",
-    rebuild_doing: "正在重新讀取裝置上的日誌。",
+    rebuild_head: "從日誌重建",
+    reset_doing: "正在重設記錄。",
+    restore_doing: "正在還原備份。",
+    rebuild_doing: "正在重新讀取 Kindle 上的日誌。",
     clear: "清除",
     clear_ask: "清除這本書的閱讀記錄？",
     clear_note: "將刪除{what}，進度回到 0%。保留書籍時，它仍在列表中，只是沒有任何數值；\
@@ -1729,23 +1620,13 @@ const TRADITIONAL: Strings = Strings {
     streak_note: "最長連續天數將從 {a} 天變為 {b} 天。",
     clear_keep: "保留書籍",
     clear_forget: "一併移除",
-    no_reading_yet: "還沒有閱讀記錄。打開一本書讀幾頁再回來——日誌從首次執行當天開始。",
+    no_reading_yet: "還沒有閱讀記錄。打開一本書讀幾頁再回來——日誌從首次啟動當天開始。",
     nothing_since_reset: "重設後還沒有閱讀。打開一本書，就從這裡重新開始。",
-    unnamed_only: "已讀 {t}，但目錄未能指明是哪些書。裝置辨識出書名後就會列出。",
+    unidentified_only: "已讀 {t}，但圖書館未能指明是哪些書。Kindle 辨識出書名後就會列出。",
     sitting_floor_row: "計時下限",
-    unnamed_row: "未識別的書",
+    unidentified_row: "未識別的書",
     chip_show: "顯示",
     chip_hide: "隱藏",
-    unnamed_retry: "重試",
-    retry_ask: "再次尋找缺少的書名？",
-    retry_note: "每個能認出書的來源都會重讀一次，包括裝置上的日誌，需要幾分鐘。已有書名的書保持不變，只有未識別的會改動。",
-    retry_go: "再找一次",
-    retry_head: "識別書籍",
-    retry_logs: "正在讀取日誌和書籍檔案。",
-    retry_minutes: "需要幾分鐘。",
-    retry_files: "正在讀取書籍檔案。",
-    retry_named: "已識別 {d}本。",
-    retry_none: "沒有新識別出的書。",
     uncovered_row: "沒有封面的書",
     unidentified: "本未識別",
     no_cover: "無封面",
@@ -1833,7 +1714,7 @@ mod tests {
     use super::*;
 
     /// Every value that can reach [`LOCALE_FILE`].
-    const DEVICE_LOCALES: &[(&str, Option<Lang>)] = &[
+    const KINDLE_LOCALES: &[(&str, Option<Lang>)] = &[
         ("de_DE.utf8", Some(Lang::German)),
         ("ja_JP.utf8", Some(Lang::Japanese)),
         ("zh_CN.utf8", Some(Lang::SimplifiedChinese)),
@@ -1853,8 +1734,8 @@ mod tests {
     ];
 
     #[test]
-    fn every_locale_the_device_can_be_set_to_is_read() {
-        for (value, want) in DEVICE_LOCALES {
+    fn every_locale_the_kindle_can_be_set_to_is_read() {
+        for (value, want) in KINDLE_LOCALES {
             assert_eq!(of_posix(value), *want, "{value}");
         }
     }
@@ -1889,7 +1770,7 @@ mod tests {
     }
 
     #[test]
-    fn a_device_with_no_locale_file_reads_as_english() {
+    fn a_kindle_with_no_locale_file_reads_as_english() {
         assert_eq!(
             Lang::detect_in(Path::new("/nonexistent/locale")),
             Lang::English
@@ -1926,9 +1807,9 @@ mod tests {
             let named: [(&str, &str); 15] = [
                 ("words", s.words),
                 ("characters", s.characters),
-                ("figures_row", s.figures_row),
-                ("figures_device", s.figures_device),
-                ("figures_app", s.figures_app),
+                ("figures_row", s.stats_from_row),
+                ("figures_device", s.stats_from_kindle),
+                ("figures_app", s.stats_from_app),
                 ("exit", s.exit),
                 ("config", s.config),
                 ("today", s.today),
@@ -1991,8 +1872,8 @@ mod tests {
                 .replace("{b}", "999")
             };
             for (name, heading, note) in [
-                ("wipe", s.wipe_ask, s.wipe_note),
-                ("nowipe", s.nowipe_ask, s.nowipe_note),
+                ("reset_keep", s.reset_keep_ask, s.reset_keep_note),
+                ("reset_none", s.reset_none_ask, s.reset_none_note),
                 ("restore", s.restore_ask, s.restore_note),
                 ("rebuild", s.rebuild_ask, s.rebuild_note),
                 ("restart", s.restart_ask, s.restart_note),
@@ -2035,8 +1916,8 @@ mod tests {
             let s = lang.strings();
             for answer in [
                 s.cancel,
-                s.wipe_do,
-                s.nowipe_do,
+                s.reset_keep_do,
+                s.reset_none_do,
                 s.restore_do,
                 s.rebuild_do,
                 s.clear_keep,

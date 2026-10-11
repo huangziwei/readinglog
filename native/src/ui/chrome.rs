@@ -199,7 +199,7 @@ fn headed(
     let over = text.draw(fb, area.x, baseline, title, false);
     if let Some(said) = said {
         // Against the right end, and never over the heading: the two are one
-        // line, and a language that fills it drops the figure rather than set
+        // line, and a language that fills it drops the figure, never setting
         // it on top of the words.
         let w = text.measure_width(said) as i32;
         let x = area.right() - w;

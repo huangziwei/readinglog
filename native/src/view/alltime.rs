@@ -248,7 +248,7 @@ fn sitting_name(at: usize, first: usize, floor: SittingFloor, s: &Strings) -> St
     }
 }
 
-/// Books the shelf states as read through, longest first.
+/// Books the record states as read through, longest first.
 fn finished_books(cx: &Ctx) -> Vec<usize> {
     let mut out: Vec<usize> = cx.stats.finished_in(i64::MIN..=i64::MAX).collect();
     out.sort_by_key(|at| -cx.stats.books[*at].seconds);
@@ -299,7 +299,7 @@ fn cells(cx: &Ctx) -> Vec<Cell> {
 
 /// How long a finished book took, averaged over the books in `finished`.
 ///
-/// A shelf with none of them read through states no average.
+/// A record with no book read through states no average.
 fn a_book(cx: &Ctx, finished: &[usize], s: &Strings) -> String {
     if finished.is_empty() {
         return "—".into();

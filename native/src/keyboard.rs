@@ -1,4 +1,4 @@
-//! The device's on-screen keyboard. [`open`] and [`close`] set one property
+//! The Kindle's on-screen keyboard. [`open`] and [`close`] set one property
 //! each on [`SERVICE`]; [`height`] states how much of the screen it takes.
 
 use std::process::Command;

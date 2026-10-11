@@ -65,8 +65,8 @@ impl Theme {
         }
     }
 
-    /// A rule, an outline or any other physical length written at
-    /// `scale::DESIGN_DPI`, in this panel's pixels. Never rounds a rule away.
+    /// A rule, an outline or any other length in design pixels, in this panel's
+    /// pixels. Never rounds a rule away.
     pub fn px(&self, design: i32) -> i32 {
         self.scale.px(design)
     }

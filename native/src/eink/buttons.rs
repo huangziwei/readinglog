@@ -108,7 +108,7 @@ impl Buttons {
         }
     }
 
-    /// One event record, the caller having polled first. `Some` on a mapped
+    /// One event, the caller having polled first. `Some` on a mapped
     /// page key's press (`value==1`) alone; a release, autorepeat, `SYN` or
     /// unmapped key answers `None`.
     pub fn read_one(&mut self) -> Result<Option<PageButton>> {
@@ -119,7 +119,7 @@ impl Buttons {
         let type_ = u16::from_ne_bytes([buf[8], buf[9]]);
         let code = u16::from_ne_bytes([buf[10], buf[11]]);
         let value = i32::from_ne_bytes([buf[12], buf[13], buf[14], buf[15]]);
-        // Covered: the record is read and dropped.
+        // Covered: the event is read and dropped.
         if self.covered {
             return Ok(None);
         }
@@ -178,7 +178,7 @@ fn find_button_device() -> Result<Option<PathBuf>> {
 
 /// What the bezel resolved to, for the log's header block. A model with no
 /// page buttons is the common case and says so plainly: it is a fact about the
-/// device, not something the reader can act on.
+/// Kindle, not something the reader can act on.
 pub fn describe(held: Option<&Buttons>) -> String {
     match held {
         None => "buttons=none".to_string(),
@@ -197,8 +197,8 @@ pub fn describe(held: Option<&Buttons>) -> String {
 mod tests {
     use super::{PageButton, describe};
 
-    /// Most models have no page buttons. That is a fact about the device, not
-    /// a fault the reader can act on, so it is a word in the header block and
+    /// Most models have no page buttons. That is a fact about the Kindle, not
+    /// a fault the reader can act on: a word in the header block and
     /// never a line in the body.
     #[test]
     fn a_model_with_no_page_buttons_says_so_as_a_fact() {

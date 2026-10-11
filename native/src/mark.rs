@@ -1,13 +1,13 @@
 //! `PROPERTY` on `SOURCE`, set through `lipc-hash-prop`.
-//! `MarkAsReadHandler` answers on it and files a `ContentReadStateRecord`.
+//! The firmware's read-state handler answers on it and writes the mark.
 
 use std::io::Write as _;
 use std::process::{Command, Stdio};
 
-/// The lipc source `openBook` also sits on.
+/// The lipc source a Mark as Read call goes to.
 const SOURCE: &str = "com.lab126.readnow";
 
-/// The hasharray property `MarkAsReadHandler` answers on.
+/// The hasharray property the read-state handler answers on.
 const PROPERTY: &str = "kppMarkAsReadAction";
 
 /// The `kppMAR` values setting a book read and unread.

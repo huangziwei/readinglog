@@ -199,7 +199,7 @@ fn classify(e: ureq::Error, url: &str) -> Error {
             url: url.to_string(),
         },
         // Everything else — DNS, refused connection, TLS failure, timeout —
-        // is the device not being able to reach GitHub, which is the one
+        // is the Kindle not being able to reach GitHub, which is the one
         // distinction the banner acts on.
         other => Error::Unreachable(other.to_string()),
     }
@@ -213,8 +213,8 @@ mod tests {
     fn the_user_agent_names_the_software_and_resolves() {
         assert!(USER_AGENT.starts_with("readinglog/"));
         // GitHub rejects a request with no User-Agent, and a `+URL` that 404s
-        // reads as a fake courtesy. This one points at the repository rather
-        // than at whoever is holding the Kindle.
+        // reads as a fake courtesy. This one points at the repository, not
+        // at whoever is holding the Kindle.
         assert!(USER_AGENT.contains(super::super::REPO));
         assert!(!USER_AGENT.contains("Mozilla"), "no browser spoofing");
     }

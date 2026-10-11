@@ -1,23 +1,23 @@
 //! What this app writes about itself: one line a launch under a header block
-//! restating what only changes with the device or the build. It goes to stderr,
+//! restating what only changes with the Kindle or the build. It goes to stderr,
 //! which the shell appends to [`LOG_PATH`], and only that file's tail is read.
 use std::fmt::Write as _;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
-/// Where the shell points our stderr. `readinglog.sh` and `collect.sh` name
+/// Where the shell points the app's stderr. `readinglog.sh` and `collect.sh` name
 /// this same path; changing one means changing all three.
 pub const LOG_PATH: &str = "/mnt/us/logs/readinglog.log";
 
-/// Opens a header block, at column 0, so a reader and a trim can both find it.
-const MARK: &str = "=== ";
+/// Opens a header block, at column 0, where a reader and a trim both find it.
+const HEADER_MARKER: &str = "=== ";
 
 /// Opens a line the app could not do what it was asked on. Every `eprintln!`
 /// that reports a failure carries it, and no trim may drop such a line.
 pub const FAILED: &str = "!!";
 
-/// Opens a line the app went on from, less than whole: a bezel that would not
-/// grab, a keyboard that would not open, settings with nowhere to go.
+/// Opens a line the app went on from, less than whole: a bezel that did not
+/// grab, a keyboard that did not open, settings with nowhere to go.
 pub const WARNED: &str = "??";
 
 /// How much of the log's tail is read to find the standing header. A block is
@@ -26,7 +26,7 @@ pub const WARNED: &str = "??";
 const TAIL: u64 = 8192;
 
 /// The facts a header block states. Each is what it is for the life of a
-/// build on a device: a change in any of them is what makes a block worth
+/// build on a Kindle: a change in any of them is what makes a block worth
 /// writing.
 pub struct Header {
     pub version: &'static str,
@@ -36,20 +36,23 @@ pub struct Header {
     pub surface: String,
     pub input: String,
     pub fonts: String,
-    pub store: String,
+    pub record: String,
     pub zone: String,
 }
 
 impl Header {
-    /// The block, `MARK` first and every other line indented under it.
+    /// The block, `HEADER_MARKER` first and every other line indented under it.
     pub fn block(&self) -> String {
-        let mut out = format!("{MARK}{} {} {}\n", self.version, self.build, self.arch);
+        let mut out = format!(
+            "{HEADER_MARKER}{} {} {}\n",
+            self.version, self.build, self.arch
+        );
         for (name, said) in [
             ("panel", &self.panel),
             ("surface", &self.surface),
             ("input", &self.input),
             ("fonts", &self.fonts),
-            ("store", &self.store),
+            ("record", &self.record),
             ("zone", &self.zone),
         ] {
             let _ = writeln!(out, "    {name:<8}{said}");
@@ -57,8 +60,8 @@ impl Header {
         out
     }
 
-    /// Write the block where the log does not already end with it, answering
-    /// whether it was written. A log we cannot read is treated as one that
+    /// Write the block where the log does not end with it, answering
+    /// whether it was written. A log that cannot be read counts as one that
     /// does not carry it.
     pub fn state(&self, log: &Path) -> bool {
         let block = self.block();
@@ -81,15 +84,15 @@ fn standing(log: &Path) -> Option<String> {
     // decode and read the block out of the rest.
     let tail = String::from_utf8_lossy(&bytes);
     let at = tail
-        .rfind(&format!("\n{MARK}"))
+        .rfind(&format!("\n{HEADER_MARKER}"))
         .map(|i| i + 1)
         .or_else(|| {
             // The whole file is short enough that the tail holds its opening.
-            (end <= TAIL && tail.starts_with(MARK)).then_some(0)
+            (end <= TAIL && tail.starts_with(HEADER_MARKER)).then_some(0)
         })?;
     let block: String = tail[at..]
         .lines()
-        .take_while(|line| line.starts_with(MARK) || line.starts_with("    "))
+        .take_while(|line| line.starts_with(HEADER_MARKER) || line.starts_with("    "))
         .fold(String::new(), |mut out, line| {
             let _ = writeln!(out, "{line}");
             out
@@ -97,8 +100,8 @@ fn standing(log: &Path) -> Option<String> {
     Some(block)
 }
 
-/// Now, in the `YYMMDD:HHMMSS` a syslog line and the store's mark both use, so
-/// a log line sorts against the rows it is about.
+/// The current instant, in the `YYMMDD:HHMMSS` a syslog line and the record's
+/// watermark both use: a log line sorts against the rows it is about.
 pub fn stamp_now() -> String {
     let (days, secs) = crate::date::now();
     crate::log::line::log_stamp(&crate::date::stamp(days, secs)).unwrap_or_default()
@@ -122,34 +125,34 @@ pub struct Trimmed {
 }
 
 /// Cut `log` back to `ceiling`, keeping every [`FAILED`] and [`WARNED`] line
-/// wherever it sits, then as far back as the previous [`MARK`] block will fit.
-/// Streamed a line at a time: a log outgrows the RAM that would hold it.
+/// wherever it sits, then as far back as the previous [`HEADER_MARKER`] block will fit.
+/// Streamed a line at a time: a log can outgrow the RAM.
 pub fn trim(log: &Path, ceiling: u64) -> Option<Trimmed> {
     let before = std::fs::metadata(log).ok()?.len();
     if before <= ceiling {
         return None;
     }
-    let (marks, by_bytes) = scan(log, before.saturating_sub(ceiling))?;
+    let (headers, by_bytes) = scan(log, before.saturating_sub(ceiling))?;
     // Where to cut from: the previous block, or the last one where keeping two
-    // would leave the file over the ceiling anyway.
-    let from = match marks.len() {
+    // leaves the file over the ceiling.
+    let from = match headers.len() {
         // No header block to cut on: the newest `ceiling` bytes are kept,
         // from a line boundary.
         0 => by_bytes,
-        1 => marks[0],
+        1 => headers[0],
         _ => {
-            let two = marks[marks.len() - 2];
+            let two = headers[headers.len() - 2];
             match before - two > ceiling {
-                true => marks[marks.len() - 1],
+                true => headers[headers.len() - 1],
                 false => two,
             }
         }
     };
-    let dropped = marks.iter().filter(|&&at| at < from).count();
+    let dropped = headers.iter().filter(|&&at| at < from).count();
     let partial = log.with_extension("partial");
     let kept = copy_kept(log, &partial, from).ok()?;
-    // **Write back through the same inode, never rename into place.** The
-    // shell holds one `2>>` descriptor on this file for the whole launch, and
+    // **Write back through the same inode, never rename into place.**
+    // one `2>>` descriptor stays open on this file for the whole launch, and
     // an unlinked inode takes every line printed afterwards nowhere.
     if put_back(&partial, log).is_err() {
         return None;
@@ -173,7 +176,7 @@ fn put_back(from: &Path, to: &Path) -> std::io::Result<()> {
     out.flush()
 }
 
-/// One pass over `log`: the byte offset of every [`MARK`] line, and the offset
+/// One pass over `log`: the byte offset of every [`HEADER_MARKER`] line, and the offset
 /// of the first line opening at or after `want`.
 fn scan(log: &Path, want: u64) -> Option<(Vec<u64>, u64)> {
     let file = std::fs::File::open(log).ok()?;
@@ -188,7 +191,7 @@ fn scan(log: &Path, want: u64) -> Option<(Vec<u64>, u64)> {
         if read == 0 {
             break;
         }
-        if line.starts_with(MARK.as_bytes()) {
+        if line.starts_with(HEADER_MARKER.as_bytes()) {
             out.push(at);
         }
         if from.is_none() && at >= want {
@@ -200,7 +203,7 @@ fn scan(log: &Path, want: u64) -> Option<(Vec<u64>, u64)> {
 }
 
 /// Copy `log` to `to`, keeping every line at or past `from` and every line
-/// marked [`FAILED`] or [`WARNED`] before it. Answers the bytes written.
+/// flagged [`FAILED`] or [`WARNED`] before it. Answers the bytes written.
 fn copy_kept(log: &Path, to: &Path, from: u64) -> std::io::Result<u64> {
     let mut reader = std::io::BufReader::new(std::fs::File::open(log)?);
     let mut writer = std::io::BufWriter::new(std::fs::File::create(to)?);
@@ -256,12 +259,12 @@ fn read_capped(reader: &mut impl std::io::BufRead, out: &mut Vec<u8>) -> std::io
     }
 }
 
-/// Which launch this was. A cron collect and a person opening the app do
+/// Which launch this was. `Collect` and `Opened` do
 /// different work, and separating them is what makes a run of launches read.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     /// The app was opened and drew.
-    Run,
+    Opened,
     /// `--collect` folded the log and drew nothing.
     Collect,
 }
@@ -269,14 +272,14 @@ pub enum Mode {
 impl Mode {
     fn tag(self) -> &'static str {
         match self {
-            Self::Run => "run",
+            Self::Opened => "run",
             Self::Collect => "col",
         }
     }
 }
 
 /// What one launch did, as the fields of one line. A field left `None` is one
-/// this launch never reached, and it is left out rather than written as zero:
+/// this launch never reached, and it is left out, not written as zero:
 /// a pass that did not run and a pass that found nothing are different facts.
 #[derive(Default)]
 pub struct Launch {
@@ -284,34 +287,34 @@ pub struct Launch {
     pub log: Option<String>,
     /// Sittings added, extended, and held after the pass.
     pub sittings: Option<String>,
-    /// Catalog rows, and the records they refreshed.
-    pub catalog: Option<String>,
-    /// Book records the store holds. What names no book is `identify`'s.
-    pub records: Option<String>,
-    /// Jackets held, then the books whose artwork the device has lost and
-    /// the books the store never had artwork for.
+    /// Library rows, and the books they refreshed.
+    pub library: Option<String>,
+    /// Books the record holds. Unidentified ones are `identify`'s.
+    pub record: Option<String>,
+    /// Covers held, then the books whose cover the Kindle has lost and
+    /// the books the record never had a cover for.
     pub covers: Option<String>,
-    /// What the sources past the catalog named.
+    /// What the sources past the library identified.
     pub identify: Option<String>,
-    /// What the two annotation sources came to.
-    pub annotate: Option<String>,
+    /// What the two highlight sources came to.
+    pub highlights: Option<String>,
     /// What the screens were given to draw. Only a launch that draws has one.
     pub drawn: Option<String>,
 }
 
 impl Launch {
-    /// The line, stamped and tagged. `stamp` is the shape the store's own
-    /// mark uses, so a log line and a store row sort against each other.
+    /// The line, stamped and tagged. `stamp` is the shape the record's own
+    /// watermark uses: a log line and a record row sort against each other.
     pub fn say(&self, stamp: &str, mode: Mode) -> String {
         let mut out = format!("{stamp} {}", mode.tag());
         for said in [
             &self.log,
             &self.sittings,
-            &self.catalog,
-            &self.records,
+            &self.library,
+            &self.record,
             &self.covers,
             &self.identify,
-            &self.annotate,
+            &self.highlights,
             &self.drawn,
         ]
         .into_iter()
@@ -341,7 +344,7 @@ mod tests {
             surface: "root 1264x1680 depth=24 stride=5056".into(),
             input: "touch=/dev/input/event2 score=7 grab=ok".into(),
             fonts: "86 faces, primary=Amazon-Ember-Regular.ttf".into(),
-            store: "581 s, 491 b, 111 a".into(),
+            record: "581 s, 491 b, 111 a".into(),
             zone: "Europe/Berlin +0200".into(),
         }
     }
@@ -358,13 +361,16 @@ mod tests {
         let block = header().block();
         let mut lines = block.lines();
         let first = lines.next().expect("an opening line");
-        assert!(first.starts_with(MARK), "{first}");
+        assert!(first.starts_with(HEADER_MARKER), "{first}");
         assert!(
             first.contains("0.3.1") && first.contains("armv7l"),
             "{first}"
         );
         for line in lines {
-            assert!(line.starts_with("    "), "indented under the mark: {line}");
+            assert!(
+                line.starts_with("    "),
+                "indented under the marker: {line}"
+            );
         }
     }
 
@@ -391,7 +397,7 @@ mod tests {
 
     /// A log carrying no header block is the one every install stands on the
     /// moment a build that writes them arrives — and it is the large one. It
-    /// must still be cut back, from a line boundary, keeping every failure.
+    /// is cut back all the same, from a line boundary, keeping every failure.
     #[test]
     fn a_log_with_no_header_block_is_still_cut_back() {
         let dir = scratch("noblocks");
@@ -418,9 +424,9 @@ mod tests {
         );
     }
 
-    /// The shell runs the binary as `2>> $LOG` and holds one descriptor for
-    /// the whole launch. A trim that replaced the file would leave that
-    /// descriptor on an unlinked inode and lose everything printed after it.
+    /// `2>> $LOG` holds one descriptor open for
+    /// the whole launch. A trim that replaces the file leaves that
+    /// descriptor on an unlinked inode and loses everything printed after it.
     #[test]
     fn a_trim_keeps_the_file_it_was_given() {
         let dir = scratch("inode");
@@ -506,9 +512,9 @@ mod tests {
         assert!(!left.contains("0.2.9"), "the oldest block is gone");
         assert!(left.contains("=== 0.3.1"), "the newest block stands");
         assert!(left.len() < text.len());
-        // Never a half block: what is left opens on a mark.
+        // Never a half block: what is left opens on `HEADER_MARKER`.
         assert!(
-            left.starts_with(MARK),
+            left.starts_with(HEADER_MARKER),
             "cut at a boundary: {:?}",
             &left[..40]
         );
@@ -541,7 +547,7 @@ mod tests {
     }
 
     /// A single over-long line is stepped over, not held: the offsets stay
-    /// right and the trim still cuts where it should.
+    /// right and the trim cuts where it should.
     #[test]
     fn one_enormous_line_does_not_derail_the_offsets() {
         let dir = scratch("longline");
@@ -557,18 +563,18 @@ mod tests {
 
         trim(&log, 1_000).expect("over the ceiling");
         let left = std::fs::read_to_string(&log).unwrap();
-        assert!(left.starts_with("=== 0.3.2"), "cut at the newer mark");
+        assert!(left.starts_with("=== 0.3.2"), "cut at the newer marker");
         assert!(
             !left.contains("xxxx"),
             "the enormous line went with its block"
         );
     }
 
-    /// A device fact is the same on every launch of one build, so it belongs
-    /// in the header block and never in the body. Only an event or a marked
+    /// A Kindle fact is the same on every launch of one build: it belongs
+    /// in the header block and never in the body. Only an event or a flagged
     /// failure may print from the open path, and this list is not an accident.
     #[test]
-    fn the_device_layers_state_facts_in_the_header_and_events_in_the_body() {
+    fn the_kindle_layers_state_facts_in_the_header_and_events_in_the_body() {
         const SOURCES: [(&str, &str); 3] = [
             ("fb.rs", include_str!("eink/fb.rs")),
             ("touch.rs", include_str!("eink/touch.rs")),
@@ -596,23 +602,23 @@ mod tests {
                     .split_once("eprintln!(\"")
                     .map(|(_, rest)| rest)
                     .unwrap_or_default();
-                let marked = said.starts_with(FAILED) || said.starts_with(WARNED);
+                let flagged = said.starts_with(FAILED) || said.starts_with(WARNED);
                 let evented = EVENTS.iter().any(|e| said.starts_with(e));
-                if !marked && !evented {
+                if !flagged && !evented {
                     loose.push(format!("{name}: {}", said.trim_end_matches('"')));
                 }
             }
         }
         assert!(
             loose.is_empty(),
-            "a device fact must reach the header block, not a line a launch: {loose:#?}",
+            "a Kindle fact must reach the header block, not a line a launch: {loose:#?}",
         );
     }
 
     #[test]
     fn a_launch_line_leaves_out_what_it_never_reached() {
         let bare = Launch::default();
-        assert_eq!(bare.say("260910:132307", Mode::Run), "260910:132307 run");
+        assert_eq!(bare.say("260910:132307", Mode::Opened), "260910:132307 run");
 
         let full = Launch {
             log: Some("log=25524".into()),

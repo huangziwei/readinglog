@@ -1,4 +1,4 @@
-//! Font fallback over the faces the device ships. A character is drawn from
+//! Font fallback over the faces the Kindle ships. A character is drawn from
 //! the [`Band`] its script belongs to, never from whichever face covers the
 //! whole string. [`FontChain::load`] leaves every candidate but one `Pending`.
 
@@ -47,7 +47,7 @@ impl Script {
         }
     }
 
-    /// The convention `text` is set in: the catalog's tag, else the
+    /// The convention `text` is set in: the library's tag, else the
     /// characters. Kana settles a run for Japanese and Hangul for Korean; Han
     /// alone cannot be told apart and takes a bare `zh`'s default.
     pub fn resolve(hint: Script, text: &str) -> Script {
@@ -179,7 +179,7 @@ fn is_wide(c: char) -> bool {
     matches!(c, '\u{3000}'..='\u{303F}' | '\u{FF00}'..='\u{FF65}' | '\u{FFA0}'..='\u{FFEF}')
 }
 
-/// One face the device might have, and the convention it sets.
+/// One face the Kindle might have, and the convention it sets.
 pub struct Candidate {
     pub path: PathBuf,
     pub script: Script,
@@ -332,7 +332,7 @@ fn order_for(scripts: &[Script], wanted: Script, also: &[Script]) -> Vec<usize> 
     order
 }
 
-/// The most face bytes held at once, past the primary; `STSongBold.ttf` is 13 MB.
+/// The most face bytes held at once, past the primary; one CJK face runs to 13 MB.
 const RESIDENT_CAP: u64 = 24 * 1024 * 1024;
 
 /// The most bytes one lookup will newly read; past it the character draws a box.
@@ -383,7 +383,7 @@ impl FontChain {
     /// Fails on an empty chain alone.
     pub fn load(candidates: &[Candidate]) -> Result<Self> {
         // Existence is settled here, parsing is not: a stat per candidate is
-        // free, and it keeps `paths` an honest account of this device.
+        // free, and it keeps `paths` an honest account of this Kindle.
         let mut present = candidates
             .iter()
             .filter(|candidate| candidate.path.is_file());
@@ -694,10 +694,10 @@ mod tests {
         }
     }
 
-    /// Every character here is drawn from a face the device ships, and each
+    /// Every character here is drawn from a face the Kindle ships, and each
     /// must resolve under [`WALK_BUDGET`].
     #[test]
-    fn the_scripts_the_device_ships_still_resolve() {
+    fn the_scripts_the_kindle_ships_still_resolve() {
         let Some(mut chain) = chain_on_disk() else {
             return;
         };
@@ -771,7 +771,7 @@ mod tests {
     /// order names each convention once before it names any of them twice.
     #[test]
     fn the_head_of_every_order_names_a_different_convention() {
-        let (names, scripts) = device_chain();
+        let (names, scripts) = kindle_chain();
         let orders = band_orders(&scripts);
         let conventions = CJK_FAMILIES.len();
         for band in [
@@ -822,7 +822,7 @@ mod tests {
 
     /// Every face on a Kindle Scribe's `/usr/java/lib/fonts`, verbatim, cut to
     /// the ones a title can reach. The full directory holds 122.
-    const DEVICE: &[&str] = &[
+    const KINDLE: &[&str] = &[
         "Amazon-Ember-Bold.ttf",
         "Amazon-Ember-Heavy.ttf",
         "Amazon-Ember-Medium.ttf",
@@ -854,10 +854,10 @@ mod tests {
         "code2000.ttf",
     ];
 
-    /// [`DEVICE`] in the order [`discover`] hands it over, with the convention
+    /// [`KINDLE`] in the order [`discover`] hands it over, with the convention
     /// each face sets.
-    fn device_chain() -> (Vec<&'static str>, Vec<Script>) {
-        let mut names = DEVICE.to_vec();
+    fn kindle_chain() -> (Vec<&'static str>, Vec<Script>) {
+        let mut names = KINDLE.to_vec();
         names.sort_by_key(|n| (rank(n), *n));
         let scripts = names
             .iter()
@@ -867,11 +867,11 @@ mod tests {
     }
 
     #[test]
-    fn the_ui_font_wins_on_a_real_device() {
-        let (names, _) = device_chain();
+    fn the_ui_font_wins_on_a_real_kindle() {
+        let (names, _) = kindle_chain();
         assert_eq!(
             names[0], "Amazon-Ember-Regular.ttf",
-            "the device's UI typeface, upright and regular, must draw the UI"
+            "the Kindle's UI typeface, upright and regular, must draw the UI"
         );
         // The traps: a bold family whose cut is named "Regular", two weights
         // with no bold-ish token, and the serif cuts naming no weight at all.
@@ -905,7 +905,7 @@ mod tests {
                 "{han} must outrank code2000"
             );
         }
-        // The catch-all outranks the unnamed rest.
+        // The catch-all outranks the unidentified rest.
         for unnamed in ["KindleBlackboxRegular.ttf", "Futura-Medium.ttf"] {
             assert!(rank("code2000.ttf") < rank(unnamed));
         }
@@ -947,7 +947,7 @@ mod tests {
     #[test]
     fn a_chinese_title_is_drawn_by_a_chinese_face() {
         // TBGothic is Japanese and covers most of the same codepoints.
-        let (names, scripts) = device_chain();
+        let (names, scripts) = kindle_chain();
         let orders = band_orders(&scripts);
         let first = |band: Band| names[orders[band.slot()][0]];
         assert_eq!(
@@ -968,7 +968,7 @@ mod tests {
     #[test]
     fn every_band_can_still_reach_every_face() {
         // A band prefers its own convention and fences no face off.
-        let (names, scripts) = device_chain();
+        let (names, scripts) = kindle_chain();
         let orders = band_orders(&scripts);
         for band in [
             Band::Latin,
@@ -1064,7 +1064,7 @@ mod tests {
         assert_eq!(Script::of_language("zh-CN"), Script::SimplifiedChinese);
         // CLDR resolves bare `zh` to Simplified.
         assert_eq!(Script::of_language("zh"), Script::SimplifiedChinese);
-        // The catalog's `p_languages_0`, in the shapes it takes.
+        // The library's `p_languages_0`, in the shapes it takes.
         assert_eq!(Script::of_language("ja-JP"), Script::Japanese);
         assert_eq!(
             Script::of_language("zh-Hant-TW"),
@@ -1088,10 +1088,10 @@ mod tests {
         }
     }
 
-    /// The real faces, where `READINGLOG_FONTS` points at a device's own font
+    /// The real faces, where `READINGLOG_FONTS` points at a Kindle's own font
     /// directories. `None` where it is unset, which skips the assertions below:
-    /// they are about a device's files, not about the ranking.
-    fn device_chain_on_disk() -> Option<FontChain> {
+    /// they are about a Kindle's files, not about the ranking.
+    fn kindle_chain_on_disk() -> Option<FontChain> {
         let dirs = std::env::var("READINGLOG_FONTS").ok()?;
         let candidates: Vec<Candidate> = dirs
             .split(':')
@@ -1132,7 +1132,7 @@ mod tests {
 
     #[test]
     fn a_mixed_title_takes_each_run_off_its_own_face() {
-        let Some(mut chain) = device_chain_on_disk() else {
+        let Some(mut chain) = kindle_chain_on_disk() else {
             return;
         };
         let name = |chain: &FontChain, face: usize| {
@@ -1167,8 +1167,8 @@ mod tests {
     }
 
     #[test]
-    fn each_convention_reaches_its_own_face_on_a_real_device() {
-        let Some(mut chain) = device_chain_on_disk() else {
+    fn each_convention_reaches_its_own_face_on_a_real_kindle() {
+        let Some(mut chain) = kindle_chain_on_disk() else {
             return;
         };
         let name = |chain: &FontChain, face: usize| {
@@ -1191,7 +1191,7 @@ mod tests {
             assert_eq!(name(&chain, face), want, "{run:?}");
         }
         // Kana and Hangul have faces of their own, and neither is code2000 —
-        // whose copy on this device carries both, and no Han at all.
+        // whose copy on this Kindle carries both, and no Han at all.
         let kana = chain.face_for(Band::Kana, 'ゆ').expect("no face");
         assert_eq!(name(&chain, kana), "TBGothicMed_213.ttf");
         let hangul = chain.face_for(Band::Hangul, '한').expect("no face");
@@ -1200,7 +1200,7 @@ mod tests {
 
     #[test]
     fn every_face_is_scaled_to_the_same_em() {
-        let Some(mut chain) = device_chain_on_disk() else {
+        let Some(mut chain) = kindle_chain_on_disk() else {
             return;
         };
         // The faces disagree on `hhea.ascender - hhea.descender`, which is

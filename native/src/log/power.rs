@@ -1,9 +1,9 @@
-//! The stretches `powerd` recorded as `ACTIVE`, and the sleeps between them,
-//! in absolute seconds. [`Awake::between`] sums the stretches inside a span,
+//! The spans `powerd` recorded as `ACTIVE`, and the sleeps between them,
+//! in absolute seconds. [`Awake::between`] sums the spans inside an interval,
 //! [`Awake::bound`] takes the sleeps off it.
 
 use super::line::{field_text, stamp};
-use super::session::SESSION_GAP_SECS;
+use super::sitting::SITTING_GAP_SECS;
 
 /// The tags on the lines `powerd` writes at a change of state.
 /// `ereader_powerd_state_change` transcribes the machine whole;
@@ -19,14 +19,14 @@ pub const POWER_MARKERS: [&str; 4] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Family {
     /// `ereader_powerd_state_change`, naming both ends of the move.
-    Record,
+    Metric,
     /// The LIPC event `powerd` fires as it makes the same move.
     Event,
 }
 
-/// Whether a power change left the device awake.
+/// Whether a power change left the Kindle awake.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Woke {
+enum State {
     Active,
     Idle,
 }
@@ -34,22 +34,22 @@ enum Woke {
 /// Read a line as a change into or out of `ACTIVE`.
 /// `ereader_powerd_state_change` states both ends of a move, read on both;
 /// `outOfScreenSaver` opens a span, `goingToScreenSaver`/`suspending` close.
-fn change(line: &str) -> Option<(Family, Woke)> {
+fn change(line: &str) -> Option<(Family, State)> {
     if line.contains(POWER_MARKERS[0]) {
         return match (
             field_text(line, "curr_state").is_some_and(|s| s == "ACTIVE"),
             field_text(line, "prev_state").is_some_and(|s| s == "ACTIVE"),
         ) {
-            (true, _) => Some((Family::Record, Woke::Active)),
-            (_, true) => Some((Family::Record, Woke::Idle)),
+            (true, _) => Some((Family::Metric, State::Active)),
+            (_, true) => Some((Family::Metric, State::Idle)),
             _ => None,
         };
     }
     if line.contains(POWER_MARKERS[1]) {
-        return Some((Family::Event, Woke::Active));
+        return Some((Family::Event, State::Active));
     }
     if POWER_MARKERS[2..].iter().any(|m| line.contains(m)) {
-        return Some((Family::Event, Woke::Idle));
+        return Some((Family::Event, State::Idle));
     }
     None
 }
@@ -63,47 +63,47 @@ pub fn is_state_change(line: &str) -> bool {
 pub struct Awake {
     spans: Vec<(i64, i64)>,
     asleep: Vec<(i64, i64)>,
-    /// The instant of the first change where it is a `Woke::Idle`, awake ahead of it.
+    /// The instant of the first change where it is a `State::Idle`, awake ahead of it.
     lead: Option<i64>,
 }
 
 impl Awake {
-    /// `spans` opens at `Woke::Active` and closes at the next `Woke::Idle`;
-    /// one left open is dropped. `asleep` is the same walk from `Woke::Idle`.
+    /// `spans` opens at `State::Active` and closes at the next `State::Idle`;
+    /// one left open is dropped. `asleep` is the same walk from `State::Idle`.
     /// One `Family` at a time.
     pub fn from_events<'a>(events: impl IntoIterator<Item = &'a str>) -> Self {
-        let changes: Vec<(Family, i64, Woke)> = events
+        let changes: Vec<(Family, i64, State)> = events
             .into_iter()
             .filter_map(|line| {
-                let (family, woke) = change(line)?;
-                Some((family, stamp(line)?.abs, woke))
+                let (family, state) = change(line)?;
+                Some((family, stamp(line)?.abs, state))
             })
             .collect();
-        let family = match changes.iter().any(|(f, ..)| *f == Family::Record) {
-            true => Family::Record,
+        let family = match changes.iter().any(|(f, ..)| *f == Family::Metric) {
+            true => Family::Metric,
             false => Family::Event,
         };
 
         let mut spans = Vec::new();
         let mut asleep = Vec::new();
-        let mut woke_at: Option<i64> = None;
+        let mut wake_at: Option<i64> = None;
         let mut slept_at: Option<i64> = None;
         let mut ours = changes.iter().filter(|(f, ..)| *f == family).peekable();
         let lead = ours
             .peek()
-            .and_then(|(_, at, woke)| (*woke == Woke::Idle).then_some(*at));
-        for (_, at, woke) in ours {
-            match woke {
-                Woke::Active => {
+            .and_then(|(_, at, state)| (*state == State::Idle).then_some(*at));
+        for (_, at, state) in ours {
+            match state {
+                State::Active => {
                     if let Some(from) = slept_at.take()
                         && *at > from
                     {
                         asleep.push((from, *at));
                     }
-                    woke_at = woke_at.or(Some(*at));
+                    wake_at = wake_at.or(Some(*at));
                 }
-                Woke::Idle => {
-                    if let Some(from) = woke_at.take()
+                State::Idle => {
+                    if let Some(from) = wake_at.take()
                         && *at > from
                     {
                         spans.push((from, *at));
@@ -123,14 +123,14 @@ impl Awake {
 
     /// Drop the `ACTIVE` spans that no reading line falls in, after opening
     /// one at the first of `read_at` where reading runs on unbroken to `lead`.
-    /// `asleep` keeps every stretch. `read_at` is ascending.
+    /// `asleep` keeps every span. `read_at` is ascending.
     pub fn witnessed(mut self, read_at: &[i64]) -> Self {
         if let Some(lead) = self.lead {
             let ahead = &read_at[..read_at.partition_point(|at| *at < lead)];
             let unbroken = ahead
                 .iter()
                 .zip(ahead.iter().skip(1).chain([&lead]))
-                .all(|(at, next)| next - at <= SESSION_GAP_SECS);
+                .all(|(at, next)| next - at <= SITTING_GAP_SECS);
             if let Some(&first) = ahead.first()
                 && unbroken
             {
@@ -144,7 +144,7 @@ impl Awake {
         self
     }
 
-    /// Seconds between two instants, less the `asleep` stretches inside them.
+    /// Seconds between two instants, less the `asleep` spans inside them.
     pub fn bound(&self, from: i64, to: i64) -> i64 {
         let slept: i64 = self
             .asleep
@@ -154,7 +154,7 @@ impl Awake {
         (to - from - slept).max(0)
     }
 
-    /// Whether an `asleep` stretch begins after `from` and before `to`.
+    /// Whether an `asleep` span begins after `from` and before `to`.
     pub fn slept_after(&self, from: i64, to: i64) -> bool {
         self.asleep
             .iter()
@@ -169,7 +169,7 @@ impl Awake {
             .sum()
     }
 
-    /// The `ACTIVE` stretches between two instants, clipped to them.
+    /// The `ACTIVE` spans between two instants, clipped to them.
     pub fn spans_between(&self, from: i64, to: i64) -> Vec<(i64, i64)> {
         self.spans
             .iter()
@@ -188,9 +188,9 @@ impl Awake {
 mod tests {
     use super::*;
 
-    /// `ereader_powerd_state_change` records: `ACTIVE` at 11:19:00,
+    /// `ereader_powerd_state_change` metrics: `ACTIVE` at 11:19:00,
     /// `SCREEN SAVER` at 11:35:00.
-    const RECORDS: [&str; 2] = [
+    const METRICS: [&str; 2] = [
         "260814:111900.726 fastmetrics[9842]: D fastmetrics:KindleFastMetricsPublisher:[24109.944489]: Emitting a new record. SchemaName[ereader_powerd_state_change], Fields[{ \t\"curr_state\" : \"ACTIVE\", \t\"prev_state\" : \"SCREEN SAVER\" } ]. :",
         "260814:113500.549 fastmetrics[9842]: D fastmetrics:KindleFastMetricsPublisher:[26548.733985]: Emitting a new record. SchemaName[ereader_powerd_state_change], Fields[{ \t\"curr_state\" : \"SCREEN SAVER\", \t\"prev_state\" : \"ACTIVE\" } ]. :",
     ];
@@ -298,21 +298,21 @@ mod tests {
     }
 
     #[test]
-    fn a_record_pair_brackets_one_awake_span() {
-        let a = Awake::from_events(RECORDS);
+    fn a_metric_pair_brackets_one_awake_span() {
+        let a = Awake::from_events(METRICS);
         assert!(!a.is_empty());
         assert_eq!(a.between(at("260814:000000"), at("260814:235959")), 16 * 60);
     }
 
     #[test]
-    fn a_device_writing_only_lipc_events_is_still_bounded() {
+    fn a_kindle_writing_only_lipc_events_is_still_bounded() {
         let a = Awake::from_events(EVENTS);
         assert_eq!(a.between(at("260814:000000"), at("260814:235959")), 16 * 60);
     }
 
     #[test]
-    fn a_device_writing_both_families_counts_the_span_once() {
-        let both: Vec<&str> = RECORDS.iter().chain(EVENTS.iter()).copied().collect();
+    fn a_kindle_writing_both_families_counts_the_span_once() {
+        let both: Vec<&str> = METRICS.iter().chain(EVENTS.iter()).copied().collect();
         let a = Awake::from_events(both);
         assert_eq!(a.between(at("260814:000000"), at("260814:235959")), 16 * 60);
     }
@@ -325,7 +325,7 @@ mod tests {
 
     #[test]
     fn a_span_still_open_at_the_end_of_the_batch_is_dropped() {
-        let a = Awake::from_events([RECORDS[0]]);
+        let a = Awake::from_events([METRICS[0]]);
         assert!(a.is_empty());
     }
 

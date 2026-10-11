@@ -1,5 +1,5 @@
 //! One day's books, a row each: the cover, the title, how long it was read
-//! that day, the place it stood at as the day ended, and where in the day the
+//! that day, the progress it stood at as the day ended, and where in the day the
 //! reading fell. `home` and `rhythm` both end here.
 
 use crate::date;
@@ -52,7 +52,7 @@ impl Metrics {
     }
 
     /// Title lines a block `h` tall holds, of [`TITLE_LINES`]. A block too
-    /// short for one line still sets one.
+    /// short for one line sets one all the same.
     fn lines(self, theme: &Theme, h: i32, named: bool) -> usize {
         (2..=TITLE_LINES)
             .rev()
@@ -204,7 +204,7 @@ pub fn note(cx: &mut Ctx, at: Rect, books: usize, seconds: i64) {
 /// The part of `area` the rows take, [`note`] holding the foot where `day`
 /// holds books no row can name.
 pub fn rows_box(cx: &mut Ctx, area: Rect, day: i64) -> Rect {
-    let foot = (cx.stats.unnamed_over(day..=day).0 > 0) as i32 * note_height(cx);
+    let foot = (cx.stats.unidentified_over(day..=day).0 > 0) as i32 * note_height(cx);
     Rect::new(area.x, area.y, area.w, (area.h - foot).max(0))
 }
 
@@ -212,7 +212,7 @@ pub fn rows_box(cx: &mut Ctx, area: Rect, day: i64) -> Rect {
 /// name.
 pub fn draw_noting(cx: &mut Ctx, area: Rect, day: i64, read: &[(usize, i64)]) {
     let theme: &Theme = cx.theme;
-    let (books, seconds) = cx.stats.unnamed_over(day..=day);
+    let (books, seconds) = cx.stats.unidentified_over(day..=day);
     let box_ = rows_box(cx, area, day);
     let floor = row_floor(cx.text, theme);
     let shown = fits(floor, box_.h, read.len());
@@ -249,7 +249,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, day: i64, read: &[(usize, i64)]) {
     }
 }
 
-/// The book at `index`: its cover, title, author, `secs`, the place it stood
+/// The book at `index`: its cover, title, author, `secs`, the progress it stood
 /// at as `day` ended, and across the foot of `area` the spans `day` holds on
 /// it.
 fn row(cx: &mut Ctx, area: Rect, day: i64, index: usize, secs: i64) {
@@ -264,14 +264,14 @@ fn row(cx: &mut Ctx, area: Rect, day: i64, index: usize, secs: i64) {
     // `spans` takes the full width of `area`; `over` holds the book.
     let (spans, over) = area.split_bottom(theme.gap * 3);
     let inner = over.inset_y(theme.gap);
-    let (art, rest) = inner.split_left(cover::width_for(inner.h));
-    // The title stands beside the box, so an empty one says only that.
-    if !cx.covers.draw(cx.fb, art, &book.thumbnail) {
-        cover::note(cx, art);
+    let (cover_box, rest) = inner.split_left(cover::width_for(inner.h));
+    // The title stands beside the box: an empty one says only that.
+    if !cx.covers.draw(cx.fb, cover_box, &book.thumbnail) {
+        cover::note(cx, cover_box);
     }
 
     let body = Rect::new(
-        art.right() + theme.gap * 2,
+        cover_box.right() + theme.gap * 2,
         inner.y,
         rest.w - theme.gap * 2,
         inner.h,
@@ -286,9 +286,9 @@ fn row(cx: &mut Ctx, area: Rect, day: i64, index: usize, secs: i64) {
 
     // The block keeps to `body`, taking the air under it where the row is too
     // short — never the span strip. The line under the title states the day's
-    // own share of the marks, as the figure over it does; Books states all.
-    let marked = super::marks_said(cx.s(), cx.stats.marks_counted_on(index, day));
-    let named = !author.is_empty() || !marked.is_empty();
+    // own share of the highlights, as the figure over it does; Books states all.
+    let highlights = super::highlights_said(cx.s(), cx.stats.highlights_counted_on(index, day));
+    let named = !author.is_empty() || !highlights.is_empty();
     let set = Metrics::of(cx.text, theme);
     cx.text.set_px(theme.body_px);
     let room = body.h + theme.gap;
@@ -312,7 +312,7 @@ fn row(cx: &mut Ctx, area: Rect, day: i64, index: usize, secs: i64) {
     if named {
         y += theme.gap / 2;
         let line = Rect::new(words.x, words.y, body.right() - words.x, words.h);
-        super::under_title(cx, line, y, script, &author, &marked);
+        super::under_title(cx, line, y, script, &author, &highlights);
     }
 
     cx.text.set_px(theme.body_px);
@@ -344,7 +344,7 @@ fn row(cx: &mut Ctx, area: Rect, day: i64, index: usize, secs: i64) {
 }
 
 /// The width of the figures column, from `figure` alone: the band under it
-/// carries the percentage.
+/// carries the progress.
 fn figures_width(cx: &mut Ctx, figure: &str) -> i32 {
     cx.text.measure_width(figure) as i32
 }
@@ -431,7 +431,7 @@ pub(crate) mod tests {
         let two = set.block(&theme, TITLE_LINES, true);
         assert_eq!(set.lines(&theme, two, true), TITLE_LINES);
         assert_eq!(set.lines(&theme, two - 1, true), 1);
-        // A block shorter than one line still sets one.
+        // A block shorter than one line sets one all the same.
         assert_eq!(set.lines(&theme, 0, true), 1);
     }
 

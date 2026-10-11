@@ -1,6 +1,6 @@
 //! Reading one syslog line. [`payloads`] splits a reading-timer line into
 //! `;`-terminated payloads of `key:value,` fields, each headed by an event
-//! name; [`field_text`] and [`field_num`] read a `fastmetrics` record's body.
+//! name; [`field_text`] and [`field_num`] read a `fastmetrics` metric's body.
 
 use crate::date;
 
@@ -16,7 +16,7 @@ pub struct Moment {
     pub secs: i64,
     /// The same instant as one running count of seconds.
     pub abs: i64,
-    /// `YYYY-MM-DDTHH:MM:SS` — the form a session stores.
+    /// `YYYY-MM-DDTHH:MM:SS` — the form a sitting stores.
     pub at: String,
 }
 
@@ -125,7 +125,7 @@ fn fields<'a>(text: &'a str, name: &'static str) -> impl Iterator<Item = usize> 
     })
 }
 
-/// The `kind` and the place a position field states, `at` past its `<name>:`.
+/// The `kind` and the value a position field states, `at` past its `<name>:`.
 /// `value` ends at the next `,` or `;`. Shapes: `YJPosition:<token>:<n>`,
 /// `HTMLPosition:<n>`, `MobiPosition:<n>`, `MobiSerializedPosition:<n> <n>`.
 fn stated(text: &str, at: usize) -> Option<(&str, i64)> {
@@ -209,7 +209,7 @@ pub fn names(line: &str, event: &str) -> bool {
 /// What one line says about the book it is on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Observation {
-    /// The book's own end position: this line's fingerprint for its book.
+    /// The book's own end position: this line's end position for its book.
     pub position: i64,
     /// The book's running reading counter, in milliseconds.
     pub total_ms: Option<i64>,
@@ -227,7 +227,7 @@ pub struct Observation {
 }
 
 /// Read `line` as an observation of some book's reading counter, or `None`.
-/// `line` qualifies on a counter beside an end position, named or not.
+/// `line` qualifies on a counter beside an end position, identified or not.
 pub fn observation(line: &str) -> Option<Observation> {
     let page_turn = names(line, "NextPage");
     let closes = names(line, "CloseBook");
@@ -244,7 +244,7 @@ pub fn observation(line: &str) -> Option<Observation> {
                 .flatten()
         })
         // A payload carrying `CurrentPos` and an end position, with no
-        // `TotalTime` and no name — the whole record of an untimed sitting.
+        // `TotalTime` and no name — all an untimed sitting states.
         .or_else(|| {
             events().find(|p| {
                 end_position(p).is_some()
@@ -285,7 +285,7 @@ pub fn opened_at_counter(line: &str) -> Option<i64> {
 
 /// Whether `line` is a `Reading_Resumed` restarting the page interval: reason
 /// 2, the screensaver lifting, or 8, a return from another application.
-pub fn resumed(line: &str) -> bool {
+pub fn wakes(line: &str) -> bool {
     let Some(rest) = line.split_once("Reading_Resumed,Reason:").map(|(_, r)| r) else {
         return false;
     };
@@ -307,7 +307,7 @@ fn quoted(line: &str, name: &str) -> Option<usize> {
     })
 }
 
-/// Read `"<name>" : "<value>"` out of a metrics record's JSON-ish body.
+/// Read `"<name>" : "<value>"` out of a metric's JSON-ish body.
 pub fn field_text<'a>(line: &'a str, name: &str) -> Option<&'a str> {
     let at = quoted(line, name)? + name.len() + 2;
     let rest = &line[at..];
@@ -329,7 +329,7 @@ pub fn field_num(line: &str, name: &str) -> Option<i64> {
 }
 
 /// The `BookEndPosition.FromBook` `line` states, as `p_contentSize` holds it.
-/// An `HTMLPosition` book end is `p_contentSize - 1`; every other class states
+/// An `HTMLPosition` book end is `p_contentSize - 1`; every other kind states
 /// `p_contentSize`.
 pub fn from_book(line: &str) -> Option<i64> {
     let (kind, position) =
@@ -337,7 +337,7 @@ pub fn from_book(line: &str) -> Option<i64> {
     Some(position + i64::from(kind == "HTMLPosition"))
 }
 
-/// Map each book's per-line `EndPos` fingerprint to its [`from_book`], with
+/// Map each book's per-line `EndPos` end position to its [`from_book`], with
 /// `pending` dropped around an open and a close.
 pub fn frombook_map<'a>(events: impl IntoIterator<Item = &'a str>) -> Vec<(i64, i64)> {
     let mut map: Vec<(i64, i64)> = Vec::new();
@@ -488,7 +488,7 @@ mod tests {
     }
 
     #[test]
-    fn an_open_states_the_counter_it_resumes_from() {
+    fn an_open_states_the_counter_it_opens_at() {
         let null = "260811:072945 java[1]: I ReadingTimerController:Information::OpenBook,CurrentVersionUsed:0,StoredBookData:null,Title:<private>;";
         assert_eq!(opened_at_counter(null), Some(0));
         let read = "260811:072945 java[1]: I ReadingTimerController:Information::OpenBook,StoredBookData:TimeRead:9,229 sec. WPM:0. Version:0,Title:<private>;";
@@ -516,30 +516,30 @@ mod tests {
         assert_eq!(obs.total_ms, Some(5_000_460));
         assert_eq!(obs.words, Some(44_539));
         assert_eq!(book_position(line), Some(2_546_710));
-        // `last_event` reads `PAGE` from its `PageStartPos` on, and `place` whole.
+        // `last_event` reads `PAGE` from its `PageStartPos` on, and `positions` whole.
         assert_eq!(
             last_event(PAGE),
             PAGE.split_once("NextPage,Verdict:Processed,").unwrap().1
         );
-        let place = "CurrentPos:HTMLPosition:7731097,EndPos:HTMLPosition:19886489,PosLeft:1;";
-        assert_eq!(last_event(place), place);
+        let positions = "CurrentPos:HTMLPosition:7731097,EndPos:HTMLPosition:19886489,PosLeft:1;";
+        assert_eq!(last_event(positions), positions);
     }
 
     #[test]
-    fn a_wake_is_a_resume_the_timer_restarts_its_interval_at() {
-        let resume = |reason: i64| {
+    fn a_wake_is_where_the_timer_restarts_its_interval() {
+        let resumed = |reason: i64| {
             format!(
                 "260929:233443 cvm[6397]: I ReadingTimerController:Information::Reading_Resumed,Reason:{reason};"
             )
         };
-        assert!(resumed(&resume(2)), "the screensaver lifting");
-        assert!(resumed(&resume(8)), "back from another application");
-        assert!(!resumed(&resume(64)), "the resume behind an open");
-        assert!(!resumed(&resume(32)));
-        assert!(!resumed(
+        assert!(wakes(&resumed(2)), "the screensaver lifting");
+        assert!(wakes(&resumed(8)), "back from another application");
+        assert!(!wakes(&resumed(64)), "the `Reading_Resumed` behind an open");
+        assert!(!wakes(&resumed(32)));
+        assert!(!wakes(
             "260929:233443 cvm[6397]: I ReadingTimerController:Information::Handling Reading event :2: reason :2"
         ));
-        assert!(!resumed(
+        assert!(!wakes(
             "260929:223131 cvm[6397]: I ReadingTimerController:Information::Reading_Interrupted,Reason:1;"
         ));
     }
@@ -554,7 +554,7 @@ mod tests {
     }
 
     #[test]
-    fn a_book_end_maps_its_last_word_position_to_the_catalog_number() {
+    fn a_book_end_maps_its_last_word_position_to_the_library_number() {
         let open = "260811:072945 java[1]: I ReadingTimerController:Information::OpenBook,StoredBookData:null;";
         let info = "260811:072948 java[1]: I ReadingTimerController:Information::BookEndPosition.FromBook:YJPosition: AZI/AAAAAAAA:938018,BookEndPosition.LastWordPos.override:YJPosition: Aag/AACDAQAA:938016,CurrentPos:YJPosition: AWUDAAAAAAAA:2,EndPos:YJPosition: Aag/AACDAQAA:938016,PosLeft:938014;";
         assert_eq!(frombook_map([open, info]), vec![(938_016, 938_018)]);
@@ -590,7 +590,7 @@ mod tests {
     }
 
     #[test]
-    fn a_mobi8_book_end_is_raised_to_the_extent_the_catalog_states() {
+    fn a_mobi8_book_end_is_raised_to_the_extent_the_library_states() {
         let open = "260906:192401 java[1]: I ReadingTimerController:Information::OpenBook,StoredBookData:TimeRead:329 sec. WPM:0. Version:0,Title:<private>;";
         let info = "260906:192402 java[1]: I ReadingTimerController:Information::BookEndPosition.FromBook:HTMLPosition:19886521,BookEndPosition.LastWordPos.override:HTMLPosition:19886489,CurrentPos:HTMLPosition:7731097,EndPos:HTMLPosition:19886489,PosLeft:12155392;";
         // `FromBook` 19886521 against `p_contentSize` 19886522.
@@ -602,10 +602,10 @@ mod tests {
     }
 
     #[test]
-    fn a_place_read_back_out_of_a_sidecar_states_itself_last() {
+    fn a_position_read_back_out_of_a_sidecar_states_itself_last() {
         let close = "260906:193015 java[1]: I ReadingTimerController:Information::CloseBook,CurrentPos:MobiSerializedPosition:12 4507,EndPos:MobiSerializedPosition:9 938016,PosLeft:933509;";
         assert_eq!(book_position(close), Some(938_016));
-        // `EndPos:938016` names no class.
+        // `EndPos:938016` names no kind.
         assert_eq!(
             book_position(
                 "260906:193015 java[1]: I ReadingTimerController:Information::CloseBook,EndPos:938016,PosLeft:0;"
@@ -617,7 +617,7 @@ mod tests {
     #[test]
     fn an_untimed_sitting_is_read_whatever_stack_wrote_it() {
         let line = "260906:192500 java[1]: I ReadingTimerController:Information::CurrentPos:HTMLPosition:7731097,EndPos:HTMLPosition:19886489,PosLeft:12155392;";
-        let obs = observation(line).expect("a book and a place");
+        let obs = observation(line).expect("a book and a position");
         assert_eq!(obs.position, 19_886_489);
         assert_eq!(obs.total_ms, None);
         assert!(!obs.page_turn);

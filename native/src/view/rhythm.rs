@@ -58,7 +58,7 @@ fn lists_books(span: Span) -> bool {
 fn grid_height(span: Span, area: Rect, theme: &Theme, day: i64, week: WeekStart) -> i32 {
     match span {
         Span::AllTime | Span::Month => area.h,
-        // A week has seven columns and a shelf of covers under them: the grid
+        // A week has seven columns and a row of covers under them: the grid
         // takes a share of the page and never less than its own height.
         Span::Week => week_height(theme).max(area.h * 2 / 5),
         Span::Year => {
@@ -125,7 +125,7 @@ fn span_page(cx: &mut Ctx, area: Rect, state: &State) {
         Span::Month => month_grid(cx, grid, day),
         Span::Year => year_heatmap(cx, grid, day, state.picked),
     }
-    // A year and a week both name their books by their jackets under the grid.
+    // A year and a week both name their books by their covers under the grid.
     // A month names them in its own cells and lists none.
     if listed {
         cover_grid(cx, list, state, days);
@@ -601,8 +601,8 @@ fn more_books(cx: &mut Ctx, inner: Rect, lane: usize, over: usize) {
 /// Rows of `theme.row_h` the shortest cover is drawn at.
 const COVER_FLOOR: i32 = 3;
 
-/// The air the cover grid keeps: between one jacket and the next, under the
-/// heading before the first row, and under a jacket before its figures.
+/// The air the cover grid keeps: between one cover and the next, under the
+/// heading before the first row, and under a cover before its figures.
 fn cover_air(theme: &Theme) -> i32 {
     theme.gap * 2
 }
@@ -635,8 +635,8 @@ fn cover_grid(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeIncl
         open_day_chip(cx, head);
     }
 
-    let (unnamed, seconds) = cx.stats.unnamed_over(over.clone());
-    let foot = (unnamed > 0) as i32 * daybooks::note_height(cx);
+    let (unidentified, seconds) = cx.stats.unidentified_over(over.clone());
+    let foot = (unidentified > 0) as i32 * daybooks::note_height(cx);
     let inner = Rect::new(whole.x, whole.y, whole.w, (whole.h - foot).max(0));
 
     if read.is_empty() {
@@ -648,7 +648,7 @@ fn cover_grid(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeIncl
         daybooks::note(
             cx,
             Rect::new(whole.x, baseline + theme.gap * 2, whole.w, foot),
-            unnamed,
+            unidentified,
             seconds,
         );
         return;
@@ -689,7 +689,7 @@ fn cover_grid(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeIncl
         );
     }
 
-    // A paged grid centres its jackets between the arrows; a list that fits
+    // A paged grid centres its covers between the arrows; a list that fits
     // whole opens at `inner`'s own left edge, level with the heading over it.
     let left = match paged {
         true => row_left(grid, cell, air, columns, to - from),
@@ -704,14 +704,14 @@ fn cover_grid(cx: &mut Ctx, area: Rect, state: &State, days: std::ops::RangeIncl
             cell.h,
         );
         let percent = cx.stats.percent_over(*book, over.clone());
-        jacket(cx, box_, *book, *secs, percent);
+        cover(cx, box_, *book, *secs, percent);
         cx.hit(Hit::Book(*book), box_);
     }
     let under = inner.y + (to - from).div_ceil(columns as usize) as i32 * (cell.h + air);
     daybooks::note(
         cx,
         Rect::new(whole.x, under, whole.w, whole.bottom() - under),
-        unnamed,
+        unidentified,
         seconds,
     );
 }
@@ -803,7 +803,7 @@ fn grid_of(cx: &mut Ctx, inner: Rect) -> (i32, i32, Rect) {
     (rows, columns, Rect::new(0, 0, cell_w, cell_h))
 }
 
-/// Where a paged grid opens its jackets inside `grid`. A page of fewer than
+/// Where a paged grid opens its covers inside `grid`. A page of fewer than
 /// `columns`, and the remainder no whole number of cells covers, both leave
 /// the same air either side.
 fn row_left(grid: Rect, cell: Rect, air: i32, columns: i32, shown: usize) -> i32 {
@@ -825,22 +825,27 @@ fn figure_floor(cx: &mut Ctx) -> i32 {
 }
 
 /// One book of the grid: its cover, the reading under it, and `percent`.
-fn jacket(cx: &mut Ctx, box_: Rect, book: usize, secs: i64, percent: Option<i64>) {
+fn cover(cx: &mut Ctx, box_: Rect, book: usize, secs: i64, percent: Option<i64>) {
     let theme: &Theme = cx.theme;
     let s = cx.s();
     cx.text.set_px(theme.small_px);
     let line = cx.text.line_height() as i32;
-    // The jacket keeps clear air under it before the figures start.
+    // The cover keeps clear air under it before the figures start.
     let under_h = line * 2 + cover_air(theme);
-    let (art, under) = box_.split_top((box_.h - under_h).max(1));
-    // A cell cut wide by `figure_floor` keeps the art at a cover's own shape.
-    let w = cover::width_for(art.h).min(art.w);
-    let art = Rect::new(art.x + (art.w - w) / 2, art.y, w, art.h);
+    let (cover_box, under) = box_.split_top((box_.h - under_h).max(1));
+    // A cell cut wide by `figure_floor` keeps `cover_box` at a cover's own shape.
+    let w = cover::width_for(cover_box.h).min(cover_box.w);
+    let cover_box = Rect::new(
+        cover_box.x + (cover_box.w - w) / 2,
+        cover_box.y,
+        w,
+        cover_box.h,
+    );
     let stat = &cx.stats.books[book];
-    // `cover::titled` sets the title into a box no jacket draws into.
-    if !cx.covers.draw(cx.fb, art, &stat.thumbnail) {
+    // `cover::titled` sets the title into a box no cover draws into.
+    if !cx.covers.draw(cx.fb, cover_box, &stat.thumbnail) {
         let script = crate::font::Script::of_language(&stat.language);
-        cover::titled(cx, art, &stat.title, script);
+        cover::titled(cx, cover_box, &stat.title, script);
     }
 
     let read = date::duration_tight(secs, s);
@@ -848,7 +853,7 @@ fn jacket(cx: &mut Ctx, box_: Rect, book: usize, secs: i64, percent: Option<i64>
         crate::lang::counted(s.percent_reached, p)
     });
     // Both lines are set to the cover's own width: a title read for a hundred
-    // hours states a wider figure than the jacket beside it.
+    // hours states a wider figure than the cover beside it.
     let px = fitting_px(cx, &[&read, &percent], box_.w);
     cx.text.set_px(px);
     let mut baseline = under.y + theme.gap + cx.text.cap_height() as i32;
@@ -1081,7 +1086,7 @@ mod tests {
                 let room = list.h - head(&theme);
                 let deep = tall_page(&theme, area) as i32;
                 match span {
-                    // A year names its books by their jackets: a cover deep
+                    // A year names its books by their covers: a cover deep
                     // enough to recognise, and the two lines under it.
                     Span::Year => assert!(
                         room >= theme.row_h * (2 + deep),
@@ -1154,7 +1159,7 @@ mod tests {
     }
 
     #[test]
-    fn a_paged_grid_leaves_the_same_air_either_side_of_its_jackets() {
+    fn a_paged_grid_leaves_the_same_air_either_side_of_its_covers() {
         let grid = Rect::new(100, 0, 1000, 400);
         let cell = Rect::new(0, 0, 140, 200);
         let (air, columns) = (20, 6);
@@ -1174,10 +1179,10 @@ mod tests {
         assert_eq!(row_left(grid, wide, air, columns, 1), grid.x);
     }
 
-    /// A jacket is as tall as the band it stands in: the week's grid leaves one
+    /// A cover is as tall as the band it stands in: the week's grid leaves one
     /// deep enough to draw a cover at.
     #[test]
-    fn a_week_leaves_its_covers_a_band_a_jacket_fits() {
+    fn a_week_leaves_its_covers_a_band_a_cover_fits() {
         for (w, h) in PANELS {
             let (theme, area) = page(w, h);
             let want = wanted(Span::Week, area, &theme);

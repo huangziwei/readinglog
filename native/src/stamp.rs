@@ -1,6 +1,6 @@
-//! A small fixed hash for the gate values the record carries. `DefaultHasher`
-//! may change between Rust releases and a value in `sessions.tsv` has to mean
-//! the same to the build reading it back, so FNV-1a, which is fixed forever.
+//! A small fixed hash for the gate values the record carries: FNV-1a, fixed
+//! across Rust releases. A value in `sessions.tsv` means the same to every
+//! build reading it back.
 
 const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -16,8 +16,8 @@ impl Default for Stamp {
 }
 
 impl Stamp {
-    /// Take `bytes`, and a separator after them so that two fields cannot run
-    /// together into a third that would hash the same.
+    /// Take `bytes`, and a separator after them: two fields never run
+    /// together into a third with the same hash.
     pub fn take(&mut self, bytes: &[u8]) {
         for byte in bytes {
             self.0 = (self.0 ^ u64::from(*byte)).wrapping_mul(PRIME);

@@ -39,14 +39,14 @@ pub struct App {
     settings: Settings,
     text: TextRenderer,
     covers: Covers,
-    store: crate::store::Store,
+    record: crate::record::Record,
     stats: Stats,
     state: State,
     today: i64,
     now: i64,
     /// What `eink::fb::has_cfa` answered at startup.
     colour: bool,
-    /// Where the record and the archives beside it live.
+    /// Where the record and the backups beside it live.
     dir: std::path::PathBuf,
     /// Where every touchable thing was on the last frame.
     hits: Vec<(Hit, crate::ui::paint::Rect)>,
@@ -59,15 +59,15 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(store: crate::store::Store, theme: Theme, text: TextRenderer) -> Self {
+    pub fn new(record: crate::record::Record, theme: Theme, text: TextRenderer) -> Self {
         let (today, now) = date::now();
         let settings = Settings::load(Lang::detect());
         let settings_scope = settings.scope;
         let stats = Stats::build(
-            &store,
+            &record,
             today,
-            settings.show_unnamed,
-            settings.figures,
+            settings.show_unidentified,
+            settings.stats_from,
             settings.sitting_floor,
         );
         // The header block states this; the schemes it gates are what matters
@@ -79,10 +79,10 @@ impl App {
             settings,
             text,
             covers: Covers::default(),
-            store,
+            record,
             stats,
             colour,
-            dir: std::path::PathBuf::from(crate::store::STORE_DIR),
+            dir: std::path::PathBuf::from(crate::record::RECORD_DIR),
             state: State {
                 // The search opens on the list it last showed, which outlives
                 // the launch in `Settings::scope`.
@@ -98,15 +98,15 @@ impl App {
     }
 
     /// What the stats hold, as the launch line's field: books drawn, then the
-    /// reading no book is named for, in seconds.
+    /// reading on unidentified books, in seconds.
     pub fn drawn(&self) -> String {
         let mut out = format!("draw={}b", self.stats.books.len());
-        if self.stats.unnamed_seconds > 0 {
+        if self.stats.unidentified_seconds > 0 {
             let _ = write!(
                 out,
                 "/{}u{}s",
-                self.stats.unnamed_books(),
-                self.stats.unnamed_seconds
+                self.stats.unidentified_books(),
+                self.stats.unidentified_seconds
             );
         }
         if self.stats.skipped_seconds > 0 {
@@ -115,13 +115,13 @@ impl App {
         out
     }
 
-    /// Total the store again, at the day and the settings held.
-    fn rebuild(&mut self) {
+    /// Total the record again, at the day and the settings held.
+    fn build_stats(&mut self) {
         self.stats = Stats::build(
-            &self.store,
+            &self.record,
             self.today,
-            self.settings.show_unnamed,
-            self.settings.figures,
+            self.settings.show_unidentified,
+            self.settings.stats_from,
             self.settings.sitting_floor,
         );
     }
@@ -132,7 +132,7 @@ impl App {
         self.theme = Theme::sized(self.theme.screen.w as u32, self.theme.screen.h as u32, size);
     }
 
-    /// Rebuild `theme` at `fb`'s size and the stored `text_size`.
+    /// Size `theme` again to `fb` and the stored `text_size`.
     fn took_size(&mut self, fb: &Framebuffer) {
         self.theme = Theme::sized(fb.var.xres, fb.var.yres, self.settings.text_size);
     }
@@ -143,25 +143,25 @@ impl App {
         self.settings.language = lang;
     }
 
-    /// Count the sittings no record names, or leave them out of every total.
-    pub fn set_unnamed(&mut self, show: bool) {
-        self.settings.show_unnamed = show;
-        self.rebuild();
+    /// Count the sittings on unidentified books, or leave them out of every total.
+    pub fn set_unidentified(&mut self, show: bool) {
+        self.settings.show_unidentified = show;
+        self.build_stats();
     }
 
-    /// Count a run of at least `floor` as reading.
+    /// Count a sitting of at least `floor` as reading.
     pub fn set_sitting_floor(&mut self, floor: SittingFloor) {
         self.settings.sitting_floor = floor;
-        self.rebuild();
+        self.build_stats();
     }
 
-    /// Take every figure from `from`, and total again.
-    pub fn set_figures(&mut self, from: crate::settings::Figures) {
-        self.settings.figures = from;
-        self.rebuild();
+    /// Take the stats from `from`, and total again.
+    pub fn set_stats_from(&mut self, from: crate::settings::StatsFrom) {
+        self.settings.stats_from = from;
+        self.build_stats();
     }
 
-    /// List the books no jacket can be drawn for, or leave them off the lists.
+    /// List the books no cover can be drawn for, or leave them off the lists.
     pub fn set_uncovered(&mut self, show: bool) {
         self.settings.show_uncovered = show;
     }
@@ -186,7 +186,7 @@ impl App {
         self.today = today;
         self.now = now;
         self.state.day = today;
-        self.rebuild();
+        self.build_stats();
     }
 
     /// Set `state.tab` and `state.book`.
@@ -202,7 +202,7 @@ impl App {
 
     /// Put one of the config page's questions up, gathering the figures it
     /// states, or take one down.
-    pub fn ask_about(&mut self, about: Option<view::About>) {
+    pub fn ask_about(&mut self, about: Option<view::Act>) {
         match about {
             Some(about) => {
                 self.ask_question(about);
@@ -216,22 +216,22 @@ impl App {
         self.state.config_page = page;
     }
 
-    /// List the archives over the config page, from the row at `from`, or take
+    /// List the backups over the config page, from the row at `from`, or take
     /// the list down.
     pub fn set_backups(&mut self, from: Option<usize>) {
         self.state.backups = from;
     }
 
-    /// Draw the open book at `tab`, whatever it was left on, with its marks
+    /// Draw the open book at `tab`, whatever it was left on, with its highlights
     /// opened `from` rows down.
     pub fn set_book_tab(&mut self, tab: view::BookTab, from: usize) {
         self.state.book_tab = tab;
-        self.state.marks_from = from;
+        self.state.highlights_from = from;
     }
 
-    /// Draw the open book's marks from `order`'s own end.
-    pub fn set_marks_way(&mut self, order: view::Way) {
-        self.state.marks_way = order;
+    /// Draw the open book's highlights from `order`'s own end.
+    pub fn set_highlights_way(&mut self, order: view::Way) {
+        self.state.highlights_way = order;
     }
 
     /// Draw the open book's Graphs tab on `reading`, counted from the first,
@@ -367,7 +367,7 @@ impl App {
         self.state.books_from = 0;
     }
 
-    /// List the books of `window`, whatever stretch the screen was left on.
+    /// List the books of `window`, whatever span the screen was left on.
     pub fn set_window(&mut self, window: Option<crate::view::Window>) {
         self.state.window = window;
         self.state.books_from = 0;
@@ -423,18 +423,18 @@ impl App {
         let colour = self.colour;
         let state = self.state.clone();
         // `backup::list` runs on the frame that draws its row.
-        let record = match state.tab == Tab::Config && state.book.is_none() {
-            true => view::config::Record::of(
-                &self.store,
+        let summary = match state.tab == Tab::Config && state.book.is_none() {
+            true => view::config::Summary::of(
+                &self.record,
                 &self.stats,
                 &self.dir,
-                !self.store.floor.is_empty(),
+                !self.record.reset_at.is_empty(),
             ),
-            false => view::config::Record::default(),
+            false => view::config::Summary::default(),
         };
-        // Every archive opened once, on the frame that lists them.
+        // Every backup opened once, on the frame that lists them.
         let listed = match state.backups.is_some() {
-            true => view::config::Record::listed(&self.dir, &self.store, self.lang),
+            true => view::config::Summary::listed(&self.dir, &self.record, self.lang),
             false => view::backups::Listed::default(),
         };
         self.frame(fb, &mut |cx, area| match state.book {
@@ -448,7 +448,7 @@ impl App {
             }
             None => match state.tab {
                 Tab::Config => {
-                    view::config::draw(cx, area, &settings, colour, &record, state.config_page);
+                    view::config::draw(cx, area, &settings, colour, &summary, state.config_page);
                     if let Some(from) = state.backups {
                         view::backups::draw(cx, area, &listed, from);
                     }
@@ -484,13 +484,13 @@ impl App {
             theme: &self.theme,
             lang: self.lang,
             week: self.settings.week_start,
-            figures: self.settings.figures,
+            stats_from: self.settings.stats_from,
             uncovered: self.settings.show_uncovered,
             palette: crate::ui::paint::Palette::for_panel(self.settings.color_scheme, self.colour),
             stats: &self.stats,
             today: self.today,
             now: self.now,
-            floored: !self.store.floor.is_empty(),
+            was_reset: !self.record.reset_at.is_empty(),
             hits: Vec::new(),
         };
         body(&mut cx, area);
@@ -663,20 +663,12 @@ impl App {
                             self.update(fb, input)?;
                             self.draw(fb)?;
                         }
-                        Action::Retry => {
-                            self.retry(fb, input)?;
+                        Action::Acting(act) => {
+                            self.acting(fb, act)?;
                             self.draw(fb)?;
                         }
-                        Action::Heal => {
-                            self.heal(fb, input)?;
-                            self.draw(fb)?;
-                        }
-                        Action::Resetting(about) => {
-                            self.resetting(fb, about)?;
-                            self.draw(fb)?;
-                        }
-                        Action::Exporting => {
-                            self.exporting(fb, input)?;
+                        Action::BackingUp => {
+                            self.backing_up(fb, input)?;
                             self.draw(fb)?;
                         }
                         Action::Nothing => {}
@@ -710,7 +702,7 @@ impl App {
                     if input.follow_orientation() {
                         down = None;
                     }
-                    // `Pump::resized` rebuilds `theme` and draws the whole screen.
+                    // `Pump::resized` sizes `theme` again and draws the whole screen.
                     if pump.resized.is_some() {
                         self.took_size(fb);
                         self.draw(fb)?;
@@ -737,7 +729,7 @@ impl App {
             return Action::Nothing;
         };
         match crate::open::ask(
-            std::path::Path::new(crate::store::STORE_DIR),
+            std::path::Path::new(crate::record::RECORD_DIR),
             &book.location,
             at,
         ) {
@@ -749,7 +741,7 @@ impl App {
         }
     }
 
-    /// Set `BookRecord::finished` on the book at `index`, total the store again
+    /// Set `Book::finished` on the book at `index`, total the record again
     /// and write it out. A failed `save` leaves the mark in `stats` and off the
     /// disk.
     fn set_finished(&mut self, index: usize, on: bool) -> Action {
@@ -757,16 +749,16 @@ impl App {
             return Action::Nothing;
         };
         let (extent, key, cde_type) = (book.extent, book.cde_key.clone(), book.cde_type.clone());
-        if !self.store.set_finished(extent, &key, on) {
+        if !self.record.set_finished(extent, &key, on) {
             return Action::Nothing;
         }
         self.hand_over_mark(extent, &key, &cde_type, on);
-        self.rebuild();
+        self.build_stats();
         if let Err(err) = self
-            .store
-            .save(std::path::Path::new(crate::store::STORE_DIR))
+            .record
+            .save(std::path::Path::new(crate::record::RECORD_DIR))
         {
-            eprintln!("!! finished: the mark did not reach the store: {err:#}");
+            eprintln!("!! finished: the mark did not reach the record: {err:#}");
         }
         Action::Redraw
     }
@@ -775,8 +767,8 @@ impl App {
     /// call leaves. A refused call leaves the record's own value standing.
     fn hand_over_mark(&mut self, extent: i64, key: &str, cde_type: &str, read: bool) {
         if crate::mark::set(key, cde_type, read) {
-            self.store
-                .note_mark(extent, key, crate::catalog::read_state_for(read));
+            self.record
+                .note_mark(extent, key, crate::library::read_state_for(read));
         }
     }
 
@@ -803,20 +795,20 @@ impl App {
         }
     }
 
-    /// The book at `index` gives up its place and its mark, then opens
+    /// The book at `index` gives up its progress and its mark, then opens
     /// through `open::uri`.
     fn restart(&mut self, index: usize) -> Action {
         if let Some(book) = self.stats.books.get(index) {
             let (extent, key, cde_type) =
                 (book.extent, book.cde_key.clone(), book.cde_type.clone());
-            if self.store.restart(extent, &key, self.today) {
+            if self.record.restart(extent, &key, self.today) {
                 self.hand_over_mark(extent, &key, &cde_type, false);
-                self.rebuild();
+                self.build_stats();
                 if let Err(err) = self
-                    .store
-                    .save(std::path::Path::new(crate::store::STORE_DIR))
+                    .record
+                    .save(std::path::Path::new(crate::record::RECORD_DIR))
                 {
-                    eprintln!("!! restart: the record did not reach the store: {err:#}");
+                    eprintln!("!! restart: the record was not written: {err:#}");
                 }
             }
         }
@@ -889,13 +881,13 @@ impl App {
                 self.settings.color_scheme = pick;
                 self.settings.save();
             }
-            Hit::Figures(pick) => {
-                if self.settings.figures == pick {
+            Hit::StatsFrom(pick) => {
+                if self.settings.stats_from == pick {
                     return Action::Nothing;
                 }
-                self.settings.figures = pick;
+                self.settings.stats_from = pick;
                 // Every total on every screen comes off `stats`.
-                self.rebuild();
+                self.build_stats();
                 self.settings.save();
             }
             Hit::SittingFloor(pick) => {
@@ -904,18 +896,18 @@ impl App {
                 }
                 self.settings.sitting_floor = pick;
                 // Every total on every screen comes off `stats`.
-                self.rebuild();
+                self.build_stats();
                 self.state.books_from = 0;
                 self.state.list_from = 0;
                 self.settings.save();
             }
-            Hit::ShowUnnamed(pick) => {
-                if self.settings.show_unnamed == pick {
+            Hit::ShowUnidentified(pick) => {
+                if self.settings.show_unidentified == pick {
                     return Action::Nothing;
                 }
-                self.settings.show_unnamed = pick;
+                self.settings.show_unidentified = pick;
                 // Every total on every screen comes off `stats`.
-                self.rebuild();
+                self.build_stats();
                 self.state.books_from = 0;
                 self.state.list_from = 0;
                 self.settings.save();
@@ -932,25 +924,28 @@ impl App {
                 self.settings.save();
             }
             Hit::Book(index) => self.state.open_book(index),
-            // A tap on the tab showing is no navigation; on the Marks tab it
-            // turns the list over instead.
+            // A tap on the tab showing is no navigation; on the Highlights tab it
+            // turns the list over.
             Hit::BookTab(tab) => {
                 if !self.state.go_in_book(tab) {
                     match tab {
-                        view::BookTab::Marks => self.state.flip_marks(),
+                        view::BookTab::Highlights => self.state.flip_highlights(),
                         _ => return Action::Nothing,
                     }
                 }
             }
-            Hit::MarksPage(from) => {
-                if self.state.marks_from == from {
+            Hit::HighlightsPage(from) => {
+                if self.state.highlights_from == from {
                     return Action::Nothing;
                 }
-                self.state.marks_from = from;
+                self.state.highlights_from = from;
             }
-            // A passage the search found opens the book it was marked in, at
+            // A passage the search found opens the book it was highlighted in, at
             // its own place in that book's list.
-            Hit::Mark(book, at) => self.state.open_mark(book, at, self.stats.marks_held(book)),
+            Hit::Highlight(book, at) => {
+                self.state
+                    .open_highlight(book, at, self.stats.highlights_held(book))
+            }
             // A second tap on the day picked drops it again.
             Hit::Day(day) => {
                 self.state.picked = !(self.state.picked && self.state.day == day);
@@ -1089,35 +1084,30 @@ impl App {
                 self.state.config_page = at;
             }
             Hit::Update => return Action::Update,
-            Hit::Retry => return self.ask_question(view::About::Retry),
-            Hit::Heal => return self.ask_question(view::About::Heal),
             Hit::Prev => return self.paged(-1),
             Hit::Next => return self.paged(1),
             Hit::Clear(index) => return self.put(index, view::Ask::Clear),
             Hit::ClearBook(index) => return self.clear_book(index, false),
             Hit::ForgetBook(index) => return self.clear_book(index, true),
-            Hit::Wipe(keep) => {
-                return self.ask_question(view::About::Reset(view::Reset::Wipe(keep)));
+            Hit::Reset(keep) => {
+                return self.ask_question(view::Act::Reset(keep));
             }
-            Hit::BackUp => return Action::Exporting,
+            Hit::BackUp => return Action::BackingUp,
             Hit::Backups => self.state.backups = Some(0),
             Hit::BackupsPage(at) => self.state.backups = Some(at),
             Hit::BackupsClose => self.state.backups = None,
             Hit::Restore(at) => {
-                return self.ask_question(view::About::Reset(view::Reset::Restore(at)));
+                return self.ask_question(view::Act::Restore(at));
             }
             Hit::Deleted(at) => {
                 self.state.confirm = None;
                 self.delete_backup(at);
             }
-            Hit::Rebuild => return self.ask_question(view::About::Reset(view::Reset::Rebuild)),
-            // `App::resetting`, `App::retry` and `App::heal` carry these out,
-            // holding `fb`.
-            Hit::Wiped(keep) => return Action::Resetting(view::Reset::Wipe(keep)),
-            Hit::Restored(at) => return Action::Resetting(view::Reset::Restore(at)),
-            Hit::Rebuilt => return Action::Resetting(view::Reset::Rebuild),
-            Hit::Retried => return Action::Retry,
-            Hit::Healed => return Action::Heal,
+            Hit::Rebuild => return self.ask_question(view::Act::Rebuild),
+            // `App::acting` carries these out, holding `fb`.
+            Hit::ResetDone(keep) => return Action::Acting(view::Act::Reset(keep)),
+            Hit::Restored(at) => return Action::Acting(view::Act::Restore(at)),
+            Hit::Rebuilt => return Action::Acting(view::Act::Rebuild),
         }
         Action::Redraw
     }
@@ -1127,42 +1117,35 @@ impl App {
         &self.dir
     }
 
-    /// Draw and act against a record outside [`crate::store::STORE_DIR`].
+    /// Draw and act against a record outside [`crate::record::RECORD_DIR`].
     pub fn set_dir(&mut self, dir: std::path::PathBuf) {
         self.dir = dir;
     }
 
     /// Write the record, printing `what` and the error on a failed write.
-    fn store_it(&self, what: &str) {
-        if let Err(err) = self.store.save(self.dir()) {
-            eprintln!("!! {what}: the record did not reach the store: {err:#}");
+    fn save_record(&self, what: &str) {
+        if let Err(err) = self.record.save(self.dir()) {
+            eprintln!("!! {what}: the record was not written: {err:#}");
         }
     }
 
     /// Put one of the config page's questions up, with the figures it states
     /// gathered here: the dialog itself walks nothing.
-    fn ask_question(&mut self, about: view::About) -> Action {
-        let (jackets, archives) = crate::backup::sizes(self.dir());
-        // `Store::sessions` is what `Wipe`, `Heal` and `Retry` act on.
-        let held = self.store.sessions.len();
+    fn ask_question(&mut self, about: view::Act) -> Action {
+        let (covers, backups) = crate::backup::sizes(self.dir());
+        // `Record::sittings` is what `Act::Reset` acts on.
+        let held = self.record.sittings.len();
         let confirm = match about {
-            view::About::Heal | view::About::Retry => view::Confirm {
+            view::Act::Reset(keep) => view::Confirm {
                 about,
                 sittings: held,
                 books: self.stats.book_count(),
-                bytes: 0,
-                named: String::new(),
-            },
-            view::About::Reset(view::Reset::Wipe(keep)) => view::Confirm {
-                about,
-                sittings: held,
-                books: self.stats.book_count(),
-                // The archive's weight, or the room `covers::sweep` returns.
-                // The record's size comes off the file: serializing the store
+                // The backup's weight, or the room `covers::sweep` returns.
+                // The record's size comes off the file: serializing the record
                 // for its length is one `format!` per row, under a tap.
                 bytes: match keep {
-                    true => jackets + record_bytes(self.dir()),
-                    false => jackets,
+                    true => covers + record_bytes(self.dir()),
+                    false => covers,
                 },
                 named: crate::backup::name(
                     crate::backup::Kind::Record,
@@ -1170,7 +1153,7 @@ impl App {
                     "",
                 ),
             },
-            view::About::Reset(view::Reset::Restore(at)) => {
+            view::Act::Restore(at) => {
                 let held = crate::backup::list(self.dir());
                 let Some(backup) = held.get(at) else {
                     return Action::Nothing;
@@ -1182,7 +1165,7 @@ impl App {
                     &inside,
                     self.today,
                     true,
-                    self.settings.figures,
+                    self.settings.stats_from,
                     SittingFloor::All,
                 );
                 view::Confirm {
@@ -1197,11 +1180,11 @@ impl App {
                         .unwrap_or_default(),
                 }
             }
-            view::About::Reset(view::Reset::Rebuild) => view::Confirm {
+            view::Act::Rebuild => view::Confirm {
                 about,
                 sittings: 0,
                 books: 0,
-                bytes: archives,
+                bytes: backups,
                 named: String::new(),
             },
         };
@@ -1212,152 +1195,95 @@ impl App {
         Action::Redraw
     }
 
-    /// Carry `about` out under a banner over the whole screen, drawn from
-    /// `Reset::doing`. `restore` and `reread` count their files onto it.
-    fn resetting(&mut self, fb: &mut Framebuffer, about: view::Reset) -> Result<()> {
+    /// Carry `act` out under a banner over the whole screen, drawn from
+    /// `Act::doing`. `restore` and `rebuild` count their files onto it.
+    fn acting(&mut self, fb: &mut Framebuffer, act: view::Act) -> Result<()> {
         self.state.confirm = None;
-        let (headline, note) = about.doing(self.lang.strings());
+        let (headline, note) = act.doing(self.lang.strings());
         self.banner(fb, &headline, &note, "", true)?;
-        match about {
-            view::Reset::Wipe(keep) => self.wipe(keep),
-            view::Reset::Restore(at) => self.restore(fb, &headline, &note, at),
-            view::Reset::Rebuild => self.reread(fb, &headline, &note),
+        match act {
+            view::Act::Reset(keep) => self.reset(keep),
+            view::Act::Restore(at) => self.restore(fb, &headline, &note, at),
+            view::Act::Rebuild => self.rebuild(fb, &headline, &note),
         }
         self.relearn();
         Ok(())
     }
 
-    /// Read every source of identity again and state how many books that
-    /// named, over a banner. No sitting is folded in. The sources come in
-    /// `identify::rescue`'s order, the logs last, for the sidecar arm alone.
-    fn retry(&mut self, fb: &mut Framebuffer, input: &mut Input) -> Result<()> {
-        let before = self.unnamed_books();
-        let (headline, doing) = view::Retrying::Files.banner(self.lang.strings());
-        self.banner(fb, headline, &doing, "", true)?;
-        // `rescued` counts what the sources report, not the change in names.
-        let mut rescued = self.relearn();
-        // `wants_the_logs` holds for a class naming no book and holding no
-        // counter — the counter a sidecar is reached through.
-        if self.store.wants_the_logs() {
-            let (headline, doing) = view::Retrying::Logs.banner(self.lang.strings());
-            self.banner(fb, headline, &doing, "", true)?;
-            let learned =
-                self.over_the_logs(fb, headline, &doing, |store, on| store.relearn_classes(on));
-            eprintln!("retry: {learned} classes the record held no counter for");
-            if learned > 0 {
-                self.store_it("retry");
-                rescued += self.relearn();
-            }
-        }
-        let named = before.saturating_sub(self.unnamed_books()).max(rescued);
-        eprintln!("retry: {before} books no record named, {named} named");
-        let (headline, said) = view::Retrying::Named(named).banner(self.lang.strings());
-        self.banner(fb, headline, &said, "", true)?;
-        self.hold(input, OUTCOME_LINGER)
-    }
-
-    /// Measure every sitting the logs reach again, over a banner, and state
-    /// how many stored rows moved. A row older than the logs keeps what it
-    /// holds, and no row is given up.
-    fn heal(&mut self, fb: &mut Framebuffer, input: &mut Input) -> Result<()> {
-        let (headline, doing) = view::Healing::Logs.banner(self.lang.strings());
-        self.banner(fb, headline, &doing, "", true)?;
-        let healed = self.over_the_logs(fb, headline, &doing, |store, on| store.heal(on));
-        eprintln!("heal: {healed} sittings the logs measured again");
-        if healed > 0 {
-            self.store_it("heal");
-            self.relearn();
-        }
-        let (headline, said) = view::Healing::Done(healed).banner(self.lang.strings());
-        self.banner(fb, headline, &said, "", true)?;
-        self.hold(input, OUTCOME_LINGER)
-    }
-
-    /// Books read that no record names, over the whole record.
-    fn unnamed_books(&self) -> usize {
-        crate::stats::Stats::build(
-            &self.store,
-            self.today,
-            true,
-            self.settings.figures,
-            SittingFloor::All,
-        )
-        .unnamed_books()
-    }
-
-    /// `catalog::read` through `Store::remember`, then every source that names
-    /// a book the catalog cannot, then `Store::keep_covers` and
-    /// `Stats::build`. Answers the classes the sources past the catalog named.
+    /// `library::read` through `Record::remember`, then every source that identifies
+    /// a book the library cannot, then `Record::keep_covers` and
+    /// `Stats::build`. Answers the end positions the sources past the library identified.
     fn relearn(&mut self) -> usize {
-        let books = crate::catalog::read();
+        let books = crate::library::read();
         let dir = self.dir.clone();
-        let stated = self.store.remember(&books);
+        let stated = self.record.remember(&books);
         // Neither gate holds this pass back: both are dropped and written
         // again from what it reads.
         let clips = std::path::Path::new(crate::clippings::CLIPPINGS_FILE);
         let documents = std::path::Path::new(crate::sidecar::DOCUMENTS_DIR);
-        self.store.sources = None;
-        self.store.gate = None;
+        self.record.sources = None;
+        self.record.gate = None;
         let survey = crate::sidecar::survey(documents);
         let held = crate::identify::gate(
-            &self.store,
+            &self.record,
             std::path::Path::new(crate::vocab::VOCAB_DB),
             clips,
             &survey,
         );
-        let shelf = crate::identify::walk(documents, true);
+        let sidecars = crate::identify::walk(documents, true);
         // One read of the file, for both passes.
-        let records = crate::clippings::read(clips);
+        let clippings = crate::clippings::read(clips);
         // Measured before either pass places an instant on a clock.
-        self.store
+        self.record
             .clock
-            .observe(crate::annotate::clocks_seen(&records, &shelf));
-        let rescue = crate::identify::rescue(&mut self.store, &records, &shelf);
-        self.store.sources = Some(held);
-        let merge = crate::annotate::fold(&mut self.store, clips, &records, &shelf, &survey);
-        let refreshed = stated + rescue.named() + self.store.keep_covers(&dir).kept;
+            .observe(crate::highlights::clocks_seen(&clippings, &sidecars));
+        let identified = crate::identify::from_sources(&mut self.record, &clippings, &sidecars);
+        self.record.sources = Some(held);
+        let merge =
+            crate::highlights::fold(&mut self.record, clips, &clippings, &sidecars, &survey);
+        let refreshed = stated + identified.found() + self.record.keep_covers(&dir).kept;
         eprintln!(
-            "reset: {} catalog rows, {refreshed} book records refreshed, {} held",
+            "reset: {} library rows, {refreshed} books refreshed, {} held",
             books.len(),
-            self.store.books.len(),
+            self.record.books.len(),
         );
         if refreshed > 0 || merge.read {
-            self.store_it("reset");
+            self.save_record("reset");
         }
         self.covers.forget();
-        self.rebuild();
-        rescue.named()
+        self.build_stats();
+        identified.found()
     }
 
-    /// Write an archive of the record under a banner, and state what it came
+    /// Write a backup of the record under a banner, and state what it came
     /// to on an outcome banner `App::hold` keeps up.
-    fn exporting(&mut self, fb: &mut Framebuffer, input: &mut Input) -> Result<()> {
+    fn backing_up(&mut self, fb: &mut Framebuffer, input: &mut Input) -> Result<()> {
         let s = self.lang.strings();
         let headline = s.back_up.to_string();
-        let doing = vec![s.export_doing.to_string()];
+        let doing = vec![s.back_up_doing.to_string()];
         self.banner(fb, &headline, &doing, "", true)?;
-        let said = match crate::backup::export(&self.dir.clone(), &self.store) {
+        let said = match crate::backup::back_up(&self.dir.clone(), &self.record) {
             Ok(at) => {
-                eprintln!("export: the record is at {}", at.display());
+                eprintln!("backup: the record is at {}", at.display());
                 let named = at
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default();
                 let bytes = std::fs::metadata(&at).map(|m| m.len()).unwrap_or_default();
-                s.export_done
+                s.back_up_done
                     .replace("{file}", &named)
                     .replace("{size}", &view::config::bytes(bytes))
             }
             Err(err) => {
-                eprintln!("!! export: nothing was written — {err}");
-                s.export_failed.to_string()
+                eprintln!("!! backup: nothing was written — {err}");
+                s.back_up_failed.to_string()
             }
         };
         self.banner(fb, &headline, &[said], "", true)?;
         self.hold(input, OUTCOME_LINGER)
     }
 
-    /// Take one archive off disk, by its place in `backup::list`.
+    /// Take one backup off disk, by its place in `backup::list`.
     fn delete_backup(&mut self, at: usize) {
         let held = crate::backup::list(self.dir());
         let Some(backup) = held.get(at) else {
@@ -1367,30 +1293,30 @@ impl App {
             Ok(()) => eprintln!("backup: {} is gone", backup.path.display()),
             Err(err) => eprintln!("!! backup: {} stands — {err}", backup.path.display()),
         }
-        // The last archive gone takes the list down.
+        // The last backup gone takes the list down.
         if held.len() <= 1 {
             self.state.backups = None;
         }
     }
 
-    /// Empty the record, keeping an archive of it first under `keep`.
-    fn wipe(&mut self, keep: bool) {
+    /// Empty the record, keeping a backup of it first under `keep`.
+    fn reset(&mut self, keep: bool) {
         let keeping = match keep {
-            true => crate::backup::Keep::Archive,
+            true => crate::backup::Keep::Backup,
             false => crate::backup::Keep::Nothing,
         };
         let dir = self.dir.clone();
-        match crate::backup::reset(&dir, &mut self.store, keeping) {
+        match crate::backup::reset(&dir, &mut self.record, keeping) {
             Ok(Some(at)) => eprintln!("reset: the record is kept at {}", at.display()),
             Ok(None) => {}
-            // `reset` writes the archive first and leaves `store` on a failure.
+            // `reset` writes the backup first and leaves `record` on a failure.
             Err(err) => {
                 eprintln!("!! reset: nothing was reset — {err}");
             }
         }
     }
 
-    /// Fold the archive at `at` in the list back into the record, counting the
+    /// Fold the backup at `at` in the list back into the record, counting the
     /// files coming out of it onto the banner.
     fn restore(&mut self, fb: &mut Framebuffer, headline: &str, note: &[String], at: usize) {
         let held = crate::backup::list(self.dir());
@@ -1399,11 +1325,11 @@ impl App {
         };
         let path = backup.path.clone();
         let dir = self.dir.clone();
-        // `backup::take` holds `self.store`, `App::banner` holds `self`.
+        // `backup::restore` holds `self.record`, `App::banner` holds `self`.
         let counting = self.lang.strings().step_files;
-        let mut store = std::mem::take(&mut self.store);
+        let mut record = std::mem::take(&mut self.record);
         let mut painted = usize::MAX;
-        let took = crate::backup::take(&dir, &path, &mut store, &mut |done, total| {
+        let restored = crate::backup::restore(&dir, &path, &mut record, &mut |done, total| {
             if done == painted {
                 return;
             }
@@ -1411,34 +1337,34 @@ impl App {
             let step = crate::ui::splash::step(counting, done, total);
             let _ = self.banner(fb, headline, note, &step, false);
         });
-        self.store = store;
-        match took {
-            Ok(taken) => {
-                eprintln!("restore: {} sittings from {}", taken.added, path.display());
-                self.store_it("restore");
-                // `Taken::whole`: `store` holds every row the archive carried.
+        self.record = record;
+        match restored {
+            Ok(merged) => {
+                eprintln!("restore: {} sittings from {}", merged.added, path.display());
+                self.save_record("restore");
+                // `Merged::whole`: `record` holds every row the backup carried.
                 // The file stands either way, and `backup::remove` is the way
                 // out.
-                eprintln!("restore: {} whole {}", path.display(), taken.whole);
+                eprintln!("restore: {} whole {}", path.display(), merged.whole);
             }
             Err(err) => eprintln!("!! restore: {} would not open — {err}", path.display()),
         }
     }
 
     /// One pass over the logs, counting the files it opens onto the
-    /// banner. The pass holds `self.store` and `App::banner` holds `self`, and
+    /// banner. The pass holds `self.record` and `App::banner` holds `self`, and
     /// the record stands out of both for the length of it.
     fn over_the_logs(
         &mut self,
         fb: &mut Framebuffer,
         headline: &str,
         note: &[String],
-        pass: impl FnOnce(&mut crate::store::Store, &mut dyn FnMut(usize, usize)) -> usize,
+        pass: impl FnOnce(&mut crate::record::Record, &mut dyn FnMut(usize, usize)) -> usize,
     ) -> usize {
         let counting = self.lang.strings().step_logs;
-        let mut store = std::mem::take(&mut self.store);
+        let mut record = std::mem::take(&mut self.record);
         let mut painted = usize::MAX;
-        let out = pass(&mut store, &mut |done, total| {
+        let out = pass(&mut record, &mut |done, total| {
             if done == painted {
                 return;
             }
@@ -1446,42 +1372,42 @@ impl App {
             let step = crate::ui::splash::step(counting, done, total);
             let _ = self.banner(fb, headline, note, &step, false);
         });
-        self.store = store;
+        self.record = record;
         out
     }
 
-    /// `Store::rebuild`, counting the log files it opens onto the banner.
-    fn reread(&mut self, fb: &mut Framebuffer, headline: &str, note: &[String]) {
-        let added = self.over_the_logs(fb, headline, note, |store, on| store.rebuild(on));
-        eprintln!("reread: {added} sittings the record did not hold");
-        self.store_it("reread");
+    /// `Record::rebuild`, counting the log files it opens onto the banner.
+    fn rebuild(&mut self, fb: &mut Framebuffer, headline: &str, note: &[String]) {
+        let added = self.over_the_logs(fb, headline, note, |record, on| record.rebuild(on));
+        eprintln!("rebuild: {added} sittings the record did not hold");
+        self.save_record("rebuild");
     }
 
-    /// Put one book's reading back to zero, taking its record with it under
-    /// `forget`. An archive of that book goes down first, and a book whose
-    /// archive will not write is left alone.
+    /// Put one book's reading back to zero, taking the book with it under
+    /// `forget`. A backup of that book goes down first, and a book whose
+    /// backup will not write is left alone.
     fn clear_book(&mut self, index: usize, forget: bool) -> Action {
         self.state.asked = None;
         let Some(book) = self.stats.books.get(index) else {
             return Action::Redraw;
         };
         let (extent, key) = (book.extent, book.cde_key.clone());
-        let one = self.store.one_book(extent, &key);
+        let one = self.record.one_book(extent, &key);
         if let Err(err) = crate::backup::keep_book(self.dir(), &one, &crate::backup::stamped_now())
         {
             eprintln!("!! clear: nothing was cleared — {err}");
             return Action::Redraw;
         }
         let went = match forget {
-            true => self.store.forget_book(extent, &key),
-            false => self.store.clear_book(extent, &key),
+            true => self.record.forget_book(extent, &key),
+            false => self.record.clear_book(extent, &key),
         };
         eprintln!("clear: {went} sittings, forget {forget}");
-        self.store_it("clear");
+        self.save_record("clear");
         // `Stats::books` drops a book with no sittings.
         self.state.book = None;
         self.covers.forget();
-        self.rebuild();
+        self.build_stats();
         Action::Redraw
     }
 
@@ -1496,7 +1422,7 @@ impl App {
     }
 
     /// One step across the open book: `BookTab::Statistics`, `BookTab::Graphs`,
-    /// then each page of `view::marks::pages` in turn. A step off either end
+    /// then each page of `view::highlights::pages` in turn. A step off either end
     /// answers `Action::Nothing`.
     fn through_book(&mut self, book: usize, by: i64) -> Action {
         let area = chrome::content_box(&self.theme);
@@ -1505,13 +1431,13 @@ impl App {
         if let Some(open) = self.state.book_search.clone() {
             return self.through_found(book, rest, &open, by);
         }
-        let opens = view::marks::pages(
+        let opens = view::highlights::pages(
             &mut self.text,
             &self.theme,
             &self.stats,
             book,
             rest,
-            self.state.marks_way,
+            self.state.highlights_way,
             None,
         );
         let forward = by > 0;
@@ -1523,15 +1449,15 @@ impl App {
             view::BookTab::Statistics => Action::Nothing,
             view::BookTab::Graphs => {
                 self.state.go_in_book(match forward {
-                    true => view::BookTab::Marks,
+                    true => view::BookTab::Highlights,
                     false => view::BookTab::Statistics,
                 });
                 Action::Redraw
             }
-            view::BookTab::Marks => {
+            view::BookTab::Highlights => {
                 let page = opens
                     .iter()
-                    .rposition(|o| *o <= self.state.marks_from)
+                    .rposition(|o| *o <= self.state.highlights_from)
                     .unwrap_or(0);
                 let next = match forward {
                     true => page + 1,
@@ -1546,7 +1472,7 @@ impl App {
                 };
                 match opens.get(next) {
                     Some(opens) => {
-                        self.state.marks_from = *opens;
+                        self.state.highlights_from = *opens;
                         Action::Redraw
                     }
                     None => Action::Nothing,
@@ -1564,13 +1490,13 @@ impl App {
         open: &view::Search,
         by: i64,
     ) -> Action {
-        let opens = view::marks::pages(
+        let opens = view::highlights::pages(
             &mut self.text,
             &self.theme,
             &self.stats,
             book,
             rest,
-            self.state.marks_way,
+            self.state.highlights_way,
             Some(open),
         );
         let page = opens.iter().rposition(|o| *o <= open.from).unwrap_or(0) as i64;
@@ -1630,8 +1556,8 @@ impl App {
                     }
                     // A page steps to the next entry of `opens`, every row
                     // being as tall as its own words.
-                    Scope::Marks => {
-                        let opens = view::search::mark_pages(
+                    Scope::Highlights => {
+                        let opens = view::search::highlight_pages(
                             &mut self.text,
                             &self.theme,
                             &self.stats,
@@ -1693,15 +1619,11 @@ enum Action {
     Quit,
     /// Go looking for a newer release, over the whole screen.
     Update,
-    /// Name the books nothing names yet, over the whole screen.
-    Retry,
-    /// Measure every sitting the logs reach again, over the whole
+    /// Carry out one of the config page's acts on the record, over the whole
     /// screen.
-    Heal,
-    /// Carry out one of the config page's resets, over the whole screen.
-    Resetting(view::Reset),
-    /// Write an archive of the record, over the whole screen.
-    Exporting,
+    Acting(view::Act),
+    /// Write a backup of the record, over the whole screen.
+    BackingUp,
 }
 
 impl Drop for App {
@@ -1714,9 +1636,9 @@ impl Drop for App {
 }
 
 /// What the record takes on disk, read off the file. Zero where there is none
-/// to read, which is what a store never saved weighs.
+/// to read, which is what a record never saved weighs.
 fn record_bytes(dir: &std::path::Path) -> u64 {
-    std::fs::metadata(crate::store::Store::file(dir))
+    std::fs::metadata(crate::record::Record::file(dir))
         .map(|m| m.len())
         .unwrap_or(0)
 }

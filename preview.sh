@@ -1,7 +1,7 @@
 #!/bin/sh
 # ./preview.sh [shots...] — draws screens into artifacts/preview/*.png;
-# --list names every shot, --store DIR draws a real sessions.tsv.
-# $READINGLOG_FONTS names the device's fonts; preview.env sets it.
+# --list names every shot, --record DIR draws a real sessions.tsv.
+# $READINGLOG_FONTS names the Kindle's fonts; preview.env sets it.
 set -eu
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -9,20 +9,20 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 if [ -z "${READINGLOG_FONTS:-}" ]; then
     echo "error: READINGLOG_FONTS names no directory" >&2
-    echo "       fix: write READINGLOG_FONTS=<the device's fonts> into preview.env" >&2
+    echo "       fix: write READINGLOG_FONTS=<the Kindle's fonts> into preview.env" >&2
     exit 1
 fi
 export READINGLOG_FONTS
 
 cargo build --quiet --manifest-path "$ROOT/native/Cargo.toml" --bin preview
 
-# --out and --art default under $ROOT unless "$@" names them. The jackets are
+# --out and --covers default under $ROOT unless "$@" names them. The covers are
 # one set shared by every run, never a copy under each --out.
-out= art=
+out= covers=
 for arg in "$@"; do
     [ "$arg" = "--out" ] && out=named
-    [ "$arg" = "--art" ] && art=named
+    [ "$arg" = "--covers" ] && covers=named
 done
 [ -z "$out" ] && set -- "$@" --out "$ROOT/artifacts/preview"
-[ -z "$art" ] && set -- "$@" --art "$ROOT/artifacts/preview/art"
+[ -z "$covers" ] && set -- "$@" --covers "$ROOT/artifacts/preview/art"
 exec "$ROOT/target/debug/preview" "$@"

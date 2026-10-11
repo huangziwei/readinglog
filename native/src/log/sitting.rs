@@ -1,25 +1,25 @@
-//! Turning a stream of log lines into sittings. A [`Session`] is a run of page
+//! Turning a stream of log lines into sittings. A [`Sitting`] is the page
 //! events on one book, ended by a close, a change of book, a gap over
-//! [`SESSION_GAP_SECS`], or midnight; [`Session::seconds`] is the counter's span.
+//! [`SITTING_GAP_SECS`], or midnight; [`Sitting::seconds`] is the counter's span.
 
 use super::line;
 use super::line::{
-    Moment, Observation, end_position, last_event, observation, opened_at_counter, payloads,
-    resumed, stamp, toc_and_book,
+    Moment, Observation, end_position, last_event, observation, opened_at_counter, payloads, stamp,
+    toc_and_book, wakes,
 };
 use super::metric::{Metric, cde_key, metric};
 use super::power::{Awake, is_state_change};
 
-/// The gap between two reader events that cuts a session.
-pub const SESSION_GAP_SECS: i64 = 30 * 60;
+/// The gap between two reader events that cuts a sitting.
+pub const SITTING_GAP_SECS: i64 = 30 * 60;
 
-/// How far the wall clock may step back inside a run before the run is cut.
+/// How far the wall clock may step back inside a sitting before the sitting is cut.
 const CLOCK_BACK_SECS: i64 = 60;
 
-/// How far a session's opening counter may outrun the wall clock.
-const SEED_SLACK_SECS: i64 = 60;
+/// How far a sitting's opening counter may outrun the wall clock.
+const START_SLACK_SECS: i64 = 60;
 
-/// How far a `powerd` record of `ACTIVE` may trail a `Reading_Resumed`.
+/// How far a `powerd` metric of `ACTIVE` may trail a `Reading_Resumed`.
 const WAKE_LAG_SECS: i64 = 5;
 
 /// The words a minute under which a page stood longer than its words account for.
@@ -30,7 +30,7 @@ const PAGE_FLOOR_SECS: i64 = 3;
 /// The most a page counts however long it stood, in seconds.
 const PAGE_CAP_SECS: i64 = 120;
 
-/// A page's words a minute, in the `f64` steps the log's `IntervalWPM` prints.
+/// A page's words a minute, in `f64` steps.
 fn page_rate(words: i64, standing_ms: i64) -> f64 {
     words as f64 / (standing_ms as f64 / 1000.0) * 60.0
 }
@@ -89,7 +89,7 @@ fn paged_secs(standing_secs: i64) -> i64 {
     }
 }
 
-/// How a session's seconds were arrived at, ranked best first.
+/// How a sitting's seconds were arrived at, ranked best first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Measure {
     /// The span of `TotalTime`.
@@ -99,7 +99,7 @@ pub enum Measure {
     Timed,
     /// How long each `ereader_book_consume_content` page was open.
     Paged,
-    /// The `ACTIVE` stretches [`Awake::between`] sums with the book open.
+    /// The `ACTIVE` spans [`Awake::between`] sums with the book open.
     Awake,
 }
 
@@ -125,8 +125,8 @@ impl Measure {
     }
 }
 
-/// One run of a book: the place it opened at and the place it closed at, each
-/// a fraction of `Session::end_position`. `to` under `from` runs backwards.
+/// One stretch of a book: the progress it opened at and the progress it closed at, each
+/// a fraction of `Sitting::end_position`. `to` under `from` runs backwards.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Stretch {
     pub from: f64,
@@ -135,11 +135,11 @@ pub struct Stretch {
 
 /// One parsed sitting.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct Session {
-    /// `YYYY-MM-DDTHH:MM:SS`, device-local.
+pub struct Sitting {
+    /// `YYYY-MM-DDTHH:MM:SS`, on the Kindle's clock.
     pub started_at: String,
     pub ended_at: String,
-    /// The book's own end position, this sitting's fingerprint for its book.
+    /// The book's own end position, the one this sitting's lines state.
     pub end_position: i64,
     pub seconds: i64,
     /// Screens advanced, at the font size each was drawn at.
@@ -149,46 +149,46 @@ pub struct Session {
     pub hours: Vec<(u8, i64)>,
     /// Where [`Self::seconds`] came from.
     pub measure: Measure,
-    /// The catalog key a reader-shell record named during the run.
+    /// The library key a reader-shell metric named during the sitting.
     pub asin: Option<String>,
     /// How far into the book the sitting ended, as a fraction, off `%Left`.
     pub progress: Option<f64>,
-    /// The runs this sitting covered, in reading order, empty where no line stated a place.
+    /// The stretches this sitting covered, in reading order, empty where no line stated progress.
     pub stretches: Vec<Stretch>,
     /// Seconds left in the book as it closed, off `NewTimeLeft`.
     pub time_left: Option<i64>,
     /// The rate off `TotalWPM` as the sitting closed, in whole words a minute.
     pub stated_wpm: Option<i64>,
-    /// Seconds the run's `IntervalTime`s credit through [`credits`], zero where none is stated.
+    /// Seconds the sitting's `IntervalTime`s credit through [`credits`], zero where none is stated.
     pub timed_seconds: i64,
     /// The words on the pages that credited time, off `IntervalWords`.
     pub timed_words: i64,
-    /// Seconds this run spanned, less the sleeps [`Awake`] states inside it.
+    /// Seconds this sitting spanned, less the sleeps [`Awake`] states inside it.
     pub awake_seconds: i64,
-    /// Seconds the run's `ereader_book_consume_content` pages credit, whatever [`Measure`] won.
+    /// Seconds the sitting's `ereader_book_consume_content` pages credit, whatever [`Measure`] won.
     pub paged_seconds: i64,
     /// The words on those pages, inside [40, 900] a minute or not.
     pub paged_words: i64,
     /// The share of the book those same pages cover, summed page by page.
     pub covered: f64,
-    /// The book's reading counter where this run began, `None` with `end_counter_ms`.
+    /// The book's reading counter where this sitting began, `None` with `end_counter_ms`.
     pub start_counter_ms: Option<i64>,
-    /// The same counter where the run was last seen.
+    /// The same counter where the sitting was last seen.
     pub end_counter_ms: Option<i64>,
     /// `start_counter_ms`'s reading of `TotalWords`.
     pub start_words: Option<i64>,
     /// `end_counter_ms`'s reading of `TotalWords`.
     pub end_words: Option<i64>,
-    /// Seconds ahead of UTC at the pass that read this sitting, set by `Store::absorb`.
+    /// Seconds ahead of UTC at the pass that read this sitting, set by `Record::absorb`.
     pub tz_offset_s: Option<i64>,
 }
 
-impl Session {
+impl Sitting {
     /// Take `fresh`'s figures over this sitting's own, keeping every field
     /// `fresh` states nothing for. Answers whether anything moved.
-    pub fn remeasure(&mut self, fresh: &Session) -> bool {
+    pub fn remeasure(&mut self, fresh: &Sitting) -> bool {
         let was = self.clone();
-        // `fresh` reading more of the run states its earlier start and later close.
+        // `fresh` reading more of the sitting states its earlier start and later close.
         if fresh.started_at < self.started_at {
             self.started_at = fresh.started_at.clone();
         }
@@ -212,8 +212,8 @@ impl Session {
         self.end_words = fresh.end_words.or(self.end_words);
         self.asin = fresh.asin.clone().or_else(|| self.asin.clone());
         self.progress = fresh.progress.or(self.progress);
-        // `Store::heal_from` is the one caller, parsing from an empty
-        // watermark, and `fresh` opens where this sitting opens.
+        // `fresh` reads this sitting from the whole log in `Record::heal_from`,
+        // and from an earlier start in `Record::take_sittings`.
         if !fresh.stretches.is_empty() {
             self.stretches = fresh.stretches.clone();
         }
@@ -221,6 +221,18 @@ impl Session {
         self.stated_wpm = fresh.stated_wpm.or(self.stated_wpm);
         self.tz_offset_s = fresh.tz_offset_s.or(self.tz_offset_s);
         was != *self
+    }
+
+    /// Take from `other`, closing on the same second, each field of the book and
+    /// of the close that this sitting states none of.
+    pub fn keep_close(&mut self, other: &Sitting) {
+        if self.asin.is_none() {
+            self.asin = other.asin.clone();
+        }
+        self.progress = self.progress.or(other.progress);
+        self.time_left = self.time_left.or(other.time_left);
+        self.stated_wpm = self.stated_wpm.or(other.stated_wpm);
+        self.tz_offset_s = self.tz_offset_s.or(other.tz_offset_s);
     }
 }
 
@@ -233,22 +245,22 @@ fn share(advance: i64, elapsed: i64, before: i64) -> i64 {
     advance * before.clamp(0, elapsed) / elapsed
 }
 
-/// How a run in progress ends when a new observation cannot join it.
+/// How a sitting in progress ends when a new observation cannot join it.
 enum Break {
-    /// A gap, a close, or another book, the run ending where it was last seen.
+    /// A gap, a close, or another book, the sitting ending where it was last seen.
     Left,
     /// Midnight inside an interval, `counter_ms` and `words` interpolated at it.
     Midnight(Box<Start>),
 }
 
-/// An `OpenBook` unattached to a session.
+/// An `OpenBook` unattached to a sitting.
 struct Opened {
     counter_ms: i64,
     at: Moment,
 }
 
-/// A `Reading_Resumed` unattached to a session.
-struct Woke {
+/// A `Reading_Resumed` unattached to a sitting.
+struct Wake {
     at: Moment,
     /// Whether a `Metric` page or turn followed `at`.
     read: bool,
@@ -256,22 +268,22 @@ struct Woke {
     lapsed: bool,
 }
 
-/// Where a session begins: an `Opened`, a `Woke` or a `Break::Midnight`.
+/// Where a sitting begins: an `Opened`, a `Wake` or a `Break::Midnight`.
 struct Start {
     /// `None` on an untimed book.
     counter_ms: Option<i64>,
     /// `TotalWords` beside `counter_ms`.
     words: Option<i64>,
     at: Moment,
-    /// Milliseconds of the page open across `at` the run before took.
+    /// Milliseconds of the page open across `at` the sitting before took.
     credited_ms: i64,
-    /// A counter for the run's first counted line to settle.
+    /// A counter for the sitting's first counted line to settle.
     floor: Option<Floor>,
-    /// The `Floor` that settled `counter_ms`, and what it left to `owed` runs.
+    /// The `Floor` that settled `counter_ms`, and what it left to `owed` sittings.
     settled: Option<(Floor, Settled)>,
 }
 
-/// A counter a run opens at, stated ahead of the run's first counted line.
+/// A counter a sitting opens at, stated ahead of the sitting's first counted line.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Floor {
     counter_ms: i64,
@@ -287,7 +299,7 @@ struct Floor {
 struct Settled {
     counter_ms: i64,
     words: Option<i64>,
-    /// The gain past `Floor::counter_ms` left to the `owed` runs.
+    /// The gain past `Floor::counter_ms` left to the `owed` sittings.
     owed_ms: i64,
     owed_words: Option<i64>,
 }
@@ -299,7 +311,7 @@ impl Floor {
     fn settle(&self, obs: &Observation, credit: Credit, owed: i64, after: i64) -> Option<Settled> {
         let total = obs.total_ms?;
         let unseen = total - credit.counted_ms - self.counter_ms;
-        if unseen < 0 || unseen > (owed + after + SEED_SLACK_SECS) * 1000 {
+        if unseen < 0 || unseen > (owed + after + START_SLACK_SECS) * 1000 {
             return None;
         }
         let rounded = unseen < self.step_ms;
@@ -333,7 +345,7 @@ struct Counters {
 }
 
 impl Counters {
-    /// The rows [`parse_sessions`] was handed, as its own copy.
+    /// The rows [`parse_sittings`] was handed, as its own copy.
     fn held(rows: &[(i64, i64, i64)]) -> Self {
         Self {
             highest: rows.to_vec(),
@@ -352,7 +364,7 @@ impl Counters {
 
     /// The one book whose counter, `latest` where held and `highest` where
     /// not, stands at a `counter_ms` above zero to the second.
-    fn named_by(&self, counter_ms: i64) -> Option<i64> {
+    fn book_at_counter(&self, counter_ms: i64) -> Option<i64> {
         let standing = |&(position, highest, _): &(i64, i64, i64)| {
             let latest = self.latest.iter().find(|row| row.0 == position);
             (position, latest.map_or(highest, |row| row.1))
@@ -403,7 +415,7 @@ impl Counters {
 }
 
 impl Opened {
-    /// This open as a session start, or `None` when it cannot be vouched for:
+    /// This open as a sitting start, or `None` when it cannot be vouched for:
     /// `counter_ms` must sit at or under the first observation's, and the
     /// reading it adds inside the wall clock since the open.
     fn vouch(self, now: &Moment, obs: &Observation, counters: &Counters) -> Option<Start> {
@@ -411,7 +423,7 @@ impl Opened {
         let elapsed = now.abs.checked_sub(self.at.abs).filter(|e| *e >= 0)?;
         (self.at.day == now.day
             && self.counter_ms <= total
-            && total - self.counter_ms <= (elapsed + SEED_SLACK_SECS) * 1000)
+            && total - self.counter_ms <= (elapsed + START_SLACK_SECS) * 1000)
             .then(|| Start {
                 counter_ms: Some(self.counter_ms),
                 words: counters.words_at(obs.position, self.counter_ms),
@@ -422,39 +434,44 @@ impl Opened {
             })
     }
 
-    /// `at` as the start of a run `obs` opens stating no counter, within
-    /// [`SESSION_GAP_SECS`]; `counter_ms` waits on the first counted line.
-    fn opened_run(&self, now: &Moment, obs: &Observation, counters: &Counters) -> Option<Start> {
+    /// `at` as the start of a sitting `obs` opens stating no counter, within
+    /// [`SITTING_GAP_SECS`]; `counter_ms` waits on the first counted line.
+    fn opened_sitting(
+        &self,
+        now: &Moment,
+        obs: &Observation,
+        counters: &Counters,
+    ) -> Option<Start> {
         let elapsed = now.abs - self.at.abs;
-        (self.at.day == now.day && (0..=SESSION_GAP_SECS).contains(&elapsed))
+        (self.at.day == now.day && (0..=SITTING_GAP_SECS).contains(&elapsed))
             .then(|| self.carried(obs.position, counters))
     }
 
-    /// The run of the book `Counters::named_by` names from `at`, over the
-    /// `pending` records from `at`, where they close a page.
-    fn named_run(
+    /// The sitting of the book `Counters::book_at_counter` names from `at`, over the
+    /// `pending` metrics from `at`, where they close a page.
+    fn sitting_at_counter(
         &self,
         pending: &mut Vec<(Moment, Metric)>,
         named: Option<&(i64, String)>,
         counters: &Counters,
         awake: &Awake,
     ) -> Option<Open> {
-        let book = counters.named_by(self.counter_ms)?;
-        let mut run = Open::new(book, &self.at, Some(self.carried(book, counters)));
-        run.asin = named
+        let book = counters.book_at_counter(self.counter_ms)?;
+        let mut sitting = Open::new(book, &self.at, Some(self.carried(book, counters)));
+        sitting.asin = named
             .filter(|(at, _)| *at >= self.at.abs)
             .map(|(_, key)| key.clone());
         for (at, m) in pending.iter().filter(|(at, _)| at.abs >= self.at.abs) {
-            run.observe_metric(at, m, awake);
+            sitting.observe_metric(at, m, awake);
         }
-        if run.paged_total_ms == 0 {
+        if sitting.paged_total_ms == 0 {
             return None;
         }
         pending.retain(|(at, _)| at.abs < self.at.abs);
-        Some(run)
+        Some(sitting)
     }
 
-    /// `at` as the start of a run of `position`, `counter_ms` its `Floor`.
+    /// `at` as the start of a sitting of `position`, `counter_ms` its `Floor`.
     fn carried(&self, position: i64, counters: &Counters) -> Start {
         Start {
             counter_ms: None,
@@ -472,9 +489,9 @@ impl Opened {
     }
 }
 
-impl Woke {
+impl Wake {
     /// `Counters::stated` for `position`, else the `held` row opening at `at`.
-    fn floor(&self, position: i64, counters: &Counters, held: &[Session]) -> Option<Floor> {
+    fn floor(&self, position: i64, counters: &Counters, held: &[Sitting]) -> Option<Floor> {
         counters.stated(position).or_else(|| {
             let stored = held
                 .iter()
@@ -489,13 +506,13 @@ impl Woke {
     }
 
     /// The `end_position` of the `held` row opening at `at`.
-    fn held_book(&self, held: &[Session]) -> Option<i64> {
+    fn held_book(&self, held: &[Sitting]) -> Option<i64> {
         held.iter()
             .find(|s| s.started_at == self.at.at)
             .map(|s| s.end_position)
     }
 
-    /// Whether `at` can start a run at `now`: the same day, no `lapsed`, no
+    /// Whether `at` can start a sitting at `now`: the same day, no `lapsed`, no
     /// `Awake::slept_after` it, and asleep at most [`WAKE_LAG_SECS`] past it.
     fn stands(&self, now: &Moment, awake: &Awake) -> bool {
         let span = now.abs - self.at.abs;
@@ -506,8 +523,8 @@ impl Woke {
             && span - awake.bound(self.at.abs, now.abs) <= WAKE_LAG_SECS
     }
 
-    /// `at` as the start of the run `obs` opens: `floor` settles at `obs` where
-    /// `obs` states a counter, else waits on the run's first counted line.
+    /// `at` as the start of the sitting `obs` opens: `floor` settles at `obs` where
+    /// `obs` states a counter, else waits on the sitting's first counted line.
     fn start(
         self,
         now: &Moment,
@@ -534,7 +551,7 @@ impl Woke {
         })
     }
 
-    /// `at` as the start of a run a page record at `now` opens, on `floor`.
+    /// `at` as the start of a sitting a page metric at `now` opens, on `floor`.
     fn begin(self, now: &Moment, floor: Option<Floor>, awake: &Awake) -> Option<Start> {
         if !self.stands(now, awake) {
             return None;
@@ -550,7 +567,7 @@ impl Woke {
     }
 }
 
-/// A session under construction.
+/// A sitting under construction.
 struct Open {
     end_position: i64,
     started_at: String,
@@ -575,7 +592,7 @@ struct Open {
     metric_turns: i64,
     /// `Metric::Page` words on the pages `paged_secs` counted.
     metric_words: i64,
-    /// Whether a `Start` made the first observation's `IntervalTime` this run's.
+    /// Whether a `Start` made the first observation's `IntervalTime` this sitting's.
     vouched: bool,
     /// A `Start::floor` waiting on the first counted line.
     floor: Option<Floor>,
@@ -595,11 +612,11 @@ struct Open {
     /// `share_of` summed over the pages `paged_secs` counted.
     covered: f64,
     open_page: Option<Page>,
-    /// The last `cde_key` named while the run was open.
+    /// The last `cde_key` named while the sitting was open.
     asin: Option<String>,
     /// The last `%Left` a line stated for `end_position`.
     progress: Option<f64>,
-    /// The `Stretch` runs closed, and the one open with whether it turned.
+    /// The stretches closed, and the one open with whether it turned.
     stretches: Vec<Stretch>,
     open_stretch: Option<(f64, f64, bool)>,
     /// The last `NewTimeLeft` a line stated for `end_position`.
@@ -609,7 +626,7 @@ struct Open {
 }
 
 impl Open {
-    /// A run of `end_position` from `start`, else from `now` with no floor.
+    /// A sitting of `end_position` from `start`, else from `now` with no floor.
     fn new(end_position: i64, now: &Moment, start: Option<Start>) -> Self {
         let vouched = start.is_some();
         let credited_before = start.as_ref().map_or(0, |s| s.credited_ms);
@@ -657,12 +674,12 @@ impl Open {
         }
     }
 
-    /// Fold `at` into the runs: `jumped` closes the open run and opens one at
-    /// `at`, else `at` extends the open run and marks it turned.
-    /// [`Open::covered`] drops a run holding no turn.
-    fn place(&mut self, at: f64, jumped: bool) {
+    /// Fold `at` into the stretches: `jumped` closes the open stretch and opens one at
+    /// `at`, else `at` extends the open stretch and sets it turned.
+    /// [`Open::covered`] drops a stretch holding no turn.
+    fn stretch_to(&mut self, at: f64, jumped: bool) {
         match self.open_stretch {
-            // `to` holds the place of the line before this one, which is the
+            // `to` holds the progress of the line before this one, which is the
             // page left; `at` is the destination.
             Some((from, to, turned)) if jumped => {
                 if turned {
@@ -675,7 +692,7 @@ impl Open {
         }
     }
 
-    /// [`Open::stretches`] with the open run closed at its last place, where it turned.
+    /// [`Open::stretches`] with the open stretch closed at its last progress, where it turned.
     fn covered(&self) -> Vec<Stretch> {
         let mut out = self.stretches.clone();
         if let Some((from, to, true)) = self.open_stretch {
@@ -712,15 +729,15 @@ impl Open {
     }
 
     /// Fold `obs` in. `owed` is the seconds awake `Floor::settle` weighs the
-    /// `owed` runs by.
+    /// `owed` sittings by.
     fn observe(&mut self, now: &Moment, obs: &Observation, awake: &Awake, owed: i64) {
-        // `credit` is nothing for an unvouched first observation, its page before the run.
+        // `credit` is nothing for an unvouched first observation, its page before the sitting.
         self.seen += 1;
         let credit = match self.seen == 1 && !self.vouched {
             true => Credit::default(),
             false => credits(obs),
         };
-        // `credited_before` stays with the run a midnight cut.
+        // `credited_before` stays with the sitting a midnight cut.
         let timed = match self.seen {
             1 => (credit.timed_ms() - self.credited_before).max(0),
             _ => credit.timed_ms(),
@@ -823,7 +840,7 @@ impl Open {
         }
     }
 
-    /// Fold one `fastmetrics` record in. `Metric::Page` closes the page
+    /// Fold one [`Metric`] in. `Metric::Page` closes the page
     /// before it; `ended_at` moves where `page_turns` is zero.
     fn observe_metric(&mut self, now: &Moment, m: &Metric, awake: &Awake) {
         if *m != Metric::Close && now.abs > self.seen_at.abs {
@@ -859,7 +876,7 @@ impl Open {
         }
     }
 
-    /// Whether `obs` ends the run, and how.
+    /// Whether `obs` ends the sitting, and how.
     fn broken_by(&self, now: &Moment, obs: &Observation, gapped: bool) -> Option<Break> {
         if self.end_position != obs.position || gapped {
             return Some(Break::Left);
@@ -893,7 +910,7 @@ impl Open {
         })))
     }
 
-    /// The run cut at the midnight ahead of `now`, and the run of
+    /// The sitting cut at the midnight ahead of `now`, and the sitting of
     /// `end_position` from it, carrying `time_hi` or `floor` as its `Floor`.
     fn past_midnight(mut self, now: &Moment) -> (Open, Open) {
         let midnight = Moment {
@@ -925,7 +942,7 @@ impl Open {
         (self, next)
     }
 
-    /// Close the run at midnight on `boundary`'s counters, `ended_at` the
+    /// Close the sitting at midnight on `boundary`'s counters, `ended_at` the
     /// second before it.
     fn cut_at(&mut self, boundary: &Start) {
         let at_boundary = boundary.counter_ms.unwrap_or(self.time_hi);
@@ -956,14 +973,14 @@ impl Open {
     }
 
     /// [`Self::cut_at`], then [`Self::finish`].
-    fn finish_at(mut self, boundary: &Start, awake: &Awake) -> Session {
+    fn finish_at(mut self, boundary: &Start, awake: &Awake) -> Sitting {
         self.cut_at(boundary);
         self.finish(awake)
     }
 
-    /// The run as a session, its [`Measure`] the first of the four with a
+    /// The sitting as a sitting, its [`Measure`] the first of the four with a
     /// figure.
-    fn finish(self, awake: &Awake) -> Session {
+    fn finish(self, awake: &Awake) -> Sitting {
         let stretches = self.covered();
         let counted = (self.time_hi - self.time_lo.unwrap_or(self.time_hi)) / 1000;
         let timed = self.interval_total_ms / 1000;
@@ -978,7 +995,7 @@ impl Open {
             _ if awake.is_empty() => (0, Measure::Counted),
             _ => (witnessed, Measure::Awake),
         };
-        Session {
+        Sitting {
             hours: match measure {
                 Measure::Counted => hours_in_seconds(&self.hours_ms, seconds),
                 Measure::Timed => hours_in_seconds(&self.interval_hours_ms, seconds),
@@ -1022,7 +1039,7 @@ impl Open {
     }
 }
 
-/// The screen a page record opened, held until the record after it closes it.
+/// The screen a page metric opened, held until the metric after it closes it.
 #[derive(Debug, Clone)]
 struct Page {
     at: Moment,
@@ -1033,7 +1050,7 @@ struct Page {
 }
 
 /// The share of `extent` one page's own span covers, zero where `extent` or
-/// either place is unstated.
+/// either end is unstated.
 fn share_of(from: i64, to: i64, extent: i64) -> f64 {
     match extent > 0 && from >= 0 && to >= 0 {
         true => (to - from).abs() as f64 / extent as f64,
@@ -1041,14 +1058,14 @@ fn share_of(from: i64, to: i64, extent: i64) -> f64 {
     }
 }
 
-/// Whether the wall clock moved further than one run may hold.
+/// Whether the wall clock moved further than one sitting may hold.
 fn stepped(now: i64, prev: i64) -> bool {
-    now - prev > SESSION_GAP_SECS || prev - now > CLOCK_BACK_SECS
+    now - prev > SITTING_GAP_SECS || prev - now > CLOCK_BACK_SECS
 }
 
 /// Book `advance_ms` against the clock hours [`Awake`] holds. `from` and `to`
 /// bracket an interval a page was open across; `advance_ms` splits between
-/// [`Awake`]'s stretches in it, or goes whole where it names none.
+/// [`Awake`]'s spans in it, or goes whole where it names none.
 fn credit_awake(
     hours_ms: &mut [i64; 24],
     awake: &Awake,
@@ -1086,7 +1103,7 @@ fn spread(awake: &Awake, from: &Moment, to: &Moment, seconds: i64) -> Vec<(u8, i
     hours_in_seconds(&hours_ms, seconds)
 }
 
-/// The hours a session's milliseconds fall in, as whole seconds summing to
+/// The hours a sitting's milliseconds fall in, as whole seconds summing to
 /// exactly `seconds`. `running` truncates, and the busiest hour takes the rest.
 fn hours_in_seconds(hours_ms: &[i64; 24], seconds: i64) -> Vec<(u8, i64)> {
     let mut out = Vec::new();
@@ -1110,23 +1127,23 @@ fn hours_in_seconds(hours_ms: &[i64; 24], seconds: i64) -> Vec<(u8, i64)> {
     out
 }
 
-/// Turn an ordered, de-duplicated event stream into sessions. `counters` seeds
+/// Turn an ordered, de-duplicated event stream into sittings. `counters` fills
 /// [`Counters`], where `Open::words_lo` reads the `TotalWords` an `OpenBook`
 /// leaves unstated.
-pub fn parse_sessions<'a>(
+pub fn parse_sittings<'a>(
     events: impl IntoIterator<Item = &'a str>,
     counters: &[(i64, i64, i64)],
-) -> Vec<Session> {
+) -> Vec<Sitting> {
     parse_restating(events, counters, &[])
 }
 
-/// [`parse_sessions`] over a batch restating the sittings in `held`: a `held`
-/// row opening at a wake lends its run the counter and book the batch lacks.
+/// [`parse_sittings`] over a batch restating the sittings in `held`: a `held`
+/// row opening at a wake lends its sitting the counter and book the batch lacks.
 pub fn parse_restating<'a>(
     events: impl IntoIterator<Item = &'a str>,
     counters: &[(i64, i64, i64)],
-    held: &[Session],
-) -> Vec<Session> {
+    held: &[Sitting],
+) -> Vec<Sitting> {
     // [`Awake`] reads the whole stream before the first sitting closes.
     let lines: Vec<&str> = events.into_iter().collect();
     // Which lines are reading-timer lines, read once.
@@ -1162,26 +1179,26 @@ pub fn parse_restating<'a>(
         .filter_map(|(line, _)| Some(stamp(line)?.abs))
         .collect();
     // `powerd` lines alone state a change, `timer` lines filtered out.
-    let woke = lines
+    let changes = lines
         .iter()
         .copied()
         .zip(&timer)
         .filter_map(|(line, timer)| (!timer).then_some(line));
-    let awake = Awake::from_events(woke).witnessed(&read_at);
+    let awake = Awake::from_events(changes).witnessed(&read_at);
 
     let mut out = Vec::new();
     let mut open: Option<Open> = None;
-    // `Open::owing` runs, waiting on a statement of their book to share its gain.
+    // `Open::owing` sittings, waiting on a statement of their book to share its gain.
     let mut owed: Vec<Open> = Vec::new();
     let mut prev_abs: Option<i64> = None;
     let mut opened: Option<Opened> = None;
-    let mut wake: Option<Woke> = None;
+    let mut wake: Option<Wake> = None;
     let mut counters = Counters::held(counters);
     // `gapped` holds a `stepped` until an observation acts on it.
     let mut gapped = false;
     // The newest `cde_key` and its instant.
     let mut named: Option<(i64, String)> = None;
-    // `Metric` records no `live` run took.
+    // `Metric`s no `live` sitting took.
     let mut pending: Vec<(Moment, Metric)> = Vec::new();
     // The last observation's `position`, cleared at a close or an `OpenBook`.
     let mut left_open: Option<i64> = None;
@@ -1194,18 +1211,18 @@ pub fn parse_restating<'a>(
         if timer || !is_state_change(line) {
             let step = prev_abs.is_some_and(|prev| stepped(now.abs, prev));
             gapped |= step;
-            if step && let Some(woke) = wake.as_mut() {
-                woke.lapsed |= woke.read;
+            if step && let Some(w) = wake.as_mut() {
+                w.lapsed |= w.read;
             }
             prev_abs = Some(now.abs);
         }
 
         if timer && let Some(counter_ms) = opened_at_counter(line) {
-            if let Some(run) = opened
+            if let Some(sitting) = opened
                 .take()
-                .and_then(|o| o.named_run(&mut pending, named.as_ref(), &counters, &awake))
+                .and_then(|o| o.sitting_at_counter(&mut pending, named.as_ref(), &counters, &awake))
             {
-                retire(run, &mut owed, &mut out, &awake);
+                retire(sitting, &mut owed, &mut out, &awake);
             }
             opened = Some(Opened {
                 counter_ms,
@@ -1214,15 +1231,15 @@ pub fn parse_restating<'a>(
             wake = None;
             left_open = None;
         }
-        if timer && resumed(line) {
-            wake = Some(Woke {
+        if timer && wakes(line) {
+            wake = Some(Wake {
                 at: now.clone(),
                 read: false,
                 lapsed: false,
             });
         }
 
-        // `live`: `open` within [`SESSION_GAP_SECS`] of `seen_at`, with no
+        // `live`: `open` within [`SITTING_GAP_SECS`] of `seen_at`, with no
         // `opened` pending.
         let live = opened.is_none()
             && open
@@ -1243,19 +1260,19 @@ pub fn parse_restating<'a>(
         else {
             if !timer && let Some(m) = metric(line) {
                 let reading = m != Metric::Close;
-                if reading && let Some(woke) = wake.as_mut() {
-                    woke.read = true;
+                if reading && let Some(w) = wake.as_mut() {
+                    w.read = true;
                 }
                 // `reading` after `gapped` and `wake`, ahead of any observation,
-                // opens a run of `left_open`, or of the `held` row at the wake.
+                // opens a sitting of `left_open`, or of the `held` row at the wake.
                 if reading
                     && (gapped || open.is_none())
                     && !live
                     && let Some(book) = left_open.or_else(|| wake.as_ref()?.held_book(held))
-                    && let Some(woke) = wake.take()
+                    && let Some(w) = wake.take()
                     && let Some(start) = {
-                        let floor = woke.floor(book, &counters, held);
-                        woke.begin(&now, floor, &awake)
+                        let floor = w.floor(book, &counters, held);
+                        w.begin(&now, floor, &awake)
                     }
                 {
                     if let Some(cur) = open.take() {
@@ -1277,7 +1294,7 @@ pub fn parse_restating<'a>(
                     open = Some(cur);
                     continue;
                 }
-                // `reading` past midnight cuts the `live` run there.
+                // `reading` past midnight cuts the `live` sitting there.
                 if reading
                     && live
                     && let Some(cur) = open.take_if(|cur| cur.seen_at.day != now.day)
@@ -1295,9 +1312,9 @@ pub fn parse_restating<'a>(
         };
         let gapped = std::mem::take(&mut gapped);
 
-        // `reopened`: `opened`'s counter where it starts the run.
+        // `reopened`: `opened`'s counter where it starts the sitting.
         let mut reopened: Option<i64> = None;
-        let mut seed = match obs.total_ms {
+        let mut start = match obs.total_ms {
             Some(_) => opened.take().and_then(|o| {
                 let read = o.counter_ms;
                 let start = o.vouch(&now, &obs, &counters);
@@ -1307,20 +1324,20 @@ pub fn parse_restating<'a>(
             None => {
                 let start = opened
                     .as_ref()
-                    .and_then(|o| o.opened_run(&now, &obs, &counters));
+                    .and_then(|o| o.opened_sitting(&now, &obs, &counters));
                 reopened = start.as_ref().and(opened.as_ref()).map(|o| o.counter_ms);
                 opened = opened.filter(|_| start.is_none());
                 start
             }
         };
         // `TimeRead` restates the counter at the book's last close: the gain
-        // past `Counters::stated` goes to its `owed` runs.
+        // past `Counters::stated` goes to its `owed` sittings.
         if let Some(read) = reopened
             && let Some(floor) = counters.stated(obs.position)
         {
             let span = owed_awake(&owed, obs.position, floor.stated, &awake);
             let gain = read - floor.counter_ms;
-            let gain = match gain >= 1000 && gain <= (span + SEED_SLACK_SECS) * 1000 {
+            let gain = match gain >= 1000 && gain <= (span + START_SLACK_SECS) * 1000 {
                 true => gain,
                 false => 0,
             };
@@ -1334,7 +1351,7 @@ pub fn parse_restating<'a>(
                 &awake,
             );
         }
-        let woken = wake.take();
+        let taken = wake.take();
 
         match open
             .as_ref()
@@ -1342,29 +1359,29 @@ pub fn parse_restating<'a>(
         {
             None => {}
             Some(Break::Left) => {
-                let cur = open.take().expect("a run to break");
+                let cur = open.take().expect("a sitting to break");
                 retire(cur, &mut owed, &mut out, &awake);
             }
             Some(Break::Midnight(boundary)) => {
                 out.push(
                     open.take()
-                        .expect("a run to cut")
+                        .expect("a sitting to cut")
                         .finish_at(&boundary, &awake),
                 );
-                seed = Some(*boundary);
+                start = Some(*boundary);
             }
         }
         let fresh = open.is_none();
-        if fresh && seed.is_none() {
-            seed = woken.and_then(|w| {
+        if fresh && start.is_none() {
+            start = taken.and_then(|w| {
                 let floor = w.floor(obs.position, &counters, held);
                 let span = floor.map_or(0, |f| owed_awake(&owed, obs.position, f.stated, &awake));
                 w.start(&now, &obs, floor, span, &awake)
             });
         }
-        let cur = open.get_or_insert_with(|| Open::new(obs.position, &now, seed.take()));
-        // `fresh` takes `named` and `pending` from `began`, a run going on every
-        // record `pending` holds.
+        let cur = open.get_or_insert_with(|| Open::new(obs.position, &now, start.take()));
+        // `fresh` takes `named` and `pending` from `began`, a sitting going on every
+        // metric `pending` holds.
         let from = match fresh {
             true => cur.began.abs,
             false => i64::MIN,
@@ -1380,8 +1397,8 @@ pub fn parse_restating<'a>(
                 cur.observe_metric(&at, &m, &awake);
             }
         }
-        // `seed`'s counters go to a run `time_lo` and `words_lo` leave open.
-        if let Some(start) = seed.take() {
+        // `start`'s counters go to a sitting `time_lo` and `words_lo` leave open.
+        if let Some(start) = start.take() {
             if let Some(counter) = start.counter_ms
                 && cur.time_lo.is_none()
             {
@@ -1399,7 +1416,7 @@ pub fn parse_restating<'a>(
         }
         if let Some(left) = percent_left(line, cur.end_position) {
             cur.progress = Some(1.0 - left);
-            cur.place(1.0 - left, obs.jumped);
+            cur.stretch_to(1.0 - left, obs.jumped);
         }
         if let Some(secs) = time_left(line, cur.end_position) {
             cur.time_left = Some(secs);
@@ -1412,7 +1429,7 @@ pub fn parse_restating<'a>(
             .map_or(0, |f| owed_awake(&owed, cur.end_position, f.stated, &awake));
         cur.observe(&now, &obs, &awake, span);
         // A settled `Floor` shares `owed_ms` out; any other counter finishes
-        // the `owed` runs as they stand.
+        // the `owed` sittings as they stand.
         match cur.settled.take() {
             Some((floor, settled)) => {
                 let book = cur.end_position;
@@ -1435,7 +1452,7 @@ pub fn parse_restating<'a>(
         counters.learn(&obs, now.abs);
         left_open = Some(obs.position);
         if obs.closes {
-            let cur = open.take().expect("a run to close");
+            let cur = open.take().expect("a sitting to close");
             retire(cur, &mut owed, &mut out, &awake);
             left_open = None;
         }
@@ -1443,12 +1460,12 @@ pub fn parse_restating<'a>(
     if let Some(cur) = open {
         retire(cur, &mut owed, &mut out, &awake);
     }
-    if let Some(run) =
-        opened.and_then(|o| o.named_run(&mut pending, named.as_ref(), &counters, &awake))
+    if let Some(sitting) =
+        opened.and_then(|o| o.sitting_at_counter(&mut pending, named.as_ref(), &counters, &awake))
     {
-        retire(run, &mut owed, &mut out, &awake);
+        retire(sitting, &mut owed, &mut out, &awake);
     }
-    out.extend(owed.into_iter().map(|run| run.finish(&awake)));
+    out.extend(owed.into_iter().map(|sitting| sitting.finish(&awake)));
     out.retain(|s| s.seconds > 0);
     out
 }
@@ -1461,48 +1478,48 @@ const FLAT: Floor = Floor {
     stated: 0,
 };
 
-/// `run` into `owed` while `Open::owing`, else finished into `out`.
-fn retire(run: Open, owed: &mut Vec<Open>, out: &mut Vec<Session>, awake: &Awake) {
-    match run.owing() {
-        true => owed.push(run),
-        false => out.push(run.finish(awake)),
+/// `sitting` into `owed` while `Open::owing`, else finished into `out`.
+fn retire(sitting: Open, owed: &mut Vec<Open>, out: &mut Vec<Sitting>, awake: &Awake) {
+    match sitting.owing() {
+        true => owed.push(sitting),
+        false => out.push(sitting.finish(awake)),
     }
 }
 
-/// Seconds awake across the `owed` runs of `book` past `stated`.
+/// Seconds awake across the `owed` sittings of `book` past `stated`.
 fn owed_awake(owed: &[Open], book: i64, stated: i64, awake: &Awake) -> i64 {
     owed.iter()
-        .filter(|run| run.end_position == book)
-        .map(|run| awake.bound(run.began.abs.max(stated), run.end().abs))
+        .filter(|sitting| sitting.end_position == book)
+        .map(|sitting| awake.bound(sitting.began.abs.max(stated), sitting.end().abs))
         .sum()
 }
 
-/// The `owed` runs of `book`, `gain` shared over them by `owed_awake` from
+/// The `owed` sittings of `book`, `gain` shared over them by `owed_awake` from
 /// `floor`, finished into `out`; `words` is the same for `TotalWords`.
 fn share_out(
     owed: &mut Vec<Open>,
-    out: &mut Vec<Session>,
+    out: &mut Vec<Sitting>,
     book: i64,
     floor: &Floor,
     gain: i64,
     words: Option<i64>,
     awake: &Awake,
 ) {
-    let (runs, rest): (Vec<Open>, Vec<Open>) = std::mem::take(owed)
+    let (sittings, rest): (Vec<Open>, Vec<Open>) = std::mem::take(owed)
         .into_iter()
-        .partition(|run| run.end_position == book);
+        .partition(|sitting| sitting.end_position == book);
     *owed = rest;
-    let weights: Vec<i64> = runs
+    let weights: Vec<i64> = sittings
         .iter()
-        .map(|run| awake.bound(run.began.abs.max(floor.stated), run.end().abs))
+        .map(|sitting| awake.bound(sitting.began.abs.max(floor.stated), sitting.end().abs))
         .collect();
     let total: i64 = weights.iter().sum();
-    let part = |whole: i64, given: i64, at: usize, weight: i64| match (at + 1 == runs.len(), total)
-    {
-        (true, _) => whole - given,
-        (false, 0) => 0,
-        (false, total) => whole * weight / total,
-    };
+    let part =
+        |whole: i64, given: i64, at: usize, weight: i64| match (at + 1 == sittings.len(), total) {
+            (true, _) => whole - given,
+            (false, 0) => 0,
+            (false, total) => whole * weight / total,
+        };
     let (mut counter, mut given) = (floor.counter_ms, 0);
     let (mut at_words, mut words_given) = (floor.words, 0);
     let shares: Vec<(i64, Option<i64>)> = weights
@@ -1519,15 +1536,15 @@ fn share_out(
             (share, words_share)
         })
         .collect();
-    for (mut run, (share, words_share)) in runs.into_iter().zip(shares) {
-        run.top_up(counter, share, at_words.zip(words_share), awake);
+    for (mut sitting, (share, words_share)) in sittings.into_iter().zip(shares) {
+        sitting.top_up(counter, share, at_words.zip(words_share), awake);
         counter += share;
         at_words = at_words.zip(words_share).map(|(at, share)| at + share);
-        out.push(run.finish(awake));
+        out.push(sitting.finish(awake));
     }
 }
 
-/// A book's percentage read, off the reading-timer lines. `%Left` is the
+/// A book's progress, off the reading-timer lines. `%Left` is the
 /// fraction ahead, on the payload naming the book; read only off a line whose
 /// book `end_position` names.
 fn percent_left(line: &str, book: i64) -> Option<f64> {
@@ -1578,7 +1595,7 @@ mod tests {
 
     #[test]
     fn two_page_events_measure_the_span_of_the_counter_between_them() {
-        let out = parse_sessions(CVM, &[]);
+        let out = parse_sittings(CVM, &[]);
         assert_eq!(out.len(), 1);
         // 7431463 - 7390020 = 41443 ms.
         assert_eq!(out[0].seconds, 41);
@@ -1590,7 +1607,7 @@ mod tests {
         assert_eq!(out[0].ended_at, "2026-08-07T10:15:43");
     }
 
-    /// An `OpenBook` and two `NextPage` lines stating `HTMLPosition` places.
+    /// An `OpenBook` and two `NextPage` lines stating `HTMLPosition` positions.
     const MOBI8: [&str; 3] = [
         "260906:192401 java[1]: I ReadingTimerController:Information::OpenBook,StoredBookData:TimeRead:329 sec. WPM:0. Version:0,Title:<private>;",
         "260906:192404 cvm[6144]: I ReadingTimerController:Information::NextPage,Verdict:Processed,PageStartPos:HTMLPosition:7731097,IntervalTime:785,IntervalWords:12,TotalTime:329785,TotalWords:1905,CurrentPos:HTMLPosition:7731097,EndPos:HTMLPosition:19886489,PosLeft:12155392,%Left:0.6112;",
@@ -1599,7 +1616,7 @@ mod tests {
 
     /// One `cvm` line at `hhmmss` naming `event`, standing `left` of the book,
     /// its `TotalTime` the clock's.
-    fn placed(hhmmss: &str, event: &str, left: f64) -> String {
+    fn event_line(hhmmss: &str, event: &str, left: f64) -> String {
         let secs: i64 = hhmmss[0..2].parse::<i64>().unwrap() * 3600
             + hhmmss[2..4].parse::<i64>().unwrap() * 60
             + hhmmss[4..6].parse::<i64>().unwrap();
@@ -1614,7 +1631,7 @@ mod tests {
 
     fn covered(lines: &[String]) -> Vec<(i64, i64)> {
         let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
-        let out = parse_sessions(refs, &[]);
+        let out = parse_sittings(refs, &[]);
         assert_eq!(out.len(), 1, "one sitting");
         out[0]
             .stretches
@@ -1628,28 +1645,28 @@ mod tests {
             .collect()
     }
 
-    /// 0 to 10, back to 5 and on to 8, then 10 to 12: three runs, and no run
+    /// 0 to 10, back to 5 and on to 8, then 10 to 12: three stretches, and none
     /// spanning 8 to 10.
     #[test]
-    fn a_jump_cuts_the_run_of_the_book_and_a_page_turn_opens_one() {
+    fn a_jump_cuts_the_stretch_and_a_page_turn_opens_one() {
         assert_eq!(
             covered(&[
-                placed("100000", "NextPage", 1.0),
-                placed("100100", "NextPage", 0.9),
-                placed("100200", "GoToPosition", 0.95),
-                placed("100300", "NextPage", 0.92),
-                placed("100400", "GoToPosition", 0.9),
-                placed("100500", "NextPage", 0.88),
+                event_line("100000", "NextPage", 1.0),
+                event_line("100100", "NextPage", 0.9),
+                event_line("100200", "GoToPosition", 0.95),
+                event_line("100300", "NextPage", 0.92),
+                event_line("100400", "GoToPosition", 0.9),
+                event_line("100500", "NextPage", 0.88),
             ]),
             [(0, 10), (5, 8), (10, 12)],
         );
         // `NextPage` turns make one stretch however far they reach.
         assert_eq!(
             covered(&[
-                placed("100000", "NextPage", 1.0),
-                placed("100100", "NextPage", 0.9),
-                placed("100200", "PreviousPage", 0.93),
-                placed("100300", "NextPage", 0.8),
+                event_line("100000", "NextPage", 1.0),
+                event_line("100100", "NextPage", 0.9),
+                event_line("100200", "PreviousPage", 0.93),
+                event_line("100300", "NextPage", 0.8),
             ]),
             [(0, 20)],
         );
@@ -1657,45 +1674,45 @@ mod tests {
 
     /// `GoToPosition` twice running, and `TapOnFooter` on the way, cover no ground.
     #[test]
-    fn a_run_no_page_was_turned_in_is_not_a_run_of_the_book() {
+    fn a_stretch_no_page_was_turned_in_is_not_one() {
         assert_eq!(
             covered(&[
-                placed("100000", "NextPage", 1.0),
-                placed("100100", "NextPage", 0.9),
-                placed("100200", "TapOnFooter", 0.9),
-                placed("100300", "GoToPosition", 0.5),
-                placed("100400", "GoToPosition", 0.3),
-                placed("100500", "NextPage", 0.28),
+                event_line("100000", "NextPage", 1.0),
+                event_line("100100", "NextPage", 0.9),
+                event_line("100200", "TapOnFooter", 0.9),
+                event_line("100300", "GoToPosition", 0.5),
+                event_line("100400", "GoToPosition", 0.3),
+                event_line("100500", "NextPage", 0.28),
             ]),
             [(0, 10), (70, 72)],
         );
-        // `GoToPosition` and `TapOnFooter` alone state no run.
+        // `GoToPosition` and `TapOnFooter` alone state no stretch.
         assert!(
             covered(&[
-                placed("100000", "GoToPosition", 0.5),
-                placed("100100", "TapOnFooter", 0.4),
+                event_line("100000", "GoToPosition", 0.5),
+                event_line("100100", "TapOnFooter", 0.4),
             ])
             .is_empty()
         );
     }
 
-    /// A [`Stretch`] states the run it covered, backwards included.
+    /// A [`Stretch`] states the ground it covered, backwards included.
     #[test]
-    fn a_run_read_backwards_states_the_ground_it_covered() {
+    fn a_stretch_read_backwards_states_the_ground_it_covered() {
         assert_eq!(
             covered(&[
-                placed("100000", "NextPage", 0.2),
-                placed("100100", "PreviousPage", 0.25),
+                event_line("100000", "NextPage", 0.2),
+                event_line("100100", "PreviousPage", 0.25),
             ]),
             [(80, 75)],
         );
     }
 
     #[test]
-    fn a_mobi8_run_is_measured_the_way_a_kfx_one_is() {
-        let out = parse_sessions(MOBI8, &[]);
+    fn a_mobi8_sitting_is_measured_the_way_a_kfx_one_is() {
+        let out = parse_sittings(MOBI8, &[]);
         assert_eq!(out.len(), 1);
-        // `vouch` seeds 329000 ms; 351002 stands at the last turn.
+        // `vouch` starts at 329000 ms; 351002 stands at the last turn.
         assert_eq!(out[0].seconds, 22);
         assert_eq!(out[0].end_position, 19_886_489);
         assert_eq!(out[0].page_turns, 2);
@@ -1722,12 +1739,12 @@ mod tests {
     }
 
     #[test]
-    fn a_run_holds_the_time_left_the_last_line_stated_for_its_book() {
+    fn a_sitting_holds_the_time_left_the_last_line_stated_for_its_book() {
         let lines = [
             turn_left("192404", 329_785, 4_200, 300),
             turn_left("192425", 351_002, 3_900, 240),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].end_position, 19_886_489);
         assert_eq!(out[0].time_left, Some(3_900), "the chapter's figure stood");
@@ -1757,13 +1774,13 @@ mod tests {
     }
 
     #[test]
-    fn a_resumed_run_takes_the_words_that_stood_beside_the_counter_it_opened_at() {
+    fn a_sitting_takes_the_words_that_stood_beside_the_counter_it_opened_at() {
         let lines = [
             kpp_close("024945", 1_592_301, 5_548),
             kpp_open("024957", "1,592"),
             kpp_close("140506", 10_194_302, 33_906),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 1, "the first close spans nothing of its own");
         // 10194302 ms against the 1592000 the open vouched for.
         assert_eq!(out[0].seconds, 8_602);
@@ -1779,7 +1796,7 @@ mod tests {
             kpp_close("140506", 10_194_302, 33_906),
         ];
         let held = [(289_095, 1_592_301, 5_548)];
-        let out = parse_sessions(lines.iter().map(String::as_str), &held);
+        let out = parse_sittings(lines.iter().map(String::as_str), &held);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].words, 33_906 - 5_548);
     }
@@ -1796,12 +1813,12 @@ mod tests {
             (19_886_489, 1_592_301, 5_548),
             (289_095, 10_194_302, 33_906),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &held);
+        let out = parse_sittings(lines.iter().map(String::as_str), &held);
         assert_eq!(out[0].seconds, 8_602, "the seconds still came off the open");
         assert_eq!(out[0].words, 0, "a word count was invented");
     }
 
-    /// A `cde_key` record at `hhmmss`.
+    /// A `cde_key` metric at `hhmmss`.
     fn keyed(hhmmss: &str, key: &str) -> String {
         format!(
             "260906:{hhmmss} fastmetrics[1]: D fastmetrics: \
@@ -1820,7 +1837,7 @@ mod tests {
     }
 
     #[test]
-    fn a_run_gone_quiet_does_not_take_the_next_books_key() {
+    fn a_sitting_gone_quiet_does_not_take_the_next_books_key() {
         let mut lines = vec![page("101501", 7_390_020), page("101543", 7_431_463)];
         // A month on, another book's key, its open, and its own turns.
         lines.push(MOBI8[0].replace("260906:192401", "260906:121001"));
@@ -1828,10 +1845,13 @@ mod tests {
         lines.push(MOBI8[1].replace("260906:192404", "260906:121004"));
         lines.push(MOBI8[2].replace("260906:192425", "260906:121025"));
 
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].end_position, 148_207);
-        assert_eq!(out[0].asin, None, "the first run took a later book's key");
+        assert_eq!(
+            out[0].asin, None,
+            "the first sitting took a later book's key"
+        );
         assert_eq!(out[1].end_position, 19_886_489);
         assert_eq!(out[1].asin.as_deref(), Some("B00NEXTONE"));
     }
@@ -1851,14 +1871,14 @@ mod tests {
             MOBI8[2].to_string(),
             lone("192500", 28_828),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 1, "a chapter opened a sitting of its own");
         assert_eq!(out[0].end_position, 19_886_489);
     }
 
     #[test]
-    fn the_hours_of_a_session_add_back_up_to_the_session() {
-        let out = parse_sessions(CVM, &[]);
+    fn the_hours_of_a_sitting_add_back_up_to_the_sitting() {
+        let out = parse_sittings(CVM, &[]);
         let summed: i64 = out[0].hours.iter().map(|(_, s)| s).sum();
         assert_eq!(summed, out[0].seconds);
         assert_eq!(out[0].hours, vec![(10, 41)]);
@@ -1875,7 +1895,7 @@ mod tests {
         )
     }
 
-    /// A turn line stating no `IntervalTime`, leaving the run to the pages.
+    /// A turn line stating no `IntervalTime`, leaving the sitting to the pages.
     fn untimed_page(hhmmss: &str, total_ms: i64) -> String {
         format!(
             "260807:{hhmmss} cvm[6144]: I ReadingTimerController:Information::NextPage,\
@@ -1889,7 +1909,7 @@ mod tests {
     #[test]
     fn a_night_of_suspends_between_page_events_ends_the_sitting() {
         let mut lines = vec![page("020000", 7_390_020), page("020040", 7_430_020)];
-        // `suspending` every twenty minutes, under `SESSION_GAP_SECS`.
+        // `suspending` every twenty minutes, under `SITTING_GAP_SECS`.
         let mut at = 2 * 3600 + 30 * 60;
         while at < 11 * 3600 + 40 * 60 {
             let (h, m) = (at / 3600, (at % 3600) / 60);
@@ -1902,7 +1922,7 @@ mod tests {
         lines.push(page("115000", 7_431_020));
         lines.push(page("115040", 7_471_020));
 
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(
             out.len(),
             2,
@@ -1917,7 +1937,7 @@ mod tests {
         assert_eq!(out[1].seconds, 40);
     }
 
-    /// An `ereader_book_consume_content` record at `hhmmss`, stating `words`.
+    /// An `ereader_book_consume_content` metric at `hhmmss`, stating `words`.
     fn worded_page(hhmmss: &str, words: i64) -> String {
         format!(
             "260807:{hhmmss} fastmetrics[9842]: D fastmetrics: Emitting a new record. \
@@ -1925,8 +1945,8 @@ mod tests {
         )
     }
 
-    /// The same record, stating where the screen began.
-    fn placed_page(hhmmss: &str, words: i64, start: i64) -> String {
+    /// The same metric, stating where the screen began.
+    fn positioned_page(hhmmss: &str, words: i64, start: i64) -> String {
         format!(
             "260807:{hhmmss} fastmetrics[9842]: D fastmetrics: Emitting a new record. \
              SchemaName[ereader_book_consume_content], Fields[{{ \"start_position\" : {start}, \
@@ -1934,18 +1954,18 @@ mod tests {
         )
     }
 
-    /// `start_position` repeated is a redraw, its words those the record before
+    /// `start_position` repeated is a redraw, its words those the metric before
     /// it counted.
     #[test]
     fn a_redrawn_screen_counts_its_words_once() {
         let lines = [
             page("101500", 7_390_020),
-            placed_page("101500", 300, 1000),
-            placed_page("101530", 300, 1000),
-            placed_page("101600", 250, 1301),
-            placed_page("101630", 100, 1552),
+            positioned_page("101500", 300, 1000),
+            positioned_page("101530", 300, 1000),
+            positioned_page("101600", 250, 1301),
+            positioned_page("101630", 100, 1552),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 1);
         // Three closed intervals of 30 s, the one from 101630 left open.
         assert_eq!(out[0].paged_seconds, 90);
@@ -1953,7 +1973,7 @@ mod tests {
         assert_eq!(out[0].paged_words, 550, "a redraw counted its words twice");
     }
 
-    /// A page record stating the span it covers.
+    /// A page metric stating the span it covers.
     fn spanned_page(hhmmss: &str, words: i64, start: i64, end: i64) -> String {
         format!(
             "260807:{hhmmss} fastmetrics[9842]: D fastmetrics: Emitting a new record. \
@@ -1963,7 +1983,7 @@ mod tests {
     }
 
     /// `covered` is the share of the book the pages crediting words cover,
-    /// against the run's own `end_position`.
+    /// against the sitting's own `end_position`.
     #[test]
     fn the_pages_that_count_carry_the_share_of_the_book() {
         let lines = [
@@ -1974,7 +1994,7 @@ mod tests {
             spanned_page("101600", 100, 9000, 9251),
             spanned_page("101630", 120, 9251, 9500),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         // Three closed pages, each its own span over the book's own 148207.
         let want = (301.0 + 251.0 + 251.0) / 148_207.0;
         assert!(
@@ -1991,22 +2011,22 @@ mod tests {
     }
 
     /// `worded_page` names no `start_position`: `share_of` reads -1 for both
-    /// places, and `covered` stays zero.
+    /// positions, and `covered` stays zero.
     #[test]
-    fn pages_stating_no_place_carry_no_share() {
+    fn pages_stating_no_position_carry_no_share() {
         let lines = [
             page("101500", 7_390_020),
             worded_page("101500", 300),
             worded_page("101530", 300),
             worded_page("101600", 250),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert!(out[0].paged_words > 0, "the pages counted their words");
         assert_eq!(out[0].covered, 0.0);
     }
 
     #[test]
-    fn a_run_the_timer_states_no_words_for_counts_the_pages_own() {
+    fn a_sitting_the_timer_states_no_words_for_counts_the_pages_own() {
         // `TotalTime` never moves on a book the timer declines to count, and
         // the word span with it.
         let lines = [
@@ -2017,7 +2037,7 @@ mod tests {
             worded_page("105210", 300),
             page("105220", 7_390_020),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 1);
         // 105010 to 105110 and 105110 to 105210 close; 105210 closes none.
         assert_eq!(out[0].words, 600, "the pages' own counts went unread");
@@ -2025,7 +2045,7 @@ mod tests {
     }
 
     #[test]
-    fn a_fixed_layout_run_states_no_words_and_none_are_invented() {
+    fn a_fixed_layout_sitting_states_no_words_and_none_are_invented() {
         // `wordless_page` states zero words, as an image-only book does.
         let lines = [
             power("105000", "outOfScreenSaver"),
@@ -2035,7 +2055,7 @@ mod tests {
             wordless_page("105210"),
             page("105220", 7_390_020),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].words, 0, "an image-only book was credited words");
     }
@@ -2051,12 +2071,12 @@ mod tests {
             worded_page("105151", 300),
             page("105220", 7_390_020),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].words, 300, "a flipped page was counted as read");
     }
 
-    /// An `ereader_book_consume_content` record at `hhmmss`, no words on it.
+    /// An `ereader_book_consume_content` metric at `hhmmss`, no words on it.
     fn wordless_page(hhmmss: &str) -> String {
         format!(
             "260807:{hhmmss} fastmetrics[9842]: D fastmetrics: Emitting a new record. \
@@ -2070,7 +2090,7 @@ mod tests {
     }
 
     #[test]
-    fn a_page_held_across_a_short_sleep_counts_only_where_the_device_was_awake() {
+    fn a_page_held_across_a_short_sleep_counts_only_where_the_kindle_was_awake() {
         // `TotalTime` never moves on a book the timer declines to count.
         let lines = [
             power("105000", "outOfScreenSaver"),
@@ -2083,7 +2103,7 @@ mod tests {
             untimed_page("111510", 7_390_020),
             power("111600", "goingToScreenSaver"),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].measure, Measure::Paged);
         // `ACTIVE` 10:50:00-10:52:00 and 11:10:00-11:15:00, `hours` split in proportion.
@@ -2093,14 +2113,14 @@ mod tests {
     }
 
     #[test]
-    fn a_run_no_power_line_brackets_still_states_the_wall_clock_it_ran_over() {
+    fn a_sitting_no_power_line_brackets_still_states_the_wall_clock_it_ran_over() {
         // Three `page` lines, and no `power` line above or between them.
         let lines = [
             page("105000", 7_390_020),
             page("105500", 7_420_020),
             page("110000", 7_450_020),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].measure, Measure::Counted);
         assert_eq!(out[0].seconds, 60, "the counter credited a minute of it");
@@ -2108,14 +2128,14 @@ mod tests {
     }
 
     #[test]
-    fn a_run_broken_by_a_sleep_states_the_wall_clock_less_the_sleep() {
+    fn a_sitting_broken_by_a_sleep_states_the_wall_clock_less_the_sleep() {
         let lines = [
             page("105000", 7_390_020),
             power("105500", "goingToScreenSaver"),
             power("110500", "outOfScreenSaver"),
             page("111000", 7_420_020),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 1);
         // 10:50:00 to 11:10:00, asleep 10:55:00 to 11:05:00.
         assert_eq!(out[0].awake_seconds, 600);
@@ -2123,23 +2143,23 @@ mod tests {
 
     #[test]
     fn remeasure_takes_the_figures_and_keeps_what_the_fresh_parse_states_none_of() {
-        let mut held = Session {
+        let mut held = Sitting {
             seconds: 9,
             awake_seconds: 0,
             measure: Measure::Paged,
             asin: Some("B00OKPCRLG".into()),
             tz_offset_s: Some(10_800),
             stated_wpm: Some(240),
-            ..Session::default()
+            ..Sitting::default()
         };
-        let fresh = Session {
+        let fresh = Sitting {
             seconds: 41,
             awake_seconds: 600,
             measure: Measure::Counted,
             asin: None,
             tz_offset_s: None,
             stated_wpm: Some(260),
-            ..Session::default()
+            ..Sitting::default()
         };
         assert!(held.remeasure(&fresh));
         assert_eq!(held.seconds, 41);
@@ -2169,7 +2189,7 @@ mod tests {
     }
 
     #[test]
-    fn the_device_waking_each_hour_of_a_night_draws_no_hour_of_reading() {
+    fn the_kindle_waking_each_hour_of_a_night_draws_no_hour_of_reading() {
         let mut lines = vec![
             power("024000", "outOfScreenSaver"),
             open_book("024552"),
@@ -2187,7 +2207,7 @@ mod tests {
         lines.push(position("113818"));
         lines.push(power("114500", "goingToScreenSaver"));
 
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 1, "the night held one sitting, at its head");
         assert_eq!(out[0].started_at, "2026-08-07T02:45:52");
         assert_eq!(out[0].ended_at, "2026-08-07T02:45:53");
@@ -2196,12 +2216,12 @@ mod tests {
             out.iter()
                 .flat_map(|s| &s.hours)
                 .all(|(hour, _)| !(3..=11).contains(hour)),
-            "a wake the device took by itself was drawn as reading"
+            "a wake the Kindle took by itself was drawn as reading"
         );
     }
 
     #[test]
-    fn an_open_a_gap_old_does_not_start_the_run_that_follows_it() {
+    fn an_open_a_gap_old_does_not_start_the_sitting_that_follows_it() {
         let lines = [
             power("100000", "outOfScreenSaver"),
             open_book("100000"),
@@ -2212,9 +2232,9 @@ mod tests {
             position("120010"),
             power("120100", "goingToScreenSaver"),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 2);
-        // `open_book` stands a second before the run it starts.
+        // `open_book` stands a second before the sitting it starts.
         assert_eq!(out[0].started_at, "2026-08-07T10:00:00");
         // Two hours on, `started_at` is the observation's own.
         assert_eq!(out[1].started_at, "2026-08-07T12:00:05");
@@ -2254,7 +2274,7 @@ mod tests {
     }
 
     #[test]
-    fn a_page_the_device_counted_counts_the_whole_of_its_interval() {
+    fn a_page_the_kindle_counted_counts_the_whole_of_its_interval() {
         // 3 words in 4 s and one page standing an hour both count whole.
         assert_eq!(
             credits(&turn(3_600_000, 900, false)),
@@ -2341,19 +2361,19 @@ mod tests {
         )
     }
 
-    /// `seconds` counts the page that brought the run its first `TotalTime`.
+    /// `seconds` counts the page that brought the sitting its first `TotalTime`.
     #[test]
-    fn a_run_counts_the_page_that_brought_it_its_first_counter() {
+    fn a_sitting_counts_the_page_that_brought_it_its_first_counter() {
         let lines = [
             open_book("101500"),
-            // `position` states no counter, and `open_book` starts the run unvouched.
+            // `position` states no counter, and `open_book` starts the sitting unvouched.
             position("101501"),
             page("101540", 7_390_020),
             page("101620", 7_429_910),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 1);
-        // 39.89 s for each page, both the run's.
+        // 39.89 s for each page, both the sitting's.
         assert_eq!(out[0].seconds, 79);
         assert_eq!(out[0].timed_seconds, 79);
     }
@@ -2367,7 +2387,7 @@ mod tests {
             dated_page("260807", "235940", 7_040_000, 40_000),
             dated_page("260808", "000020", 7_080_000, 40_000),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 2);
         // 40 s stood wholly on the 7th, then 40 s split 20/20 over midnight.
         assert_eq!((out[0].seconds, out[0].timed_seconds), (60, 60));
@@ -2376,10 +2396,10 @@ mod tests {
         assert_eq!(out[1].hours, vec![(0, 20)]);
     }
 
-    /// `dated_page` stepping back four hours mid-run, a zone change, opens a
+    /// `dated_page` stepping back four hours mid-sitting, a zone change, opens a
     /// second sitting booking no hour the first ran in.
     #[test]
-    fn a_clock_stepping_back_mid_run_cuts_the_run() {
+    fn a_clock_stepping_back_mid_sitting_cuts_it() {
         let lines = [
             dated_page("260924", "104500", 7_000_000, 20_000),
             dated_page("260924", "104540", 7_040_000, 40_000),
@@ -2387,7 +2407,7 @@ mod tests {
             dated_page("260924", "064620", 7_080_000, 40_000),
             dated_page("260924", "064700", 7_120_000, 40_000),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 2, "one sitting either side of the step");
         assert_eq!(out[0].started_at, "2026-09-24T10:45:00");
         assert_eq!(out[0].ended_at, "2026-09-24T10:45:40");
@@ -2402,11 +2422,11 @@ mod tests {
 
     #[test]
     fn a_sitting_that_measured_nothing_is_not_a_sitting() {
-        assert!(parse_sessions([CVM[0]], &[]).is_empty());
+        assert!(parse_sittings([CVM[0]], &[]).is_empty());
     }
 
     #[test]
-    fn a_percentage_is_read_off_the_book_payload_and_not_the_chapter() {
+    fn progress_is_read_off_the_book_payload_and_not_the_chapter() {
         assert_eq!(percent_left(CVM[0], 148_207), Some(0.6450299914310198));
         // `percent_left` answers nothing for the chapter's own end position.
         assert_eq!(percent_left(CVM[0], 56_499), None);
@@ -2451,7 +2471,7 @@ mod tests {
     /// A wake 34 minutes after the last page, a wake and sleep a minute long,
     /// then the first page, its `IntervalTime` from the second wake.
     #[test]
-    fn a_page_turned_after_a_long_sleep_belongs_to_the_run_it_opens() {
+    fn a_page_turned_after_a_long_sleep_belongs_to_the_sitting_it_opens() {
         let lines = [
             dated_page("260807", "120312", 12_722_410, 38_255),
             dated_page("260807", "120356", 12_766_659, 44_249),
@@ -2467,7 +2487,7 @@ mod tests {
             dated_page("260807", "124052", 12_783_344, 16_685),
             dated_page("260807", "124130", 12_821_344, 38_000),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 2);
         assert_eq!(out[1].started_at, "2026-08-07T12:40:35");
         assert_eq!(
@@ -2479,10 +2499,10 @@ mod tests {
     }
 
     /// A KPP book left open across an hour's sleep, read on and closed: `closed`
-    /// is the stretch's only counted line, and the last `flushed` before the
+    /// is the sitting's only counted line, and the last `flushed` before the
     /// sleep states the counter three seconds of reading short of it.
     #[test]
-    fn a_stretch_read_after_a_wake_opens_at_the_wake_on_the_counter_the_sleep_left() {
+    fn a_sitting_read_after_a_wake_opens_at_the_wake_on_the_counter_the_sleep_left() {
         let lines = [
             kpp_open("221813", "18,648").replacen("260906:", "260807:", 1),
             flushed("221823", 18_648_522, 166_639),
@@ -2495,8 +2515,8 @@ mod tests {
             power("233443", "outOfScreenSaver"),
             closed("234505", 19_285_414, 172_147),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
-        assert_eq!(out.len(), 2, "the stretch after the wake was lost");
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
+        assert_eq!(out.len(), 2, "the sitting after the wake was lost");
         assert_eq!(out[0].seconds, 317);
         assert_eq!(out[0].end_counter_ms, out[1].start_counter_ms);
         assert_eq!(out[1].started_at, "2026-08-07T23:34:43");
@@ -2508,17 +2528,17 @@ mod tests {
         assert_eq!(out[1].seconds, 320);
         assert_eq!(out[1].measure, Measure::Counted);
         // `healed`: the log read under `t` rows holding the counter it ends at.
-        let healed = parse_sessions(
+        let healed = parse_sittings(
             lines.iter().map(String::as_str),
             &[(289_095, 19_285_414, 172_147)],
         );
         assert_eq!(healed, out);
     }
 
-    /// A wake, a page record, then eleven hours of silence: a hole in the log,
-    /// the wake starting no run.
+    /// A wake, a page metric, then eleven hours of silence: a hole in the log,
+    /// the wake starting no sitting.
     #[test]
-    fn a_wake_the_log_falls_silent_after_starts_no_run() {
+    fn a_wake_the_log_falls_silent_after_starts_no_sitting() {
         let lines = [
             dated_page("260807", "080000", 7_390_020, 39_890),
             event("080030", "Reading_Interrupted,Reason:1"),
@@ -2530,7 +2550,7 @@ mod tests {
             dated_page("260807", "190000", 12_390_020, 39_890),
             dated_page("260807", "190040", 12_430_020, 40_000),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert!(
             out.iter().all(|s| s.seconds < 100),
             "the hole was read as a sitting: {out:?}"
@@ -2538,10 +2558,10 @@ mod tests {
         assert!(out.iter().all(|s| s.started_at != "2026-08-07T08:10:00"));
     }
 
-    /// No page record between a wake and the sleep after it, `flushed` counting
-    /// the run from the wake however long the silence.
+    /// No page metric between a wake and the sleep after it, `flushed` counting
+    /// the sitting from the wake however long the silence.
     #[test]
-    fn a_silent_stretch_the_counter_brackets_is_read_from_its_wake() {
+    fn a_silence_the_counter_brackets_is_read_from_its_wake() {
         let lines = [
             flushed("120144", 30_470_613, 170_000),
             power("120144", "goingToScreenSaver"),
@@ -2550,7 +2570,7 @@ mod tests {
             flushed("151739", 32_412_005, 180_000),
             power("151739", "goingToScreenSaver"),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].started_at, "2026-08-07T14:40:15");
         assert_eq!(out[0].start_counter_ms, Some(30_470_613));
@@ -2558,22 +2578,22 @@ mod tests {
     }
 
     /// `open_book`, then `position` stating no counter: `close_at` settles the
-    /// run on the counter `open_book` restates.
+    /// sitting on the counter `open_book` restates.
     #[test]
-    fn an_open_its_first_line_cannot_vouch_for_still_floors_the_run() {
+    fn an_open_its_first_line_cannot_vouch_for_still_floors_the_sitting() {
         let lines = [
             open_book("180404"),
             position("180406"),
             close_at("182833", 10_201),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].start_counter_ms, Some(0));
         assert_eq!(out[0].seconds, 10);
     }
 
     /// `StoredBookData` states whole seconds: `dated_page`, under one past it,
-    /// floors the run a page under itself.
+    /// floors the sitting a page under itself.
     #[test]
     fn a_counter_stated_in_whole_seconds_gains_nothing_under_one() {
         let lines = [
@@ -2583,12 +2603,12 @@ mod tests {
             position("101501"),
             dated_page("260807", "101541", 5_421_525 + 39_890, 39_890),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(out[0].start_counter_ms, Some(5_421_525));
         assert_eq!(out[0].seconds, 39);
     }
 
-    /// Page records alone after a wake, the sleep's flush naming no book: pages
+    /// Page metrics alone after a wake, the sleep's flush naming no book: pages
     /// of the book `flushed` left open.
     #[test]
     fn pages_read_after_a_wake_with_no_line_naming_a_book_are_the_book_left_open() {
@@ -2603,7 +2623,7 @@ mod tests {
             event("120500", "Reading_Interrupted,Reason:1"),
             power("120500", "goingToScreenSaver"),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 1, "the pages after the wake were lost");
         assert_eq!(out[0].end_position, 289_095);
         assert_eq!(out[0].started_at, "2026-08-07T12:00:00");
@@ -2614,21 +2634,21 @@ mod tests {
         );
     }
 
-    /// `record`s past midnight cut the run they carry at midnight.
+    /// `worded`s past midnight cut the sitting they carry at midnight.
     #[test]
-    fn a_run_its_records_carry_past_midnight_is_cut_there() {
-        let record = |day: &str, hhmmss: &str| worded_page(hhmmss, 300).replacen("260807:", day, 1);
+    fn a_sitting_its_metrics_carry_past_midnight_is_cut_there() {
+        let worded = |day: &str, hhmmss: &str| worded_page(hhmmss, 300).replacen("260807:", day, 1);
         let lines = [
             flushed("230000", 6_066_717, 53_689),
             power("230000", "goingToScreenSaver"),
             power("235000", "outOfScreenSaver"),
             event("235000", "Reading_Resumed,Reason:2"),
-            record("260807:", "235010"),
-            record("260807:", "235500"),
-            record("260808:", "000100"),
-            record("260808:", "000500"),
+            worded("260807:", "235010"),
+            worded("260807:", "235500"),
+            worded("260808:", "000100"),
+            worded("260808:", "000500"),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         let spans: Vec<(&str, &str)> = out
             .iter()
             .map(|s| (s.started_at.as_str(), s.ended_at.as_str()))
@@ -2655,7 +2675,7 @@ mod tests {
 
     /// `worded_page`s after `open_book` wait for the line naming the opened book.
     #[test]
-    fn records_after_an_open_wait_for_the_line_naming_its_book() {
+    fn metrics_after_an_open_wait_for_the_line_naming_its_book() {
         let lines = [
             dated_page("260807", "100000", 7_390_020, 39_890),
             worded_page("100010", 300),
@@ -2664,11 +2684,11 @@ mod tests {
             worded_page("100610", 300),
             other("100700", 60_000),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         let opened = out
             .iter()
             .find(|s| s.end_position == 19_886_489)
-            .expect("the opened book's run");
+            .expect("the opened book's sitting");
         assert_eq!(opened.started_at, "2026-08-07T10:05:00");
         assert_eq!(opened.paged_seconds, 60);
         assert!(
@@ -2676,7 +2696,7 @@ mod tests {
                 .all(|s| s.end_position != 148_207 || s.paged_seconds == 0)
         );
 
-        // `again`: the same book opened, its run going on and taking them.
+        // `again`: the same book opened, its sitting going on and taking them.
         let again = [
             dated_page("260807", "100000", 7_390_020, 39_890),
             worded_page("100010", 300),
@@ -2687,35 +2707,35 @@ mod tests {
             worded_page("100610", 300),
             dated_page("260807", "100700", 7_430_020, 40_000),
         ];
-        let out = parse_sessions(again.iter().map(String::as_str), &[]);
+        let out = parse_sittings(again.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 1);
         // 10:00:10 to 10:05:10 at the cap, then a minute.
         assert_eq!(out[0].paged_seconds, 180);
     }
 
     /// A pass re-reading a sitting from its wake, the counter the sleep left
-    /// stated before the batch: `held` opens the run where it opened.
+    /// stated before the batch: `held` opens the sitting where it opened.
     #[test]
-    fn a_pass_reading_from_the_wake_opens_the_run_where_the_record_did() {
+    fn a_pass_reading_from_the_wake_opens_the_sitting_where_the_record_did() {
         let lines = [
             event("233443", "Reading_Resumed,Reason:2"),
             power("233443", "outOfScreenSaver"),
             closed("234505", 19_285_414, 172_147),
         ];
-        let held = [Session {
+        let held = [Sitting {
             started_at: "2026-08-07T23:34:43".into(),
             ended_at: "2026-08-07T23:45:05".into(),
             end_position: 289_095,
             start_counter_ms: Some(18_965_084),
             start_words: Some(169_950),
-            ..Session::default()
+            ..Sitting::default()
         }];
         let out = parse_restating(lines.iter().map(String::as_str), &[], &held);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].start_counter_ms, Some(18_965_084));
         assert_eq!(out[0].seconds, 320);
         // `alone`: no `held` row, no counter at the wake.
-        let alone = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let alone = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(alone[0].measure, Measure::Timed);
     }
 
@@ -2725,7 +2745,7 @@ mod tests {
     }
 
     /// A KPP book reopened, its close a flush naming nothing: `TimeRead` names
-    /// the run's book, and the next `opened` counts it.
+    /// the sitting's book, and the next `opened` counts it.
     #[test]
     fn pages_after_an_open_no_line_names_are_the_book_its_counter_names() {
         let lines = [
@@ -2739,38 +2759,38 @@ mod tests {
             opened("234000", "1,003"),
             closed("234020", 1_003_773, 1_834),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
-        let run = &out[0];
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
+        let sitting = &out[0];
         assert_eq!(
-            (run.started_at.as_str(), run.ended_at.as_str()),
+            (sitting.started_at.as_str(), sitting.ended_at.as_str()),
             ("2026-08-07T22:21:10", "2026-08-07T22:31:27")
         );
-        assert_eq!(run.end_position, 289_095);
-        assert_eq!(run.paged_seconds, 360);
+        assert_eq!(sitting.end_position, 289_095);
+        assert_eq!(sitting.paged_seconds, 360);
         assert_eq!(
-            (run.start_counter_ms, run.end_counter_ms),
+            (sitting.start_counter_ms, sitting.end_counter_ms),
             (Some(589_913), Some(1_003_000))
         );
-        assert_eq!((run.seconds, run.measure), (413, Measure::Counted));
+        assert_eq!((sitting.seconds, sitting.measure), (413, Measure::Counted));
 
-        // `early` ends at the flush, its run `Measure::Paged`.
-        let early = parse_sessions(lines[..7].iter().map(String::as_str), &[]);
+        // `early` ends at the flush, its sitting `Measure::Paged`.
+        let early = parse_sittings(lines[..7].iter().map(String::as_str), &[]);
         assert_eq!(early.len(), 1);
         assert_eq!((early[0].seconds, early[0].measure), (360, Measure::Paged));
 
         // `TimeRead` 590 names no book.
-        let unnamed = lines[..7]
+        let unidentified = lines[..7]
             .iter()
             .map(|line| line.replace(":589 sec", ":590 sec"));
-        let unnamed: Vec<String> = unnamed.collect();
-        assert!(parse_sessions(unnamed.iter().map(String::as_str), &[]).is_empty());
+        let unidentified: Vec<String> = unidentified.collect();
+        assert!(parse_sittings(unidentified.iter().map(String::as_str), &[]).is_empty());
     }
 
-    /// `Reading_Resumed` at 10:00:00, the page record at 10:01:00, under
+    /// `Reading_Resumed` at 10:00:00, the page metric at 10:01:00, under
     /// three `powerd` streams.
     #[test]
-    fn a_resume_stands_where_powerd_woke_at_it() {
-        let woke = Woke {
+    fn a_wake_stands_where_powerd_states_the_kindle_awake() {
+        let wake = Wake {
             at: stamp(&event("100000", "Reading_Resumed,Reason:2")).unwrap(),
             read: false,
             lapsed: false,
@@ -2781,18 +2801,18 @@ mod tests {
                 power(sleep.0, "goingToScreenSaver"),
                 power(sleep.1, "outOfScreenSaver"),
             ];
-            woke.stands(&now, &Awake::from_events(lines.iter().map(String::as_str)))
+            wake.stands(&now, &Awake::from_events(lines.iter().map(String::as_str)))
         };
-        // `ACTIVE` [`WAKE_LAG_SECS`] or less past the resume.
+        // `ACTIVE` [`WAKE_LAG_SECS`] or less past the wake.
         assert!(stands(("090000", "100001")));
-        assert!(!stands(("090000", "100030")), "a resume asleep stood");
+        assert!(!stands(("090000", "100030")), "a wake asleep stood");
         assert!(!stands(("100030", "100050")), "a sleep after it stood");
     }
 
-    /// A wake, then pages only past a silence over [`SESSION_GAP_SECS`]
-    /// awake, up to the flush counting the stretch.
+    /// A wake, then pages only past a silence over [`SITTING_GAP_SECS`]
+    /// awake, up to the flush counting the sitting.
     #[test]
-    fn pages_a_silence_after_their_wake_open_the_run_at_it() {
+    fn pages_a_silence_after_their_wake_open_the_sitting_at_it() {
         let lines = [
             flushed("070000", 9_105_240, 50_000),
             power("070000", "goingToScreenSaver"),
@@ -2805,7 +2825,7 @@ mod tests {
             flushed("093339", 12_038_162, 60_000),
             power("093339", "goingToScreenSaver"),
         ];
-        let out = parse_sessions(lines.iter().map(String::as_str), &[]);
+        let out = parse_sittings(lines.iter().map(String::as_str), &[]);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].started_at, "2026-08-07T08:13:59");
         assert_eq!(out[0].start_counter_ms, Some(9_105_240));
@@ -2814,18 +2834,18 @@ mod tests {
 
     #[test]
     fn remeasure_takes_the_earlier_start_a_fuller_pass_states() {
-        let mut held = Session {
+        let mut held = Sitting {
             started_at: "2026-08-07T10:40:40".into(),
             ended_at: "2026-08-07T10:41:20".into(),
-            ..Session::default()
+            ..Sitting::default()
         };
-        let fresh = Session {
+        let fresh = Sitting {
             started_at: "2026-08-07T10:40:00".into(),
             ..held.clone()
         };
         assert!(held.remeasure(&fresh));
         assert_eq!(held.started_at, "2026-08-07T10:40:00");
-        let later = Session {
+        let later = Sitting {
             started_at: "2026-08-07T10:40:50".into(),
             ..fresh
         };

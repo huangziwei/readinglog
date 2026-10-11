@@ -1,5 +1,5 @@
-//! Book covers, decoded from the file a `BookRecord` names and held by
-//! [`Covers`] under path and height. A box no jacket could be drawn in says
+//! Book covers, decoded from the file a `Book` names and held by
+//! [`Covers`] under path and height. A box no cover could be drawn in says
 //! what it stands for, through [`titled`] or [`note`].
 
 use std::collections::HashMap;
@@ -90,7 +90,7 @@ impl Covers {
     }
 }
 
-/// The share of [`Theme::small_px`] a title standing in for a jacket is set
+/// The share of [`Theme::small_px`] a title standing in for a cover is set
 /// at: enough of a long title has to show for one box to be told from the
 /// next, and only a smaller size holds that much.
 const TITLE_SHARE: f32 = 0.72;
@@ -101,14 +101,14 @@ pub fn title_px(theme: &Theme) -> f32 {
 }
 
 /// What an empty cover box says on a screen that names the book beside it:
-/// that there is no jacket, and nothing else.
+/// that there is no cover, and nothing else.
 pub fn note(cx: &mut Ctx, area: Rect) {
     let said = cx.s().no_cover;
     let script = cx.ui_script();
     words(cx, area, said, script, cx.theme.small_px);
 }
 
-/// What an empty cover box says on a screen naming its books by their jackets
+/// What an empty cover box says on a screen naming its books by their covers
 /// alone: the title, at [`title_px`], ellipsized where the box will not hold
 /// it whole.
 pub fn titled(cx: &mut Ctx, area: Rect, title: &str, script: Script) {
@@ -190,7 +190,7 @@ fn decode(path: &str, max_w: i32, max_h: i32) -> Option<Thumb> {
         return None;
     }
     // Whichever of `max_w` and `max_h` binds first, keeping the source's
-    // aspect. A jacket smaller than its box is sampled up to fill it: one row
+    // aspect. A cover smaller than its box is sampled up to fill it: one row
     // of covers is one width, whatever size each file was cached at.
     let w = max_w.min(sw * max_h / sh).max(1) as usize;
     let h = max_h.min(sh * max_w / sw).max(1) as usize;
@@ -248,7 +248,7 @@ mod tests {
                 .save(&path)
                 .expect("a written fixture");
             let thumb = decode(path.to_str().unwrap(), 200, 300).expect("a decoded cover");
-            // Every jacket of this shape comes to the box's own height, and
+            // Every cover of this shape comes to the box's own height, and
             // to a width within a pixel of every other's.
             assert_eq!(thumb.h, 300, "{w}x{h} falls short of its box");
             assert!(
@@ -258,7 +258,7 @@ mod tests {
             );
             assert_eq!(thumb.rgb.len(), thumb.w * thumb.h * 3);
         }
-        // A jacket of another shape keeps its own inside the box: `max_w`
+        // A cover of another shape keeps its own inside the box: `max_w`
         // binds on one wider than its box is.
         let path = dir.join("wide.png");
         image::RgbImage::from_pixel(120, 80, image::Rgb([20, 130, 240]))
@@ -270,7 +270,7 @@ mod tests {
     }
 
     #[test]
-    fn a_title_standing_in_for_a_jacket_is_set_under_the_figures_beside_it() {
+    fn a_title_standing_in_for_a_cover_is_set_under_the_figures_beside_it() {
         for (w, h) in crate::ui::theme::tests::PANELS {
             let theme = Theme::for_screen(w, h);
             let px = title_px(&theme);

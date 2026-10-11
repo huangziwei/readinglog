@@ -1,6 +1,6 @@
 //! Reading Log — reading statistics on a Kindle, from the Kindle's own logs.
 //! Four modes: no argument collects then draws, `--collect` collects alone,
-//! `--dump` prints the store, `--version` states its version.
+//! `--dump` prints the record, `--version` states its version.
 
 use std::path::Path;
 
@@ -11,18 +11,18 @@ use readinglog_native::eink::fb::Framebuffer;
 use readinglog_native::eink::input::Input;
 use readinglog_native::eink::touch::Touch;
 use readinglog_native::orientation::Orientation;
+use readinglog_native::record::Record;
 use readinglog_native::stats::Stats;
-use readinglog_native::store::Store;
 use readinglog_native::{
-    annotate, app, catalog, clippings, date, font, identify, journal, lang, settings, sidecar,
-    store, ui, vocab, zone,
+    app, backup, clippings, date, font, highlights, identify, journal, lang, library, record,
+    settings, sidecar, ui, vocab, zone,
 };
 
 fn main() {
     let mode = std::env::args().nth(1).unwrap_or_default();
     // `show` states the version inside its header block, under the panel and
     // font facts that only it knows. The modes that draw nothing have no such
-    // block, so they say it on a line of their own.
+    // block and say it on a line of their own.
     if matches!(mode.as_str(), "--collect" | "--dump") {
         eprintln!(
             "build: {} {}",
@@ -30,8 +30,8 @@ fn main() {
             readinglog_native::update::BUILD
         );
     }
-    // Before anything is written: the log is ours, and bounding it is ours to
-    // do. `--dump` and `--version` write nothing and leave it alone.
+    // Before anything is written: `journal::trim` bounds the log.
+    // `--dump` and `--version` write nothing and leave it alone.
     if matches!(mode.as_str(), "--collect" | "")
         && let Some(cut) = journal::trim(Path::new(journal::LOG_PATH), journal::CEILING)
     {
@@ -46,8 +46,8 @@ fn main() {
         "--version" => version(),
         _ => show(),
     };
-    // A launch that dies before `show` states its header block would sit under
-    // the previous build's block and be read as that build's. The failure
+    // A launch that dies before `show` states its header block sits under
+    // the previous build's block and reads as that build's. The failure
     // names its own.
     if let Err(err) = result {
         eprintln!(
@@ -60,73 +60,85 @@ fn main() {
 }
 
 /// Which version this build is, on one line and nothing beside it —
-/// `states_version` reads it back off a staged copy. The one mode that opens
-/// nothing: no display, no log, no store.
+/// `update::states_version` reads it back off a staged copy. The one mode that
+/// opens nothing: no display, no log, no record.
 fn version() -> Result<()> {
     println!("{}", readinglog_native::update::VERSION);
     Ok(())
 }
 
-/// Read the log and the catalog into the store, and answer with the store.
-/// `catalog` is read here and nowhere else, and what it states is written into
-/// `store`.
-fn collect() -> Result<Store> {
-    let dir = Path::new(store::STORE_DIR);
-    let mut store = Store::open(dir);
-    let said = collect_into(&mut store, dir, &mut |_, _| {});
+/// Read the log and the library into the record, and answer with the record.
+/// `library` is read here and nowhere else, and what it states is written into
+/// `record`.
+fn collect() -> Result<Record> {
+    let dir = Path::new(record::RECORD_DIR);
+    let mut record = Record::open(dir);
+    let said = collect_into(&mut record, dir, &mut |_, _| {});
     said.state(&journal::stamp_now(), journal::Mode::Collect);
-    Ok(store)
+    Ok(record)
 }
 
-/// [`collect`] over a loaded `store`, reporting log files opened and log files
-/// to open.
+/// [`collect`] over a loaded `record`, reporting log files opened and log files
+/// to open. [`backup::drop_nested`] runs ahead of the pass.
 fn collect_into(
-    store: &mut Store,
+    record: &mut Record,
     dir: &Path,
     on: &mut dyn FnMut(usize, usize),
 ) -> journal::Launch {
     let mut said = journal::Launch::default();
-    let pass = store.update(on);
-    // A clock that stepped back left the stretch it stepped over below the
-    // mark; the pass pulled the mark back and read that stretch again. Rare
+    match backup::drop_nested(dir, record) {
+        Ok(Some((went, at))) => eprintln!(
+            "record: {went} nested sittings dropped, backed up first to {}",
+            at.display()
+        ),
+        Ok(None) => {}
+        Err(err) => eprintln!("!! record: the nested sittings stand: {err}"),
+    }
+    let pass = record.update(on);
+    // A clock that stepped back left the span it stepped over below the
+    // watermark; the pass pulled the watermark back and read that span again. Rare
     // enough to be worth its own line when it happens.
     if pass.rewound > 0 {
         eprintln!(
-            "clock: the device stepped back {}, and the log was read again from there",
+            "clock: the Kindle stepped back {}, and the log was read again from there",
             date::duration(pass.rewound, lang::Lang::English.strings()),
         );
     }
-    // `catalog::read` speaks first. `identify::rescue` asks the three sources
-    // that name what it left unnamed, and `annotate::fold` joins the two the
+    // `library::read` speaks first. `identify::from_sources` asks the three sources
+    // for what it left unidentified, and `highlights::fold` joins the two the
     // same walk reaches.
-    let books = catalog::read();
-    let stated = store.remember(&books);
-    // Both gates, off a walk that opens nothing. A launch that read, marked
-    // and installed nothing leaves both standing and opens no sidecar at all.
+    let books = library::read();
+    let stated = record.remember(&books);
+    // Both gates, off a walk that opens nothing. With nothing read, highlighted
+    // or installed, both stand and no sidecar opens at all.
     let clips = Path::new(clippings::CLIPPINGS_FILE);
     let documents = Path::new(sidecar::DOCUMENTS_DIR);
-    let (survey, naming, marks) =
-        identify::asked(store, Path::new(vocab::VOCAB_DB), clips, documents);
-    let shelf = match naming.is_some() || marks {
-        true => identify::shelf_for(store, documents, naming.is_some()),
-        false => sidecar::Shelf::default(),
+    let (survey, identifying, highlights) =
+        identify::asked(record, Path::new(vocab::VOCAB_DB), clips, documents);
+    let sidecars = match identifying.is_some() || highlights {
+        true => identify::sidecars_for(record, documents, identifying.is_some()),
+        false => sidecar::Sidecars::default(),
     };
     // One read of `My Clippings.txt`, for whichever of the two passes wants
-    // it: the naming pass reads it as witnesses and the annotation pass as
-    // marks, and neither may open it for itself.
-    let wants_clips = naming.is_some() && store.wants_naming(store::Named::Clippings);
-    let records = match marks || wants_clips {
+    // it: the identifying pass reads it as witnesses and the highlights pass as
+    // highlights, and neither may open it for itself.
+    let wants_clips =
+        identifying.is_some() && record.wants_identifying(record::IdentifiedBy::Clippings);
+    let clippings = match highlights || wants_clips {
         true => clippings::read(clips),
         false => Vec::new(),
     };
     // Whether this pass moved the gate, which is a change to the record like
     // any other: a gate written and not saved is a gate that never holds, and
-    // the sources would be read again on every launch for ever.
-    let gated = naming.is_some();
-    // Measured before either pass: both place a true instant on the device's
+    // the sources are read again on every launch for ever.
+    let gated = identifying.is_some();
+    // Measured before either pass: both place a true instant on the Kindle's
     // own clock, and this is what says which clock that was.
-    if store.clock.observe(annotate::clocks_seen(&records, &shelf)) {
-        let held: Vec<String> = store
+    if record
+        .clock
+        .observe(highlights::clocks_seen(&clippings, &sidecars))
+    {
+        let held: Vec<String> = record
             .clock
             .offsets()
             .iter()
@@ -134,23 +146,23 @@ fn collect_into(
             .collect();
         eprintln!(
             "clock: {} seen, {}",
-            store.clock.rows().len(),
+            record.clock.rows().len(),
             held.join(" ")
         );
     }
-    let rescue = naming.map(|gate| {
-        let out = identify::rescue(store, &records, &shelf);
-        // The gate as it stood *before* the pass: a pass that named something
-        // moved the record, so the next launch asks once more and settles.
-        store.sources = Some(gate);
+    let identified = identifying.map(|gate| {
+        let out = identify::from_sources(record, &clippings, &sidecars);
+        // The gate as it stood *before* the pass: a pass that identified something
+        // moved the record, and the next launch's gate asks once more and settles.
+        record.sources = Some(gate);
         out
     });
-    let merge = match marks {
-        true => annotate::fold(store, clips, &records, &shelf, &survey),
-        false => annotate::Merge::default(),
+    let merge = match highlights {
+        true => highlights::fold(record, clips, &clippings, &sidecars, &survey),
+        false => highlights::Merge::default(),
     };
-    let jackets = store.keep_covers(dir);
-    let refreshed = stated + rescue.map_or(0, |r| r.named()) + jackets.kept;
+    let covers = record.keep_covers(dir);
+    let refreshed = stated + identified.map_or(0, |r| r.found()) + covers.kept;
     said.log = Some(format!(
         "log={}/{}l{}c{}d{}s",
         pass.lines, pass.from.live, pass.from.chunks, pass.from.dumps, pass.from.skipped,
@@ -159,44 +171,48 @@ fn collect_into(
         "s=+{}~{}/{}",
         pass.added,
         pass.extended,
-        store.sessions.len()
+        record.sittings.len()
     ));
-    said.catalog = Some(format!("cat={}/{stated}", books.len()));
-    said.records = Some(format!("rec={}b", store.books.len()));
-    said.covers = Some(jackets.said());
-    said.identify = rescue.as_ref().and_then(rescue_said);
-    said.annotate = marks_said(&merge);
-    // The books whose jackets the device has lost are the same ones every
-    // launch, so they are named beside the count rather than a line apiece.
-    if let Some(lost) = jackets.lost_said() {
-        eprintln!("covers: the device has lost artwork for {lost}");
+    said.library = Some(format!("cat={}/{stated}", books.len()));
+    said.record = Some(format!("rec={}b", record.books.len()));
+    said.covers = Some(covers.said());
+    said.identify = identified.as_ref().and_then(identified_said);
+    said.highlights = highlights_said(&merge);
+    // The books whose covers the Kindle has lost are the same ones every
+    // launch: they are named beside the count, not a line apiece.
+    if let Some(lost) = covers.lost_said() {
+        eprintln!("covers: the Kindle has lost covers for {lost}");
     }
-    // An unchanged store is left on disk unwritten.
+    // An unchanged record is left on disk unwritten.
     if pass.added + pass.extended + refreshed == 0 && !merge.read && !gated {
         return said;
     }
-    // A failed `save` leaves `store` drawable and unsaved.
-    if let Err(err) = store.save(dir) {
-        eprintln!("!! collect: the record did not reach the store: {err}");
+    // A failed `save` leaves `record` drawable and unsaved.
+    if let Err(err) = record.save(dir) {
+        eprintln!("!! collect: the record was not written: {err}");
     }
     said
 }
 
-/// What the sources that name a book the catalog cannot came to, one line, and
-/// nothing at all where the catalog left them nothing to do.
-fn rescue_said(rescue: &identify::Rescue) -> Option<String> {
-    if rescue.lookups + rescue.clippings + rescue.sidecars == 0 {
+/// What the sources that identify a book the library cannot came to, one line, and
+/// nothing at all where the library left them nothing to do.
+fn identified_said(identified: &identify::Identified) -> Option<String> {
+    if identified.lookups + identified.clippings + identified.sidecars == 0 {
         return None;
     }
     Some(format!(
         "id={}v{}c{}s/{}?{}",
-        rescue.by_vocab, rescue.by_clippings, rescue.by_sidecars, rescue.unnamed, rescue.contested,
+        identified.by_vocab,
+        identified.by_clippings,
+        identified.by_sidecars,
+        identified.unidentified,
+        identified.contested,
     ))
 }
 
-/// What the two annotation sources came to, one line, and nothing at all where
+/// What the two highlight sources came to, one line, and nothing at all where
 /// the gate held and neither was read.
-fn marks_said(merge: &annotate::Merge) -> Option<String> {
+fn highlights_said(merge: &highlights::Merge) -> Option<String> {
     if !merge.read {
         return None;
     }
@@ -206,16 +222,16 @@ fn marks_said(merge: &annotate::Merge) -> Option<String> {
     ))
 }
 
-/// The store as text, one sitting a line.
+/// The record as text, one sitting a line.
 fn dump() -> Result<()> {
-    let store = collect()?;
+    let record = collect()?;
     let (today, _) = date::now();
     let settings = settings::Settings::load(lang::Lang::detect());
     let stats = Stats::build(
-        &store,
+        &record,
         today,
-        settings.show_unnamed,
-        settings.figures,
+        settings.show_unidentified,
+        settings.stats_from,
         settings.sitting_floor,
     );
     println!(
@@ -276,12 +292,12 @@ fn show() -> Result<()> {
     input.set_orientation(orientation);
 
     // `splash::show` paints before the first gunzip.
-    let dir = Path::new(store::STORE_DIR);
-    let mut store = Store::open(dir);
+    let dir = Path::new(record::RECORD_DIR);
+    let mut record = Record::open(dir);
     let theme = ui::theme::Theme::for_screen(fb.var.xres, fb.var.yres);
     let mut text = ui::text::TextRenderer::load(theme.body_px)?;
     // The facts that only change when the build, the panel or the clock does.
-    // A block identical to the one already standing is not written again.
+    // A block identical to the one standing is not written again.
     journal::Header {
         version: readinglog_native::update::VERSION,
         build: readinglog_native::update::BUILD,
@@ -300,13 +316,13 @@ fn show() -> Result<()> {
         surface: fb.describe().to_string(),
         input: input_said,
         fonts: text.chain_summary(),
-        store: store.said(),
+        record: record.said(),
         zone: zone::describe(date::epoch_now()),
     }
     .state(Path::new(journal::LOG_PATH));
     // `splash` draws before `App` and detects for itself.
     let splash_lang = lang::Lang::detect();
-    let note = ui::splash::note(&store.mark, splash_lang.strings());
+    let note = ui::splash::note(&record.watermark, splash_lang.strings());
     let script = font::Script::of_language(splash_lang.language_tag());
     ui::splash::show(
         &mut fb,
@@ -317,7 +333,7 @@ fn show() -> Result<()> {
     )?;
 
     let mut painted = 0;
-    let mut said = collect_into(&mut store, dir, &mut |done, total| {
+    let mut said = collect_into(&mut record, dir, &mut |done, total| {
         if done == painted {
             return;
         }
@@ -327,8 +343,8 @@ fn show() -> Result<()> {
         let _ = ui::splash::show(&mut fb, &mut text, &theme, &step_said, false);
     });
 
-    let mut app = app::App::new(store, theme, text);
+    let mut app = app::App::new(record, theme, text);
     said.drawn = Some(app.drawn());
-    said.state(&journal::stamp_now(), journal::Mode::Run);
+    said.state(&journal::stamp_now(), journal::Mode::Opened);
     app.run(&mut fb, &mut input)
 }

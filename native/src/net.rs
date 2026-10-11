@@ -1,4 +1,4 @@
-//! A route off this device, read from `/proc/net/route`. Offline only when
+//! A route off this Kindle, read from `/proc/net/route`. Offline only when
 //! certain: a table that cannot be read is no answer.
 
 use std::fs;
@@ -9,7 +9,7 @@ const ROUTE_TABLE: &str = "/proc/net/route";
 /// `RTF_UP` — the flag that separates a live route from a listed one.
 const RTF_UP: u32 = 0x0001;
 
-/// Is there no route off this device? False if the table cannot be read.
+/// Is there no route off this Kindle? False if the table cannot be read.
 pub fn is_offline() -> bool {
     offline_by(fs::read_to_string(ROUTE_TABLE).ok().as_deref())
 }

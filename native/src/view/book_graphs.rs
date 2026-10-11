@@ -209,7 +209,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, on: Option<usize>) {
     let (top, rest) = area.split_top(head + pitch + theme.gap * 2);
     listed(cx, top, index, &reads, on, pitch);
 
-    // `days`, `sat` and `book_hours` are all cut to `from..=to`.
+    // `days`, `where_you_sat` and `book_hours` are all cut to `from..=to`.
     let hours = cx.stats.book_hours(index, from..=to);
     let clock = hours.iter().any(|secs| *secs > 0);
     let rows = rest.rows(2 + clock as i32, cx.theme.gap * 2);
@@ -220,7 +220,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, on: Option<usize>) {
     let inner = chrome::heading_stating(cx.fb, cx.text, theme, rows[0], s.the_days, Some(&said));
     days(cx, inner, &strip, s);
     let inner = chrome::heading_stating(cx.fb, cx.text, theme, rows[1], s.where_you_sat, None);
-    sat(cx, inner, index, &strip, from, to);
+    where_you_sat(cx, inner, index, &strip, from, to);
     if let Some(row) = rows.last().filter(|_| clock) {
         let fold = cx.stats.fold(hours.to_vec(), hours.iter().sum());
         let names: Vec<String> = (0..24).map(|at| format!("{at:02}")).collect();
@@ -398,25 +398,24 @@ fn days(cx: &mut Ctx, area: Rect, strip: &Strip, s: &'static Strings) {
     );
 }
 
-/// The run of the book each sitting of one reading covered, opening place to
-/// closing place. A sitting the record states no run for keeps its own mark,
-/// and the place before it where it states no place either.
-fn sat(cx: &mut Ctx, area: Rect, index: usize, strip: &Strip, from: i64, to: i64) {
+/// The stretches each sitting of one reading covered. A sitting stating no
+/// stretch keeps its own progress mark, else the progress before it.
+fn where_you_sat(cx: &mut Ctx, area: Rect, index: usize, strip: &Strip, from: i64, to: i64) {
     let s: &Strings = cx.s();
-    let mut place = 0;
-    let runs = cx.stats.book_stretches(index);
-    let at: Vec<charts::Sat> = cx
+    let mut progress = 0;
+    let stretches = cx.stats.book_stretches(index);
+    let at: Vec<charts::Sitting> = cx
         .stats
-        .book_places(index)
+        .book_progress(index)
         .into_iter()
-        .zip(runs)
+        .zip(stretches)
         .filter(|((day, _), _)| (from..=to).contains(day))
-        .map(|((day, at), runs)| {
-            place = at.unwrap_or(place);
-            charts::Sat {
+        .map(|((day, at), stretches)| {
+            progress = at.unwrap_or(progress);
+            charts::Sitting {
                 column: strip.column(day),
-                place,
-                runs,
+                progress,
+                stretches,
             }
         })
         .collect();
@@ -441,13 +440,13 @@ fn sat(cx: &mut Ctx, area: Rect, index: usize, strip: &Strip, from: i64, to: i64
 mod tests {
     use super::*;
     use crate::lang::Lang;
-    use crate::log::session::Measure;
+    use crate::log::sitting::Measure;
     use crate::stats::{BookStat, Sitting, Stats};
 
-    /// A record of one book whose sittings ended at each of `places`, one a
+    /// A record of one book whose sittings ended at each of `progress`, one a
     /// day from day 20000, begun again on each of `again`.
-    fn read(places: &[Option<f64>], again: &[i64]) -> Stats {
-        let sittings: Vec<Sitting> = places
+    fn read(progress: &[Option<f64>], again: &[i64]) -> Stats {
+        let sittings: Vec<Sitting> = progress
             .iter()
             .enumerate()
             .map(|(at, progress)| Sitting {
@@ -481,8 +480,8 @@ mod tests {
 
     /// The days of a book read `n` days running, begun again on `again`.
     fn readings(n: usize, again: &[i64]) -> Vec<(i64, i64)> {
-        let places = vec![Some(0.5); n];
-        read(&places, again).book_readings(0)
+        let progress = vec![Some(0.5); n];
+        read(&progress, again).book_readings(0)
     }
 
     #[test]

@@ -130,7 +130,7 @@ impl Touch {
         }
         // One line of what the reader resolved to. The node, the score that
         // chose it and the grab are the same on every launch of one build on
-        // one device: they belong in the log's header block, not its body.
+        // one Kindle: they belong in the log's header block, not its body.
         let said = format!(
             "touch={} {} grab={}",
             path.display(),
@@ -246,10 +246,10 @@ impl Touch {
         let mut buf = [0u8; EVENT_BYTES];
         loop {
             match self.file.read(&mut buf) {
-                // Covered: the record is read and dropped.
+                // Covered: the event is read and dropped.
                 Ok(EVENT_BYTES) if self.covered => continue,
                 Ok(EVENT_BYTES) => {}
-                // evdev hands back whole 16-byte records: a short read is an
+                // A read answers whole 16-byte events: a short read is an
                 // empty buffer.
                 Ok(_) => return Ok(None),
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return Ok(None),
@@ -609,7 +609,7 @@ B: ABS=f000003
                 .map(|(node, _)| node)
                 .as_deref(),
             Some("event3"),
-            "must pick pt_mt; picking the Wacom node freezes the device"
+            "must pick pt_mt; picking the Wacom node freezes the Kindle"
         );
     }
 
@@ -662,7 +662,7 @@ B: ABS=f000003
         ));
     }
 
-    /// The pen exclusion leaves no device without input. `pen` is a substring
+    /// The pen exclusion leaves no Kindle without input. `pen` is a substring
     /// some panel name carries.
     #[test]
     fn a_pen_named_node_is_used_when_it_is_the_only_candidate() {
@@ -693,7 +693,7 @@ B: ABS=ee18000 0
         );
     }
 
-    /// A device with no touch node at all must report that, not pick the power
+    /// A Kindle with no touch node at all must report that, not pick the power
     /// key or the accelerometer.
     #[test]
     fn no_touch_node_yields_none() {

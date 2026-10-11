@@ -1,10 +1,10 @@
-//! The zone the device's clock stands in, read out of `/var/local/system/tz`.
-//! A Kindle ships no zoneinfo and `/etc/TZ` reads `UTC`, so that TZif is the
-//! only thing stating the offset `syslogd` stamps every log line with.
+//! The zone the Kindle's clock stands in, read out of `/var/local/system/tz`.
+//! `/etc/TZ` reads `UTC` and no zoneinfo ships: that TZif is the only thing
+//! stating the offset every syslog line is stamped with.
 use std::sync::OnceLock;
 
 /// The zone file, the symlink every firmware keeps first. `/var/local` is a
-/// bind mount of the metadata partition, so the second path reaches the same
+/// bind mount of the metadata partition: the second path reaches the same
 /// file on both layouts.
 pub const ZONE_PATHS: [&str; 3] = [
     "/etc/localtime",
@@ -25,7 +25,7 @@ pub struct Kind {
     pub offset: i64,
     /// Whether the file calls this one daylight saving.
     pub dst: bool,
-    /// What the file calls it. The firmware writes its own labels rather than
+    /// What the file calls it, in labels of its own and not
     /// tzdata's: Berlin's +1 reads `CEST` and its +2 `EEDT`.
     pub name: String,
 }
@@ -140,8 +140,8 @@ impl Zone {
     }
 }
 
-/// The six counts a header ends with: `isutcnt`, `isstdcnt`, `leapcnt`,
-/// `timecnt`, `typecnt`, `charcnt`. `None` where `head` opens no header.
+/// The six counts a header ends with: UT and standard indicators, leap
+/// seconds, transitions, kinds and designation bytes. `None` where `head` opens no header.
 fn counts(b: &[u8], head: usize) -> Option<[usize; 6]> {
     if b.get(head..head + 4)? != MAGIC {
         return None;
@@ -181,7 +181,7 @@ pub struct Held {
     pub zone: Zone,
 }
 
-/// The zone file this device keeps, read once for the life of the process.
+/// The zone file this Kindle keeps, read once for the life of the process.
 pub fn held() -> Option<&'static Held> {
     static HELD: OnceLock<Option<Held>> = OnceLock::new();
     HELD.get_or_init(|| load(&ZONE_PATHS)).as_ref()
@@ -198,7 +198,7 @@ fn load(paths: &[&'static str]) -> Option<Held> {
     })
 }
 
-/// Seconds the device's local clock stands ahead of UTC at `epoch`, and `None`
+/// Seconds the Kindle's local clock stands ahead of UTC at `epoch`, and `None`
 /// where no zone file answers and the caller must fall back to the C library.
 pub fn offset_at(epoch: i64) -> Option<i64> {
     held()?.zone.offset_at(epoch)
@@ -211,7 +211,7 @@ pub fn hhmm(offset: i64) -> String {
     format!("{sign}{:02}:{:02}", mins / 60, mins % 60)
 }
 
-/// One line for the launch log: the zone file this device keeps, or what
+/// One line for the launch log: the zone file this Kindle keeps, or what
 /// stands in for it.
 pub fn describe(epoch: i64) -> String {
     match held() {
@@ -327,8 +327,8 @@ mod tests {
     #[test]
     fn a_fixed_offset_stands_past_its_only_transition() {
         let zone = Zone::read(&fixed()).expect("a zone file");
-        // Every instant a device will ever ask about is past 1900, which is
-        // where the C library the app is built against answers UTC instead.
+        // Every instant a Kindle will ever ask about is past 1900, below which
+        // the C library the app is built against answers UTC.
         assert_eq!(zone.offset_at(at(2026, 9, 9, 11)), Some(7260));
         assert_eq!(zone.offset_at(at(2038, 9, 9, 11)), Some(7260));
         assert_eq!(zone.name_at(at(2026, 9, 9, 11)), Some("GMT+2:1100"));
@@ -354,7 +354,7 @@ mod tests {
     fn an_instant_past_the_table_takes_the_last_transitions_offset() {
         let zone = Zone::read(&ruled_table()).expect("a zone file");
         // 2027-03-28 is the last row, and 2030 is past it: the offset it moved
-        // to stands, rather than the UTC an empty rule would read as.
+        // to stands, not the UTC of an empty rule.
         assert_eq!(zone.offset_at(at(2030, 1, 1, 0)), Some(7200));
     }
 
@@ -432,11 +432,11 @@ mod tests {
         assert_eq!(hhmm(-4 * 3600 - 30 * 60), "-04:30");
     }
 
-    /// Zone files off real devices, named by `READINGLOG_ZONES` as a
+    /// Zone files off real Kindles, named by `READINGLOG_ZONES` as a
     /// `:`-separated list of `path=offset` pairs — the offset in seconds that
-    /// device's own `date` reported. Skipped where it is unset.
+    /// Kindle's own `date` reported. Skipped where it is unset.
     #[test]
-    fn a_real_zone_file_answers_what_the_device_answered() {
+    fn a_real_zone_file_answers_what_the_kindle_answered() {
         let Ok(named) = std::env::var("READINGLOG_ZONES") else {
             eprintln!("skipped: set READINGLOG_ZONES=path=offset[:path=offset] to read real files");
             return;

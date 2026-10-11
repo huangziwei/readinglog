@@ -13,14 +13,13 @@ use crate::ui::paint;
 
 const COVERAGE_THRESHOLD: u8 = 96;
 
-/// The most glyphs held at once. The key carries the size and face too, so a
-/// CJK reader fills this several times in one session and the cache must give
-/// ground rather than grow. A miss costs one re-rasterization.
+/// The most glyphs held at once. The key carries the size and face too: one
+/// sitting of CJK fills this several times, and the cache gives ground and
+/// never grows. A miss costs one re-rasterization.
 const CACHE_CAP: usize = 4_096;
 
 /// How much of the cache one eviction gives up. Dropping a quarter at a time
-/// makes the scan that finds the oldest amortize over the inserts that follow,
-/// rather than running on every insert once the cap is reached.
+/// spreads the scan that finds the oldest over the inserts that follow.
 const CACHE_EVICT: usize = CACHE_CAP / 4;
 
 /// One rasterized glyph. `left` runs from the pen's x, `top` from the baseline
@@ -228,7 +227,7 @@ impl TextRenderer {
             return;
         }
         let mut ages: Vec<u64> = self.cache.values().map(|held| held.used).collect();
-        // The age of the youngest glyph that still goes: everything at or
+        // The age of the youngest glyph that goes: everything at or
         // under it is given up.
         let at = CACHE_EVICT.min(ages.len() - 1);
         let (_, &mut oldest, _) = ages.select_nth_unstable(at);
@@ -269,7 +268,7 @@ impl TextRenderer {
         self.draw_inked(script, fb, x, y_baseline, s, ink)
     }
 
-    /// [`TextRenderer::draw_in`] in `ink` rather than in black or in white.
+    /// [`TextRenderer::draw_in`] in `ink`, not in black or in white.
     /// Every glyph is one value, the coverage thresholded as it is everywhere
     /// else.
     pub fn draw_inked(
@@ -445,24 +444,24 @@ fn blit_threshold(
 mod tests {
     use super::*;
 
-    /// A renderer over the device's own faces, where `READINGLOG_FONTS` names
+    /// A renderer over the Kindle's own faces, where `READINGLOG_FONTS` names
     /// their directories. `None` skips the assertions below: they measure a
-    /// device's files.
-    fn device_renderer(px: f32) -> Option<TextRenderer> {
+    /// Kindle's files.
+    fn kindle_renderer(px: f32) -> Option<TextRenderer> {
         std::env::var("READINGLOG_FONTS").ok()?;
         TextRenderer::load(px).ok()
     }
 
     /// The cache is bounded, and what it gives up is the oldest. Drawing far
     /// more distinct characters than it holds must not grow it without end,
-    /// and the ones still in use must survive.
+    /// and the ones in use must survive.
     #[test]
     fn the_glyph_cache_is_bounded_and_gives_up_the_oldest() {
-        let Some(mut text) = device_renderer(26.0) else {
+        let Some(mut text) = kindle_renderer(26.0) else {
             return;
         };
         let ja = font::Script::Japanese;
-        // Far past the cap, so eviction runs many times over.
+        // Far past the cap: eviction runs many times over.
         let many: String = (0x4E00u32..0x4E00 + (CACHE_CAP as u32 * 2))
             .filter_map(char::from_u32)
             .collect();
@@ -475,7 +474,7 @@ mod tests {
             text.cache.len()
         );
 
-        // A character drawn now is held now, whatever came before it.
+        // The character drawn last is held, whatever came before it.
         let recent = '\u{6771}';
         let _ = text.measure_width_in(ja, &recent.to_string());
         assert!(
@@ -488,7 +487,7 @@ mod tests {
     /// one Latin is set in. The paths themselves run to kilobytes.
     #[test]
     fn the_summary_counts_the_chain_and_names_the_primary() {
-        let Some(text) = device_renderer(26.0) else {
+        let Some(text) = kindle_renderer(26.0) else {
             return;
         };
         let said = text.chain_summary();
@@ -499,7 +498,7 @@ mod tests {
 
     #[test]
     fn a_run_crossing_scripts_is_charged_a_quarter_em() {
-        let Some(mut text) = device_renderer(40.0) else {
+        let Some(mut text) = kindle_renderer(40.0) else {
             return;
         };
         let ja = font::Script::Japanese;
@@ -519,7 +518,7 @@ mod tests {
 
     #[test]
     fn a_prefix_measures_to_the_pen_and_not_to_the_glyph_before_it() {
-        let Some(mut text) = device_renderer(40.0) else {
+        let Some(mut text) = kindle_renderer(40.0) else {
             return;
         };
         let ja = font::Script::Japanese;
@@ -539,7 +538,7 @@ mod tests {
 
     #[test]
     fn a_drawn_run_advances_by_what_it_measures() {
-        let Some(mut text) = device_renderer(40.0) else {
+        let Some(mut text) = kindle_renderer(40.0) else {
             return;
         };
         let mut fb = Framebuffer::offscreen(200, 80);

@@ -70,7 +70,7 @@ mod tests {
         for wide in [1072, 1236, 1264, 1272, 1860] {
             assert_eq!(Scale::of_width(wide).dpi(), COMMON_DPI, "{wide}");
         }
-        // An unreported width draws at the density most devices have.
+        // An unreported width draws at the density most Kindles have.
         assert_eq!(Scale::of_width(999).dpi(), COMMON_DPI);
     }
 

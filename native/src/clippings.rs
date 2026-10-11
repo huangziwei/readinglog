@@ -1,20 +1,19 @@
 //! `My Clippings.txt`: plain UTF-8, appended, never rewritten, the only copy
-//! of an annotation's words outside the book. A record names its book by title
-//! and author alone; nothing here reaches the store.
+//! of a highlight's words outside the book. A block names its book by title
+//! and author alone; nothing here reaches the record.
 
 use std::path::Path;
 
-/// The file, one for the whole device. `Clipping.<init>` builds it from
-/// `Const.add()` — the `BOOK_DIR_INTERNAL` default — and the literal name.
+/// The file, one for the whole Kindle.
 pub const CLIPPINGS_FILE: &str = "/mnt/us/documents/My Clippings.txt";
 
-/// The line ending one record and opening the next. Byte-identical in every
-/// bundle the reader ships, and the format's one invariant.
+/// The line ending one block and opening the next, byte-identical in every
+/// language bundle: the format's one invariant.
 const SEPARATOR: &str = "==========";
 
-/// The twelve `annotation.personal.*` records of 5.19, which is what a `.sdr`
-/// writes. The seven above the line also reach `My Clippings.txt`;
-/// `ClippingsManager.C` refuses the rest.
+/// The twelve `annotation.personal.*` kinds of 5.19, the set a `.sdr`
+/// holds. The seven above the line also reach `My Clippings.txt`, and the
+/// rest never do.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Kind {
     Bookmark,
@@ -27,23 +26,21 @@ pub enum Kind {
     Underline,
     Circle,
     Asterisk,
-    /// A place marked on a page rather than in the text.
+    /// A spot pinned on a page, outside the text.
     Pin,
     /// A note kept beside the page, its body held under an id elsewhere.
     StickyNote,
-    /// A region of a page rather than a run of text.
+    /// A region of a page, not a run of text.
     GraphicalHighlight,
-    /// Ink, in the margin. `ClippingsManager.C` refuses it, so it is in the
-    /// sidecar and nowhere else.
+    /// Ink, in the margin, held by the sidecar alone.
     Handwriting,
     /// Ink, over the page itself.
     HandwritingOnContent,
 }
 
 impl Kind {
-    /// The number `AnnotationTypes` gives this kind, and `None` for the five
-    /// only a sidecar carries: `AnnotationTypes` names its constants under
-    /// obfuscated fields, and nothing here needs the number.
+    /// The firmware's number for this kind, and `None` for the five only a
+    /// sidecar carries.
     pub fn code(self) -> Option<u8> {
         match self {
             Self::Bookmark => Some(0),
@@ -57,7 +54,7 @@ impl Kind {
         }
     }
 
-    /// The word a stored row names this kind by, which is the record's own
+    /// The word a stored row names this kind by, which is the annotation's own
     /// name in the sidecar.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -97,15 +94,15 @@ impl Kind {
         Self::ALL.into_iter().find(|k| k.as_str() == text)
     }
 
-    /// Whether this kind's body is the user's own words rather than the
+    /// Whether this kind's body is the user's own words and not the
     /// book's. A note's is; a highlight's is the passage it covers.
     pub fn is_the_readers_own(self) -> bool {
         matches!(self, Self::Note | Self::StickyNote)
     }
 
-    /// Whether this kind marks a run of the book's own text, which is the
+    /// Whether this kind spans a run of the book's own text, which is the
     /// five kinds with words to show.
-    pub fn marks_a_passage(self) -> bool {
+    pub fn spans_a_passage(self) -> bool {
         matches!(
             self,
             Self::Highlight | Self::Note | Self::Underline | Self::Circle | Self::Asterisk
@@ -113,26 +110,25 @@ impl Kind {
     }
 }
 
-/// One record: the five lines between two [`SEPARATOR`]s.
+/// One block: the five lines between two [`SEPARATOR`]s.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Clipping {
-    /// `BookMetadata.getTitle()`, as the reader states it.
+    /// The title, as the head line states it.
     pub title: String,
-    /// `BookMetadata.kv()`, a joined list. Empty where the book names none.
+    /// The author list, joined. Empty where the head line names none.
     pub author: String,
     pub kind: Kind,
     /// The publisher's page label, where the book carried page numbers. A
     /// string, not a number: front matter gives `xii`.
     pub page: String,
-    /// `Position.getUIString()`, the displayed location. Negative where the
-    /// label carried none.
+    /// The displayed location, negative where the label carried none.
     pub start: i64,
     /// The end of a range, equal to [`Self::start`] where one number was
     /// stated.
     pub end: i64,
-    /// `YYYY-MM-DDTHH:MM:SS`, device-local, as a sitting stores its own. This
-    /// is when the record was appended, not when the reading happened. Empty
-    /// where the stamp would not parse.
+    /// `YYYY-MM-DDTHH:MM:SS`, Kindle-local, as a sitting stores its own. This
+    /// is when the block was appended, not when the reading happened. Empty
+    /// where the stamp does not parse.
     pub at: String,
     /// The words: the book's own for a highlight, the user's for a note, empty
     /// for a bookmark.
@@ -140,15 +136,15 @@ pub struct Clipping {
 }
 
 /// The most one line may take. A clipping's body is a passage from a book, not
-/// a file, and anything past this is a torn write rather than a record.
+/// a file, and anything past this is a torn write, not a block.
 const LINE_CAP: usize = 16_384;
 
-/// The most lines one record may hold before it is given up and the read
+/// The most lines one block may hold before it is given up and the read
 /// resyncs at the next [`SEPARATOR`]. The pattern writes five.
-const RECORD_CAP: usize = 64;
+const BLOCK_CAP: usize = 64;
 
-/// Every record in the file at `path`, in write order, streamed one at a
-/// time. The file is bounded by nothing and runs to megabytes, so **nothing
+/// Every clipping in the file at `path`, in write order, streamed one at a
+/// time. The file is bounded by nothing and runs to megabytes: **nothing
 /// here may hold one whole**.
 pub fn read(path: &Path) -> Vec<Clipping> {
     let file = match std::fs::File::open(path) {
@@ -174,11 +170,11 @@ pub fn read(path: &Path) -> Vec<Clipping> {
         }
         frames.take(tidy(&String::from_utf8_lossy(&raw)));
     }
-    // Whatever the last record holds ran past the last separator: a torn write.
+    // Whatever the last block holds ran past the last separator: a torn write.
     frames.out
 }
 
-/// Every record `text` frames. A record that will not parse is dropped and the
+/// Every block `text` frames. A block that will not parse is dropped and the
 /// rest are kept: one torn write must never cost the file.
 pub fn parse(text: &str) -> Vec<Clipping> {
     let mut frames = Frames::default();
@@ -188,9 +184,8 @@ pub fn parse(text: &str) -> Vec<Clipping> {
     frames.out
 }
 
-/// One line, without its ending or its byte-order marks. `Clipping.gQ` never
-/// lowers its BOM flag once raised, so they appear anywhere in the file, not
-/// only at byte 0.
+/// One line, without its ending or its byte-order marks, which appear
+/// anywhere in the file and not only at byte 0.
 fn tidy(line: &str) -> String {
     let line = line.strip_suffix('\n').unwrap_or(line);
     let line = line.strip_suffix('\r').unwrap_or(line);
@@ -200,41 +195,41 @@ fn tidy(line: &str) -> String {
     }
 }
 
-/// Records assembled out of lines, however the lines arrive: [`read`] streams
-/// them off a file and [`parse`] walks text already in hand.
+/// Clippings assembled out of lines, however the lines arrive: [`read`] streams
+/// them off a file and [`parse`] walks text in hand.
 #[derive(Default)]
 struct Frames {
     out: Vec<Clipping>,
-    record: Vec<String>,
-    /// A record ran past [`RECORD_CAP`]. Everything up to the next
-    /// [`SEPARATOR`] is given up, so the record after it opens clean — a tear
-    /// must cost the record it is in and not the one that follows.
+    block: Vec<String>,
+    /// A block ran past [`BLOCK_CAP`]. Everything up to the next
+    /// [`SEPARATOR`] is given up, and the block after it opens clean: a tear
+    /// costs the block it is in and not the one that follows.
     resync: bool,
 }
 
 impl Frames {
-    /// Hand one line over, closing the record where the line is a separator.
+    /// Hand one line over, closing the block where the line is a separator.
     fn take(&mut self, line: String) {
         if line == SEPARATOR {
             if !self.resync {
-                let held: Vec<&str> = self.record.iter().map(String::as_str).collect();
+                let held: Vec<&str> = self.block.iter().map(String::as_str).collect();
                 self.out.extend(one(&held));
             }
-            self.record.clear();
+            self.block.clear();
             self.resync = false;
             return;
         }
         if self.resync {
             return;
         }
-        // A record that never closes is a torn write, and holding it would let
-        // one grow to the size of the file.
-        if self.record.len() >= RECORD_CAP {
-            self.record.clear();
+        // A block that never closes is a torn write, given up at `BLOCK_CAP`
+        // lines before it grows to the size of the file.
+        if self.block.len() >= BLOCK_CAP {
+            self.block.clear();
             self.resync = true;
             return;
         }
-        self.record.push(line);
+        self.block.push(line);
     }
 }
 
@@ -267,10 +262,10 @@ fn read_capped(reader: &mut impl std::io::BufRead, out: &mut Vec<u8>) -> std::io
     }
 }
 
-/// One record's lines as a [`Clipping`]. `None` where there are fewer than the
+/// One block's lines as a [`Clipping`]. `None` where there are fewer than the
 /// three the pattern always writes.
 fn one(lines: &[&str]) -> Option<Clipping> {
-    // A record opens at the line after the previous separator, which is empty
+    // A block opens at the line after the previous separator, which is empty
     // when the writer's own trailing CRLF sits there.
     let lines = match lines.first() {
         Some(&"") => &lines[1..],
@@ -325,7 +320,7 @@ fn head(line: &str) -> (String, String) {
 }
 
 /// The label and the stamp tail, split at the **last** space-bar: the page arm
-/// puts a ` | ` inside the label too. Russian opens the line with an EN DASH
+/// puts a ` | ` inside the label too. A Russian line opens with an EN DASH
 /// where every other bundle writes `-`.
 fn split_label(line: &str) -> (&str, &str) {
     let line = line
@@ -338,11 +333,11 @@ fn split_label(line: &str) -> (&str, &str) {
     }
 }
 
-/// A fragment of `<kind>.clipping.label.pattern` naming its kind, over the
-/// eleven bundles. **No fragment occurs in another kind's pattern in any
-/// bundle**, and one added here has to keep that true.
+/// A fragment of a kind's clipping label naming that kind, over the eleven
+/// bundles. **No fragment occurs in another kind's label in any bundle**,
+/// and one added here has to keep that true.
 const FRAGMENTS: [(&str, Kind); 37] = [
-    // 5.19 English only: the reader ships no localised bundle at that build.
+    // 5.19 English only: no localised bundle exists at that build.
     ("underline", Kind::Underline),
     ("circle", Kind::Circle),
     ("asterisk", Kind::Asterisk),
@@ -382,7 +377,7 @@ const FRAGMENTS: [(&str, Kind); 37] = [
     ("笔记", Kind::Note),
 ];
 
-/// What `label` marks, and where it names nothing, what the record's shape
+/// The kind `label` names, and where it names nothing, what the block's shape
 /// says: an empty body is a bookmark, a range is a highlight, and a single
 /// location with words is a note.
 fn kind(label: &str, body: &str, start: i64, end: i64) -> Kind {
@@ -397,9 +392,8 @@ fn kind(label: &str, body: &str, start: i64, end: i64) -> Kind {
     }
 }
 
-/// The page label and the location range. `user.location.number` is
-/// `{0,number,###0}` so digit runs are the numbers; a page comes with a bar
-/// except in Chinese, which brackets the location instead.
+/// The page label and the location range. A location is a run of digits;
+/// a page comes with a bar except in Chinese, which brackets the location.
 fn locate(label: &str) -> (String, i64, i64) {
     let (page_part, loc_part) = match label.rfind('|') {
         Some(at) => (&label[..at], &label[at + 1..]),
@@ -423,17 +417,17 @@ fn locate(label: &str) -> (String, i64, i64) {
     let took = 1 + usize::from(ranged);
     let page = match token(page_part) {
         Some(page) => page,
-        // Chinese brackets the location instead of barring it, so whatever run
-        // stands before the location is the page.
+        // A Chinese location stands in brackets with no bar, and the run
+        // before it is the page.
         None if runs.len() > took => runs[runs.len() - took - 1].1.to_string(),
         None => String::new(),
     };
     (page, start, end)
 }
 
-/// Whether `between` is what `reader.clipping.position.range.pattern` puts
-/// between two locations: `-` everywhere but Russian, which uses an EN DASH,
-/// and Dutch, which writes ` t/m `.
+/// Whether `between` is the separator a range puts between two locations:
+/// `-` everywhere but Russian, which uses an EN DASH, and Dutch, which
+/// writes ` t/m `.
 fn is_range(between: &str) -> bool {
     matches!(between.trim(), "-" | "\u{2013}" | "t/m")
 }
@@ -469,9 +463,9 @@ fn digits(at: usize, text: &str) -> usize {
         .max(1)
 }
 
-/// The last run of ASCII letters and digits in `text`, which is the page label
-/// the reader interpolated. `None` where there is none: Japanese writes
-/// `211ページ`, so the run stops at the first non-ASCII character.
+/// The last run of ASCII letters and digits in `text`: the page label. `None`
+/// where there is none. A Japanese label reads `211ページ`, and the run stops
+/// at the first non-ASCII character.
 fn token(text: &str) -> Option<String> {
     let mut out: Option<String> = None;
     let mut run = String::new();
@@ -501,8 +495,8 @@ fn roman(text: &str) -> bool {
             .all(|b| b"ivxlcdmIVXLCDM".contains(&b.to_ascii_lowercase()))
 }
 
-/// The twelve month names `FormatData` holds. Every firmware ships English
-/// date data and nothing else, so a German device still writes these.
+/// The twelve English month names, the only ones any firmware's stamp
+/// carries: a German Kindle writes these too.
 const MONTHS: [&str; 12] = [
     "January",
     "February",
@@ -518,9 +512,9 @@ const MONTHS: [&str; 12] = [
     "December",
 ];
 
-/// The instant a stamp tail names, as `YYYY-MM-DDTHH:MM:SS`. No firmware
-/// carries non-English `FormatData`, so `{4,date,full} {4,time,medium}` has
-/// three English shapes: `June 24, 2026`, `24 June 2026`, `24 June, 2026`.
+/// The instant a stamp tail names, as `YYYY-MM-DDTHH:MM:SS`. A stamp is
+/// English on every firmware, in three shapes: `June 24, 2026`,
+/// `24 June 2026`, `24 June, 2026`.
 fn stamp(tail: &str) -> Option<String> {
     let (at, name) = MONTHS
         .iter()
@@ -541,7 +535,7 @@ fn stamp(tail: &str) -> Option<String> {
         return None;
     };
     // `h:mm:ss a` on a 12-hour locale, `HH:mm:ss` on en_GB. The space before
-    // the meridiem is U+202F on 5.19, so match the letters and not the gap.
+    // the meridiem is U+202F on 5.19: the match is on the letters, not the gap.
     let meridiem = tail[at + len..].rfind(['A', 'P']).and_then(|i| {
         tail[at + len + i..]
             .starts_with("AM")
@@ -565,9 +559,9 @@ fn stamp(tail: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// Files the reader would have written, one per firmware and language
+    /// Files in the clippings format, one per firmware and language
     /// mix, every body invented. A no-author title line **ends in two
-    /// spaces**, so an editor that trims them breaks these tests.
+    /// spaces**: an editor that trims them breaks these tests.
     mod fixture {
         /// 5.19 English: every kind the file can carry, the 5.19-only
         /// underline, asterisk and circle among them, and a book with
@@ -635,7 +629,7 @@ mod tests {
             ==========\r\n\
         ";
 
-        /// A German 5.18 device: localised labels around an English stamp.
+        /// A German 5.18 Kindle: localised labels around an English stamp.
         pub const SEABREEZE_DE: &str = "\
             \u{feff}Der Prozess (Franz Kafka)\r\n\
             - Deine Markierung bei Position 120-180 | Hinzugefügt am Sunday, August 30, 2026 10:00:00 AM\r\n\
@@ -814,8 +808,8 @@ mod tests {
         assert_eq!((got[6].start, got[6].end), (12_044, 12_099));
         assert_eq!(got[7].page, "xii", "front matter is a roman numeral");
         assert_eq!((got[7].start, got[7].end), (300, 340));
-        // A range whose two locations render the same number is still a range:
-        // the writer collapses on `Position.equals`, not on the digits.
+        // A range whose two locations render the same number is a range all the
+        // same: the range is collapsed on positions, not on the digits.
         assert_eq!(got[8].page, "");
         assert_eq!((got[8].start, got[8].end), (102, 102));
     }
@@ -850,20 +844,20 @@ mod tests {
         assert_eq!(got[0].title, "Война и мир");
         assert_eq!((got[0].start, got[0].end), (900, 930));
         assert_eq!(got[0].at, "2026-08-12T07:45:00");
-        // Dutch writes ` t/m `.
+        // ` t/m ` separates a Dutch range.
         assert_eq!((got[1].start, got[1].end), (55, 88));
-        // Japanese bars inside the label and not after it.
+        // A Japanese label carries its bar inside it, not after it.
         assert_eq!(got[2].kind, Kind::Note);
         assert_eq!((got[2].start, got[2].end), (77, 77));
         assert_eq!(got[2].at, "2026-08-14T06:30:00");
-        // Chinese brackets the location and never bars at all, so the page is
-        // whatever run stands before it — with a range or without.
+        // A Chinese location stands in brackets with no bar at all, and the page
+        // is the run before it — with a range or without.
         assert_eq!(got[3].kind, Kind::Highlight);
         assert_eq!(got[3].page, "");
         assert_eq!((got[3].start, got[3].end), (1_500, 1_540));
         assert_eq!(got[4].page, "88");
         assert_eq!((got[4].start, got[4].end), (1_600, 1_640));
-        // Italian opens its note location arm with a space of its own.
+        // An Italian note's location arm opens with a space of its own.
         assert_eq!(got[5].kind, Kind::Note);
         assert_eq!(got[5].title, "Il nome della rosa");
         // French, Spanish and Portuguese, the last on its page arm.
@@ -892,14 +886,14 @@ mod tests {
     }
 
     #[test]
-    fn a_body_is_taken_whole_and_a_record_it_frames_through_is_the_only_loss() {
+    fn a_body_is_taken_whole_and_a_block_it_frames_through_is_the_only_loss() {
         let got = at(fixture::HAZARDS);
         assert_eq!(
             got[2].body, "The first paragraph ends here.\n\nAnd the second begins.",
             "a paragraph break was folded away",
         );
         // A body carrying the separator's own shape frames through: the
-        // record ends at it, and what follows has too few lines to stand.
+        // block ends at it, and what follows has too few lines to stand.
         // There is nothing else the frame can be.
         assert_eq!(got[3].body, "Chapter rule");
         assert!(got.iter().all(|c| c.title != "Something After"));
@@ -911,7 +905,7 @@ mod tests {
         );
         assert!(got[7].body.starts_with(' '));
         assert_eq!(got[9].body, "\tindented", "a tab survived the parse");
-        // An edited note is appended a second time, and both records stand.
+        // An edited note is appended a second time, and both clippings stand.
         assert_eq!(got[8].start, got[10].start);
         assert_eq!(got[8].body, "🙂 note");
         assert_eq!(got[10].body, "🙂 note, revised");
@@ -928,8 +922,8 @@ mod tests {
         assert_eq!(got[12].at, "2026-07-07T00:32:25");
     }
 
-    /// `read` streams the file and `parse` walks text already in hand. They
-    /// must come to the same records, or a device and a test disagree.
+    /// `read` streams the file and `parse` walks text in hand. They
+    /// must come to the same clippings, or a Kindle and a test disagree.
     #[test]
     fn the_streamed_read_and_the_parse_agree() {
         let dir = std::env::temp_dir().join("readinglog-clippings-agree");
@@ -953,7 +947,7 @@ mod tests {
 
         let streamed = read(&at);
         let walked = parse(&text);
-        assert_eq!(streamed.len(), 50, "every record read");
+        assert_eq!(streamed.len(), 50, "every clipping read");
         assert_eq!(streamed.len(), walked.len());
         for (a, b) in streamed.iter().zip(walked.iter()) {
             assert_eq!(a.title, b.title);
@@ -964,12 +958,12 @@ mod tests {
         assert!(!streamed[0].title.contains(bom), "BOMs stripped");
     }
 
-    /// A run of lines that never closes must not build one record the size of
-    /// the file. It is given up, and the record after the next separator still
-    /// reads: a tear costs the record it is in, never the one that follows.
+    /// A run of lines that never closes must not build one block the size of
+    /// the file. It is given up, and the block after the next separator
+    /// reads whole: a tear costs the block it is in, never the one that follows.
     #[test]
-    fn a_record_that_never_closes_is_given_up_and_the_next_one_reads() {
-        let mut text = "a line that closes nothing\n".repeat(RECORD_CAP * 4);
+    fn a_block_that_never_closes_is_given_up_and_the_next_one_reads() {
+        let mut text = "a line that closes nothing\n".repeat(BLOCK_CAP * 4);
         text.push_str("==========\n");
         text.push_str("A Book (An Author)\n");
         text.push_str(
@@ -978,13 +972,17 @@ mod tests {
         text.push_str("\n\n==========\n");
 
         let got = parse(&text);
-        assert_eq!(got.len(), 1, "the torn run gave nothing, the record read");
+        assert_eq!(
+            got.len(),
+            1,
+            "the torn block gave nothing, the clipping read"
+        );
         assert_eq!(got[0].title, "A Book");
         assert_eq!(got[0].kind, Kind::Bookmark);
     }
 
     #[test]
-    fn a_record_the_writer_never_wrote_is_dropped_and_the_file_stands() {
+    fn a_block_the_writer_never_wrote_is_dropped_and_the_file_stands() {
         let torn = concat!(
             "A Good Book (An Author)\r\n",
             "- Your Highlight on Location 1-2 | Added on Sunday, ",
@@ -1007,7 +1005,7 @@ mod tests {
     }
 
     #[test]
-    fn a_stamp_naming_no_day_leaves_the_record_unplaced() {
+    fn a_stamp_naming_no_day_leaves_the_clipping_unplaced() {
         let bad = concat!(
             "A Book (An Author)\r\n",
             "- Your Highlight on Location 1-2 | Added on Sunday, ",
@@ -1018,13 +1016,13 @@ mod tests {
         let got = at(bad);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].at, "", "June has thirty days");
-        assert_eq!(got[0].title, "A Book", "the record went with its stamp");
+        assert_eq!(got[0].title, "A Book", "the clipping went with its stamp");
     }
 
     #[test]
-    fn every_bom_the_first_session_wrote_is_stripped() {
-        // `Clipping.gQ` raises the flag when the file is absent and never
-        // lowers it, so the fixture carries one on each of the first entries.
+    fn every_bom_the_first_entries_carry_is_stripped() {
+        // The fixture carries a byte-order mark on each of the first entries,
+        // which a real file holds anywhere.
         assert!(fixture::SCRIBE_EN.matches('\u{FEFF}').count() > 1);
         let got = at(fixture::SCRIBE_EN);
         assert!(got.iter().all(|c| !c.title.contains('\u{FEFF}')));
@@ -1032,7 +1030,7 @@ mod tests {
     }
 
     #[test]
-    fn a_label_with_no_words_this_knows_falls_back_to_the_records_shape() {
+    fn a_label_with_no_words_this_knows_falls_back_to_the_blocks_shape() {
         let odd = concat!(
             "A Book (An Author)\r\n",
             "- Klipp pa position 10-12 | Added on Sunday, ",
@@ -1088,7 +1086,7 @@ mod tests {
         for kind in Kind::ALL {
             assert_eq!(Kind::from_stored(kind.as_str()), Some(kind), "{kind:?}");
         }
-        assert_eq!(Kind::ALL.len(), 12, "the twelve records 5.19 names");
+        assert_eq!(Kind::ALL.len(), 12, "the twelve kinds 5.19 names");
         assert_eq!(Kind::from_stored("scribble"), None);
     }
 }

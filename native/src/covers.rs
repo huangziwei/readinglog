@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 /// The directory holding the copies, under the `dir` [`path`] takes.
 pub const COVERS_DIR: &str = "covers";
 
-/// The device's own cache of book covers, which `catalog::Book::thumbnail`
+/// The Kindle's own cache of book covers, which `library::Book::thumbnail`
 /// names a file in.
 pub const THUMBNAILS_DIR: &str = "/mnt/us/system/thumbnails";
 
@@ -32,9 +32,9 @@ pub fn path(dir: &Path, key: &str) -> PathBuf {
     dir.join(COVERS_DIR).join(file_name(key))
 }
 
-/// Whether `path` opens a picture [`crate::ui::cover`] can draw. The store
-/// answers a key it holds no artwork for with a 60x40 GIF under the `.jpg`
-/// name a jacket would have had, so the name proves nothing.
+/// Whether `path` opens a picture [`crate::ui::cover`] can draw. A key the Kindle
+/// Store holds no cover for gets a 60x40 GIF under the `.jpg`
+/// name of a cover: the name proves nothing.
 pub fn drawable(path: &Path) -> bool {
     let mut head = [0u8; 8];
     std::fs::File::open(path)
@@ -69,17 +69,17 @@ pub fn keep(dir: &Path, key: &str, source: &Path) -> std::io::Result<PathBuf> {
     Ok(dest)
 }
 
-/// Whether [`path`] holds a jacket: a file of non-zero length that
+/// Whether [`path`] holds a cover: a file of non-zero length that
 /// [`drawable`] answers for. A copy of something that will not draw counts for
-/// nothing, so the next pass weighs it against the cache again.
+/// nothing: the next pass weighs it against the cache again.
 pub fn held(dir: &Path, key: &str) -> bool {
     let at = path(dir, key);
     std::fs::metadata(&at).is_ok_and(|m| m.len() > 0) && drawable(&at)
 }
 
 /// The files in [`THUMBNAILS_DIR`] under `dir` by the key each names, in one
-/// `read_dir`. The cache keeps a jacket after the catalog row naming it goes,
-/// so a key alone still finds one.
+/// `read_dir`. The cache keeps a cover after the library row naming it goes:
+/// a key alone finds one.
 pub fn cached(dir: &Path) -> HashMap<String, PathBuf> {
     let mut out = HashMap::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -95,9 +95,9 @@ pub fn cached(dir: &Path) -> HashMap<String, PathBuf> {
     out
 }
 
-/// The content key `name` states. The store writes
-/// `thumbnail_<key>_<cdeType>_portrait.jpg`; a jacket taken out of a book on
-/// the device is named by `mkstemp` and reaches nothing, so it answers `None`.
+/// The content key `name` states. A cached cover is
+/// `thumbnail_<key>_<cdeType>_portrait.jpg`; a cover taken out of a book on
+/// the Kindle carries a random name and answers `None`.
 fn keyed(name: &str) -> Option<&str> {
     let rest = name
         .strip_prefix("thumbnail_")?
@@ -140,8 +140,8 @@ mod tests {
     /// A JPEG's opening bytes, which is all [`keep`] asks of a source.
     const JPEG: &[u8] = b"\xff\xd8\xff\xe0\x00\x10JFIF\0";
 
-    /// The 60x40 GIF the store answers a key it holds no artwork for with,
-    /// under the `.jpg` name a jacket would have had.
+    /// The 60x40 GIF the Kindle Store answers a key it holds no cover for with,
+    /// under the `.jpg` name of a cover.
     const PLACEHOLDER: &[u8] = b"GIF89a\x3c\x00\x28\x00\x80\x00\x00";
 
     fn thumbnail(dir: &Path, name: &str, bytes: &[u8]) -> PathBuf {
@@ -151,7 +151,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cover_is_copied_and_read_back_from_the_stores_own_directory() {
+    fn a_cover_is_copied_and_read_back_from_the_records_own_directory() {
         let dir = scratch("keep");
         let source = thumbnail(&dir, "thumbnail_B00OKPCRLG_EBOK_portrait.jpg", JPEG);
         assert!(!held(&dir, "B00OKPCRLG"));
@@ -175,13 +175,13 @@ mod tests {
     }
 
     #[test]
-    fn the_device_cache_answers_for_a_key_and_not_for_a_name_with_none_in_it() {
+    fn the_kindle_cache_answers_for_a_key_and_not_for_a_name_with_none_in_it() {
         let dir = scratch("cached");
         for name in [
             "thumbnail_B00OKPCRLG_EBOK_portrait.jpg",
             "thumbnail_Entry:Item:ADC_Entry:Item:ADC_portrait.jpg",
-            // Six random characters: a jacket taken out of a book on the
-            // device, which nothing names.
+            // Six random characters: a cover taken out of a book on the
+            // Kindle, which nothing names.
             "thumbnail_iS79xE.jpg",
             "thumbnail__portrait.jpg",
         ] {
@@ -208,16 +208,16 @@ mod tests {
     }
 
     #[test]
-    fn the_stores_no_artwork_answer_is_not_a_jacket_whatever_it_is_named() {
+    fn a_placeholder_is_no_cover_whatever_it_is_named() {
         let dir = scratch("placeholder");
-        let art = thumbnail(&dir, "thumbnail_B0053VMNY2_EBOK_portrait.jpg", PLACEHOLDER);
-        assert!(!drawable(&art));
+        let picture = thumbnail(&dir, "thumbnail_B0053VMNY2_EBOK_portrait.jpg", PLACEHOLDER);
+        assert!(!drawable(&picture));
 
-        let err = keep(&dir, "B0053VMNY2", &art).expect_err("a refused cover");
+        let err = keep(&dir, "B0053VMNY2", &picture).expect_err("a refused cover");
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
         assert!(!held(&dir, "B0053VMNY2"));
 
-        // One already copied counts for nothing, so a jacket the store sends
+        // A copy that will not draw counts for nothing: a cover the Kindle Store sends
         // later is not shadowed by it.
         std::fs::create_dir_all(dir.join(COVERS_DIR)).unwrap();
         std::fs::write(path(&dir, "B0053VMNY2"), PLACEHOLDER).unwrap();

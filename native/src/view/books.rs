@@ -1,5 +1,5 @@
 //! Every [`crate::stats::BookStat`], most recent first, with its cover, the
-//! progress the catalog states, and a filled figure on a book read through.
+//! progress the library states, and a filled figure on a book read through.
 
 use crate::date;
 use crate::stats::{BookStat, Stats};
@@ -13,7 +13,7 @@ use super::{Ctx, Hit, Shelf, Sort, State, Way, Window, band, pager};
 /// Lines a title takes before the rest of it is ellipsized.
 const TITLE_LINES: usize = 2;
 
-/// The mark on the window chip, which a tap on it takes off the list.
+/// The cross on the window chip, which a tap on it takes off the list.
 const DROP: &str = "×";
 
 /// The share of a search box's side [`magnifier`] draws into.
@@ -55,7 +55,7 @@ pub fn listed(
     match order {
         Sort::Recent => {}
         Sort::Time => out.sort_by_key(|at| -stats.books[*at].seconds),
-        // A book the catalog states no percent for sorts as though unopened.
+        // A book the library states no percent for sorts as though unopened.
         Sort::Progress => out.sort_by_key(|at| -stats.books[*at].percent_shown().max(0)),
     }
     if way == Way::Up {
@@ -258,7 +258,7 @@ fn shelf_chips(cx: &mut Ctx, area: Rect, on: Shelf, window: Option<Window>) -> i
     edge
 }
 
-/// The stretch the list is narrowed to, standing between `opens` and `until`,
+/// The window the list is narrowed to, standing between `opens` and `until`,
 /// filled the way the shelf showing is. Its name carries [`DROP`], and a tap
 /// opens the same shelf over the whole record.
 fn window_chip(cx: &mut Ctx, area: Rect, opens: i32, until: i32, window: Window, shelf: Shelf) {
@@ -305,16 +305,16 @@ fn bare(cx: &mut Ctx, area: Rect, said: &str) {
 pub(super) fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
     let theme: &Theme = cx.theme;
     let book = &cx.stats.books[index];
-    // `art` and `figures` keep `row`'s own edges.
+    // `cover_box` and `figures` keep `row`'s own edges.
     let inner = row.inset_y(theme.gap);
-    let (art, rest) = inner.split_left(cover::width_for(inner.h));
-    // `cover::note` writes into a box holding no jacket.
-    if !cx.covers.draw(cx.fb, art, &book.thumbnail) {
-        cover::note(cx, art);
+    let (cover_box, rest) = inner.split_left(cover::width_for(inner.h));
+    // `cover::note` writes into a box holding no cover.
+    if !cx.covers.draw(cx.fb, cover_box, &book.thumbnail) {
+        cover::note(cx, cover_box);
     }
 
     let body = Rect::new(
-        art.right() + theme.gap * 2,
+        cover_box.right() + theme.gap * 2,
         inner.y,
         rest.w - theme.gap * 2,
         inner.h,
@@ -322,7 +322,7 @@ pub(super) fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
     let script = crate::font::Script::of_language(&book.language);
 
     // Two columns: the words on the left, the figures on the right.
-    let figure = date::duration(book.read_seconds(cx.figures), cx.s());
+    let figure = date::duration(book.read_seconds(cx.stats_from), cx.s());
     cx.text.set_px(theme.body_px);
     let column_w = figures_width(cx, &figure) + theme.gap * 2;
     let (words, figures) = body.split_left((body.w - column_w).max(theme.gap));
@@ -334,10 +334,10 @@ pub(super) fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
     let title_h = lines.len() as i32 * cx.text.line_height() as i32;
     cx.text.set_px(theme.small_px);
     // The line under the title carries `book.author` at its left and
-    // `marks_said` at its right. A row with neither gives the line's height
+    // `highlights_said` at its right. A row with neither gives the line's height
     // back to the block.
-    let marked = super::marks_said(cx.s(), cx.stats.marks_counted(index));
-    let author_h = match book.author.is_empty() && marked.is_empty() {
+    let highlights = super::highlights_said(cx.s(), cx.stats.highlights_counted(index));
+    let author_h = match book.author.is_empty() && highlights.is_empty() {
         true => 0,
         false => theme.gap / 2 + cx.text.line_height() as i32,
     };
@@ -359,7 +359,7 @@ pub(super) fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
         y += theme.gap / 2;
         let line = Rect::new(words.x, words.y, body.right() - words.x, words.h);
         let author = book.author.clone();
-        super::under_title(cx, line, y, script, &author, &marked);
+        super::under_title(cx, line, y, script, &author, &highlights);
     }
 
     cx.text.set_px(theme.body_px);
@@ -367,7 +367,7 @@ pub(super) fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
     cx.text
         .draw(cx.fb, figures.right() - fw, top, &figure, false);
 
-    // The band closes the block, across the whole of `body`. A book the catalog
+    // The band closes the block, across the whole of `body`. A book the library
     // states no progress for and no mark draws none.
     if book.has_percent() || book.is_finished() {
         let foot = Rect::new(body.x, y + theme.gap, body.w, band_h);
@@ -376,15 +376,15 @@ pub(super) fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
     paint::hline(cx.fb, row.x, row.bottom() - 1, row.w, LIGHT, 1);
 }
 
-/// The line an empty list stands under: reading on nothing the catalog names,
+/// The line an empty list stands under: reading on unidentified books alone,
 /// nothing since a reset, or nothing at all.
-fn empty_line(stats: &crate::stats::Stats, floored: bool, s: &crate::lang::Strings) -> String {
+fn empty_line(stats: &crate::stats::Stats, was_reset: bool, s: &crate::lang::Strings) -> String {
     if stats.total_seconds > 0 {
         return s
-            .unnamed_only
+            .unidentified_only
             .replace("{t}", &crate::date::duration(stats.total_seconds, s));
     }
-    match floored {
+    match was_reset {
         true => s.nothing_since_reset.to_string(),
         false => s.no_reading_yet.to_string(),
     }
@@ -393,7 +393,7 @@ fn empty_line(stats: &crate::stats::Stats, floored: bool, s: &crate::lang::Strin
 fn empty(cx: &mut Ctx, area: Rect) {
     let theme: &Theme = cx.theme;
     cx.text.set_px(theme.body_px);
-    let said = empty_line(cx.stats, cx.floored, cx.s());
+    let said = empty_line(cx.stats, cx.was_reset, cx.s());
     let lines = cx.text.wrap_and_clamp(&said, area.w as u32, 4);
     let mut y = area.y + area.h / 3;
     for line in lines {
@@ -418,14 +418,14 @@ mod tests {
                 extent: at as i64,
                 cde_key: format!("KEY{at}"),
                 cde_type: "EBOK".into(),
-                // The mark the store puts on a place read through.
-                finished: *percent >= crate::store::FINISHED_PERCENT,
+                // The mark the record puts on progress read through.
+                finished: *percent >= crate::record::FINISHED_PERCENT,
                 restarted_on: Vec::new(),
                 title: format!("Book {at}"),
                 author: String::new(),
                 thumbnail: String::new(),
                 percent: *percent,
-                on_device: true,
+                on_kindle: true,
                 location: String::new(),
                 language: String::new(),
                 seconds: 600,
@@ -446,7 +446,7 @@ mod tests {
                 timer_covered: 0.0,
                 stated_time_left: None,
                 stated_wpm: None,
-                marks: Vec::new(),
+                highlights: Vec::new(),
             })
             .collect();
         Stats {
@@ -488,7 +488,7 @@ mod tests {
             up.reverse();
             assert_eq!(up, down, "{order:?}");
         }
-        // The shelf is picked before the turn, so it names the same books.
+        // The shelf is picked before the turn: it names the same books.
         let up = listed(&stats, Shelf::Finished, Sort::Recent, Way::Up, None, true);
         assert_eq!(up, [3, 0]);
     }
@@ -520,7 +520,7 @@ mod tests {
 
     #[test]
     fn a_chip_never_opens_a_shelf_hiding_holds_nothing_of() {
-        // The one book read through is also the one with no jacket.
+        // The one book read through is also the one with no cover.
         let mut stats = shelf_of(&[100.0, 40.0]);
         stats.books[1].thumbnail = "/covers/1.jpg".into();
         assert!(shelved(&stats, true), "the Finished chip stands");
@@ -540,7 +540,7 @@ mod tests {
     }
 
     #[test]
-    fn a_shelf_hiding_the_uncovered_keeps_only_the_books_with_a_jacket() {
+    fn a_shelf_hiding_the_uncovered_keeps_only_the_books_with_a_cover() {
         let mut stats = shelf_of(&[100.0, 40.0, 60.0, 100.0]);
         for at in [1, 3] {
             stats.books[at].thumbnail = format!("/covers/{at}.jpg");
@@ -665,15 +665,15 @@ mod tests {
     fn a_cover_is_worth_looking_at_on_every_panel() {
         for (w, h) in PANELS {
             let theme = Theme::for_screen(w, h);
-            let art = cover::width_for(row_height(&theme) - theme.gap * 2);
-            // `art` against the panel's own density and width.
+            let cover_w = cover::width_for(row_height(&theme) - theme.gap * 2);
+            // `cover_w` against the panel's own density and width.
             assert!(
-                art >= theme.px(100),
-                "{w}x{h}: a {art} px cover is a smudge"
+                cover_w >= theme.px(100),
+                "{w}x{h}: a {cover_w} px cover is a smudge"
             );
             assert!(
-                art < theme.screen.w / 6,
-                "{w}x{h}: a {art} px cover crowds the words"
+                cover_w < theme.screen.w / 6,
+                "{w}x{h}: a {cover_w} px cover crowds the words"
             );
         }
     }

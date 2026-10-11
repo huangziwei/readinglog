@@ -1,6 +1,6 @@
-//! The progress band every screen draws a book's place in: a track, the
+//! The progress band every screen draws a book's progress on: a track, the
 //! `Finished` chip right-anchored on the line over it, and the figure set
-//! small over the place the reading stands at.
+//! small over the point the reading stands at.
 
 use crate::stats::BookStat;
 use crate::ui::paint::{self, INK, Rect, WHITE};
@@ -28,7 +28,7 @@ pub fn height(text: &mut TextRenderer, theme: &Theme) -> i32 {
 pub struct Band {
     /// How full the track draws, from [`BookStat::bar_percent`].
     pub fill: i64,
-    /// The place the figure names and the notch cuts at.
+    /// The point the figure names and the notch cuts at.
     pub at: Option<i64>,
     /// Whether the `Finished` chip stands at the right.
     pub finished: bool,
@@ -115,7 +115,7 @@ fn mark_x(theme: &Theme, track: Rect, at: i64) -> i32 {
     paint::notch_x(track, at, mark_width(theme))
 }
 
-/// `said` filled with `at` and set small over the place it names, inside
+/// `said` filled with `at` and set small over the point it names, inside
 /// `line`. Under `cut` a white notch cuts the ink there.
 fn mark(cx: &mut Ctx, line: Rect, track: Rect, at: i64, said: &str, cut: bool) {
     let theme: &Theme = cx.theme;

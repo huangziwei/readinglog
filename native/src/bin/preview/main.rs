@@ -14,18 +14,18 @@ use readinglog_native::app::App;
 use readinglog_native::date;
 use readinglog_native::eink::fb::Framebuffer;
 use readinglog_native::lang::Lang;
-use readinglog_native::settings::{ColorScheme, Figures, Scope, SittingFloor, TextSize, WeekStart};
+use readinglog_native::record::Record;
+use readinglog_native::settings::{
+    ColorScheme, Scope, SittingFloor, StatsFrom, TextSize, WeekStart,
+};
 use readinglog_native::stats::Stats;
-use readinglog_native::store::Store;
 use readinglog_native::ui::chrome::Tab;
 use readinglog_native::ui::paint;
 use readinglog_native::ui::splash;
 use readinglog_native::ui::text::TextRenderer;
 use readinglog_native::ui::theme::Theme;
 use readinglog_native::update::{Doing, Failure, Outcome};
-use readinglog_native::view::{
-    About, Ask, BookTab, Healing, Reset, Retrying, Search, Shelf, Sort, Span, Way, Window,
-};
+use readinglog_native::view::{Act, Ask, BookTab, Search, Shelf, Sort, Span, Way, Window};
 
 /// The day the preview is set to, and the second of it.
 const DAY: (i64, i64, i64) = (2026, 9, 16);
@@ -51,8 +51,8 @@ const PANELS: &[(&str, u32, u32)] = &[
 /// Where the PNGs land under `--out`.
 const OUT: &str = "artifacts/preview";
 
-/// Where the fixture's jackets are drawn, under `--art`, apart from [`OUT`].
-const ART: &str = "artifacts/preview/art";
+/// Where the fixture's covers are drawn, under `--covers`, apart from [`OUT`].
+const COVERS: &str = "artifacts/preview/art";
 
 /// The update banner a shot can name, and what it is saying. The one screen
 /// with no tab under it, drawn over the whole panel.
@@ -75,26 +75,11 @@ const BANNERS: &[(&str, Said)] = &[
     }),
 ];
 
-/// The banner over a running reset, by the name a `reset:<of>` shot takes.
-const RESETS: &[(&str, Reset)] = &[
-    ("wipe", Reset::Wipe(true)),
-    ("restore", Reset::Restore(0)),
-    ("logs", Reset::Rebuild),
-];
-
-/// The banner over a heal, by the name a `heal:<of>` shot takes.
-const HEALS: &[(&str, Healing)] = &[
-    ("logs", Healing::Logs),
-    ("done", Healing::Done(142)),
-    ("none", Healing::Done(0)),
-];
-
-/// The banner over a retry, by the name a `retry:<of>` shot takes.
-const RETRIES: &[(&str, Retrying)] = &[
-    ("logs", Retrying::Logs),
-    ("files", Retrying::Files),
-    ("named", Retrying::Named(3)),
-    ("none", Retrying::Named(0)),
+/// The banner over a running act, by the name an `act:<of>` shot takes.
+const ACTS: &[(&str, Act)] = &[
+    ("reset", Act::Reset(true)),
+    ("restore", Act::Restore(0)),
+    ("rebuild", Act::Rebuild),
 ];
 
 /// What one of [`BANNERS`] is saying, made when a shot names it.
@@ -155,9 +140,9 @@ struct Opts {
     week: WeekStart,
     day: i64,
     out: PathBuf,
-    art: PathBuf,
-    /// A store to draw in place of the fixture, by the directory holding it.
-    store: Option<PathBuf>,
+    covers: PathBuf,
+    /// A record to draw in place of the fixture, by the directory holding it.
+    record: Option<PathBuf>,
     sheet: Option<String>,
     scale: u32,
     crop: Option<sheet::Crop>,
@@ -167,13 +152,13 @@ struct Opts {
     scheme: ColorScheme,
     /// What `eink::fb::has_cfa` is drawn as answering.
     colour: bool,
-    /// Whether a total counts the sittings no record names.
-    unnamed: bool,
-    /// The shortest run a total counts as reading.
+    /// Whether a total counts the sittings on unidentified books.
+    unidentified: bool,
+    /// The shortest sitting a total counts as reading.
     floor: SittingFloor,
-    /// Which of the two sets every figure is taken from.
-    figures: Figures,
-    /// Whether a list holds the books no jacket can be drawn for.
+    /// Which of the two sources the stats are taken from.
+    stats_from: StatsFrom,
+    /// Whether a list holds the books no cover can be drawn for.
     uncovered: bool,
 }
 
@@ -189,15 +174,15 @@ impl Default for Opts {
             colour: true,
             day: date::days_from_civil(DAY.0, DAY.1, DAY.2),
             out: PathBuf::from(OUT),
-            art: PathBuf::from(ART),
-            store: None,
+            covers: PathBuf::from(COVERS),
+            record: None,
             sheet: None,
             scale: 40,
             crop: None,
             hits: false,
-            unnamed: true,
+            unidentified: true,
             floor: SittingFloor::default(),
-            figures: Figures::default(),
+            stats_from: StatsFrom::default(),
             uncovered: true,
         }
     }
@@ -218,12 +203,12 @@ fn run() -> Result<()> {
     }
     let started = std::time::Instant::now();
     std::fs::create_dir_all(&opts.out).context("make the output directory")?;
-    std::fs::create_dir_all(&opts.art).context("make the cover directory")?;
+    std::fs::create_dir_all(&opts.covers).context("make the cover directory")?;
     let standing = shots_in(&opts.out);
 
-    let library = match &opts.store {
-        Some(dir) => Store::load(dir),
-        None => fixture::library(opts.day, &opts.art),
+    let library = match &opts.record {
+        Some(dir) => Record::load(dir),
+        None => fixture::library(opts.day, &opts.covers),
     };
     let mut tiles: Vec<sheet::Tile> = Vec::new();
     let mut wrote: Vec<PathBuf> = Vec::new();
@@ -231,11 +216,11 @@ fn run() -> Result<()> {
         for lang in opts.langs.iter().copied() {
             for size in opts.sizes.iter().copied() {
                 for shot in &opts.shots {
-                    let store = thinned_for(shot, &opts, &opts.art);
-                    let store = store.as_ref().unwrap_or(&library);
+                    let record = thinned_for(shot, &opts, &opts.covers);
+                    let record = record.as_ref().unwrap_or(&library);
                     let mut fb = Framebuffer::offscreen(w, h);
-                    let mut app = open(store, &opts, w, h, lang, size)?;
-                    if let Some(dir) = archives_for(shot, store, &opts.out)? {
+                    let mut app = open(record, &opts, w, h, lang, size)?;
+                    if let Some(dir) = backups_for(shot, record, &opts.out)? {
                         app.set_dir(dir);
                     }
                     draw(&mut app, &mut fb, shot, opts.week)?;
@@ -308,83 +293,83 @@ fn shots_in(dir: &Path) -> Vec<PathBuf> {
 }
 
 /// What to say when no face was found.
-const FONTS: &str = "no font — point READINGLOG_FONTS at the device's font directory";
+const FONTS: &str = "no font — point READINGLOG_FONTS at the Kindle's font directory";
 
-/// An [`App`] over `store`, at the panel and the settings the run names.
-fn open(store: &Store, opts: &Opts, w: u32, h: u32, lang: Lang, size: TextSize) -> Result<App> {
-    // Only of the fixture: a real record given by `--store` can be empty, and
+/// An [`App`] over `record`, at the panel and the settings the run names.
+fn open(record: &Record, opts: &Opts, w: u32, h: u32, lang: Lang, size: TextSize) -> Result<App> {
+    // Only of the fixture: a real record given by `--record` can be empty, and
     // an emptied one is a screen worth drawing.
-    if opts.store.is_none()
+    if opts.record.is_none()
         && Stats::build(
-            store,
+            record,
             opts.day,
             true,
-            Figures::Device,
+            StatsFrom::Kindle,
             readinglog_native::settings::SittingFloor::All,
         )
         .books
         .is_empty()
     {
-        bail!("the fixture named no book");
+        bail!("the fixture identified no book");
     }
     let theme = Theme::sized(w, h, size);
     let text = TextRenderer::load(theme.body_px).context(FONTS)?;
-    let mut app = App::new(store.clone(), theme, text);
+    let mut app = App::new(record.clone(), theme, text);
     app.set_clock(opts.day, NOW);
     app.set_language(lang);
     app.set_text_size(size);
     app.set_week_start(opts.week);
     app.set_colour(opts.colour);
     app.set_color_scheme(opts.scheme);
-    app.set_unnamed(opts.unnamed);
+    app.set_unidentified(opts.unidentified);
     app.set_sitting_floor(opts.floor);
-    app.set_figures(opts.figures);
+    app.set_stats_from(opts.stats_from);
     app.set_uncovered(opts.uncovered);
     Ok(app)
 }
 
-/// The store a shot wants, where it wants one of its own.
-fn thinned_for(shot: &Shot, opts: &Opts, art: &Path) -> Option<Store> {
+/// The record a shot wants, where it wants one of its own.
+fn thinned_for(shot: &Shot, opts: &Opts, covers: &Path) -> Option<Record> {
     let keep = match (shot.name.as_str(), shot.of.as_deref()) {
         ("today", Some("quiet")) => 1,
         ("today", Some("empty")) => 0,
-        ("today", Some("busy")) => return Some(fixture::crowded(opts.day, art)),
-        // A record standing on a floor, which is what offers the log rebuild.
+        ("today", Some("busy")) => return Some(fixture::crowded(opts.day, covers)),
+        // A record that was reset, which is what offers the rebuild from the logs.
         (
             "config",
-            Some("restore" | "logs" | "many" | "many2" | "backups" | "backups2" | "gone"),
+            Some("restore" | "rebuild" | "many" | "many2" | "backups" | "backups2" | "gone"),
         ) => {
-            let mut store = fixture::library(opts.day, art);
-            store.floor = "260810:120000".into();
-            return Some(store);
+            let mut record = fixture::library(opts.day, covers);
+            record.reset_at = "260810:120000".into();
+            return Some(record);
         }
-        // The book listed last cleared, its record kept. It sorts last either
+        // The book listed last, cleared and kept. It sorts last either
         // way; every other index stands.
         ("book" | "books", Some(of)) if of.ends_with("cleared") => {
-            let mut store = fixture::library(opts.day, art);
+            let mut record = fixture::library(opts.day, covers);
             let last = Stats::build(
-                &store,
+                &record,
                 opts.day,
                 true,
-                Figures::Device,
+                StatsFrom::Kindle,
                 readinglog_native::settings::SittingFloor::All,
             )
             .books
             .last()?
             .clone();
             let (extent, key) = (last.extent, last.cde_key);
-            store.mark = "260916:200000".into();
-            store.clear_book(extent, &key);
-            return Some(store);
+            record.watermark = "260916:200000".into();
+            record.clear_book(extent, &key);
+            return Some(record);
         }
         _ => return None,
     };
-    Some(fixture::thinned(opts.day, art, keep))
+    Some(fixture::thinned(opts.day, covers, keep))
 }
 
-/// A directory of archives for the shots that draw them, under `out`, each
-/// written by `backup::write`.
-fn archives_for(shot: &Shot, store: &Store, out: &Path) -> Result<Option<PathBuf>> {
+/// A directory of backups for the shots that draw them, under `out`, each
+/// written by `backup::keep_record`.
+fn backups_for(shot: &Shot, record: &Record, out: &Path) -> Result<Option<PathBuf>> {
     let stamps: &[&str] = match (shot.name.as_str(), shot.of.as_deref()) {
         ("config", Some("restore")) => &["260906:010231", "260830:184500"],
         ("config", Some("gone")) => &["260906:010231"],
@@ -401,8 +386,8 @@ fn archives_for(shot: &Shot, store: &Store, out: &Path) -> Result<Option<PathBuf
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir)?;
     for stamp in stamps {
-        readinglog_native::backup::keep_record(&dir, store, stamp, false)
-            .map_err(|e| anyhow!("write an archive: {e}"))?;
+        readinglog_native::backup::keep_record(&dir, record, stamp, false)
+            .map_err(|e| anyhow!("write a backup: {e}"))?;
     }
     Ok(Some(dir))
 }
@@ -419,28 +404,22 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
     if shot.name == "update" {
         return banner(app, fb, shot.of.as_deref().unwrap_or("asking"));
     }
-    if shot.name == "reset" {
-        return resetting(app, fb, shot.of.as_deref().unwrap_or("logs"));
-    }
-    if shot.name == "heal" {
-        return healing(app, fb, shot.of.as_deref().unwrap_or("done"));
-    }
-    if shot.name == "retry" {
-        return retrying(app, fb, shot.of.as_deref().unwrap_or("named"));
+    if shot.name == "act" {
+        return acting(app, fb, shot.of.as_deref().unwrap_or("rebuild"));
     }
     let Some((_, tab)) = SCREENS.iter().find(|(name, _)| *name == shot.name) else {
         return Err(anyhow!("no screen or sketch called {}", shot.name));
     };
-    // `book:<index>`, `book:<index>:graphs` and `book:<index>:marks` for the
+    // `book:<index>`, `book:<index>:graphs` and `book:<index>:highlights` for the
     // book's other pages, and `book:<index>:<question>` with one up over it.
     let (book, asking, page, from, find) = match shot.name.as_str() {
         "book" => {
             let of = shot.of.as_deref().unwrap_or("0");
             let (at, asking, page, from, find) = match of.split_once(':') {
                 Some((at, "cleared")) => (at, None, BookTab::Statistics, 0, None),
-                // `marks` opens the list at its head, `marks:<n>` `n` rows
-                // down, and `marks:earliest` the list turned over.
-                Some((at, "marks")) => (at, None, BookTab::Marks, 0, None),
+                // `highlights` opens the list at its head, `highlights:<n>` `n` rows
+                // down, and `highlights:earliest` the list turned over.
+                Some((at, "highlights")) => (at, None, BookTab::Highlights, 0, None),
                 // `graphs` draws the standing reading, `graphs:<n>` the one
                 // standing `n` from the first.
                 Some((at, page)) if page == "graphs" || page.starts_with("graphs:") => {
@@ -451,15 +430,15 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
                 Some((at, page)) if page == "find" || page.starts_with("find:") => (
                     at,
                     None,
-                    BookTab::Marks,
+                    BookTab::Highlights,
                     0,
                     Some(searching(page.strip_prefix("find:"))),
                 ),
-                Some((at, page)) if page.starts_with("marks:") => (
+                Some((at, page)) if page.starts_with("highlights:") => (
                     at,
                     None,
-                    BookTab::Marks,
-                    page["marks:".len()..].parse().unwrap_or(0),
+                    BookTab::Highlights,
+                    page["highlights:".len()..].parse().unwrap_or(0),
                     None,
                 ),
                 Some((at, name)) => (at, Some(question(name)?), BookTab::Statistics, 0, None),
@@ -475,8 +454,8 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
         of.rsplit_once("graphs:")
             .and_then(|(_, at)| at.parse::<usize>().ok())
     }));
-    app.set_marks_way(match shot.of.as_deref() {
-        Some(of) if of.ends_with(":marks:earliest") => Way::Up,
+    app.set_highlights_way(match shot.of.as_deref() {
+        Some(of) if of.ends_with(":highlights:earliest") => Way::Up,
         _ => Way::Down,
     });
     app.set_book_search(find);
@@ -490,12 +469,10 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
             _ => None,
         });
         app.ask_about(match shot.of.as_deref() {
-            Some("reset") => Some(About::Reset(Reset::Wipe(true))),
-            Some("nobackup") => Some(About::Reset(Reset::Wipe(false))),
-            Some("restore" | "gone") => Some(About::Reset(Reset::Restore(0))),
-            Some("logs") => Some(About::Reset(Reset::Rebuild)),
-            Some("heal") => Some(About::Heal),
-            Some("retry") => Some(About::Retry),
+            Some("reset") => Some(Act::Reset(true)),
+            Some("nobackup") => Some(Act::Reset(false)),
+            Some("restore" | "gone") => Some(Act::Restore(0)),
+            Some("rebuild") => Some(Act::Rebuild),
             Some("many" | "many2" | "backups" | "backups2") | None => None,
             Some(other) => bail!("no config shot called {other}"),
         });
@@ -503,7 +480,7 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
     if shot.name == "search" || shot.name == "highlights" {
         app.set_search(Some(searching(shot.of.as_deref())));
         app.set_scope(match shot.name.as_str() {
-            "highlights" => Scope::Marks,
+            "highlights" => Scope::Highlights,
             _ => Scope::Books,
         });
     }
@@ -562,50 +539,20 @@ fn banner(app: &mut App, fb: &mut Framebuffer, of: &str) -> Result<()> {
     app.banner(fb, &headline, &note, step, true)
 }
 
-/// The banner over a reset while it runs, at whichever of them `of` names,
+/// The banner over an act while it runs, at whichever of them `of` names,
 /// drawn a quarter of the way through the files it counts.
-fn resetting(app: &mut App, fb: &mut Framebuffer, of: &str) -> Result<()> {
-    let Some((_, about)) = RESETS.iter().find(|(name, _)| *name == of) else {
-        return Err(anyhow!("no reset banner called {of}"));
+fn acting(app: &mut App, fb: &mut Framebuffer, of: &str) -> Result<()> {
+    let Some((_, about)) = ACTS.iter().find(|(name, _)| *name == of) else {
+        return Err(anyhow!("no act banner called {of}"));
     };
     let s = app.language().strings();
     let (headline, note) = about.doing(s);
     let step = match about {
-        Reset::Wipe(_) => String::new(),
-        Reset::Restore(_) => splash::step(s.step_files, 118, 436),
-        Reset::Rebuild => splash::step(s.step_logs, 31, 97),
+        Act::Reset(_) => String::new(),
+        Act::Restore(_) => splash::step(s.step_files, 118, 436),
+        Act::Rebuild => splash::step(s.step_logs, 31, 97),
     };
     app.banner(fb, &headline, &note, &step, true)
-}
-
-/// The banner over a heal, at whichever of its lines `of` names, drawn a
-/// third of the way through the logs it counts while it runs.
-fn healing(app: &mut App, fb: &mut Framebuffer, of: &str) -> Result<()> {
-    let Some((_, said)) = HEALS.iter().find(|(name, _)| *name == of) else {
-        return Err(anyhow!("no heal banner called {of}"));
-    };
-    let s = app.language().strings();
-    let step = match said {
-        Healing::Logs => splash::step(s.step_logs, 31, 97),
-        _ => String::new(),
-    };
-    let (headline, note) = said.banner(s);
-    app.banner(fb, headline, &note, &step, true)
-}
-
-/// The banner over a retry, at whichever of its lines `of` names, drawn a
-/// third of the way through the logs it counts while it runs.
-fn retrying(app: &mut App, fb: &mut Framebuffer, of: &str) -> Result<()> {
-    let Some((_, said)) = RETRIES.iter().find(|(name, _)| *name == of) else {
-        return Err(anyhow!("no retry banner called {of}"));
-    };
-    let s = app.language().strings();
-    let step = match said {
-        Retrying::Logs => splash::step(s.step_logs, 31, 97),
-        _ => String::new(),
-    };
-    let (headline, note) = said.banner(s);
-    app.banner(fb, headline, &note, &step, true)
 }
 
 /// Every hit box the frame recorded, outlined over it.
@@ -791,10 +738,10 @@ fn list() {
             }
             "today" => "  (:quiet :empty :busy)",
             "book" => {
-                "  (:<index> :<index>:graphs :<index>:graphs:<n> :<index>:marks\n   :<index>:marks:<n> :<index>:marks:earliest :<index>:find\n   :<index>:find:<query> :<index>:restart :<index>:mark :<index>:unmark\n   :<index>:clear :<index>:cleared)"
+                "  (:<index> :<index>:graphs :<index>:graphs:<n> :<index>:highlights\n   :<index>:highlights:<n> :<index>:highlights:earliest :<index>:find\n   :<index>:find:<query> :<index>:restart :<index>:mark :<index>:unmark\n   :<index>:clear :<index>:cleared)"
             }
             "config" => {
-                "  (:reset :nobackup :restore :gone :logs :heal :retry :many :many2\n   :backups :backups2)"
+                "  (:reset :nobackup :restore :gone :rebuild :many :many2 :backups\n   :backups2)"
             }
             "search" | "highlights" => "  (:<query> :empty :none :down :preedit)",
             "books" => {
@@ -804,15 +751,11 @@ fn list() {
         };
         println!("  {name}{of}");
     }
-    // Each of these four states its own list of qualifiers.
+    // Each of these two states its own list of qualifiers.
     let banners: Vec<&str> = BANNERS.iter().map(|(name, _)| *name).collect();
     println!("  update  (:{})", banners.join(" :"));
-    let resets: Vec<&str> = RESETS.iter().map(|(name, _)| *name).collect();
-    println!("  reset   (:{})", resets.join(" :"));
-    let retries: Vec<&str> = RETRIES.iter().map(|(name, _)| *name).collect();
-    println!("  retry   (:{})", retries.join(" :"));
-    let heals: Vec<&str> = HEALS.iter().map(|(name, _)| *name).collect();
-    println!("  heal    (:{})", heals.join(" :"));
+    let acts: Vec<&str> = ACTS.iter().map(|(name, _)| *name).collect();
+    println!("  act     (:{})", acts.join(" :"));
     println!("sketches:");
     match sketch::ALL.is_empty() {
         true => println!("  (none)"),
@@ -846,14 +789,14 @@ fn read_args(args: impl Iterator<Item = String>) -> Result<Opts> {
             "--scheme" => opts.scheme = scheme(&value()?)?,
             "--no-colour" => opts.colour = false,
             "--day" => opts.day = day(&value()?)?,
-            "--hide-unnamed" => opts.unnamed = false,
+            "--hide-unidentified" => opts.unidentified = false,
             "--floor" => opts.floor = floor(&value()?)?,
-            "--figures" => opts.figures = figures(&value()?)?,
+            "--stats-from" => opts.stats_from = stats_from(&value()?)?,
             "--hide-uncovered" => opts.uncovered = false,
             "--hits" => opts.hits = true,
             "--out" => opts.out = PathBuf::from(value()?),
-            "--art" => opts.art = PathBuf::from(value()?),
-            "--store" => opts.store = Some(PathBuf::from(value()?)),
+            "--covers" => opts.covers = PathBuf::from(value()?),
+            "--record" => opts.record = Some(PathBuf::from(value()?)),
             "--sheet" => opts.sheet = Some(value()?),
             "--scale" => opts.scale = value()?.parse().context("--scale wants a percentage")?,
             "--crop" => {
@@ -912,23 +855,21 @@ fn everything() -> Vec<Shot> {
         "books:windowprogress",
         "books:windowempty",
         "book",
-        // `book:1` is the shelf slot `fixture::RESTARTED` reads twice.
+        // `book:1` is the library slot `fixture::RESTARTED` reads twice.
         "book:1:graphs",
         "book:2:graphs",
         "book:5:graphs",
-        "book:5:marks",
-        "book:8:marks",
-        "book:8:marks:5",
-        "book:13:marks",
-        "book:12:marks",
-        "book:0:marks",
+        "book:5:highlights",
+        "book:8:highlights",
+        "book:8:highlights:5",
+        "book:13:highlights",
+        "book:12:highlights",
+        "book:0:highlights",
         "config",
         "update:downloading",
         "update:done",
         "update:failed",
-        "reset:logs",
-        "retry:logs",
-        "retry:named",
+        "act:rebuild",
     ]
     .iter()
     .map(|spec| Shot::read(spec))
@@ -992,11 +933,11 @@ fn week(name: &str) -> Result<WeekStart> {
     }
 }
 
-fn figures(name: &str) -> Result<Figures> {
+fn stats_from(name: &str) -> Result<StatsFrom> {
     match name {
-        "device" => Ok(Figures::Device),
-        "app" => Ok(Figures::App),
-        other => Err(anyhow!("no figures called {other} — device, app")),
+        "kindle" => Ok(StatsFrom::Kindle),
+        "app" => Ok(StatsFrom::App),
+        other => Err(anyhow!("no stats source called {other} — kindle, app")),
     }
 }
 

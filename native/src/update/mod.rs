@@ -373,15 +373,15 @@ fn fetch(
     let _ = fs::remove_dir_all(&staging);
     let _ = fs::remove_file(&zip);
 
-    // `last` holds `mark` to one repaint every other percent.
+    // `last` holds `step` to one repaint every other percent.
     let last = std::cell::Cell::new(u64::MAX);
     let progress = |got: u64, total: Option<u64>| {
-        let mark = match total {
+        let step = match total {
             Some(total) if total > 0 => got * 50 / total,
             _ => got / (512 * 1024),
         };
-        if mark != last.get() {
-            last.set(mark);
+        if step != last.get() {
+            last.set(step);
             say(Doing::Downloading { got, total });
         }
     };
@@ -640,7 +640,7 @@ mod tests {
     }
 
     #[test]
-    fn a_draft_or_a_prerelease_is_not_offered_to_every_device() {
+    fn a_draft_or_a_prerelease_is_not_offered_to_every_kindle() {
         let mut draft = published("v0.3.0");
         draft.draft = true;
         let mut early = published("v0.2.0");
@@ -816,7 +816,7 @@ mod tests {
         fs::write(dest.join("sessions.tsv"), b"the reading").unwrap();
         fs::write(dest.join("settings"), b"lang = e").unwrap();
         fs::create_dir_all(dest.join("covers")).unwrap();
-        fs::write(dest.join("covers/a.jpg"), b"a jacket").unwrap();
+        fs::write(dest.join("covers/a.jpg"), b"a cover").unwrap();
 
         fs::write(staging.join("bin/readinglog"), b"new binary").unwrap();
         fs::write(staging.join("config.xml"), b"<version>0.2.0</version>").unwrap();
@@ -834,7 +834,7 @@ mod tests {
         // The record is not in the archive and is never touched.
         assert_eq!(fs::read(dest.join("sessions.tsv")).unwrap(), b"the reading");
         assert_eq!(fs::read(dest.join("settings")).unwrap(), b"lang = e");
-        assert_eq!(fs::read(dest.join("covers/a.jpg")).unwrap(), b"a jacket");
+        assert_eq!(fs::read(dest.join("covers/a.jpg")).unwrap(), b"a cover");
         // Nothing is left lying beside what it replaced.
         assert!(!dest.join("bin/readinglog.old").exists());
         let _ = fs::remove_dir_all(&dir);

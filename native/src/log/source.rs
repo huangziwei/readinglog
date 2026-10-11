@@ -1,4 +1,4 @@
-//! Where the log lines are on the device. [`LIVE_LOG`] holds the sitting in
+//! Where the log lines are on the Kindle. [`LIVE_LOG`] holds the sitting in
 //! progress, [`LOG_DIR`] its rotated chunks, [`DUMP_DIR`] the daily snapshots.
 //! [`collect_from`] reads all three and de-duplicates.
 
@@ -222,7 +222,7 @@ fn take_events(
         // `raw` carries bytes that are not UTF-8.
         let line = String::from_utf8_lossy(&raw);
         // `family` is the whole cost of this loop: three probes over a line
-        // that carries no marker, rather than all thirteen.
+        // that carries no marker, not all thirteen.
         if super::family(&line).is_none() {
             continue;
         }

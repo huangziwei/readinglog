@@ -1,5 +1,5 @@
 //! Proleptic Gregorian date arithmetic on a day count from 1970-01-01. Every
-//! stored instant is device-local wall clock with no zone on it. A day the
+//! stored instant is Kindle-local wall clock with no zone on it. A day the
 //! clock moved on holds 23 or 25 hours.
 
 use crate::lang::Strings;
@@ -97,13 +97,13 @@ pub fn epoch_now() -> i64 {
 const FIRST_DAY: i64 = days_from_civil(1900, 1, 1);
 const LAST_DAY: i64 = days_from_civil(9999, 12, 31);
 
-/// An epoch second as `(day count, seconds into the day)` on the device's own
+/// An epoch second as `(day count, seconds into the day)` on the Kindle's own
 /// clock, through the zone file [`crate::zone`] reads.
 pub fn local_of(epoch: i64) -> Option<(i64, i64)> {
     local_at(epoch, crate::zone::offset_at(epoch))
 }
 
-/// [`local_of`] with `offset` supplied. An `offset` of `None` names a device
+/// [`local_of`] with `offset` supplied. An `offset` of `None` names a Kindle
 /// keeping no zone file [`crate::zone`] reads.
 pub fn local_at(epoch: i64, offset: Option<i64>) -> Option<(i64, i64)> {
     let (days, secs) = match offset {
@@ -124,7 +124,7 @@ fn libc_local_of(epoch: i64) -> Option<(i64, i64)> {
     // SAFETY: `localtime_r` fills a caller-owned `tm` and takes the zone from
     // the process environment. No pointer outlives the call.
     unsafe {
-        // `time_t` is 32 bits on the device and 64 on the host: `clock` takes
+        // `time_t` is 32 bits on the Kindle and 64 on the host: `clock` takes
         // its width from the call. An `epoch` too wide names no day, never a
         // wrapped one.
         let clock = epoch as _;

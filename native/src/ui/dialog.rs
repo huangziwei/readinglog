@@ -14,7 +14,7 @@ const HEAD_LINES: usize = 2;
 const NOTE_LINES: usize = 8;
 
 /// The outline standing a question off the screen under it, in design pixels:
-/// heavier than a rule, because it is the edge of the thing being answered.
+/// heavier than a rule: it is the edge of the thing being answered.
 const BORDER: i32 = 3;
 
 /// What a question says and what may be answered.

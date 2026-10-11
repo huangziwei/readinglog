@@ -1,5 +1,5 @@
-//! The archives, listed over the config page. A row is one tap target, two
-//! lines tall: when the archive was written and what it weighs above what it
+//! The backups, listed over the config page. A row is one tap target, two
+//! lines tall: when the backup was written and what it weighs above what it
 //! holds. Every row raises a question of its own.
 
 use crate::ui::chrome;
@@ -13,7 +13,7 @@ const BORDER: i32 = 3;
 /// The most rows a page holds, whatever room the panel has.
 const MOST_ROWS: usize = 8;
 
-/// One archive as its two lines read, gathered before the page is drawn.
+/// One backup as its two lines read, gathered before the page is drawn.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Row {
     /// When it was written, else the file's own name.
@@ -23,14 +23,14 @@ pub struct Row {
     pub holds: String,
 }
 
-/// What the list states on its heading: how many archives, and their weight.
+/// What the list states on its heading: how many backups, and their weight.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Listed {
     pub rows: Vec<Row>,
     pub said: String,
 }
 
-/// The height one archive's two lines take, air included.
+/// The height one backup's two lines take, air included.
 fn row_height(cx: &mut Ctx) -> i32 {
     let theme = cx.theme;
     cx.text.set_px(theme.body_px);
@@ -86,7 +86,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, listed: &Listed, from: usize) {
     let (list, feet) = rest.split_top(step * showing as i32 + theme.gap * 2);
     for (at, row) in listed.rows.iter().skip(from).take(showing).enumerate() {
         let box_ = Rect::new(list.x, list.y + step * at as i32, list.w, step);
-        archive(cx, box_, row);
+        backup(cx, box_, row);
         cx.hit(Hit::Restore(from + at), box_);
         if at + 1 < showing {
             let rule = cx.theme.rule();
@@ -100,7 +100,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, listed: &Listed, from: usize) {
 fn head(cx: &mut Ctx, box_: Rect, said: &str) {
     let theme = cx.theme;
     let script = cx.ui_script();
-    let heading = cx.s().restore_row;
+    let heading = cx.s().backups_row;
     cx.text.set_px(theme.head_px);
     let y = box_.y + cx.text.cap_height() as i32;
     cx.text.draw_in(script, cx.fb, box_.x, y, heading, false);
@@ -128,8 +128,8 @@ fn fitted(cx: &mut Ctx, opening: f32, said: &str, room: i32) -> f32 {
     )
 }
 
-/// One archive: when and how heavy above what it holds.
-fn archive(cx: &mut Ctx, box_: Rect, row: &Row) {
+/// One backup: when and how heavy above what it holds.
+fn backup(cx: &mut Ctx, box_: Rect, row: &Row) {
     let script = cx.ui_script();
     let (gap, body, small) = (cx.theme.gap, cx.theme.body_px, cx.theme.small_px);
     cx.text.set_px(body);
