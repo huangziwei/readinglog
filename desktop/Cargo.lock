@@ -3274,6 +3274,7 @@ name = "readinglog-desktop"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "image",
  "pulldown-cmark",
  "readinglog-native",
  "serde",

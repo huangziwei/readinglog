@@ -1,6 +1,6 @@
-//! What the app's windows list and change: every book in the record with its
-//! edit, one book's highlights with theirs, and the posts. Each row is stated
-//! over the whole record, the public one being a choice among them.
+//! What a site's edits are made over: every book in the record with its edit,
+//! one book's highlights with theirs, and the posts. [`books`] and
+//! [`highlights`] state the whole record, the public one a choice among it.
 
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -15,7 +15,7 @@ use crate::edits::Edits;
 use crate::posts;
 use crate::workspace::{POSTS, Workspace, write_file};
 
-/// One book of the record, as the Books window lists it.
+/// One book of the record, with its edit.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct BookRow {
     pub key: String,
@@ -109,7 +109,7 @@ pub struct HighlightRow {
     pub made: String,
 }
 
-/// One post, as the Posts window lists it.
+/// One post, as `posts/` holds it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PostRow {
     /// Its file's name under `posts/`, without `.md`.
@@ -250,8 +250,8 @@ impl Choice {
     }
 }
 
-/// A change to one book's row. A field left out leaves its choice as it
-/// stands; an empty title or author gives the record's back.
+/// A change to one book's row. A `None` leaves its field's choice as it
+/// stands; an empty `title` or `author` gives the record's back.
 #[derive(Debug, Default, Clone, PartialEq, Deserialize)]
 pub struct BookChange {
     pub shown: Option<bool>,
@@ -289,7 +289,7 @@ pub fn show_all(ws: &Workspace, shown: bool) -> Result<()> {
 }
 
 /// A change to one highlight's row, as [`BookChange`] is to a book's. An empty
-/// correction or comment takes it away.
+/// `text` or `comment` takes it away.
 #[derive(Debug, Default, Clone, PartialEq, Deserialize)]
 pub struct HighlightChange {
     pub shown: Option<Choice>,
@@ -406,7 +406,7 @@ mod tests {
     }
 
     #[test]
-    fn the_books_window_lists_every_book_with_the_readers_choice() {
+    fn every_book_is_listed_with_the_readers_choice() {
         let ws = workspace("shelf-books");
         let rows = books(&ws).unwrap();
         assert_eq!(rows.len(), 2);
@@ -478,7 +478,7 @@ mod tests {
     }
 
     #[test]
-    fn the_window_says_a_choice_in_words_and_leaves_the_rest_alone() {
+    fn a_choice_is_said_in_words_and_the_rest_left_alone() {
         let change: BookChange = serde_json::from_str(r#"{"highlights":"default"}"#).unwrap();
         assert_eq!(change.highlights, Some(Choice::Default));
         assert_eq!((change.shown, change.title), (None, None));

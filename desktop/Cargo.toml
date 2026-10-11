@@ -20,11 +20,11 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-# The window. `protocol-asset` serves the built site's preview from disk.
+# The window. `protocol-asset` serves the record's covers from disk.
 tauri = { version = "2", features = ["protocol-asset"] }
-# Picking a workspace, a backup and a Kindle's drive.
+# Picking a backup and the record's folder.
 tauri-plugin-dialog = "2"
-# Showing the written site in the browser and its folder in the Finder.
+# Showing the record's folder in the Finder.
 tauri-plugin-opener = "2"
 # The record, the stats and the backups, read the way the Kindle reads them.
 readinglog-native = { path = "../native" }
@@ -35,6 +35,8 @@ serde = { version = "1", features = ["derive"] }
 toml = "1"
 # A post's Markdown, to HTML. `html` alone: no command line, no SIMD scanner.
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+# A book's tone off its cover; the decoders `readinglog-native` builds already.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
 [dev-dependencies]
 # What the window sends a command, read the way Tauri reads it.

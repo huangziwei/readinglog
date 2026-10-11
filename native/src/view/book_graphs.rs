@@ -1,10 +1,10 @@
-//! One book's reading drawn: each reading it has been given, the days of the
-//! one picked, where each of its sittings sat in the book, and which hours of
-//! the day it was read in.
+//! [`draw`]: a book's readings, the days of the one picked, where each of its
+//! sittings sat in the book, and the hours of the day it was read in.
 
 use crate::date;
 use crate::lang::Strings;
 use crate::settings::WeekStart;
+use crate::stats::Stats;
 use crate::ui::charts;
 use crate::ui::chrome;
 use crate::ui::paint::{self, INK, PALE, Rect};
@@ -18,22 +18,22 @@ const WHOLE_BOOK: i64 = 100;
 /// One hour of the clock in this many is named.
 const HOURS_NAMED: usize = 3;
 
-/// The reading row takes at most one in this many of the page's height.
+/// `listed` takes at most one in this many of the page's height.
 const LISTED: i32 = 2;
 
-/// A column narrower than this steps the strip up to a coarser grain.
+/// The narrowest column `Strip::of` lets `cut_to` keep before a coarser grain.
 const THINNEST: i32 = 4;
 
 /// What one column of a strip of days covers.
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum Grain {
+pub enum Grain {
     Day,
     Week,
     Month,
 }
 
 impl Grain {
-    /// Finest first: a strip takes the first of these its columns fit in.
+    /// Finest first: `cut_to` takes the first of these its columns fit in.
     const ALL: [Grain; 3] = [Grain::Day, Grain::Week, Grain::Month];
 
     /// About how many days one column of this grain covers.
@@ -71,7 +71,7 @@ impl Grain {
 
     /// What a column opening on `day` is called. A `year` of true states the
     /// year with every name.
-    fn name(self, day: i64, year: bool, s: &Strings) -> String {
+    pub fn name(self, day: i64, year: bool, s: &Strings) -> String {
         let (y, m, _) = date::civil_from_days(day);
         match (self, year) {
             (Grain::Month, _) => date::month_name(y, m, s),
@@ -82,8 +82,8 @@ impl Grain {
 }
 
 /// A strip of seconds over `from..=to` at one grain, with every run of columns
-/// holding nothing cut down to one column. The run a break stands for is
-/// measured in days at every grain.
+/// holding nothing cut down to one column. `ran` measures each cut run in days
+/// at every grain.
 fn strip(
     days: &[(i64, i64)],
     from: i64,
@@ -109,7 +109,7 @@ fn strip(
             0 => secs[at..].iter().take_while(|s| **s == 0).count(),
             _ => 0,
         };
-        // A run at either end of the strip is the span's own edge, never a break.
+        // `run` at either end of `secs` is the span's own edge, never a break.
         if run > 0 && at > 0 && at + run < secs.len() {
             breaks.push(values.len());
             ran.push(run as i64 * grain.days());
@@ -128,7 +128,7 @@ fn strip(
 
 /// The columns a strip takes: the finest grain whose count comes under `most`
 /// once its runs are cut.
-fn cut_to(
+pub fn cut_to(
     days: &[(i64, i64)],
     from: i64,
     to: i64,
@@ -239,7 +239,7 @@ fn line(cx: &mut Ctx) -> i32 {
 }
 
 /// The reading picked: its span at the left, the seconds it took at the right,
-/// closed by a rule. One reading fills the band, and `‹ ›` step between them.
+/// closed by a rule; `daybooks::pager` steps between `reads` holding more than one.
 fn listed(cx: &mut Ctx, area: Rect, index: usize, reads: &[(i64, i64)], on: usize, pitch: i32) {
     let s = cx.s();
     let theme: &Theme = cx.theme;
@@ -279,13 +279,13 @@ fn listed(cx: &mut Ctx, area: Rect, index: usize, reads: &[(i64, i64)], on: usiz
     let w = cx.text.measure_width(&over) as i32;
     cx.text
         .draw_inked(script, cx.fb, row.right() - w, baseline, &over, INK);
-    // The rule closes the band the air over the heading's cap opens it by.
+    // `air` over the heading's cap stands again under `baseline`, over the rule.
     let air = baseline - row.y - cap;
     paint::hline(cx.fb, area.x, baseline + air, area.w, PALE, theme.rule());
 }
 
-/// The one strip a reading's two bands are both drawn on. Their columns and
-/// their axis stand in the same places.
+/// The one strip a reading's two bands are both drawn on, their columns and
+/// their axis in the same places.
 struct Strip {
     values: Vec<i64>,
     edges: Vec<i64>,
@@ -352,14 +352,42 @@ impl Strip {
     fn name(&self, at: usize, s: &Strings) -> String {
         self.grain.name(self.edges[at], self.year, s)
     }
+}
 
-    fn column(&self, day: i64) -> usize {
-        let last = self.values.len().saturating_sub(1);
-        self.edges
-            .partition_point(|edge| *edge <= day)
-            .saturating_sub(1)
-            .min(last)
-    }
+/// The column of `edges` holding `day`, each edge the first day of its column.
+pub fn column_of(edges: &[i64], day: i64) -> usize {
+    edges
+        .partition_point(|edge| *edge <= day)
+        .saturating_sub(1)
+        .min(edges.len().saturating_sub(1))
+}
+
+/// Each sitting of one reading on the column of `edges` holding its day, with
+/// the stretches it covered and `progress`, its own else the one before it,
+/// where a sitting stating no stretch is marked.
+pub fn placed(
+    stats: &Stats,
+    index: usize,
+    edges: &[i64],
+    from: i64,
+    to: i64,
+) -> Vec<charts::Sitting> {
+    let mut progress = 0;
+    let stretches = stats.book_stretches(index);
+    stats
+        .book_progress(index)
+        .into_iter()
+        .zip(stretches)
+        .filter(|((day, _), _)| (from..=to).contains(day))
+        .map(|((day, at), stretches)| {
+            progress = at.unwrap_or(progress);
+            charts::Sitting {
+                column: column_of(edges, day),
+                progress,
+                stretches,
+            }
+        })
+        .collect()
 }
 
 /// The seconds read on each column of one reading.
@@ -381,27 +409,10 @@ fn days(cx: &mut Ctx, area: Rect, strip: &Strip, s: &'static Strings) {
     );
 }
 
-/// The stretches each sitting of one reading covered. A sitting stating no
-/// stretch keeps its own progress mark, else the progress before it.
+/// [`placed`] on the strip the days are drawn on.
 fn where_you_sat(cx: &mut Ctx, area: Rect, index: usize, strip: &Strip, from: i64, to: i64) {
     let s: &Strings = cx.s();
-    let mut progress = 0;
-    let stretches = cx.stats.book_stretches(index);
-    let at: Vec<charts::Sitting> = cx
-        .stats
-        .book_progress(index)
-        .into_iter()
-        .zip(stretches)
-        .filter(|((day, _), _)| (from..=to).contains(day))
-        .map(|((day, at), stretches)| {
-            progress = at.unwrap_or(progress);
-            charts::Sitting {
-                column: strip.column(day),
-                progress,
-                stretches,
-            }
-        })
-        .collect();
+    let at = placed(cx.stats, index, &strip.edges, from, to);
     let theme: &Theme = cx.theme;
     charts::scatter(
         cx.fb,
@@ -469,17 +480,17 @@ mod tests {
 
     #[test]
     fn a_reading_runs_from_its_first_day_to_the_day_before_the_next_began() {
-        // Begun again on day 20003: the first reading closes the day before.
+        // Day 20_003 in `again` closes the first reading on 20_002.
         assert_eq!(readings(5, &[20_003]), [(20_000, 20_002), (20_003, 20_004)]);
-        // Never begun again, and begun again twice.
+        // `again` empty, then holding two days.
         assert_eq!(readings(5, &[]), [(20_000, 20_004)]);
         assert_eq!(
             readings(5, &[20_002, 20_004]),
             [(20_000, 20_001), (20_002, 20_003), (20_004, 20_004)]
         );
-        // A day past the last sitting closes the record and opens nothing.
+        // 20_099, past the last sitting, opens no reading.
         assert_eq!(readings(5, &[20_099]), [(20_000, 20_004)]);
-        // A day before it opens leaves one reading, which it opens.
+        // 19_000, before the first sitting, leaves one reading.
         assert_eq!(readings(5, &[19_000]), [(20_000, 20_004)]);
         assert!(readings(0, &[]).is_empty());
     }
@@ -489,14 +500,14 @@ mod tests {
         let week = WeekStart::Monday;
         let days: Vec<(i64, i64)> = (0..400).map(|d| (20_000 + d, 1800)).collect();
         let most = |wide: i32| (wide / THINNEST).max(2) as usize;
-        // Forty days in 400px is a column a day; four hundred is not.
+        // `most(400)` holds forty days at a column each, and four hundred at a coarser grain.
         let (values, _, _, _, grain) = cut_to(&days, 20_000, 20_039, most(400), week);
         assert_eq!((values.len(), grain == Grain::Day), (40, true));
         let (_, _, _, _, grain) = cut_to(&days, 20_000, 20_399, most(400), week);
         assert_eq!(grain, Grain::Week);
         let (_, _, _, _, grain) = cut_to(&days, 20_000, 22_000, most(400), week);
         assert_eq!(grain, Grain::Month);
-        // Every second of the span lands in a column, wherever it is cut.
+        // `values` sums to every second of the span at every width.
         for wide in [40, 120, 400] {
             let (values, _, _, _, _) = cut_to(&days, 20_000, 20_399, most(wide), week);
             assert_eq!(values.iter().sum::<i64>(), 400 * 1800);
@@ -523,8 +534,8 @@ mod tests {
         out
     }
 
-    /// Every run holding nothing between two days read is cut, one day long or
-    /// many, and a run at either end of the span is drawn whole.
+    /// `cut_to` cuts every empty run between two days read, one day long or
+    /// many, and draws a run at either end of the span whole.
     #[test]
     fn every_run_between_two_days_read_is_cut() {
         let week = WeekStart::Monday;
@@ -553,14 +564,14 @@ mod tests {
         assert_eq!(cut(&daily, from, to), (9, 0, vec![]));
     }
 
-    /// Every run states its length while the stated take at most half the row;
-    /// past that fewer state, spread evenly, the first and last kept.
+    /// `labelled` states every run's length while the stated take at most half
+    /// the row; past that fewer, spread evenly, the first and last kept.
     #[test]
     fn a_strip_states_as_many_run_lengths_as_half_its_row_carries() {
         // Nine short lengths fit inside half the row, and every one states.
         let (stated, share) = labelled(&[36; 9], 38, 1112, 14);
         assert!(stated.iter().all(|on| *on));
-        // A stated break is cut as wide as its length and the gap.
+        // `share` cuts a stated break as wide as its length and the gap.
         let wide = 1112.0 * share / (29.0 + 9.0 * share);
         assert!((wide - 50.0).abs() < 0.5, "{wide}");
         // Twelve, the last one wider: six state, the first and the last among them.
@@ -573,7 +584,7 @@ mod tests {
         assert_eq!(labelled(&[72], 3, 100, 14), (vec![false], 1.0));
     }
 
-    /// The grain is asked after the runs are cut.
+    /// `cut_to` asks for a grain after the runs are cut.
     #[test]
     fn the_grain_steps_only_after_the_runs_are_cut() {
         let week = WeekStart::Monday;
@@ -591,8 +602,8 @@ mod tests {
         assert_eq!(grain, Grain::Week);
     }
 
-    /// Every second of the reading lands in a column, cut or not, and a break
-    /// column carries none of them.
+    /// `values` holds every second of the reading, cut or not, and a break
+    /// column none of them.
     #[test]
     fn a_cut_strip_holds_every_second_the_reading_held() {
         let days = rhythm(3, 4, 1, 60);
@@ -615,7 +626,7 @@ mod tests {
         assert_eq!(spanned(open, close, true, s), "Aug 6 – Oct 22, 2024");
         let close = date::days_from_civil(2026, 8, 7);
         assert_eq!(spanned(open, close, true, s), "Aug 6, 2024 – Aug 7, 2026");
-        // A reading carried through in a day states that day once.
+        // `open` to `open`, carried through, states that day once.
         assert_eq!(spanned(open, open, true, s), "Aug 6, 2024");
         // A `whole` of false states no day it closed on.
         assert_eq!(spanned(open, close, false, s), "Aug 6, 2024 –");

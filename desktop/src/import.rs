@@ -59,6 +59,41 @@ pub fn backup(ws: &Workspace, from: &Path) -> Result<Imported> {
     fold(ws, kept, again)
 }
 
+/// Every volume mounted where this system mounts removable ones: each entry
+/// of `/Volumes` on macOS, of `/media/$USER` and `/run/media/$USER` on Linux,
+/// and each drive letter past `C:` on Windows.
+pub fn volumes() -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if cfg!(target_os = "macos") {
+        roots.push(PathBuf::from("/Volumes"));
+    }
+    if cfg!(target_os = "linux")
+        && let Ok(user) = std::env::var("USER")
+    {
+        roots.push(Path::new("/media").join(&user));
+        roots.push(Path::new("/run/media").join(&user));
+    }
+    let mut out: Vec<PathBuf> = roots
+        .iter()
+        .filter_map(|root| std::fs::read_dir(root).ok())
+        .flat_map(|entries| entries.flatten().map(|e| e.path()))
+        .collect();
+    if cfg!(windows) {
+        out.extend((b'D'..=b'Z').map(|letter| PathBuf::from(format!("{}:\\", letter as char))));
+    }
+    out.sort();
+    out
+}
+
+/// The first of `volumes` holding a Reading Log record in the Kindle's own
+/// folder, `extensions/readinglog`.
+pub fn mounted(volumes: &[PathBuf]) -> Option<PathBuf> {
+    volumes
+        .iter()
+        .find(|volume| Record::file(&volume.join("extensions").join("readinglog")).is_file())
+        .cloned()
+}
+
 /// Import the record of a Kindle mounted at `root`: its volume, or the
 /// app's own folder on it. The record and its covers go into one backup laid
 /// out as the Kindle lays its own, which is kept and folded as any other.
@@ -205,6 +240,20 @@ mod tests {
             vec![book(100, "B1", "One")],
             vec![sitting("2026-09-01T09:00:00", 100, 600)],
         )
+    }
+
+    #[test]
+    fn a_volume_holding_the_kindles_record_is_the_one_mounted() {
+        let record = record_of(vec![book(100, "B1", "A Book")], vec![]);
+        let kindle = kindle_dir("mounted-kindle", &record);
+        let stick = scratch("mounted-stick");
+        std::fs::write(stick.join("sessions.tsv"), "x").unwrap();
+        assert_eq!(mounted(&[stick.clone(), kindle.clone()]), Some(kindle));
+        assert_eq!(
+            mounted(&[stick]),
+            None,
+            "a record outside extensions/readinglog"
+        );
     }
 
     #[test]

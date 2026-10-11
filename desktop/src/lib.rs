@@ -1,6 +1,6 @@
 //! Reading Log on the desktop: [`import`] folds backups into a [`workspace`],
-//! [`edits`] and [`posts`] stand beside its record, [`site`] builds the [`public`]
-//! record into pages and [`out`] writes them; [`shelf`] and [`app`] are the window.
+//! [`screen`] draws its record and [`app`] is the window. [`edits`], [`posts`],
+//! [`public`], [`site`], [`out`] and [`shelf`] build the record into a site.
 
 pub mod app;
 pub mod edits;
@@ -8,6 +8,7 @@ pub mod import;
 pub mod out;
 pub mod posts;
 pub mod public;
+pub mod screen;
 pub mod shelf;
 pub mod site;
 pub mod workspace;

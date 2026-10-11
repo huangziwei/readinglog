@@ -718,6 +718,11 @@ impl Ctx<'_> {
         let s = self.s;
         let title = title_of(book, self.edits);
         let author = author_of(book, self.edits);
+        // `s.left` stands only on a book short of `BookStat::is_finished`.
+        let headline: Vec<(String, &'static str)> = book_view::headline(book, self.from, s)
+            .into_iter()
+            .filter(|(_, name)| !(book.is_finished() && *name == s.left))
+            .collect();
         let mut body = format!(
             "<article class=\"book\">\n<header class=\"book\">{cover}<div class=\"words\">\
              <h1{lang}>{title}</h1>{by}{figures}{band}</div></header>\n",
@@ -728,7 +733,7 @@ impl Ctx<'_> {
                 true => String::new(),
                 false => format!("<p class=\"author\">{}</p>", esc(&author)),
             },
-            figures = figures(&book_view::headline(book, self.from, s), "three"),
+            figures = figures(&headline, "three"),
             band = self.band(book),
         );
 
@@ -750,12 +755,13 @@ impl Ctx<'_> {
             "<section>\n<h2 class=\"head\">{}</h2>\n<dl class=\"rows\">\n",
             esc(s.the_reading)
         );
-        for (name, value) in book_view::reading_rows(book, self.from, s) {
+        let rows = book_view::reading_rows(book, self.from, s);
+        for (name, value) in rows.iter().filter(|(_, value)| value != book_view::DASH) {
             let _ = writeln!(
                 body,
                 "<div><dt>{}</dt><dd>{}</dd></div>",
                 esc(name),
-                esc(&value)
+                esc(value)
             );
         }
         body.push_str("</dl>\n</section>\n");
@@ -925,7 +931,7 @@ impl Ctx<'_> {
 /// `stated` as a row of figures, each over its name.
 fn figures(stated: &[(String, &'static str)], class: &str) -> String {
     let mut out = format!("<dl class=\"figures {class}\">");
-    for (value, name) in stated {
+    for (value, name) in stated.iter().filter(|(value, _)| value != book_view::DASH) {
         let _ = write!(
             out,
             "<div><dt>{}</dt><dd>{}</dd></div>",
@@ -1079,6 +1085,32 @@ mod tests {
         assert!(!book.contains("Some words"), "a highlight starts hidden");
         let cat = String::from_utf8(site.files["books/b2/index.html"].clone()).unwrap();
         assert!(cat.contains("<h1 lang=\"en\">川辺の記録</h1>"));
+    }
+
+    #[test]
+    fn a_figure_with_nothing_to_state_is_left_off_the_page() {
+        let ws = workspace("site-blank");
+        let site = build(&ws).unwrap();
+        let page = String::from_utf8(site.files["books/a-map-of-small-rivers/index.html"].clone())
+            .unwrap();
+        let left = format!("<dt>{}</dt>", Lang::English.strings().left);
+        assert!(!page.contains(&left), "{page}");
+        assert!(!page.contains(book_view::DASH), "{page}");
+    }
+
+    #[test]
+    fn a_finished_book_states_nothing_left() {
+        let ws = Workspace::create(&crate::tests::scratch("site-finished")).unwrap();
+        let mut done = book(100, "B1", "A Map of Small Rivers");
+        done.percent = 100.0;
+        let record = record_of(vec![done], vec![sitting("2026-09-01T09:00:00", 100, 600)]);
+        record.save(&ws.record_dir()).unwrap();
+        let site = build(&ws).unwrap();
+        let page = String::from_utf8(site.files["books/a-map-of-small-rivers/index.html"].clone())
+            .unwrap();
+        let s = Lang::English.strings();
+        assert!(page.contains(&format!("<dt>{}</dt>", s.read)), "{page}");
+        assert!(!page.contains(&format!("<dt>{}</dt>", s.left)), "{page}");
     }
 
     #[test]
