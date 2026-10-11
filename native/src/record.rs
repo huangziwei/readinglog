@@ -125,13 +125,13 @@ impl Book {
         self.percent >= FINISHED_PERCENT
     }
 
-    /// Take `percent` as this book's progress. At or past [`FINISHED_PERCENT`] it
-    /// carries [`Self::finished`]; at or past [`Self::restart`] it is the
-    /// reading that ended, and `percent` holds 0.
+    /// Take `percent` as this book's progress, carrying [`Self::finished`] at or
+    /// past [`FINISHED_PERCENT`]. A `percent` equal to [`Self::restart`] is
+    /// dropped, and any other `percent` clears `restart` and stands.
     fn stand_at(&mut self, percent: f64) {
         let percent = stored_percent(percent);
         if let Some(from) = self.restart {
-            if percent >= from {
+            if percent == from {
                 return;
             }
             self.restart = None;
@@ -203,8 +203,7 @@ pub struct Record {
     pub reset_at: String,
     /// Books put back to zero, ascending by `extent` then `key`.
     pub cleared: Vec<Cleared>,
-    /// Every highlight the two sources state, by stamp, written whole by
-    /// [`crate::highlights::fold`].
+    /// Every highlight by stamp, written whole by [`crate::highlights::fold`].
     pub highlights: Vec<Highlight>,
     /// What the pass that wrote [`Self::highlights`] saw, `None` where no pass has.
     pub gate: Option<Gate>,
@@ -2185,8 +2184,7 @@ fn read_book<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Book> {
         read_state: next().trim().parse().unwrap_or(-1),
         cde_type: next().to_string(),
         kept: next().trim() == "1",
-        // `IdentifiedBy::Library` where the row states none, `Record::migrate`
-        // picking out a sidecar's.
+        // `IdentifiedBy::Library` where the row states none; `Record::migrate` picks a sidecar's.
         identified_by: IdentifiedBy::from_stored(next()).unwrap_or_default(),
         // 0 where the row states none, until a pass over the sidecars fills them.
         timer_ms: next().trim().parse().unwrap_or(0),
@@ -2654,7 +2652,7 @@ mod tests {
             "progress is something to clear"
         );
         assert_eq!(record.books[0].restarted_on.len(), 0);
-        // And again from the head of that reading, which clears nothing.
+        // `restart` at the head of that reading clears nothing.
         assert!(!record.restart(extent, &key, 0));
         assert_eq!(record.books[0].restarted_on.len(), 0);
     }
@@ -2674,7 +2672,7 @@ mod tests {
         record.restart(extent, &key, 0);
         assert_eq!(record.books[0].restarted_on.len(), 1);
 
-        // And through the end of a third, which the mark carries.
+        // `restart` on a `finished` third reading banks a second day.
         record.books[0].finished = true;
         record.restart(extent, &key, 0);
         assert_eq!(record.books[0].restarted_on.len(), 2);
@@ -2699,7 +2697,7 @@ mod tests {
         let again = Record::from_text(&record.text());
         assert_eq!(again.books[0].restarted_on, record.books[0].restarted_on);
 
-        // The row as an older build wrote it: every column but the last.
+        // `cut`: each `b` row less its last column.
         let text = record.text();
         let cut: String = text
             .lines()
@@ -2712,8 +2710,8 @@ mod tests {
         assert_eq!(Record::from_text(&cut).books[0].restarted_on.len(), 0);
     }
 
-    /// `restart` is the floor a book's progress is read against, a book
-    /// carrying one keeping the progress and the mark it set.
+    /// `fold_in` leaves a book carrying `restart` at the progress and the mark
+    /// it holds.
     #[test]
     fn a_restart_here_outranks_progress_and_a_mark_from_elsewhere() {
         let mut here = one_book_at(0.0, false, "A Book");
@@ -3490,7 +3488,7 @@ mod tests {
     }
 
     #[test]
-    fn a_restart_gives_up_the_progress_and_waits_for_one_before_it() {
+    fn a_restart_gives_up_the_progress_until_the_library_moves() {
         let dir = scratch("restart");
         let mut record = Record::default();
         let library = [listed(938_018, "B00OKPCRLG", "Bible", 100.0)];
@@ -3502,7 +3500,7 @@ mod tests {
         assert_eq!(record.books[0].restart, Some(100.0));
         assert!(!record.books[0].finished);
 
-        // `remember` at or past `restart` leaves `percent` at 0.
+        // `remember` at `restart` leaves `percent` at 0.
         record.remember(&library);
         assert_eq!(record.books[0].percent, 0.0);
         assert!(!record.books[0].finished);
@@ -3527,6 +3525,21 @@ mod tests {
         record.remember(&[listed(555, "B00OTHER", "Another", 0.0)]);
         assert!(!record.restart(555, "B00OTHER", 0));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `percent` follows `remember` past the place `restart` gave up, from the
+    /// first pass on.
+    #[test]
+    fn a_restart_ends_at_a_place_past_the_one_given_up() {
+        let mut record = Record::default();
+        record.remember(&[listed(203_740, "B0KAHO0001", "Kaho", 0.3189)]);
+        assert!(record.restart(203_740, "B0KAHO0001", 0));
+        assert_eq!(record.books[0].restart, Some(0.3189));
+        for (stated, held) in [(0.3189, 0.0), (2.574, 2.574), (9.7039, 9.7039)] {
+            record.remember(&[listed(203_740, "B0KAHO0001", "Kaho", stated)]);
+            assert_eq!(record.books[0].percent, held, "the library at {stated}");
+        }
+        assert_eq!(record.books[0].restart, None);
     }
 
     #[test]
@@ -3575,7 +3588,7 @@ mod tests {
         assert_eq!(record.remember(&[listed(1, "B01", "A Book", 10.0)]), 1);
         // `remember` at the same reading again changes nothing.
         assert_eq!(record.remember(&[listed(1, "B01", "A Book", 10.0)]), 0);
-        // Read further, and the library's new figure is taken.
+        // `remember` at a further figure takes it.
         assert_eq!(record.remember(&[listed(1, "B01", "A Book", 40.0)]), 1);
         assert_eq!(record.books[0].percent, 40.0);
 
@@ -4777,9 +4790,8 @@ m	260911:115340	7200
             .lines()
             .map(|l| match l.strip_prefix("s\t") {
                 Some(rest) => {
-                    // The four fields a build before v0.3.4 states none of, the
-                    // share of the book after them, and the stretches of the book
-                    // after that.
+                    // `cut`: the row less `paged_seconds`, `paged_words`,
+                    // `timed_seconds`, `timed_words`, `covered` and `stretches`.
                     let cut = (0..6).fold(rest, |r, _| {
                         r.rsplit_once('\t').expect("a page or interval field").0
                     });
@@ -5592,7 +5604,6 @@ m	260911:115340	7200
         assert_eq!(record.extent_of(148_207), 148_213);
 
         // `merge` takes it too.
-
         let mut held = Record {
             ends: vec![(148_207, 938_018)],
             ..Record::default()
@@ -5626,7 +5637,7 @@ m	260911:115340	7200
     fn a_sitting_reaches_its_book_at_an_extent_the_record_no_longer_carries() {
         let mut record = Record {
             books: vec![Book {
-                // The copy the library names today.
+                // The `extent` the library names this key at.
                 extent: 148_199,
                 cde_key: "BTIFIHP3JYKFKDNZLSD7CODVHTDUEOIM".into(),
                 title: "A Volume".into(),
