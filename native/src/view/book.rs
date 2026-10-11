@@ -544,7 +544,7 @@ fn figures(cx: &mut Ctx, words: Rect, book: &BookStat) {
 }
 
 /// `BookStat::on_kindle` as `s.yes` or `s.no`.
-fn where_note(book: &BookStat, s: &Strings) -> String {
+pub fn where_note(book: &BookStat, s: &Strings) -> String {
     match book.on_kindle {
         true => s.yes.into(),
         false => s.no.into(),

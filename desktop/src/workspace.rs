@@ -52,6 +52,10 @@ pub struct SiteToml {
     pub sitting_floor: String,
     pub week_start: String,
     pub color_scheme: String,
+    /// `yes` or `no`: whether a total counts reading on unidentified books.
+    pub show_unnamed: String,
+    /// `yes` or `no`: whether a book no cover can be drawn for is listed.
+    pub show_uncovered: String,
 }
 
 impl Default for SiteToml {
@@ -69,6 +73,8 @@ impl Default for SiteToml {
             sitting_floor: token(&kindle, "sitting_floor").into(),
             week_start: token(&kindle, "week_start").into(),
             color_scheme: token(&kindle, "color_scheme").into(),
+            show_unnamed: token(&kindle, "show_unnamed").into(),
+            show_uncovered: token(&kindle, "show_uncovered").into(),
         }
     }
 }
@@ -82,6 +88,8 @@ impl SiteToml {
             ("sitting_floor", &self.sitting_floor),
             ("week_start", &self.week_start),
             ("color_scheme", &self.color_scheme),
+            ("show_unnamed", &self.show_unnamed),
+            ("show_uncovered", &self.show_uncovered),
         ];
         let text: String = asked
             .iter()
@@ -206,7 +214,37 @@ pub fn offered(lang: Lang) -> Vec<Setting> {
                 })
                 .collect(),
         },
+        Setting {
+            key: "show_unnamed",
+            label: s.unidentified_row.into(),
+            picks: [true, false]
+                .iter()
+                .map(|on| Pick {
+                    token: word("show_unnamed", &|x| x.show_unidentified = *on),
+                    label: shown_or_not(*on, s),
+                })
+                .collect(),
+        },
+        Setting {
+            key: "show_uncovered",
+            label: s.uncovered_row.into(),
+            picks: [true, false]
+                .iter()
+                .map(|on| Pick {
+                    token: word("show_uncovered", &|x| x.show_uncovered = *on),
+                    label: shown_or_not(*on, s),
+                })
+                .collect(),
+        },
     ]
+}
+
+/// `s.chip_show` or `s.chip_hide`, as the config page names the two picks.
+fn shown_or_not(on: bool, s: &readinglog_native::lang::Strings) -> String {
+    match on {
+        true => s.chip_show.into(),
+        false => s.chip_hide.into(),
+    }
 }
 
 /// A workspace folder, and its `site.toml`.
@@ -353,6 +391,8 @@ mod tests {
                     "sitting_floor" => site.sitting_floor = value,
                     "week_start" => site.week_start = value,
                     "color_scheme" => site.color_scheme = value,
+                    "show_unnamed" => site.show_unnamed = value,
+                    "show_uncovered" => site.show_uncovered = value,
                     other => panic!("{other} is offered and read nowhere"),
                 }
                 assert!(

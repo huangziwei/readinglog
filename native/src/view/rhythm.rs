@@ -142,18 +142,7 @@ fn day_page(cx: &mut Ctx, area: Rect, state: &State) {
     let head = chrome::section_height(cx.text, theme);
     let [top, strip, list] = home::bands(area, theme, figures, head);
 
-    let turns = cx.stats.turns_on(day);
-    let longest = cx
-        .stats
-        .sittings_on(day)
-        .map(|s| s.seconds)
-        .max()
-        .unwrap_or(0);
-    let stated = [
-        (date::duration(cx.stats.day_seconds(day), s), s.total_read),
-        (turns.to_string(), s.pages_turned),
-        (date::duration(longest, s), s.longest_sitting),
-    ];
+    let stated = day_figures(cx.stats, day, s);
     chrome::figures(cx.fb, cx.text, theme, top, &stated);
 
     let named = date::long_day(day, s).to_uppercase();
@@ -163,6 +152,16 @@ fn day_page(cx: &mut Ctx, area: Rect, state: &State) {
     charts::timeline(cx.fb, cx.text, theme, inner, &spans, now);
 
     daybooks::paged(cx, list, day, state.list_from);
+}
+
+/// What one day picked off a span came to, each figure with its name: the
+/// reading, the pages turned and the longest sitting.
+pub fn day_figures(stats: &Stats, day: i64, s: &Strings) -> [(String, &'static str); 3] {
+    [
+        (date::duration(stats.day_seconds(day), s), s.total_read),
+        (stats.turns_on(day).to_string(), s.pages_turned),
+        (date::duration(stats.longest_on(day), s), s.longest_sitting),
+    ]
 }
 
 /// The four spans as a segmented control, each its own hit box. A day open
@@ -328,11 +327,16 @@ fn week_columns(cx: &mut Ctx, area: Rect, day: i64, picked: bool) {
     }
 }
 
+/// What a week's column calls its day: the weekday and the day of the month.
+pub fn day_name(day: i64, s: &Strings) -> String {
+    let (_, _, dom) = date::civil_from_days(day);
+    format!("{} {dom}", s.weekdays_short[date::weekday(day)])
+}
+
 /// A day's weekday and date, centred over its column.
 fn day_head(cx: &mut Ctx, area: Rect, day: i64) {
     let theme: &Theme = cx.theme;
-    let (_, _, dom) = date::civil_from_days(day);
-    let name = format!("{} {dom}", cx.s().weekdays_short[date::weekday(day)]);
+    let name = day_name(day, cx.s());
     let script = cx.ui_script();
     cx.text.set_px(theme.small_px);
     let w = cx.text.measure_width_in(script, &name) as i32;

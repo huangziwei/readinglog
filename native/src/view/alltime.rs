@@ -325,17 +325,22 @@ fn longest_sitting(cx: &Ctx) -> (i64, i64) {
 
 /// What the record covers, over the board.
 fn span_line(cx: &mut Ctx, area: Rect) {
-    let s = cx.s();
-    let first = cx.stats.opened(cx.today);
-    let over = (cx.today - first + 1).max(1);
-    let (year, month, _) = date::civil_from_days(first);
-    let line = crate::lang::counted(s.since_days, over)
-        .replace("{m}", &date::month_name(year, month, s).to_uppercase());
+    let line = since(cx.stats, cx.today, cx.s());
     cx.text.set_px(cx.theme.small_px);
     let baseline = area.y + cx.text.cap_height() as i32;
     let script = cx.ui_script();
     cx.text
         .draw_in(script, cx.fb, area.x, baseline, &line, false);
+}
+
+/// The month the record opens in and the days from its first to `today`, as
+/// the head of the board states them.
+pub fn since(stats: &Stats, today: i64, s: &Strings) -> String {
+    let first = stats.opened(today);
+    let over = (today - first + 1).max(1);
+    let (year, month, _) = date::civil_from_days(first);
+    crate::lang::counted(s.since_days, over)
+        .replace("{m}", &date::month_name(year, month, s).to_uppercase())
 }
 
 /// `cells` in rows of three down `area`, each row at its own size. Every

@@ -1,6 +1,6 @@
-//! The charts, as SVG drawn off `Stats` series. Every colour is a literal off
-//! [`Look`]; a day's step is `charts::level`, and a book's two bands stand on
-//! the columns `book_graphs::cut_to` cuts.
+//! The charts, as SVG drawn off `Stats` series: [`Look`] holds every colour as
+//! a literal, `charts::level` gives a day's step, and `book_graphs::cut_to`
+//! cuts the columns a book's two bands stand on.
 
 use std::fmt::Write as _;
 
@@ -53,18 +53,12 @@ impl Weeks {
     pub fn column(&self, day: i64) -> i64 {
         (day - self.origin) / 7
     }
-
-    /// The days of column `at` inside the year.
-    pub fn days(&self, at: i64) -> std::ops::RangeInclusive<i64> {
-        let from = (self.origin + at * 7).max(self.first);
-        let to = (self.origin + at * 7 + 6).min(self.last);
-        from..=to
-    }
 }
 
-/// One year as one strip, 53 or 54 weeks across and seven days down. `opened`
-/// and `today` bound the days filled: one before `opened` an outline, one past
-/// `today` not drawn.
+/// One year as one strip, a column a week. `opened` and `today` bound the days
+/// filled, one before `opened` an outline; a day with reading opens `day_link`,
+/// a month's name `month_link`.
+#[allow(clippy::too_many_arguments)]
 pub fn strip(
     stats: &Stats,
     weeks: &Weeks,
@@ -73,6 +67,8 @@ pub fn strip(
     look: &Look,
     today: i64,
     months: bool,
+    day_link: &dyn Fn(i64) -> String,
+    month_link: &dyn Fn(i64) -> String,
 ) -> String {
     let gap = 3.0;
     let cell = weeks.pitch - gap;
@@ -91,7 +87,8 @@ pub fn strip(
             let x = weeks.left + weeks.column(day) as f32 * weeks.pitch;
             let _ = write!(
                 svg,
-                "<text x=\"{x:.1}\" y=\"11\" font-size=\"11\" fill=\"{}\">{}</text>",
+                "<a href=\"{}\"><text x=\"{x:.1}\" y=\"11\" font-size=\"11\" fill=\"{}\">{}</text></a>",
+                month_link(day),
                 hex(look.soft),
                 esc(s.months_short[(month - 1) as usize])
             );
@@ -133,92 +130,20 @@ pub fn strip(
             0 => date::long_day(day, s),
             _ => format!("{} · {}", date::long_day(day, s), date::duration(secs, s)),
         };
-        let _ = write!(
-            svg,
+        let rect = format!(
             "<rect x=\"{x:.1}\" y=\"{y:.1}\" width=\"{cell:.1}\" height=\"{cell:.1}\" rx=\"2.5\" fill=\"{}\"{ring}><title>{}</title></rect>",
             hex(fill),
             esc(&tip)
         );
+        // `secs` 0 takes no link.
+        match secs > 0 {
+            true => {
+                let _ = write!(svg, "<a href=\"{}\">{rect}</a>", day_link(day));
+            }
+            false => svg.push_str(&rect),
+        }
     }
     svg.push_str("</svg>");
-    svg
-}
-
-/// Seconds each week of the year, each bar cut into the books read in it in
-/// the colour of each book, the unidentified share in grey at the top.
-pub fn weeks_by_book(
-    stats: &Stats,
-    weeks: &Weeks,
-    s: &Strings,
-    look: &Look,
-    tones: &[[u8; 3]],
-) -> String {
-    let plot = 132.0;
-    let top = 8.0;
-    let foot = 4.0;
-    let width = weeks.left + weeks.columns as f32 * weeks.pitch;
-    let height = top + plot + foot;
-    let totals: Vec<i64> = (0..weeks.columns)
-        .map(|at| stats.span_seconds(weeks.days(at)))
-        .collect();
-    let max = totals.iter().copied().max().unwrap_or(0).max(1);
-    let step = nice_hours(max);
-    let mut svg = open(width, height);
-    let mut line = step;
-    while line <= max {
-        let y = top + plot - plot * line as f32 / max as f32;
-        let _ = write!(
-            svg,
-            "<line x1=\"{:.1}\" y1=\"{y:.1}\" x2=\"{width:.1}\" y2=\"{y:.1}\" stroke=\"{}\" stroke-dasharray=\"2 3\"/>\
-             <text x=\"{:.1}\" y=\"{:.1}\" font-size=\"10\" text-anchor=\"end\" fill=\"{}\">{}</text>",
-            weeks.left,
-            hex(look.rule),
-            weeks.left - 6.0,
-            y + 3.5,
-            hex(look.faint),
-            esc(&date::duration(line, s))
-        );
-        line += step;
-    }
-    // `order` keeps each book's place in every bar: the day it was first read.
-    let order = |book: usize| stats.books[book].first_day;
-    for at in 0..weeks.columns {
-        let days = weeks.days(at);
-        let mut books = stats.book_totals(days.clone());
-        books.sort_by_key(|(book, _)| (order(*book), *book));
-        let x = weeks.left + at as f32 * weeks.pitch + 1.5;
-        let w = weeks.pitch - 3.0;
-        let mut y = top + plot;
-        let total = totals[at as usize];
-        let named: i64 = books.iter().map(|(_, secs)| secs).sum();
-        let mut parts: Vec<(Option<usize>, i64)> =
-            books.into_iter().map(|(b, secs)| (Some(b), secs)).collect();
-        if total > named {
-            parts.push((None, total - named));
-        }
-        for (book, secs) in parts {
-            let h = plot * secs as f32 / max as f32;
-            y -= h;
-            let (fill, name) = match book {
-                Some(book) => (tones[book], stats.books[book].title.clone()),
-                None => (look.faint, s.unidentified.to_string()),
-            };
-            let _ = write!(
-                svg,
-                "<rect x=\"{x:.1}\" y=\"{y:.2}\" width=\"{w:.1}\" height=\"{h:.2}\" fill=\"{}\"><title>{} · {}</title></rect>",
-                hex(fill),
-                esc(&name),
-                esc(&date::duration(secs, s))
-            );
-        }
-    }
-    let base = top + plot + 0.5;
-    let _ = write!(
-        svg,
-        "<line x1=\"{:.1}\" y1=\"{base:.1}\" x2=\"{width:.1}\" y2=\"{base:.1}\" stroke=\"{}\"/></svg>",
-        weeks.left,
-        hex(look.rule)
-    );
     svg
 }
 
@@ -309,9 +234,9 @@ pub fn columns(
     svg
 }
 
-/// The last reading of one book cut into columns by `book_graphs::cut_to`, as
-/// the Kindle's Graphs tab cuts it, and laid across `width`: each column's
-/// left edge and width, a cut run as wide as the words naming it.
+/// One reading of a book, `from` to `to`, cut into columns by
+/// `book_graphs::cut_to` as the Kindle's Graphs tab cuts it, and laid across
+/// `width`: each column's left edge and width, a cut run as wide as its words.
 pub struct BookStrip {
     pub from: i64,
     pub to: i64,
@@ -329,8 +254,14 @@ pub struct BookStrip {
 }
 
 impl BookStrip {
-    pub fn of(stats: &Stats, at: usize, week: WeekStart, s: &Strings, width: f32) -> Option<Self> {
-        let (from, to) = *stats.book_readings(at).last()?;
+    pub fn of(
+        stats: &Stats,
+        at: usize,
+        (from, to): (i64, i64),
+        week: WeekStart,
+        s: &Strings,
+        width: f32,
+    ) -> Self {
         let (left, right) = (44.0, 12.0);
         let inner = width - left - right;
         let most = ((inner / 4.0) as usize).max(2);
@@ -362,7 +293,7 @@ impl BookStrip {
             cells.push((x, w));
             x += w + gap;
         }
-        Some(Self {
+        Self {
             from,
             to,
             year: date::civil_from_days(from).0 != date::civil_from_days(to).0,
@@ -378,7 +309,7 @@ impl BookStrip {
             left,
             right,
             width,
-        })
+        }
     }
 
     fn name(&self, column: usize, s: &Strings) -> String {
@@ -612,6 +543,401 @@ pub fn book_sat(
         from = to;
     }
     strip.axis(&mut svg, top + plot + 0.5, s, look);
+    svg.push_str("</svg>");
+    svg
+}
+
+/// `secs` into a day as `HH:MM`.
+fn clock(secs: i64) -> String {
+    format!("{:02}:{:02}", secs / 3600, secs % 3600 / 60)
+}
+
+/// Where `secs` into a day stands across `width`.
+fn hour_x(secs: i64, width: f32) -> f32 {
+    width * secs.clamp(0, 86_400) as f32 / 86_400.0
+}
+
+/// One day's reading along its twenty-four hours, as `charts::timeline` draws
+/// it: a block for each stretch `Stats::day_blocks` holds, the hours named
+/// every six, each block's times its `<title>`.
+pub fn timeline(blocks: &[(i64, i64)], look: &Look, width: f32, s: &Strings) -> String {
+    let (strip, axis) = (34.0, 18.0);
+    let mut svg = open(width, strip + axis);
+    let _ = write!(
+        svg,
+        "<rect x=\"0.5\" y=\"0.5\" width=\"{:.1}\" height=\"{:.1}\" rx=\"4\" fill=\"none\" stroke=\"{}\"/>",
+        width - 1.0,
+        strip - 1.0,
+        hex(look.rule)
+    );
+    for hour in (0..=24).step_by(6) {
+        let x = hour_x(hour * 3600, width);
+        let anchor = match hour {
+            0 => "start",
+            24 => "end",
+            _ => "middle",
+        };
+        let _ = write!(
+            svg,
+            "<line x1=\"{x:.1}\" y1=\"1\" x2=\"{x:.1}\" y2=\"{:.1}\" stroke=\"{}\"/>\
+             <text x=\"{x:.1}\" y=\"{:.1}\" font-size=\"10\" text-anchor=\"{anchor}\" fill=\"{}\">{hour:02}</text>",
+            strip - 1.0,
+            hex(look.edge),
+            strip + 13.0,
+            hex(look.faint)
+        );
+    }
+    for (from, to) in blocks {
+        let (x0, x1) = (hour_x(*from, width), hour_x(*to, width));
+        let _ = write!(
+            svg,
+            "<rect x=\"{x0:.1}\" y=\"3\" width=\"{:.1}\" height=\"{:.1}\" rx=\"2\" fill=\"{}\"><title>{}–{} · {}</title></rect>",
+            (x1 - x0).max(3.0),
+            strip - 6.0,
+            hex(look.accent),
+            clock(*from),
+            clock(*to),
+            esc(&date::duration(to - from, s))
+        );
+    }
+    svg.push_str("</svg>");
+    svg
+}
+
+/// One book's stretches of a day across the same twenty-four hours as
+/// [`timeline`], in the book's `tone`, over a track the width of the day.
+pub fn spans(blocks: &[(i64, i64)], look: &Look, tone: [u8; 3], width: f32) -> String {
+    let mut svg = open(width, 8.0);
+    let _ = write!(
+        svg,
+        "<rect x=\"0\" y=\"3\" width=\"{width:.1}\" height=\"2\" rx=\"1\" fill=\"{}\"/>",
+        hex(look.l0)
+    );
+    for (from, to) in blocks {
+        let (x0, x1) = (hour_x(*from, width), hour_x(*to, width));
+        let _ = write!(
+            svg,
+            "<rect x=\"{x0:.1}\" y=\"0\" width=\"{:.1}\" height=\"8\" rx=\"2\" fill=\"{}\"><title>{}–{}</title></rect>",
+            (x1 - x0).max(3.0),
+            hex(tone),
+            clock(*from),
+            clock(*to)
+        );
+    }
+    svg.push_str("</svg>");
+    svg
+}
+
+/// The week opening on `first`, as `rhythm::week_columns` draws it: each day's
+/// name over a bar against the busiest day, its figure over it and its hours
+/// cut into its foot; a day with reading opens `link`.
+#[allow(clippy::too_many_arguments)]
+pub fn week(
+    stats: &Stats,
+    first: i64,
+    today: i64,
+    look: &Look,
+    s: &Strings,
+    width: f32,
+    link: &dyn Fn(i64) -> String,
+) -> String {
+    let (head, plot, gap) = (24.0, 170.0, 10.0);
+    let height = head + plot + 4.0;
+    let column = (width - gap * 6.0) / 7.0;
+    let most = stats
+        .busiest_day(first..=first + 6)
+        .map_or(0, |(_, secs)| secs)
+        .max(1);
+    let mut svg = open(width, height);
+    for at in 0..7 {
+        let day = first + at;
+        let x = at as f32 * (column + gap);
+        let name = readinglog_native::view::rhythm::day_name(day, s);
+        // `past` days hold no data: `name` stands faint over no line.
+        let past = day > today;
+        let mut drawn = format!(
+            "<text x=\"{:.1}\" y=\"14\" font-size=\"12\" text-anchor=\"middle\" fill=\"{}\"{}>{}</text>",
+            x + column / 2.0,
+            hex(if past { look.faint } else { look.ink }),
+            if day == today {
+                " font-weight=\"700\""
+            } else {
+                ""
+            },
+            esc(&name)
+        );
+        let base = head + plot;
+        if !past {
+            let _ = write!(
+                drawn,
+                "<line x1=\"{x:.1}\" y1=\"{base:.1}\" x2=\"{:.1}\" y2=\"{base:.1}\" stroke=\"{}\"/>",
+                x + column,
+                hex(look.rule)
+            );
+        }
+        let secs = stats.day_seconds(day);
+        if secs > 0 {
+            let label_h = 16.0;
+            let h = ((plot - label_h) * secs as f32 / most as f32).max(2.0);
+            let bw = column * 7.0 / 8.0;
+            let (bx, by) = (x + (column - bw) / 2.0, base - h);
+            let _ = write!(
+                drawn,
+                "<rect x=\"{bx:.1}\" y=\"{by:.1}\" width=\"{bw:.1}\" height=\"{h:.1}\" rx=\"2\" fill=\"{}\"/>",
+                hex(look.bar)
+            );
+            // `hours` cut into the bar's foot in `look.card`.
+            let hours = stats.hours_over(day..=day);
+            let busiest = hours.iter().copied().max().unwrap_or(0).max(1);
+            let pad = 3.0;
+            let step = ((bw - pad * 2.0) / 24.0).floor().max(1.0);
+            let box_w = step * 24.0;
+            let box_h = (h / 3.0).min(28.0) - pad;
+            let left = bx + (bw - box_w) / 2.0;
+            for (hour, at_hour) in hours.iter().enumerate() {
+                if *at_hour <= 0 || box_h <= 1.0 {
+                    continue;
+                }
+                let hh = (box_h * *at_hour as f32 / busiest as f32).max(2.0);
+                let _ = write!(
+                    drawn,
+                    "<rect x=\"{:.1}\" y=\"{:.1}\" width=\"{step:.1}\" height=\"{hh:.1}\" fill=\"{}\"/>",
+                    left + hour as f32 * step,
+                    base - pad - hh,
+                    hex(look.card)
+                );
+            }
+            let _ = write!(
+                drawn,
+                "<text x=\"{:.1}\" y=\"{:.1}\" font-size=\"12\" font-weight=\"600\" text-anchor=\"middle\" fill=\"{}\">{}</text>",
+                x + column / 2.0,
+                by - 5.0,
+                hex(look.ink),
+                esc(&date::duration_tight(secs, s))
+            );
+            let _ = write!(
+                svg,
+                "<a href=\"{}\"><rect x=\"{x:.1}\" y=\"0\" width=\"{column:.1}\" height=\"{height:.1}\" fill=\"{}\" fill-opacity=\"0\"><title>{} · {}</title></rect>{drawn}</a>",
+                link(day),
+                hex(look.card),
+                esc(&date::long_day(day, s)),
+                esc(&date::duration(secs, s))
+            );
+        } else {
+            svg.push_str(&drawn);
+        }
+    }
+    svg.push_str("</svg>");
+    svg
+}
+
+/// How many books a day of a month names in lanes, the rest counted in `+n`.
+const LANES: usize = 4;
+
+/// `text` cut to stand inside `room` at `px`, closed by `…` where it is cut;
+/// `width` sets a Han or kana character a full `px` wide, any other about half.
+fn clip(text: &str, room: f32, px: f32) -> String {
+    let width = |c: char| match c as u32 {
+        0x2E80.. => px,
+        _ => px * 0.58,
+    };
+    let whole: f32 = text.chars().map(width).sum();
+    if whole <= room {
+        return text.to_string();
+    }
+    let mut out = String::new();
+    let mut taken = width('…');
+    for c in text.chars() {
+        taken += width(c);
+        if taken > room {
+            break;
+        }
+        out.push(c);
+    }
+    out.push('…');
+    out
+}
+
+/// `tone` taken most of the way to white, the ground a lane's title is set on.
+fn wash([r, g, b]: [u8; 3]) -> [u8; 3] {
+    let lift = |c: u8| (c as f32 + (255.0 - c as f32) * 0.72).round() as u8;
+    [lift(r), lift(g), lift(b)]
+}
+
+/// The month opening on `first`, as `rhythm::month_grid` draws it: each cell
+/// its date, total and level, its books in lanes off `charts::lanes` and its
+/// hours along its foot; a day with reading opens `link`.
+#[allow(clippy::too_many_arguments)]
+pub fn month(
+    stats: &Stats,
+    first: i64,
+    week: WeekStart,
+    today: i64,
+    look: &Look,
+    s: &Strings,
+    tones: &[[u8; 3]],
+    width: f32,
+    link: &dyn Fn(i64) -> String,
+) -> String {
+    let (year, month, _) = date::civil_from_days(first);
+    let last = first + date::days_in_month(year, month) - 1;
+    let (head, gap, cell_h) = (22.0, 6.0, 112.0);
+    let rows = charts::month_rows(year, month, week) as usize;
+    let cell_w = (width - gap * 6.0) / 7.0;
+    let height = head + rows as f32 * (cell_h + gap);
+    let peak = stats.busiest_day(first..=last).map_or(0, |(_, secs)| secs);
+    let tallest = (first..=last)
+        .filter_map(|day| stats.hours_over(day..=day).into_iter().max())
+        .max()
+        .unwrap_or(0)
+        .max(1);
+    let lead = week.column_of(date::weekday(first)) as i64;
+    let mut svg = open(width, height);
+    for column in 0..7 {
+        let _ = write!(
+            svg,
+            "<text x=\"{:.1}\" y=\"14\" font-size=\"11\" text-anchor=\"middle\" fill=\"{}\">{}</text>",
+            column as f32 * (cell_w + gap) + cell_w / 2.0,
+            hex(look.faint),
+            esc(s.weekdays_short[week.day_in(column)])
+        );
+    }
+    let (lane_top, lane_h) = (30.0, 17.0);
+    for row in 0..rows {
+        let days: Vec<Option<i64>> = (0..7)
+            .map(|column| {
+                let day = first + (row * 7 + column) as i64 - lead;
+                (first..=last).contains(&day).then_some(day)
+            })
+            .collect();
+        let books: Vec<Vec<usize>> = days
+            .iter()
+            .map(|day| match day {
+                Some(day) => stats
+                    .book_totals(*day..=*day)
+                    .into_iter()
+                    .map(|(b, _)| b)
+                    .collect(),
+                None => Vec::new(),
+            })
+            .collect();
+        let lanes = charts::lanes(&books, LANES);
+        let y = head + row as f32 * (cell_h + gap);
+        for (column, day) in days.iter().enumerate() {
+            let Some(day) = day else { continue };
+            let x = column as f32 * (cell_w + gap);
+            let secs = stats.day_seconds(*day);
+            let mut cell = format!(
+                "<rect x=\"{:.1}\" y=\"{:.1}\" width=\"{:.1}\" height=\"{:.1}\" rx=\"5\" fill=\"{}\" stroke=\"{}\"{}/>",
+                x + 0.5,
+                y + 0.5,
+                cell_w - 1.0,
+                cell_h - 1.0,
+                hex(look.card),
+                hex(match *day == today {
+                    true => look.ink,
+                    false => look.rule,
+                }),
+                if *day == today {
+                    " stroke-width=\"1.5\""
+                } else {
+                    ""
+                }
+            );
+            let level = charts::level(secs, peak);
+            if level > 0 {
+                let _ = write!(
+                    cell,
+                    "<rect x=\"{:.1}\" y=\"{:.1}\" width=\"{:.1}\" height=\"5\" rx=\"2\" fill=\"{}\"/>",
+                    x + 1.0,
+                    y + 1.0,
+                    cell_w - 2.0,
+                    hex(look.level(level))
+                );
+            }
+            let (_, _, dom) = date::civil_from_days(*day);
+            let _ = write!(
+                cell,
+                "<text x=\"{:.1}\" y=\"{:.1}\" font-size=\"12\" font-weight=\"600\" fill=\"{}\">{dom}</text>",
+                x + 7.0,
+                y + 21.0,
+                hex(look.ink)
+            );
+            if secs > 0 {
+                let _ = write!(
+                    cell,
+                    "<text x=\"{:.1}\" y=\"{:.1}\" font-size=\"11\" text-anchor=\"end\" fill=\"{}\">{}</text>",
+                    x + cell_w - 7.0,
+                    y + 21.0,
+                    hex(look.soft),
+                    esc(&date::duration_tight(secs, s))
+                );
+                let hours = stats.hours_over(*day..=*day);
+                let step = ((cell_w - 14.0) / 24.0).max(1.0);
+                let foot = y + cell_h - 6.0;
+                for (hour, at) in hours.iter().enumerate() {
+                    if *at <= 0 {
+                        continue;
+                    }
+                    let h = (10.0 * *at as f32 / tallest as f32).max(1.5);
+                    let _ = write!(
+                        cell,
+                        "<rect x=\"{:.1}\" y=\"{:.1}\" width=\"{step:.1}\" height=\"{h:.1}\" fill=\"{}\"/>",
+                        x + 7.0 + hour as f32 * step,
+                        foot - h,
+                        hex(look.bar)
+                    );
+                }
+                let _ = write!(
+                    svg,
+                    "<a href=\"{}\">{cell}<rect x=\"{x:.1}\" y=\"{y:.1}\" width=\"{cell_w:.1}\" height=\"{cell_h:.1}\" fill=\"{}\" fill-opacity=\"0\"><title>{} · {}</title></rect></a>",
+                    link(*day),
+                    hex(look.card),
+                    esc(&date::long_day(*day, s)),
+                    esc(&date::duration(secs, s))
+                );
+            } else {
+                svg.push_str(&cell);
+            }
+        }
+        // `lanes` runs reach past their own cell, each bar drawn over the cells.
+        for (column, here) in lanes.iter().enumerate() {
+            let x = column as f32 * (cell_w + gap) + 6.0;
+            for (lane, run) in here.iter().enumerate() {
+                let Some(run) = run else { continue };
+                if run.start != column {
+                    continue;
+                }
+                let w = cell_w - 12.0 + (cell_w + gap) * (run.span as f32 - 1.0);
+                let ly = y + lane_top + lane as f32 * lane_h;
+                let book = &stats.books[run.book];
+                let _ = write!(
+                    svg,
+                    "<rect x=\"{x:.1}\" y=\"{ly:.1}\" width=\"{w:.1}\" height=\"{:.1}\" rx=\"3\" fill=\"{}\"><title>{}</title></rect>\
+                     <text x=\"{:.1}\" y=\"{:.1}\" font-size=\"10.5\" fill=\"{}\" pointer-events=\"none\">{}</text>",
+                    lane_h - 3.0,
+                    hex(wash(tones[run.book])),
+                    esc(&book.title),
+                    x + 4.0,
+                    ly + 10.5,
+                    hex(look.ink),
+                    esc(&clip(&book.title, w - 8.0, 10.5))
+                );
+            }
+            let named = here.iter().flatten().count();
+            let over = books[column].len().saturating_sub(named);
+            if over > 0 {
+                let ly = y + lane_top + named.min(LANES - 1) as f32 * lane_h;
+                let _ = write!(
+                    svg,
+                    "<text x=\"{:.1}\" y=\"{:.1}\" font-size=\"10.5\" text-anchor=\"end\" fill=\"{}\" pointer-events=\"none\">+{over}</text>",
+                    x + cell_w - 12.0,
+                    ly + 10.5 + if named >= LANES { lane_h } else { 0.0 },
+                    hex(look.soft)
+                );
+            }
+        }
+    }
     svg.push_str("</svg>");
     svg
 }

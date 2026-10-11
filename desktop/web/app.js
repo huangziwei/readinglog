@@ -142,6 +142,16 @@ TAURI.webview.getCurrentWebview().onDragDropEvent((event) => {
   if (payload.type === "drop") bring(payload.paths ?? []).catch(console.error);
 });
 
+// ← and → step a span or a day, through the arrows the page draws.
+document.addEventListener("keydown", (event) => {
+  if (event.target.closest("input") || event.metaKey || event.ctrlKey || event.altKey) return;
+  const key = { ArrowLeft: "prev", ArrowRight: "next" }[event.key];
+  const arrow = key && main.querySelector(`a[data-key="${key}"]`);
+  if (!arrow) return;
+  event.preventDefault();
+  location.hash = arrow.getAttribute("href");
+});
+
 window.addEventListener("hashchange", () => show().catch(console.error));
 window.addEventListener(
   "resize",

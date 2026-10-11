@@ -20,7 +20,7 @@ use super::{Ctx, Hit, Search, Way, pager, search};
 const BAR: &str = " | ";
 const DOT: &str = " · ";
 
-/// What a highlight with no position states in place of one.
+/// What a highlight with no position states for its position.
 const DASH: &str = "—";
 
 /// The most passage lines one row of a [`Layout::found`] list shows.
@@ -32,7 +32,7 @@ const NAME_LINES: usize = 3;
 /// One row of a list of highlights: `highlight`, the `note` written on it, and the
 /// `title`, `language` and `extent` of the book it was made in.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct Row {
+pub struct Row {
     /// The book, by its index in `Stats::books`.
     pub book: usize,
     /// The row's place in the book's `Stats::book_highlights` list, where its
@@ -162,8 +162,8 @@ impl Metrics {
 }
 
 /// The passage lines a [`Layout::found`] row shows in a box `high` tall:
-/// [`WINDOW_LINES`], less wherever two rows that deep overflow `high`. The
-/// row measured carries one line of `title` and no `note`.
+/// [`WINDOW_LINES`], less wherever two rows that deep overflow `high`; `m.row`
+/// measures one line of `title` and no `note`.
 fn window_lines(m: Metrics, theme: &Theme, high: i32) -> usize {
     let mut lines = WINDOW_LINES;
     while lines > 1 && m.row(theme, 1, lines, 0) * 2 > high {
@@ -219,9 +219,9 @@ fn rows(stats: &Stats, book: usize, record: &BookStat) -> Vec<Row> {
 }
 
 /// The rows a list holds, in `order`: every one of `book`'s, or those a `query`
-/// names by the words of the passage or of the note on it. Turning the list
-/// over leaves every `Row::at` alone.
-fn listing(
+/// names by the words of the passage or of the note on it. `Way::Up` leaves
+/// every `Row::at` alone.
+pub fn listing(
     stats: &Stats,
     book: usize,
     record: &BookStat,
@@ -244,8 +244,8 @@ fn listing(
     held
 }
 
-/// What the rows are measured against: a list a query found windows each
-/// passage on it, and a book's own list gives a row every line its box holds.
+/// What the rows are measured against: [`Layout::found`] under a query,
+/// windowing each passage, else every line its box holds.
 fn layout<'a>(
     text: &mut TextRenderer,
     theme: &Theme,
@@ -322,8 +322,7 @@ pub fn draw(
         cx.text.set_px(theme.body_px);
         let script = cx.ui_script();
         let baseline = inner.y + theme.gap + cx.text.cap_height() as i32;
-        // An empty list under a query holding nothing is a book with no
-        // highlights of its own.
+        // `no_highlights_in_book` where no query narrows `held`.
         let said = match query.is_some_and(|query| !query.is_empty()) {
             true => s.no_highlights_here,
             false => s.no_highlights_in_book,
@@ -334,7 +333,7 @@ pub fn draw(
     }
 
     let at = layout(cx.text, theme, inner, query);
-    // The page showing opens at the last opening at or before `from`.
+    // `page_at`: the last opening at or before `from`.
     let from = search.map_or(from, |search| search.from);
     let opens = openings(cx.text, theme, &held, &at, inner.h);
     let page_at = opens.iter().rposition(|o| *o <= from).unwrap_or(0);
@@ -363,7 +362,7 @@ pub fn draw(
         let high = height(cx.text, theme, &at, held);
         let box_of = Rect::new(inner.x, y, inner.w, high);
         row(cx, box_of, held, &at);
-        // A row a search found opens the book's own list at that passage.
+        // `Hit::Highlight` opens the book's own list at a passage a search found.
         if search.is_some() {
             cx.hit(Hit::Highlight(held.book, held.at), box_of);
         }
@@ -461,8 +460,8 @@ fn wrapped(text: &mut TextRenderer, theme: &Theme, at: &Layout, held: &Row) -> W
     };
     let room = (at.width - indent(theme)).max(1) as u32;
     text.set_px(theme.body_px);
-    // With no query the passage wraps as far as the row shows; with one it
-    // wraps whole, and [`opens_at`] reads every line of it.
+    // `at.needle` `None` wraps the passage as far as the row shows; `Some`
+    // wraps it whole for [`opens_at`].
     let (said, opens) = match at.needle {
         None => (
             text.wrap_and_clamp_in(script, &held.highlight.body, room, at.lines),
@@ -547,7 +546,7 @@ fn runs_in(line: &str, needle: &str) -> Vec<(usize, usize)> {
 /// `x` on `baseline` at [`Theme::body_px`].
 fn wash(cx: &mut Ctx, script: Script, x: i32, baseline: i32, line: &str, needle: &str) {
     let cap = cx.text.cap_height() as i32;
-    // The band clears the ascenders and takes in the descenders under it.
+    // `drop` and `over` clear the ascenders and take in the descenders.
     let drop = ((cx.text.line_height() as i32 - cap) / 2).max(1);
     let over = (drop / 2).max(1);
     let ink = cx.palette.wash();
@@ -656,9 +655,8 @@ pub(super) fn row(cx: &mut Ctx, area: Rect, held: &Row, at: &Layout) {
     }
 }
 
-/// What stands over the list: the book it belongs to. The count is the tab's
-/// own, and the title is cut to two thirds of the strip, the rest being the
-/// pager's.
+/// What stands over the list: the book it belongs to, its title cut to two
+/// thirds of the strip and the pager taking the rest.
 fn heading(cx: &mut Ctx, book: usize) -> String {
     let theme: &Theme = cx.theme;
     let Some(book) = cx.stats.books.get(book) else {
@@ -673,7 +671,7 @@ fn heading(cx: &mut Ctx, book: usize) -> String {
 }
 
 /// What a row's label reads: where the highlight falls and what kind it is —
-/// `Location 608 | Highlight`. The day stands at the other end of the line.
+/// `Location 608 | Highlight`; [`row`] sets the day at the line's other end.
 pub fn label(highlight: &Highlight, extent: i64, s: &Strings) -> String {
     format!(
         "{}{BAR}{}",
@@ -683,8 +681,8 @@ pub fn label(highlight: &Highlight, extent: i64, s: &Strings) -> String {
 }
 
 /// `highlight.page`, `highlight.location` and `highlight.through(extent)`, [`DOT`]-joined in
-/// that order, each standing only where its own source stated it. Three axes,
-/// and none converts to another; a highlight stating none takes [`DASH`].
+/// that order, each standing only where its own source stated it, none derived
+/// from another; [`DASH`] where none is stated.
 fn positions(highlight: &Highlight, extent: i64, s: &Strings) -> String {
     let mut said: Vec<String> = Vec::with_capacity(3);
     if !highlight.page.is_empty() {
@@ -749,8 +747,7 @@ mod tests {
 
     #[test]
     fn a_row_states_every_position_its_sources_named() {
-        // The page and the location come off the clipping, the progress
-        // off the sidecar's own position: 330 of 1000.
+        // `page` and `location` off the clipping, the 33% off `start`: 330 of 1000.
         let mut held = highlight(State::Live, 330, 111);
         held.page = "15".into();
         assert_eq!(
@@ -764,10 +761,10 @@ mod tests {
         // `highlight.location` is on another axis than `highlight.start`.
         let held = highlight(State::Unconfirmed, -1, 111);
         assert_eq!(positions(&held, 1_000, en()), "Location 111");
-        // A sidecar annotation no clipping speaks for has the fraction alone.
+        // `location` -1, no clipping beside `start`: the fraction alone.
         let mut held = highlight(State::Live, 330, -1);
         assert_eq!(positions(&held, 1_000, en()), "33%");
-        // And a book whose extent nothing states says nothing at all.
+        // `0` for the extent: nothing at all.
         held.location = -1;
         assert_eq!(positions(&held, 0, en()), DASH);
     }
@@ -780,10 +777,10 @@ mod tests {
             .collect();
         assert_eq!(opens_at(&every, "third"), 1);
         assert_eq!(opens_at(&every, "fourth"), 2);
-        // A match in the first two lines opens the passage at its head.
+        // `"first"` and `"SECOND"`, in the first two lines, open at the head.
         assert_eq!(opens_at(&every, "first"), 0);
         assert_eq!(opens_at(&every, "SECOND"), 0, "case folded");
-        // And a query the note alone matched leaves the passage where it is.
+        // `"nowhere"`, a note's match alone, leaves the passage at its head.
         assert_eq!(opens_at(&every, "nowhere"), 0);
     }
 
@@ -794,12 +791,12 @@ mod tests {
         assert_eq!(runs, [(0, 3), (11, 14)]);
         assert_eq!(&line[runs[0].0..runs[0].1], "The");
         assert_eq!(&line[runs[1].0..runs[1].1], "the");
-        // A run at the end of the line reaches the end of it.
+        // `"company"` at the end of the line reaches the end of it.
         assert_eq!(runs_in(line, "company"), [(15, 22)]);
-        // A word no line holds, and a query with nothing in it.
+        // `"zzz"`, which no line holds, and `""`.
         assert!(runs_in(line, "zzz").is_empty());
         assert!(runs_in(line, "").is_empty());
-        // Runs never overlap: two of three take the head of the line.
+        // `runs_in` never overlaps: `"aa"` in `"aaaa"` twice.
         assert_eq!(runs_in("aaaa", "aa"), [(0, 2), (2, 4)]);
     }
 
@@ -811,7 +808,7 @@ mod tests {
         assert_eq!(runs.len(), 1);
         assert_eq!(&line[runs[0].0..runs[0].1], "觀念");
         assert_eq!(runs_in(line, "觀念"), runs);
-        // And the window opens on the line a fold found, not on the head.
+        // `opens_at` opens on the line a fold found.
         let every: Vec<String> = ["a first line", "a second", line.to_string().as_str()]
             .iter()
             .map(|line| line.to_string())
@@ -829,17 +826,16 @@ mod tests {
         };
         for (w, h) in PANELS {
             let theme = Theme::for_screen(w, h);
-            // A page deep enough for two of the deepest rows keeps them.
+            // `deep * 2` keeps `WINDOW_LINES`.
             let deep = m.row(&theme, 1, WINDOW_LINES, 0);
             assert_eq!(window_lines(m, &theme, deep * 2), WINDOW_LINES, "{w}x{h}");
-            // One that is not gives the window up a line at a time, and never
-            // gives up the last one.
+            // `deep * 2 - 1` gives up a line at a time, never the last one.
             assert!(
                 window_lines(m, &theme, deep * 2 - 1) < WINDOW_LINES,
                 "{w}x{h}"
             );
             assert_eq!(window_lines(m, &theme, 1), 1, "{w}x{h}");
-            // Whatever it answers, two rows that deep stand in the box.
+            // `lines` stays inside `1..=WINDOW_LINES`.
             let lines = window_lines(m, &theme, deep + 10);
             assert!((1..=WINDOW_LINES).contains(&lines), "{w}x{h}");
         }
@@ -850,18 +846,18 @@ mod tests {
         let stats = crate::stats::tests::highlighted_books();
         let record = stats.books[0].clone();
         let recent = Way::Down;
-        // The whole book with no query, and with one that holds nothing.
+        // `None` and `""` list the whole book.
         assert_eq!(listing(&stats, 0, &record, recent, None).len(), 1);
         assert_eq!(listing(&stats, 0, &record, recent, Some("")).len(), 1);
-        // The passage's own words, and the note written on it.
+        // `"SKY"` in the passage, `"borrowed"` in its note.
         assert_eq!(listing(&stats, 0, &record, recent, Some("SKY")).len(), 1);
         assert_eq!(
             listing(&stats, 0, &record, recent, Some("borrowed")).len(),
             1
         );
-        // A word the other book's passage holds names nothing here.
+        // `"港"`, the other book's word, lists nothing here.
         assert!(listing(&stats, 0, &record, recent, Some("港")).is_empty());
-        // And the row states the place its own book's list opens at.
+        // `(book, at)` names where its own book's list opens.
         let held = listing(&stats, 0, &record, recent, Some("sky"));
         assert_eq!((held[0].book, held[0].at), (0, 0));
     }
@@ -909,7 +905,7 @@ mod tests {
                 let last = m.baseline(&theme) + (lines as i32 - 1) * m.line;
                 assert_eq!(first - from, from + deep - last, "{w}x{h}, {lines}");
                 assert_eq!(first - from, air(&theme), "{w}x{h}, {lines}");
-                // And the rule stays inside the block the note stands under.
+                // `from + deep` stays inside the block the note stands under.
                 assert!(from + deep <= m.quoted(&theme, lines), "{w}x{h}");
             }
         }
@@ -926,19 +922,19 @@ mod tests {
         };
         for (w, h) in PANELS {
             let theme = Theme::for_screen(w, h);
-            // A one-line passage takes a shorter row than a two-line one.
+            // `m.row` with one passage line stands shorter than with two.
             assert!(m.row(&theme, 0, 2, 0) > m.row(&theme, 0, 1, 0));
             assert_eq!(
                 m.row(&theme, 0, 0, 0),
                 m.row(&theme, 0, 1, 0),
                 "never no lines"
             );
-            // A row carrying a note stands taller than the same row without,
-            // and one stating its book taller again.
+            // `m.row` with a note stands taller, and with its book's title
+            // taller again.
             assert!(m.row(&theme, 0, 2, 2) > m.row(&theme, 0, 2, 0));
             assert!(m.row(&theme, 1, 2, 0) > m.row(&theme, 0, 2, 0));
-            // A box of 1 gives a passage one line, and `lines_in` counts
-            // every line a taller box holds.
+            // `lines_in` gives a box of 1 one line, and counts every line a
+            // taller box holds.
             assert_eq!(lines_in(m, &theme, 1), 1);
             let deep = lines_in(m, &theme, m.row(&theme, 0, 7, 0));
             assert_eq!(deep, 7, "{w}x{h}");

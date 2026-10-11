@@ -31,6 +31,20 @@ pub(super) fn bands(area: Rect, theme: &Theme, figures: i32, head: i32) -> [Rect
     ]
 }
 
+/// What `today` came to, each figure with its name: the reading, the pages
+/// turned and the streak it stands in.
+pub fn today_figures(
+    stats: &crate::stats::Stats,
+    today: i64,
+    s: &crate::lang::Strings,
+) -> [(String, &'static str); 3] {
+    [
+        (date::duration(stats.day_seconds(today), s), s.read_today),
+        (stats.turns_on(today).to_string(), s.pages_turned),
+        (stats.current_streak.to_string(), s.current_streak),
+    ]
+}
+
 /// `from` is where the day's book list opens, held inside it.
 pub fn draw(cx: &mut Ctx, area: Rect, from: usize) {
     let theme: &Theme = cx.theme;
@@ -41,13 +55,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, from: usize) {
     let head = chrome::section_height(cx.text, theme);
     let [top, strip, list] = bands(area, theme, figures, head);
 
-    let secs = cx.stats.day_seconds(today);
-    let turns = cx.stats.turns_on(today);
-    let stated = [
-        (date::duration(secs, s), s.read_today),
-        (turns.to_string(), s.pages_turned),
-        (cx.stats.current_streak.to_string(), s.current_streak),
-    ];
+    let stated = today_figures(cx.stats, today, s);
     chrome::figures(cx.fb, cx.text, theme, top, &stated);
 
     let inner = chrome::section(

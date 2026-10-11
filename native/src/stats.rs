@@ -654,6 +654,11 @@ impl Stats {
         self.sittings.iter().filter(move |s| s.day == day)
     }
 
+    /// The longest of [`Self::sittings_on`] `day`, 0 where it holds none.
+    pub fn longest_on(&self, day: i64) -> i64 {
+        self.sittings_on(day).map(|s| s.seconds).max().unwrap_or(0)
+    }
+
     /// Pages turned on one day, over [`Self::sittings_on`].
     pub fn turns_on(&self, day: i64) -> i64 {
         self.sittings_on(day).map(|s| s.page_turns).sum()

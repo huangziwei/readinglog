@@ -187,6 +187,8 @@ fn set_setting(app: AppHandle, open: State<'_, Open>, key: String, value: String
         "color_scheme" => &mut ws.site.color_scheme,
         "figures" => &mut ws.site.figures,
         "sitting_floor" => &mut ws.site.sitting_floor,
+        "show_unnamed" => &mut ws.site.show_unnamed,
+        "show_uncovered" => &mut ws.site.show_uncovered,
         other => return Err(format!("{other} is no setting")),
     };
     *field = value;

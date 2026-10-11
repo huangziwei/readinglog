@@ -1,5 +1,6 @@
-//! A year and All Time: the strips of days, each week cut into its books, what
-//! was read and finished, and the Kindle's four trends and board.
+//! Rhythm as the Kindle's states it at each zoom: the picker, the span between
+//! its arrows, what it came to, its grid — a week's bars, a month's calendar, a
+//! year's strip — and what was read; and All Time, a strip a year over its board.
 
 use std::fmt::Write as _;
 
@@ -7,148 +8,231 @@ use readinglog_native::date;
 use readinglog_native::lang::counted;
 use readinglog_native::stats::SITTING_BANDS;
 use readinglog_native::view::book as book_view;
-use readinglog_native::view::{alltime, rhythm};
+use readinglog_native::view::{Shelf, Span, Window, alltime, covered, rhythm};
 
 use super::chart::{self, Weeks};
-use super::look::hex;
 use super::{Ctx, Route, esc, lang};
 
-/// `year`: its four figures, the strip, the weeks cut by book, what was read
-/// longest first, and what was finished.
-pub(super) fn year(cx: &Ctx, year: i64) -> String {
-    let s = cx.s;
-    let weeks = Weeks::of(year, cx.week, 30.0, cx.width);
-    let days = weeks.first..=weeks.last;
-    let mut out = format!(
-        "<header class=\"head\"><h1>{year}</h1></header>{}<div class=\"card\">{}</div>",
-        lede(cx, days.clone()),
-        chart::strip(cx.stats, &weeks, cx.week, s, &cx.look, cx.today, true)
-    );
-    let _ = write!(
-        out,
-        "<section><h2>{}<span class=\"said\">{}</span></h2><div class=\"card\">{}</div></section>",
-        esc(cx.w.by_week),
-        esc(&date::duration(cx.stats.span_seconds(days.clone()), s)),
-        chart::weeks_by_book(cx.stats, &weeks, s, &cx.look, cx.tones)
-    );
-    out.push_str(&what_was_read(cx, days.clone(), 10));
-    out.push_str(&finished(cx, days));
+/// The span picker: All Time, Year, Month and Week as the Kindle orders them,
+/// each a link onto that span around `day`, `on` lit.
+pub(super) fn head(cx: &Ctx, on: Option<Span>, day: i64) -> String {
+    let mut out = String::from("<div class=\"chips picker\">");
+    for span in Span::ALL {
+        let to = match span {
+            Span::AllTime => Route::Span(Span::AllTime, 0),
+            other => Route::Span(other, day),
+        };
+        super::chip(&mut out, &to.link(), span.label(cx.lang), on == Some(span));
+    }
+    out.push_str("</div>");
     out
 }
 
-/// `rhythm::tallied` over `days`, as one line.
-fn lede(cx: &Ctx, days: std::ops::RangeInclusive<i64>) -> String {
+/// The span holding `day`: its name between the arrows, what it came to, its
+/// grid, and what was read over it.
+pub(super) fn span(cx: &Ctx, span: Span, day: i64) -> String {
+    let days = span.days(day, cx.week);
+    let mut out = head(cx, Some(span), day);
+    out.push_str(&nav(cx, span, day));
+    out.push_str(&lede(cx, span, day));
+    let grid = match span {
+        Span::Week => chart::week(
+            cx.stats,
+            *days.start(),
+            cx.today,
+            &cx.look,
+            cx.s,
+            cx.width,
+            &|d| Route::Day(d).link(),
+        ),
+        Span::Month => chart::month(
+            cx.stats,
+            *days.start(),
+            cx.week,
+            cx.today,
+            &cx.look,
+            cx.s,
+            cx.tones,
+            cx.width,
+            &|d| Route::Day(d).link(),
+        ),
+        _ => year_strip(cx, date::civil_from_days(day).0, cx.width, true),
+    };
+    let _ = write!(out, "<div class=\"card\">{grid}</div>");
+    out.push_str(&what_was_read(cx, days));
+    out
+}
+
+/// The span's name between the arrows onto the span either side, an arrow
+/// standing only where the record reaches that way, and `s.now` where the span
+/// does not hold the record's newest day.
+fn nav(cx: &Ctx, span: Span, day: i64) -> String {
+    let days = span.days(day, cx.week);
+    let arrow = |by: i64, key: &str, said: &str, open: bool| match open {
+        true => format!(
+            "<a class=\"arrow\" data-key=\"{key}\" href=\"{}\">{said}</a>",
+            Route::Span(span, span.step(day, by)).link()
+        ),
+        false => format!("<span class=\"arrow off\">{said}</span>"),
+    };
+    let now = match days.contains(&cx.today) {
+        true => String::new(),
+        false => format!(
+            "<a class=\"chip\" href=\"{}\">{}</a>",
+            Route::Span(span, cx.today).link(),
+            esc(cx.s.now)
+        ),
+    };
+    format!(
+        "<div class=\"spannav\">{}<h1>{}</h1>{}{now}</div>",
+        arrow(-1, "prev", "‹", *days.start() > cx.opened),
+        esc(&span.name(day, cx.week, cx.s)),
+        arrow(1, "next", "›", *days.end() < cx.today)
+    )
+}
+
+/// `rhythm::tallied` over the span holding `day`, as one line; its finished
+/// books open the Books list under the same window.
+fn lede(cx: &Ctx, span: Span, day: i64) -> String {
+    let days = span.days(day, cx.week);
+    let finished = cx.stats.finished_over(days.clone());
     let mut out = String::from("<p class=\"lede\">");
     for (n, (value, name)) in rhythm::tallied(cx.stats, days, cx.s).iter().enumerate() {
         if n > 0 {
             out.push_str("<span class=\"sep\">·</span>");
         }
-        let _ = write!(out, "<b>{}</b> {}", esc(value), esc(name));
+        let said = format!("<b>{}</b> {}", esc(value), esc(name));
+        match n == 3 && finished > 0 {
+            true => {
+                let window = Some(Window { span, day });
+                let _ = write!(
+                    out,
+                    "<a href=\"{}\">{said}</a>",
+                    Route::shelf(Shelf::Finished, window).link()
+                );
+            }
+            false => out.push_str(&said),
+        }
     }
     out.push_str("</p>");
     out
 }
 
-/// The books read over `days`, longest first, `top` of them each a bar as
-/// long as its share of the first, and how many more there were.
-fn what_was_read(cx: &Ctx, days: std::ops::RangeInclusive<i64>, top: usize) -> String {
+/// One year as one strip, each day with reading opening its page and each
+/// month's name its month.
+fn year_strip(cx: &Ctx, year: i64, width: f32, months: bool) -> String {
+    let weeks = Weeks::of(year, cx.week, 30.0, width);
+    chart::strip(
+        cx.stats,
+        &weeks,
+        cx.week,
+        cx.s,
+        &cx.look,
+        cx.today,
+        months,
+        &|d| Route::Day(d).link(),
+        &|d| Route::Span(Span::Month, d).link(),
+    )
+}
+
+/// Every book read over `days` as its cover, most recently put down first, as
+/// the Kindle's grid under a span states it: what was read of it there and
+/// where it stood as the span closed. [`Ctx::unidentified`] closes it.
+fn what_was_read(cx: &Ctx, days: std::ops::RangeInclusive<i64>) -> String {
     let s = cx.s;
-    let totals = cx.stats.book_totals(days);
-    let Some(first) = totals.first().map(|(_, secs)| *secs) else {
-        return String::new();
-    };
+    let mut read = cx.stats.book_totals_recent(days.clone());
+    covered(cx.stats, cx.uncovered, &mut read);
     let mut out = format!(
-        "<section><h2>{}<span class=\"said\">{}</span></h2><div class=\"card ranks\">",
+        "<section><h2>{}<span class=\"said\">{}</span></h2>",
         esc(s.what_was_read),
-        esc(&counted(s.n_books, totals.len() as i64))
+        esc(&date::duration(cx.stats.span_seconds(days.clone()), s))
     );
-    for (at, secs) in totals.iter().take(top) {
-        let book = &cx.stats.books[*at];
-        let _ = write!(
-            out,
-            "<a class=\"rank\" href=\"{}\"><div class=\"thumb cover\">{}</div>\
-             <div class=\"what\"><p class=\"t\"{}>{}</p><p class=\"a\">{}</p></div>\
-             <div class=\"track\"><i style=\"width: {:.1}%; background: {}\"></i></div><b>{}</b></a>",
-            cx.book_link(*at),
-            cx.cover(*at),
-            lang(&book.language),
-            esc(&book.title),
-            esc(&book.author),
-            100.0 * *secs as f32 / first.max(1) as f32,
-            hex(cx.tones[*at]),
-            esc(&date::duration(*secs, s))
-        );
+    if read.is_empty() {
+        let _ = write!(out, "<p class=\"lede\">{}</p>", esc(s.nothing_read));
+    } else {
+        out.push_str("<div class=\"grid small\">");
+        for (at, secs) in &read {
+            let book = &cx.stats.books[*at];
+            let percent = cx
+                .stats
+                .percent_over(*at, days.clone())
+                .map(|p| counted(s.percent_reached, p))
+                .unwrap_or_default();
+            let _ = write!(
+                out,
+                "<a class=\"tile\" href=\"{}\"><div class=\"cover\">{}</div><p class=\"title\"{}>{}</p>\
+                 <p class=\"meta\">{}</p><p class=\"meta\">{}</p></a>",
+                cx.book_link(*at),
+                cx.cover(*at),
+                lang(&book.language),
+                esc(&book.title),
+                esc(&date::duration_tight(*secs, s)),
+                esc(&percent)
+            );
+        }
+        out.push_str("</div>");
     }
-    if totals.len() > top {
-        let rest: i64 = totals[top..].iter().map(|(_, secs)| secs).sum();
-        let _ = write!(
-            out,
-            "<p class=\"more\">+ {} · {}</p>",
-            esc(&counted(s.n_books, (totals.len() - top) as i64)),
-            esc(&date::duration(rest, s))
-        );
-    }
-    out.push_str("</div></section>");
+    out.push_str(&cx.unidentified(days));
+    out.push_str("</section>");
     out
 }
 
-/// The covers of the books read through over `days`, in the order each was
-/// finished, the day under each.
-fn finished(cx: &Ctx, days: std::ops::RangeInclusive<i64>) -> String {
-    let mut done: Vec<usize> = cx.stats.finished_in(days).collect();
-    if done.is_empty() {
-        return String::new();
-    }
-    done.sort_by_key(|at| cx.stats.books[*at].last_day);
-    let mut out = format!(
-        "<section><h2>{}<span class=\"said\">{}</span></h2><div class=\"shelf\">",
-        esc(cx.s.shelf_finished),
-        done.len()
-    );
-    for at in done {
-        let _ = write!(
-            out,
-            "<a class=\"spine\" href=\"{}\"><div class=\"cover\">{}</div><p>{}</p></a>",
-            cx.book_link(at),
-            cx.cover(at),
-            esc(&date::short_day(cx.stats.books[at].last_day, cx.s))
-        );
-    }
-    out.push_str("</div></section>");
-    out
-}
-
-/// Every year of `years` as a strip with its reading, then the four trends,
-/// then the board.
+/// All Time: what the record covers, a strip a year, the Kindle's four trends,
+/// and its board, the finished books, the best day and the longest sitting
+/// each opening their own page.
 pub(super) fn all_time(cx: &Ctx, years: &[i64]) -> String {
     let s = cx.s;
-    let mut out = format!(
-        "<header class=\"head\"><h1>{}</h1></header>{}<div class=\"card years\">",
+    let mut out = head(cx, Some(Span::AllTime), cx.today);
+    let _ = write!(
+        out,
+        "<div class=\"spannav\"><h1>{}</h1></div><p class=\"lede\">{}</p><div class=\"card years\">",
         esc(s.all_time),
-        lede(cx, 0..=cx.today)
+        esc(&alltime::since(cx.stats, cx.today, s))
     );
     for (n, year) in years.iter().enumerate() {
-        let weeks = Weeks::of(*year, cx.week, 30.0, cx.width - 110.0);
-        let read = cx.stats.span_seconds(weeks.first..=weeks.last);
+        let start = date::days_from_civil(*year, 1, 1);
+        let read = cx
+            .stats
+            .span_seconds(start..=date::days_from_civil(*year, 12, 31));
         let _ = write!(
             out,
             "<div class=\"year\"><a class=\"named\" href=\"{}\"><b>{year}</b><span>{}</span></a>{}</div>",
-            Route::Year(*year).link(),
+            Route::Span(Span::Year, start).link(),
             esc(&date::duration_coarse(read, s)),
-            chart::strip(cx.stats, &weeks, cx.week, s, &cx.look, cx.today, n == 0)
+            year_strip(cx, *year, cx.width - 110.0, n == 0)
         );
     }
     out.push_str("</div>");
     out.push_str(&trends(cx));
-    let board = alltime::board(cx.stats, cx.today, cx.week, s);
+    let opens: [Option<Route>; 12] = {
+        let finished = cx.stats.finished_in(i64::MIN..=i64::MAX).next().is_some();
+        let best = cx.stats.busiest_day(i64::MIN..=i64::MAX);
+        let longest = cx.stats.longest_sitting();
+        let mut opens: [Option<Route>; 12] = Default::default();
+        opens[4] = finished.then(|| Route::shelf(Shelf::Finished, None));
+        opens[9] = best
+            .filter(|(_, secs)| *secs > 0)
+            .map(|(day, _)| Route::Day(day));
+        opens[10] = longest
+            .filter(|(_, secs)| *secs > 0)
+            .map(|(day, _)| Route::Day(day));
+        opens
+    };
     out.push_str("<section><div class=\"card board\">");
-    for (value, name) in board.iter().filter(|(value, _)| value != book_view::DASH) {
-        let _ = write!(
-            out,
-            "<div><dd>{}</dd><dt>{}</dt></div>",
-            esc(value),
-            esc(name)
-        );
+    let board = alltime::board(cx.stats, cx.today, cx.week, s);
+    for ((value, name), opens) in board.iter().zip(opens) {
+        if value == book_view::DASH {
+            continue;
+        }
+        let said = format!("<dd>{}</dd><dt>{}</dt>", esc(value), esc(name));
+        match opens {
+            Some(to) => {
+                let _ = write!(out, "<a href=\"{}\">{said}</a>", to.link());
+            }
+            None => {
+                let _ = write!(out, "<div>{said}</div>");
+            }
+        }
     }
     out.push_str("</div></section>");
     out

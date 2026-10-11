@@ -1,6 +1,5 @@
 //! The settings, as sections of rows: a heading with a rule under it, then one
 //! row per setting with every value beside it, each its own tap target.
-//! A change applies on the tap and is written as it is made.
 
 use crate::font::Script;
 use crate::lang::Lang;
@@ -20,8 +19,7 @@ struct Row<'a> {
     label: &'a str,
     options: Vec<(String, Script)>,
     on: usize,
-    /// What a tap on option `i` does. A closure, not a plain function: the
-    /// backups row's chips depend on how many backups there are.
+    /// What a tap on option `i` does.
     hit: Box<dyn Fn(usize) -> Hit + 'a>,
     /// Whether this run keeps only the chips its first line holds.
     one_row: bool,
@@ -34,8 +32,8 @@ struct Row<'a> {
 enum Line<'a> {
     /// A setting: its name, its values, and which is in use.
     Set(Row<'a>),
-    /// A fact the page states and does not set. Its value stands at the same
-    /// column the chips do.
+    /// A fact the page states and does not set, `value` at the same column
+    /// the chips stand at.
     Says { label: &'a str, value: String },
 }
 
@@ -71,8 +69,8 @@ impl<'a> Line<'a> {
 /// A section of the page.
 struct Section<'a> {
     heading: &'a str,
-    /// A figure the section is measured in, stated on the heading's own line.
-    /// It sets nothing, and takes no row and no chip.
+    /// A figure the section is measured in, stated on the heading's own line,
+    /// taking no row and no chip.
     said: Option<String>,
     lines: Vec<Line<'a>>,
 }
@@ -87,8 +85,7 @@ pub struct Summary {
     pub books: usize,
     /// How many backups are on disk, which is what offers the list.
     pub backups: usize,
-    /// What the backups take on disk, together. No backup goes away on the
-    /// app's own account, and the figure stands here.
+    /// What the backups take on disk, together.
     pub backup_bytes: u64,
     /// Whether the record was reset, which is what offers a rebuild from the logs.
     pub was_reset: bool,
@@ -180,8 +177,8 @@ fn holds(
     out
 }
 
-/// `YYMMDD-HHMMSS` as the day it names, and as `HH:MM`. A stamp that will not
-/// parse reads as itself: a name on disk is never worth dropping a row over.
+/// `YYMMDD-HHMMSS` as the day it names, and as `HH:MM`; a `stamp` that will
+/// not parse reads as itself.
 fn stamp_day(stamp: &str, s: &crate::lang::Strings) -> String {
     let n = |r: std::ops::Range<usize>| stamp.get(r).and_then(|t| t.parse::<i64>().ok());
     match (n(0..2), n(2..4), n(4..6)) {
@@ -199,8 +196,29 @@ fn stamp_clock(stamp: &str) -> String {
     }
 }
 
-/// The page, built from what is set. Kept apart from the drawing: the shape
-/// of the page is asserted without a framebuffer.
+/// What the record section states on its heading: the sittings and books the
+/// record holds and what the backups take, `None` for an empty record.
+pub fn recorded(summary: &Summary, s: &crate::lang::Strings) -> Option<String> {
+    (summary.sittings > 0).then(|| {
+        let mut said = format!(
+            "{} · {}",
+            crate::lang::counted(s.n_sittings, summary.sittings as i64),
+            crate::lang::counted(s.n_books, summary.books as i64)
+        );
+        // What the backups take, over the controls that read against it.
+        // `backup::remove` is the one call that takes one away.
+        if summary.backup_bytes > 0 {
+            said.push_str(" · ");
+            said.push_str(
+                &s.n_in_backups
+                    .replace("{size}", &bytes(summary.backup_bytes)),
+            );
+        }
+        said
+    })
+}
+
+/// The page, built from what is set.
 fn sections<'a>(
     lang: Lang,
     settings: &Settings,
@@ -326,8 +344,7 @@ fn sections<'a>(
         apart: None,
     };
 
-    // Nothing is dropped from a total by this: the books it hides are read
-    // and counted, and only their rows and their empty boxes go.
+    // `Hit::ShowUncovered` hides rows and empty boxes; every total keeps the books.
     let uncovered = Row {
         label: s.uncovered_row,
         options: vec![
@@ -340,7 +357,7 @@ fn sections<'a>(
         apart: None,
     };
 
-    // Never filled: one chip, a button.
+    // `NONE_ON`: one chip, a button, never filled.
     let update = Row {
         label: s.update_row,
         options: vec![(s.update_check.to_string(), plain)],
@@ -350,25 +367,8 @@ fn sections<'a>(
         apart: None,
     };
 
-    // What the section is measured in: the record `reset` and `restore` below
-    // act on. It stands on the heading, above every setting that moves it.
-    let recorded = (summary.sittings > 0).then(|| {
-        let mut said = format!(
-            "{} · {}",
-            crate::lang::counted(s.n_sittings, summary.sittings as i64),
-            crate::lang::counted(s.n_books, summary.books as i64)
-        );
-        // What the backups take, over the controls that read against it.
-        // `backup::remove` is the one call that takes one away.
-        if summary.backup_bytes > 0 {
-            said.push_str(" · ");
-            said.push_str(
-                &s.n_in_backups
-                    .replace("{size}", &bytes(summary.backup_bytes)),
-            );
-        }
-        said
-    });
+    // `recorded` measures the record `reset` and `restore` act on, on the heading.
+    let recorded = recorded(summary, s);
 
     let reset = (summary.sittings > 0).then(|| Row {
         label: s.reset_row,
@@ -382,8 +382,8 @@ fn sections<'a>(
         apart: None,
     });
 
-    // Two buttons and, where `record.was_reset`, the rebuild set apart from them.
-    // A fixed run: the backups are listed by `view::backups`, never here.
+    // `restore`: two buttons and, where `summary.was_reset`, the rebuild set
+    // apart; `view::backups` lists the backups.
     let logs = summary.was_reset;
     let lists = summary.backups > 0;
     let anything = summary.sittings > 0 || lists || logs;
@@ -419,8 +419,8 @@ fn sections<'a>(
             lines: vec![Line::Set(week)],
         },
         Section {
-            // The two settings that move the figure lead, under the figure
-            // itself; the two that decide how it was measured follow.
+            // `unidentified` and `uncovered` lead under `recorded`, then
+            // `stats_row` and `sitting_floor`.
             heading: s.the_record,
             said: recorded,
             lines: [
@@ -508,8 +508,7 @@ pub fn asking(cx: &mut Ctx, area: Rect, confirm: &Confirm) {
         Act::Restore(at) => Hit::Restored(at),
         Act::Rebuild => Hit::Rebuilt,
     };
-    // A backup's question carries a third answer, and `backup::remove`
-    // answers only to it.
+    // `Act::Restore` carries a third answer, `Hit::Deleted`.
     let mut answers: Vec<(&str, Hit)> = vec![(s.cancel, Hit::Dismiss), (&answer, carry)];
     if let Act::Restore(at) = confirm.about {
         answers.push((s.delete_do, Hit::Deleted(at)));
@@ -541,8 +540,8 @@ fn section_height(cx: &mut Ctx, section: &Section, theme: &Theme, width: i32, ai
 }
 
 /// Where each page of sections starts and stops, from what each is tall in
-/// `tall` and the `room` a page has. A section taller than `room` takes a page
-/// to itself and is clipped there.
+/// `tall` and the `room` a page has; one taller than `room` takes a page to
+/// itself, clipped there.
 fn paged(tall: &[i32], room: i32) -> Vec<(usize, usize)> {
     let mut out: Vec<(usize, usize)> = Vec::new();
     let (mut from, mut used) = (0, 0);
@@ -571,9 +570,8 @@ pub fn draw(
     let air = between(theme);
     let page = sections(cx.lang, settings, colour, summary);
 
-    // Every line's second column starts at one place, taken from the widest
-    // label and pulled back until the widest run fits. No row wraps that need
-    // not.
+    // `column` starts every line's second column at one place: the widest
+    // label, pulled back until the widest run fits.
     let labels: Vec<&str> = page
         .iter()
         .flat_map(|s| s.lines.iter().map(Line::label))
@@ -616,8 +614,7 @@ pub fn draw(
     let (from, upto) = leaves.get(at).copied().unwrap_or((0, page.len()));
 
     for section in page.into_iter().take(upto).skip(from) {
-        // Laid out once. The same answer sizes the row and places the chips:
-        // a wrapped option never falls outside the height it was given.
+        // `placed` is laid out once, sizing the row and placing the chips alike.
         let mut borrowed: Vec<Vec<(&str, Script)>> =
             section.lines.iter().map(Line::options).collect();
         let mut placed: Vec<Vec<Rect>> = borrowed
@@ -627,9 +624,7 @@ pub fn draw(
                 chrome::chip_layout(cx.text, theme, options, line.apart(), width)
             })
             .collect();
-        // A run that may not wrap keeps what fits on its own line. The page
-        // has no scroll: a run free to grow pushes the sections under it off
-        // the bottom, and the backups are the one run that grows without end.
+        // A `one_row` run keeps what fits on its own line.
         for (at, line) in section.lines.iter().enumerate() {
             if !matches!(line, Line::Set(row) if row.one_row) {
                 continue;
@@ -643,7 +638,7 @@ pub fn draw(
             .iter()
             .map(|row| row.iter().map(|c| c.bottom()).max().unwrap_or(0))
             .collect();
-        // Plus air: a row that wrapped clears the next one's chips.
+        // `heights` adds air: a wrapped row clears the next one's chips.
         let heights: Vec<i32> = blocks
             .iter()
             .map(|block| (block + theme.gap).max(theme.row_h))
@@ -668,9 +663,7 @@ pub fn draw(
             let box_ = chip_box(line, column, blocks[at]);
             match stated {
                 Line::Says { value, .. } => {
-                    // On the chips' own column and on the label's own line: a
-                    // fact reads as one of the list, not as a chip that will
-                    // not light.
+                    // `Line::Says` stands on the chips' column and the label's line.
                     let said = Rect::new(box_.x, line.y, (line.right() - box_.x).max(1), line.h);
                     chrome::setting(cx.fb, cx.text, theme, said, value);
                 }
@@ -725,7 +718,7 @@ mod tests {
             assert_eq!(box_.y + block / 2, row.center_y(), "a {block} px run");
             assert_eq!(box_.x, row.x + 300, "a {block} px run");
         }
-        // A run taller than its row opens at the top of it.
+        // `tall`, taller than its row, opens at the top of it.
         let tall = chip_box(row, 300, theme.row_h * 2);
         assert_eq!(tall.y, row.y);
     }
@@ -759,8 +752,7 @@ mod tests {
 
     #[test]
     fn every_language_is_offered_and_the_set_one_is_lit() {
-        // No Automatic chip: the Kindle's language is the default, and the
-        // default is simply the one that starts out lit.
+        // `Lang::ALL` holds no Automatic chip: the language set is lit.
         let mut settings = Settings::new(Lang::Japanese);
         let empty = Summary::default();
         let page = sections(Lang::English, &settings, true, &empty);
@@ -780,8 +772,7 @@ mod tests {
 
     #[test]
     fn each_language_names_itself_in_its_own_script() {
-        // A name set from another script's face draws the wrong glyphs:
-        // 日本語 is not the same shape in a Simplified face.
+        // `日本語` takes the Japanese face, never a Simplified one.
         let settings = Settings::new(Lang::English);
         let empty = Summary::default();
         let page = sections(Lang::English, &settings, true, &empty);
@@ -834,8 +825,7 @@ mod tests {
         assert_eq!(*label, Lang::English.strings().version_row);
         assert_eq!(value, crate::update::VERSION);
 
-        // One chip, never lit: it is a button, and nothing it does is a state
-        // this page could be showing.
+        // `update`: one chip, never lit.
         let update = row(&page, page.len() - 1, 1);
         assert_eq!(update.options.len(), 1);
         assert_eq!((update.hit)(0), Hit::Update);
@@ -860,7 +850,7 @@ mod tests {
             .collect()
     }
 
-    /// The two settings that move the figure lead, under the figure itself.
+    /// The record section's four settings, in order: the two that move the figure first.
     const SETTINGS: [fn(&crate::lang::Strings) -> &'static str; 4] = [
         |s| s.unidentified_row,
         |s| s.uncovered_row,
@@ -868,7 +858,7 @@ mod tests {
         |s| s.sitting_floor_row,
     ];
 
-    /// Those four labels, then whatever `rest` the record earns.
+    /// [`SETTINGS`]' labels, then `rest`.
     fn expected(rest: &[&'static str]) -> Vec<&'static str> {
         let s = Lang::English.strings();
         SETTINGS
@@ -881,7 +871,7 @@ mod tests {
     #[test]
     fn a_record_with_nothing_in_it_offers_no_reset() {
         assert_eq!(the_summary(&Summary::default()), expected(&[]));
-        // Nothing to state, and the heading states nothing.
+        // `said` stays `None` on an empty record.
         assert_eq!(
             record_section(Lang::English, &Summary::default()).said,
             None
@@ -896,20 +886,20 @@ mod tests {
             ..Summary::default()
         };
         let s = Lang::English.strings();
-        // Reading in the record is something to back up, and both rows stand.
+        // `reset_row` and `backups_row` stand under reading.
         assert_eq!(
             the_summary(&summary),
             expected(&[s.reset_row, s.backups_row])
         );
-        // The figure stands on the heading, not on a row of its own.
+        // `said` holds the figure, on the heading.
         assert_eq!(
             record_section(Lang::English, &summary).said.as_deref(),
             Some("12 sittings · 3 books")
         );
     }
 
-    /// The figure clears the heading's own words and the page's right margin
-    /// in every language, on the narrowest panel at the largest type.
+    /// `said` clears the heading's words and the right margin in every
+    /// language, on the narrowest panel at the largest type.
     #[test]
     fn the_record_figure_shares_the_heading_line() {
         let Ok(mut text) = crate::ui::text::TextRenderer::load(24.0) else {
@@ -962,9 +952,9 @@ mod tests {
         );
     }
 
-    /// The run is `back_up`, then `restore` where a backup is on disk,
-    /// then `rebuild` where the record was reset. Every backup is
-    /// listed by `view::backups`, and no chip here grows with their number.
+    /// `restore`'s run: `back_up`, then `restore` where a backup is on disk,
+    /// then `rebuild` where the record was reset; `view::backups` lists the
+    /// backups.
     #[test]
     fn the_backups_row_is_two_buttons_and_the_logs_apart_from_them() {
         let settings = Settings::new(Lang::English);
@@ -998,18 +988,18 @@ mod tests {
         assert_eq!(apart, Some(2), "the logs stand apart from the two buttons");
         assert!(!one_row, "the run is fixed and never truncated");
 
-        // No backup on disk, and nothing to list.
+        // `held(0, true)`: no backup on disk.
         let (said, hits, apart, _) = backups(&held(0, true));
         assert_eq!(said, [s.back_up, s.rebuild]);
         assert_eq!(hits, [Hit::BackUp, Hit::Rebuild]);
         assert_eq!(apart, Some(1));
 
-        // Never reset, and no rebuild is offered.
+        // `held(2, false)`: never reset, no rebuild.
         let (said, hits, _, _) = backups(&held(2, false));
         assert_eq!(said, [s.back_up, s.restore]);
         assert_eq!(hits, [Hit::BackUp, Hit::Backups]);
 
-        // A record with neither offers a backup.
+        // `held(0, false)`: `back_up` alone.
         let (said, hits, _, _) = backups(&held(0, false));
         assert_eq!(said, [s.back_up]);
         assert_eq!(hits, [Hit::BackUp]);
@@ -1061,7 +1051,7 @@ mod tests {
             assert!(!note.is_empty(), "{about:?} states nothing");
             assert!(!answer.is_empty(), "{about:?} offers no answer");
         }
-        // `Rebuild` names the minutes; a reset is instant.
+        // `Act::Rebuild`'s note names the minutes.
         let (_, note, _) = question(&blank, s);
         assert!(
             note.contains("minute"),
@@ -1117,7 +1107,7 @@ mod tests {
         for lang in Lang::ALL {
             let s = lang.strings();
             assert!(!s.sitting_floor_row.is_empty(), "{lang:?}");
-            // No other row's label repeats it.
+            // `sitting_floor_row` repeats no other row's label.
             assert_ne!(s.sitting_floor_row, s.stats_from_row, "{lang:?}");
             assert_ne!(s.sitting_floor_row, s.unidentified_row, "{lang:?}");
             assert_ne!(s.sitting_floor_row, s.uncovered_row, "{lang:?}");
@@ -1171,7 +1161,7 @@ mod tests {
 
     #[test]
     fn the_record_row_states_the_file_and_not_what_the_page_counts() {
-        // `Record::sittings` counts `Record::sittings`, not `Stats::sittings`.
+        // `Summary::sittings` counts `Record::sittings`, never `Stats::sittings`.
         let record = crate::record::Record {
             sittings: vec![crate::log::sitting::Sitting {
                 started_at: "2026-08-05T09:00:00".into(),
@@ -1227,9 +1217,9 @@ mod tests {
     fn every_page_of_settings_holds_what_it_can_and_no_more() {
         // Three sections into a page holding two of them.
         assert_eq!(paged(&[100, 100, 100], 250), [(0, 2), (2, 3)]);
-        // Everything on one page where it fits.
+        // `[100, 100]` on one page.
         assert_eq!(paged(&[100, 100], 250), [(0, 2)]);
-        // A section taller than the page gets one to itself.
+        // `400`, taller than the page, gets one to itself.
         assert_eq!(paged(&[100, 400, 100], 250), [(0, 1), (1, 2), (2, 3)]);
         assert_eq!(paged(&[], 250), Vec::new());
     }
@@ -1241,9 +1231,8 @@ mod tests {
         assert_eq!(bytes(5_000_000), "4.8 MB");
     }
 
-    /// A row names the day and the clock the backup was written at. One that
-    /// states no clock of its own falls back to the stamp in its name, and one
-    /// carrying neither reads as whatever the name spells.
+    /// `when` names the day and clock a backup was written at, else the stamp
+    /// in its name, else the name as it spells.
     #[test]
     fn a_row_names_the_day_and_the_clock_a_backup_was_written_at() {
         let s = Lang::English.strings();
@@ -1292,8 +1281,7 @@ mod tests {
         for (i, lang) in Lang::ALL.iter().enumerate() {
             assert_eq!((language.hit)(i), Hit::Language(*lang));
         }
-        // A chip index past the end cannot panic: the row is drawn from the
-        // same list, but the two are separated by the paint.
+        // `hit(99)`, past the end, answers without a panic.
         assert_eq!((language.hit)(99), Hit::Language(Lang::Japanese));
     }
 }

@@ -703,3 +703,153 @@ svg text {
 .flash.wrong {
   background: var(--mark);
 }
+
+/* Rhythm's head: the span picker, the span between its arrows */
+.picker {
+  margin-bottom: 16px;
+}
+.spannav {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 6px;
+}
+.spannav h1 {
+  font-family: var(--serif);
+  font-size: 30px;
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: -0.2px;
+}
+.arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--ink);
+  background: var(--card);
+  box-shadow: 0 0 0 1px var(--rule);
+}
+.arrow.off {
+  color: var(--rule);
+  box-shadow: 0 0 0 1px var(--edge);
+}
+.lede a {
+  border-bottom: 1px solid var(--rule);
+}
+.lede a:hover {
+  border-color: var(--ink);
+}
+
+/* A day: its figures, and a row a book */
+.figures.day {
+  margin: 6px 0 22px;
+}
+.dayrows {
+  padding: 6px 20px;
+}
+.dayrow {
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  column-gap: 14px;
+  row-gap: 8px;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--edge);
+}
+.dayrow:last-child {
+  border-bottom: none;
+}
+.dayrow .thumb {
+  width: 34px;
+  aspect-ratio: 2 / 3;
+  border-radius: 2px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+.dayrow .words {
+  min-width: 0;
+}
+.dayrow .t {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dayrow .a {
+  margin: 1px 0 6px;
+  font-size: 12px;
+  color: var(--soft);
+}
+.dayrow .meter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 360px;
+}
+.dayrow .time {
+  font-size: 14px;
+  font-weight: 600;
+}
+.dayrow .spans {
+  grid-column: 1 / -1;
+}
+.band {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--l0);
+  overflow: hidden;
+}
+.band i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.meter b {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--soft);
+}
+.meter b.done {
+  color: var(--ink);
+}
+
+/* What was read over a span, and the book list's own author line */
+.grid.small {
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 22px 18px;
+}
+.grid.small .title {
+  font-size: 12px;
+}
+.tile .author {
+  margin: 0 0 1px;
+  font-size: 12px;
+  color: var(--soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.board a {
+  display: flex;
+  flex-direction: column;
+  border-radius: 6px;
+}
+.board a dd {
+  border-bottom: 1px solid var(--rule);
+  align-self: flex-start;
+}
+.search.wide {
+  width: 100%;
+  margin: 0 0 14px;
+}
+section h2 .said .chip {
+  margin-left: 8px;
+  padding: 1px 8px;
+}

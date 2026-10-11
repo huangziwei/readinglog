@@ -1,16 +1,17 @@
-//! Config: the Kindle's settings the record is stated under, in the sections
-//! and words of the Kindle's own config page, and the record's folder; and the
-//! welcome a record holding no sitting opens on.
+//! Config: the Kindle's settings the record is stated under, in the sections,
+//! order and words of the Kindle's own config page, the record's folder and the
+//! backups imported into it; and the welcome a record holding no sitting opens on.
 
 use std::fmt::Write as _;
 use std::path::Path;
 
 use readinglog_native::lang::Strings;
+use readinglog_native::view::config::{self, Summary};
 
-use super::{Words, esc};
+use super::{Shown, Words, esc};
 use crate::workspace::{self, Workspace};
 
-pub(super) fn page(ws: &Workspace, s: &Strings, w: &Words) -> String {
+pub(super) fn page(ws: &Workspace, shown: Option<&Shown>, s: &Strings, w: &Words) -> String {
     let offered = workspace::offered(ws.site.lang());
     let set = |key: &str| -> &str {
         match key {
@@ -19,22 +20,39 @@ pub(super) fn page(ws: &Workspace, s: &Strings, w: &Words) -> String {
             "color_scheme" => &ws.site.color_scheme,
             "figures" => &ws.site.figures,
             "sitting_floor" => &ws.site.sitting_floor,
+            "show_unnamed" => &ws.site.show_unnamed,
+            "show_uncovered" => &ws.site.show_uncovered,
             _ => "",
         }
     };
+    let summary = shown.map(|shown| Summary::of(&shown.record, &shown.stats, &ws.dir, false));
+    let recorded = summary
+        .as_ref()
+        .and_then(|summary| config::recorded(summary, s));
     let mut out = format!("<header class=\"head\"><h1>{}</h1></header>", esc(s.config));
     let sections: [(&str, &[&str]); 3] = [
         (s.interface, &["language", "color_scheme"]),
         (s.the_calendar, &["week_start"]),
-        (s.the_record, &["figures", "sitting_floor"]),
+        (
+            s.the_record,
+            &["show_unnamed", "show_uncovered", "figures", "sitting_floor"],
+        ),
     ];
     for (heading, keys) in sections {
+        let said = match heading == s.the_record {
+            true => recorded.clone().unwrap_or_default(),
+            false => String::new(),
+        };
         let _ = write!(
             out,
-            "<section><h2>{}</h2><div class=\"card rows\">",
-            esc(heading)
+            "<section><h2>{}<span class=\"said\">{}</span></h2><div class=\"card rows\">",
+            esc(heading),
+            esc(&said)
         );
-        for setting in offered.iter().filter(|o| keys.contains(&o.key)) {
+        for key in keys.iter() {
+            let Some(setting) = offered.iter().find(|o| o.key == *key) else {
+                continue;
+            };
             let _ = write!(
                 out,
                 "<div class=\"row\"><span>{}</span><span class=\"chips\">",
@@ -71,6 +89,34 @@ pub(super) fn page(ws: &Workspace, s: &Strings, w: &Words) -> String {
         }
         out.push_str("</div></section>");
     }
+    if let Some(shown) = shown {
+        out.push_str(&backups(ws, shown, s));
+    }
+    out
+}
+
+/// The backups imported into the record's folder, as the Kindle's own list
+/// states each: when it was written, what it weighs and what it holds.
+fn backups(ws: &Workspace, shown: &Shown, s: &Strings) -> String {
+    let listed = Summary::listed(&ws.dir, &shown.record, shown.lang);
+    if listed.rows.is_empty() {
+        return String::new();
+    }
+    let mut out = format!(
+        "<section><h2>{}<span class=\"said\">{}</span></h2><div class=\"card rows\">",
+        esc(s.backups_row),
+        esc(&listed.said)
+    );
+    for row in &listed.rows {
+        let _ = write!(
+            out,
+            "<div class=\"row\"><span>{}<br><small>{}</small></span><span>{}</span></div>",
+            esc(&row.when),
+            esc(&row.holds),
+            esc(&row.size)
+        );
+    }
+    out.push_str("</div></section>");
     out
 }
 
