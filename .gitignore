@@ -1,4 +1,8 @@
 /target
+# desktop/ is a workspace of its own, building into its own target/.
+/desktop/target
+# Written by tauri-build on every build.
+/desktop/gen
 # Anywhere, not only the root: a tool run from a subdirectory writes its own
 # scratch under one there.
 artifacts/

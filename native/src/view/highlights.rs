@@ -674,7 +674,7 @@ fn heading(cx: &mut Ctx, book: usize) -> String {
 
 /// What a row's label reads: where the highlight falls and what kind it is —
 /// `Location 608 | Highlight`. The day stands at the other end of the line.
-fn label(highlight: &Highlight, extent: i64, s: &Strings) -> String {
+pub fn label(highlight: &Highlight, extent: i64, s: &Strings) -> String {
     format!(
         "{}{BAR}{}",
         positions(highlight, extent, s),

@@ -1,0 +1,15 @@
+{
+  // `deno lint` checks the window's plain JS in web/; there is no Node here.
+  // That code runs in the Tauri webview, where `window` is the global, so the
+  // two rules written for the Deno runtime's own globals are off.
+  "lint": {
+    "include": ["web/"],
+    "rules": {
+      "exclude": ["no-window", "no-window-prefix"]
+    }
+  },
+  "fmt": {
+    "include": ["web/"],
+    "lineWidth": 110
+  }
+}

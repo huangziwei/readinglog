@@ -40,8 +40,7 @@ pub struct BookStat {
     /// `Book::restarted_on`, which the reading standing is not in.
     pub restarted_on: Vec<i64>,
     pub seconds: i64,
-    /// The seconds `Sitting` counted, whatever [`StatsFrom`] names. Under
-    /// [`StatsFrom::Kindle`] `words` was counted across these and no others.
+    /// The seconds `Sitting` counted under any [`StatsFrom`]: `words`'s span under `Kindle`.
     pub counted_seconds: i64,
     /// The parts of `seconds` carrying `Measure::Paged` and `Measure::Awake`.
     pub paged_seconds: i64,
@@ -55,12 +54,9 @@ pub struct BookStat {
     pub last_day: i64,
     /// Seconds into `last_day` at which the last sitting ended.
     pub last_secs: i64,
-    /// The share of the book this record's own sittings cover, summed. The
-    /// divisor [`Self::time_left`] projects on. `percent` counts reading before
-    /// [`Record::reset_at`] and this counts none of it.
+    /// The share of the book this record's sittings cover, summed: [`Self::time_left`]'s divisor.
     pub covered: f64,
-    /// The seconds those same pages were open. `covered`'s own numerator: both
-    /// come off the page metrics, under the one test that admits a page.
+    /// The seconds those pages were open: `covered`'s numerator, off the same page metrics.
     pub covered_seconds: i64,
     /// `timer.model`'s own figures for this book, off `Book::timer_ms`,
     /// `timer_words` and `timer_covered`. These reach reading before
@@ -72,8 +68,7 @@ pub struct BookStat {
     pub stated_time_left: Option<i64>,
     /// The rate it stated at the same moment, off `Sitting::stated_wpm`.
     pub stated_wpm: Option<i64>,
-    /// Where this book's highlights sit in [`Stats::highlights`], in the order they were
-    /// made. [`Stats::highlights_of`] is the way in.
+    /// Where this book's highlights sit in [`Stats::highlights`], in the order they were made.
     pub highlights: Vec<usize>,
 }
 
@@ -135,6 +130,11 @@ impl BookStat {
     /// Whether `Record::restart` has anything to clear: `finished`, or progress.
     pub fn can_restart(&self) -> bool {
         self.finished || self.percent_shown() > 0
+    }
+
+    /// Days from the first this book was read on to the last, both counted.
+    pub fn span_days(&self) -> i64 {
+        (self.last_day - self.first_day + 1).max(1)
     }
 
     /// Over `days`, the days with reading on them.
@@ -283,10 +283,8 @@ pub struct Stats {
     /// The floor [`Self::build`] took, which [`Self::first_band`] reads.
     pub sitting_floor: SittingFloor,
     /// Every highlight the record holds, ascending by when it was made.
-    /// [`BookStat::highlights`] indexes into this.
     pub highlights: Vec<Highlight>,
-    /// Each highlight's `body` lowercased and Han-folded, at the same index. `None`
-    /// for a highlight no book in [`Self::books`] holds.
+    /// Each highlight's `body` lowercased and Han-folded, `None` where no book holds it.
     pub folded: Vec<Option<String>>,
 }
 
@@ -295,8 +293,7 @@ pub struct Stats {
 pub struct Across<'a> {
     /// The book, by its index in [`Stats::books`].
     pub book: usize,
-    /// The row's place in that book's own [`Stats::book_highlights`] list, which is
-    /// where the Highlights tab opens.
+    /// The row's place in its book's [`Stats::book_highlights`], where the tab opens.
     pub at: usize,
     /// Where the highlight sits in [`Stats::highlights`], and in [`Stats::folded`].
     pub held: usize,
@@ -722,8 +719,7 @@ impl Stats {
     /// [`Self::book_progress`], each stretch a pair of whole per cents. A sitting
     /// stating no stretch holds an empty list.
     pub fn book_stretches(&self, book: usize) -> Vec<Vec<(i64, i64)>> {
-        /// One sitting's stretches, keyed by the instant it closed. The key orders
-        /// them as [`Stats::book_progress`] orders its entries.
+        /// One sitting's stretches, keyed by its close as [`Stats::book_progress`] keys.
         type Closed = ((i64, i64), Vec<(i64, i64)>);
         let mut out: Vec<Closed> = self
             .book_sittings(book)
@@ -775,6 +771,15 @@ impl Stats {
             }
         }
         out
+    }
+
+    /// Seconds read of one book over `days`, off [`Self::book_sittings`]. Over
+    /// one of [`Self::book_readings`], what that reading took.
+    pub fn book_seconds_over(&self, book: usize, days: std::ops::RangeInclusive<i64>) -> i64 {
+        self.book_sittings(book)
+            .filter(|s| days.contains(&s.day))
+            .map(|s| s.seconds)
+            .sum()
     }
 
     /// Seconds read of each book over a span of days, longest first. A sitting
@@ -996,6 +1001,21 @@ impl Stats {
         self.days_in(days).max_by_key(|(_, secs)| *secs).copied()
     }
 
+    /// The longest single sitting of the record: the day it fell on and its
+    /// seconds. Of two as long, the later. `None` where the record holds none.
+    pub fn longest_sitting(&self) -> Option<(i64, i64)> {
+        self.sittings
+            .iter()
+            .max_by_key(|s| s.seconds)
+            .map(|s| (s.day, s.seconds))
+    }
+
+    /// What a sitting of the record averaged: [`Self::total_seconds`] over
+    /// [`Self::sittings`].
+    pub fn a_sitting(&self) -> i64 {
+        self.total_seconds / (self.sittings.len() as i64).max(1)
+    }
+
     /// What a span of days came to, stated the same way over the whole
     /// record and over one span.
     pub fn tally(&self, days: std::ops::RangeInclusive<i64>) -> Tally {
@@ -1031,6 +1051,14 @@ impl Stats {
             .map(|(at, _)| at)
     }
 
+    /// What a book read through took, averaged over every book
+    /// [`Self::finished_in`] answers across the record. `None` where none is.
+    pub fn a_book(&self) -> Option<i64> {
+        let finished: Vec<usize> = self.finished_in(i64::MIN..=i64::MAX).collect();
+        let spent: i64 = finished.iter().map(|at| self.books[*at].seconds).sum();
+        (!finished.is_empty()).then(|| spent / finished.len() as i64)
+    }
+
     /// Whether the book at `book` counts as finished on `day`: read through,
     /// and `day` is the last it was read on. The rule
     /// [`Self::finished_over`] counts by.
@@ -1043,6 +1071,24 @@ impl Stats {
     /// Days with any reading at all.
     pub fn days_read(&self) -> i64 {
         self.days.len() as i64
+    }
+
+    /// Weeks back from the one holding `today` with a day read in each, every
+    /// week opening on the day `week` starts on. A week with nothing read in it
+    /// yet leaves the count on the week before it.
+    pub fn weeks_running(&self, today: i64, week: WeekStart) -> i64 {
+        let opens = |day: i64| day - week.column_of(date::weekday(day)) as i64;
+        let any = |from: i64| (from..from + 7).any(|d| self.day_seconds(d) > 0);
+        let mut at = opens(today);
+        if !any(at) {
+            at -= 7;
+        }
+        let mut running = 0;
+        while any(at) {
+            running += 1;
+            at -= 7;
+        }
+        running
     }
 
     /// Most recently read first, and within a day the one put down last.
@@ -1449,6 +1495,25 @@ pub(crate) mod tests {
         assert_eq!(whole.days_read, days.len() as i64);
         // The figure beside it: what was read over the days it was read on.
         assert_eq!(whole.a_day, whole.read / whole.days_read);
+    }
+
+    #[test]
+    fn a_week_not_yet_read_in_leaves_the_weeks_running_on_the_one_before() {
+        // 2026-03-02 is a Monday: three weeks read in, one day apiece.
+        let days = [at(2026, 3, 3), at(2026, 3, 11), at(2026, 3, 20)];
+        let stats = Stats::build(
+            &on_days(&days, 600),
+            at(2026, 3, 20),
+            true,
+            StatsFrom::Kindle,
+            SittingFloor::All,
+        );
+        let running = |today: i64| stats.weeks_running(today, WeekStart::Monday);
+        assert_eq!(running(at(2026, 3, 20)), 3);
+        // The Monday after, with nothing read in its week yet.
+        assert_eq!(running(at(2026, 3, 23)), 3);
+        // A whole week with nothing read in it ends the run.
+        assert_eq!(running(at(2026, 3, 30)), 0);
     }
 
     #[test]
@@ -2137,8 +2202,7 @@ pub(crate) mod tests {
                     9,
                 ),
             ],
-            // The first book's page events key it 148207; the library calls the
-            // same book 148209.
+            // The first book's page events key it 148207; the library, 148209.
             ends: vec![(148_207, 148_209)],
             keys: Vec::new(),
             counters: Vec::new(),
@@ -2979,8 +3043,7 @@ pub(crate) mod tests {
     #[test]
     fn a_reset_kindle_counter_never_shrinks_the_book() {
         let mut record = record();
-        // A third of the 3600 s the sittings credit: a counter reset in the
-        // middle of the book.
+        // A third of the sittings' 3600 s: a counter reset in the middle of the book.
         record.counters = vec![(148_207, 1_200_000, 500)];
         for s in record.sittings.iter_mut() {
             s.stated_wpm = Some(240);

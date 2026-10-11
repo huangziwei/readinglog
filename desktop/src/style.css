@@ -1,0 +1,436 @@
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0 auto;
+  max-width: 44rem;
+  padding: 1.5rem 1rem 3rem;
+  background: var(--paper);
+  color: var(--ink);
+  font: 1rem/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans",
+    "Helvetica Neue", Arial, "Hiragino Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration-color: var(--light);
+  text-underline-offset: 0.18em;
+}
+
+a:hover {
+  text-decoration-color: var(--step-4);
+}
+
+h1 {
+  font-size: 1.6rem;
+  line-height: 1.25;
+  margin: 0 0 1rem;
+}
+
+/* The head of every page: the site's name, whose it is, and the way round. */
+header.site {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 1.5rem;
+  padding-bottom: 0.75rem;
+  margin-bottom: 2rem;
+  border-bottom: 2px solid var(--ink);
+}
+
+header.site .name {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+header.site .name a {
+  text-decoration: none;
+}
+
+header.site .by {
+  margin-left: 0.75rem;
+  font-size: 0.9rem;
+  font-weight: 400;
+  color: var(--dark);
+}
+
+header.site nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  font-size: 0.9rem;
+}
+
+header.site nav a {
+  color: var(--dark);
+  text-decoration: none;
+}
+
+header.site nav a:hover {
+  color: var(--ink);
+}
+
+footer {
+  margin-top: 3rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--pale);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  color: var(--dark);
+}
+
+section {
+  margin: 0 0 2.5rem;
+}
+
+/* A span's name, set as the Kindle sets the name between its arrows. */
+h2.span {
+  font-size: 1.15rem;
+  margin: 0 0 0.75rem;
+}
+
+h2.span a {
+  text-decoration: none;
+}
+
+/* A section heading, set as the Kindle sets one: small, spaced, ruled under. */
+.head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 1.5rem 0 0.25rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--pale);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.head .stated {
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--dark);
+}
+
+.bare {
+  color: var(--dark);
+}
+
+/* Figures, each over its name. */
+dl.figures {
+  display: grid;
+  gap: 1rem 0.5rem;
+  margin: 0 0 1rem;
+}
+
+dl.figures.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+dl.figures.four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+dl.figures.board {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  text-align: center;
+}
+
+dl.figures div {
+  display: flex;
+  flex-direction: column-reverse;
+}
+
+dl.figures dd {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+dl.figures dt {
+  font-size: 0.8rem;
+  color: var(--dark);
+}
+
+dl.figures.board div {
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--pale);
+}
+
+dl.figures.board div:nth-child(-n + 3) {
+  border-top: 0;
+}
+
+@media (max-width: 30rem) {
+  dl.figures.four {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  dl.figures dd {
+    font-size: 1.25rem;
+  }
+}
+
+/* A list of books, a row each. */
+ul.books {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+ul.books li {
+  border-bottom: 1px solid var(--pale);
+}
+
+a.row {
+  display: grid;
+  grid-template-columns: 3rem minmax(0, 1fr) auto;
+  gap: 0 1rem;
+  align-items: center;
+  padding: 0.75rem 0;
+  text-decoration: none;
+}
+
+.cover {
+  display: block;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  background: var(--pale);
+}
+
+.words {
+  min-width: 0;
+}
+
+.title {
+  display: block;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.under {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--dark);
+}
+
+.time {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* How far through a book is: the track, filled, the per cent beside it, and
+   a book read through marked. */
+.band {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+  font-size: 0.75rem;
+}
+
+.band .track {
+  flex: 1;
+  height: 0.4rem;
+  border: 1px solid var(--ink);
+  background: var(--paper);
+}
+
+.band .fill {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+}
+
+.band .at {
+  font-variant-numeric: tabular-nums;
+}
+
+.band .chip {
+  padding: 0 0.4em;
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* One book's page. */
+header.book {
+  display: grid;
+  grid-template-columns: 7rem minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: end;
+  margin-bottom: 2rem;
+}
+
+header.book h1 {
+  margin: 0;
+}
+
+header.book .author {
+  margin: 0.25rem 0 1rem;
+  color: var(--dark);
+}
+
+header.book dl.figures {
+  margin: 0;
+}
+
+@media (max-width: 30rem) {
+  header.book {
+    grid-template-columns: 5rem minmax(0, 1fr);
+  }
+}
+
+dl.rows {
+  margin: 0;
+}
+
+dl.rows div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--pale);
+}
+
+dl.rows dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+ol.readings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+ol.readings li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--pale);
+}
+
+/* A book's highlights. */
+ol.highlights {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+ol.highlights > li {
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--pale);
+}
+
+blockquote {
+  margin: 0;
+  padding-left: 1rem;
+  border-left: 3px solid var(--step-3);
+  font-family: Georgia, "Iowan Old Style", "Times New Roman", "Hiragino Mincho ProN",
+    "Songti SC", serif;
+  line-height: 1.6;
+}
+
+blockquote.note {
+  border-left-color: var(--step-5);
+  font-family: inherit;
+}
+
+details.original {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+}
+
+details.original summary {
+  color: var(--dark);
+  cursor: pointer;
+}
+
+details.original blockquote {
+  margin-top: 0.35rem;
+  border-left-color: var(--light);
+  color: var(--dark);
+}
+
+p.note {
+  margin: 0.6rem 0 0;
+}
+
+.comment {
+  margin: 0.6rem 0 0;
+  padding: 0.5rem 0.75rem;
+  background: var(--step-1);
+}
+
+.comment > :first-child {
+  margin-top: 0;
+}
+
+.comment > :last-child {
+  margin-bottom: 0;
+}
+
+p.label {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0.6rem 0 0;
+  font-size: 0.75rem;
+  color: var(--dark);
+}
+
+/* Posts. */
+article.summary {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--pale);
+}
+
+article.summary h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+article.summary h2 a {
+  text-decoration: none;
+}
+
+p.meta {
+  margin: 0.15rem 0 0;
+  font-size: 0.85rem;
+  color: var(--dark);
+}
+
+article.post .meta {
+  margin-bottom: 1.5rem;
+}
+
+article.post .text {
+  font-family: Georgia, "Iowan Old Style", "Times New Roman", "Hiragino Mincho ProN",
+    "Songti SC", serif;
+  font-size: 1.1rem;
+  line-height: 1.7;
+}
+
+article.post .text img {
+  max-width: 100%;
+  height: auto;
+}
+
+article.post .text blockquote {
+  color: var(--dark);
+}

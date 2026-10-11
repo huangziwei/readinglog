@@ -4,6 +4,7 @@
 use crate::date;
 use crate::font::Script;
 use crate::lang::{Lang, Strings};
+use crate::settings::StatsFrom;
 use crate::stats::BookStat;
 use crate::ui::chrome;
 use crate::ui::cover;
@@ -20,7 +21,7 @@ const TITLE_LINES: usize = 2;
 
 /// The [`Strings`] pair a book's count and rate are stated in: Han and kana
 /// are counted a character at a time, every other script a word at a time.
-fn unit(book: &BookStat, s: &Strings) -> (&'static str, &'static str) {
+pub fn unit(book: &BookStat, s: &Strings) -> (&'static str, &'static str) {
     match Script::resolve(Script::of_language(&book.language), &book.title) {
         Script::Japanese | Script::SimplifiedChinese | Script::TraditionalChinese => {
             (s.characters, s.cpm)
@@ -30,7 +31,7 @@ fn unit(book: &BookStat, s: &Strings) -> (&'static str, &'static str) {
 }
 
 /// What a row states in place of a figure it has none of.
-const DASH: &str = "—";
+pub const DASH: &str = "—";
 
 /// The cover's height: four rows.
 fn cover_height(theme: &Theme) -> i32 {
@@ -303,31 +304,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
     let inner = chrome::section(cx.fb, cx.text, theme, rest, s.the_reading);
 
     // [`figures`] states the other three.
-    let from = cx.stats_from;
-    let (count, rate) = unit(&book, s);
-    let mut lines: Vec<(&str, String)> = vec![
-        (s.sittings, book.sittings.to_string()),
-        (s.days, days_note(&book, s)),
-        (s.average_a_day, date::duration(book.per_day(from), s)),
-        (
-            s.average_a_sitting,
-            date::duration(book.per_sitting(from), s),
-        ),
-        (count, date::words(book.words_read(from))),
-        (
-            s.reading_speed,
-            book.wpm(from)
-                .map_or(DASH.into(), |w| format!("{w} {rate}")),
-        ),
-        (s.started, day_note(book.first_day, &book, s)),
-        (s.last_read, day_note(book.last_day, &book, s)),
-        (s.finished_on, finished_note(&book, s)),
-    ];
-    // A restart empties `finished_on`: this row is where that reading shows.
-    if !book.restarted_on.is_empty() {
-        let said = crate::lang::counted(s.n_times, book.times_finished());
-        lines.push((s.read_through_row, said));
-    }
+    let mut lines = reading_rows(&book, cx.stats_from, s);
     // The file, not the reading: the last row whatever stands above it.
     lines.push((s.on_the_kindle, where_note(&book, s)));
     // A row stands `theme.row_h` tall, as `config`'s do, and the rows share
@@ -514,12 +491,39 @@ fn title_lines(text: &mut TextRenderer, theme: &Theme, high: i32, author: bool) 
     room.clamp(1, TITLE_LINES as i32) as usize
 }
 
-/// The book's three headline figures, along the foot of the words column.
-fn figures(cx: &mut Ctx, words: Rect, book: &BookStat) {
-    let theme: &Theme = cx.theme;
-    let from = cx.stats_from;
-    let s = cx.s();
-    let stated = [
+/// The rows the reading section states, each its name and its figure: every
+/// one but the file's own.
+pub fn reading_rows(book: &BookStat, from: StatsFrom, s: &Strings) -> Vec<(&'static str, String)> {
+    let (count, rate) = unit(book, s);
+    let mut lines: Vec<(&str, String)> = vec![
+        (s.sittings, book.sittings.to_string()),
+        (s.days, days_note(book, s)),
+        (s.average_a_day, date::duration(book.per_day(from), s)),
+        (
+            s.average_a_sitting,
+            date::duration(book.per_sitting(from), s),
+        ),
+        (count, date::words(book.words_read(from))),
+        (
+            s.reading_speed,
+            book.wpm(from)
+                .map_or(DASH.into(), |w| format!("{w} {rate}")),
+        ),
+        (s.started, day_note(book.first_day, book, s)),
+        (s.last_read, day_note(book.last_day, book, s)),
+        (s.finished_on, finished_note(book, s)),
+    ];
+    // A restart empties `finished_on`: this row is where that reading shows.
+    if !book.restarted_on.is_empty() {
+        let said = crate::lang::counted(s.n_times, book.times_finished());
+        lines.push((s.read_through_row, said));
+    }
+    lines
+}
+
+/// The book's three headline figures, each with its name.
+pub fn headline(book: &BookStat, from: StatsFrom, s: &Strings) -> [(String, &'static str); 3] {
+    [
         (date::duration(book.read_seconds(from), s), s.read),
         (book.page_turns.to_string(), s.pages_turned),
         (
@@ -527,7 +531,13 @@ fn figures(cx: &mut Ctx, words: Rect, book: &BookStat) {
                 .map_or(DASH.into(), |t| date::duration(t, s)),
             s.left,
         ),
-    ];
+    ]
+}
+
+/// The book's three headline figures, along the foot of the words column.
+fn figures(cx: &mut Ctx, words: Rect, book: &BookStat) {
+    let theme: &Theme = cx.theme;
+    let stated = headline(book, cx.stats_from, cx.s());
     let height = chrome::figure_height(cx.text, theme);
     let row = Rect::new(words.x, words.bottom() - height, words.w, height);
     chrome::figures(cx.fb, cx.text, theme, row, &stated);
@@ -543,7 +553,7 @@ fn where_note(book: &BookStat, s: &Strings) -> String {
 
 /// The day a book read through was last put down. A book short of the end,
 /// or one with no reading, states none.
-fn finished_note(book: &BookStat, s: &Strings) -> String {
+pub fn finished_note(book: &BookStat, s: &Strings) -> String {
     match book.is_finished() {
         true => day_note(book.last_day, book, s),
         false => DASH.into(),
@@ -551,7 +561,7 @@ fn finished_note(book: &BookStat, s: &Strings) -> String {
 }
 
 /// `day`, and [`DASH`] for a book carrying no reading.
-fn day_note(day: i64, book: &BookStat, s: &Strings) -> String {
+pub fn day_note(day: i64, book: &BookStat, s: &Strings) -> String {
     match book.sittings {
         0 => DASH.into(),
         _ => date::year_day(day, s),
@@ -559,15 +569,10 @@ fn day_note(day: i64, book: &BookStat, s: &Strings) -> String {
 }
 
 /// The days read of the days between the first and the last.
-fn days_note(book: &BookStat, s: &Strings) -> String {
+pub fn days_note(book: &BookStat, s: &Strings) -> String {
     match book.sittings {
         0 => DASH.into(),
-        _ => format!(
-            "{} {} {}",
-            book.days,
-            s.of,
-            (book.last_day - book.first_day + 1).max(1)
-        ),
+        _ => format!("{} {} {}", book.days, s.of, book.span_days()),
     }
 }
 
@@ -587,9 +592,6 @@ mod tests {
         (said.chars().count() as f32 * px * 0.62).round() as i32
     }
 
-    /// The head row's three labels never reach the floor `chrome` shrinks to,
-    /// in any language, on any panel, at any text size. `wrap_and_clamp_in`
-    /// cuts a label that does, taking its own words off.
     #[test]
     fn only_the_tab_showing_carries_the_caret() {
         let lang = Lang::English;
@@ -604,6 +606,9 @@ mod tests {
         }
     }
 
+    /// The head row's three labels never reach the floor `chrome` shrinks to,
+    /// in any language, on any panel, at any text size. `wrap_and_clamp_in`
+    /// cuts a label that does, taking its own words off.
     #[test]
     fn the_three_tabs_fit_their_cells_in_every_language() {
         for (w, h) in PANELS {
@@ -827,8 +832,7 @@ mod tests {
                     "{w}x{h}: the two reading controls overlap"
                 );
             }
-            // With no control, `controls_bottom` is 0 and the band takes no
-            // height.
+            // With no control, `controls_bottom` is 0: the band takes no height.
             assert_eq!(controls_bottom(&split_from(&theme, width, &[])), 0);
         }
     }
@@ -897,11 +901,9 @@ mod tests {
             );
             assert_eq!(words.x, cover_box.right() + theme.gap * 2);
             assert_eq!(words.right(), top.right(), "{w}x{h}: the words fall short");
-            // The words keep the block's own depth, whatever the cover's is:
-            // a small cover never shortens the column beside it.
+            // The words keep the block's own depth, whatever the cover's is.
             assert_eq!((words.y, words.h), (top.y, top.h), "{w}x{h}");
-            // Every pixel the cover is narrower than its slot by is the
-            // words'.
+            // Every pixel the cover is narrower than its slot by is the words'.
             assert_eq!(words.w, top.w - narrow - theme.gap * 2);
         }
     }

@@ -1,0 +1,53 @@
+# Outside the root workspace, which `release.yml` lints with no webview.
+[workspace]
+
+[package]
+name = "readinglog-desktop"
+version = "0.1.0"
+license = "GPL-3.0-or-later"
+edition = "2024"
+publish = false
+
+[lib]
+name = "readinglog_desktop"
+path = "src/lib.rs"
+
+[[bin]]
+name = "readinglog-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# The window. `protocol-asset` serves the built site's preview from disk.
+tauri = { version = "2", features = ["protocol-asset"] }
+# Picking a workspace, a backup and a Kindle's drive.
+tauri-plugin-dialog = "2"
+# Showing the written site in the browser and its folder in the Finder.
+tauri-plugin-opener = "2"
+# The record, the stats and the backups, read the way the Kindle reads them.
+readinglog-native = { path = "../native" }
+# Error propagation with context strings through an import and a build.
+anyhow = "1"
+# site.toml, books.toml, highlights.toml, sittings.toml, a post's front matter.
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+# A post's Markdown, to HTML. `html` alone: no command line, no SIMD scanner.
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+
+[dev-dependencies]
+# What the window sends a command, read the way Tauri reads it.
+serde_json = "1"
+
+[features]
+# `cargo tauri build` turns this on: the window loads `web/` from the binary.
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.dev]
+incremental = true
+
+# `readinglog-native` draws and decodes covers; built once at 3, as the root
+# workspace builds it for `preview`.
+[profile.dev.package."*"]
+opt-level = 3

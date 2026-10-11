@@ -170,7 +170,7 @@ fn labelled(widths: &[i32], count: usize, room: i32, gap: i32) -> (Vec<bool>, f3
 /// "Aug 6 – Oct 22, 2024", or both years where the two fall in different ones.
 /// A `whole` of false states the day it opened and no day it closed; `from`
 /// meeting `to` states that day alone.
-fn spanned(from: i64, to: i64, whole: bool, s: &Strings) -> String {
+pub fn spanned(from: i64, to: i64, whole: bool, s: &Strings) -> String {
     if !whole {
         return format!("{} –", date::year_day(from, s));
     }
@@ -187,7 +187,7 @@ fn spanned(from: i64, to: i64, whole: bool, s: &Strings) -> String {
 
 /// Whether reading `at` of `reads` was carried through the end of the book:
 /// every one before the last, and the last where `finished`.
-fn whole(at: usize, reads: usize, finished: bool) -> bool {
+pub fn whole(at: usize, reads: usize, finished: bool) -> bool {
     at + 1 < reads || finished
 }
 
@@ -264,13 +264,8 @@ fn listed(cx: &mut Ctx, area: Rect, index: usize, reads: &[(i64, i64)], on: usiz
             ],
         );
     }
-    let days = cx.stats.book_days(index);
     let (opened, closed) = reads[on];
-    let secs: i64 = days
-        .iter()
-        .filter(|(day, _)| *day >= opened && *day <= closed)
-        .map(|(_, secs)| secs)
-        .sum();
+    let secs = cx.stats.book_seconds_over(index, opened..=closed);
     let script = cx.ui_script();
     line(cx);
     let cap = cx.text.cap_height() as i32;

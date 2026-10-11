@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Reading Log</title>
+    <link rel="stylesheet" href="app.css">
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <aside id="side" hidden>
+      <p class="name">Reading Log</p>
+      <p id="where" class="where"></p>
+      <nav id="nav">
+        <button type="button" data-screen="books">Books</button>
+        <button type="button" data-screen="posts">Posts</button>
+        <button type="button" data-screen="import">Import</button>
+        <button type="button" data-screen="publish">Publish</button>
+      </nav>
+      <button type="button" id="switch" class="quiet">Open another workspace…</button>
+    </aside>
+    <main id="main"></main>
+    <p id="flash" role="status" hidden></p>
+  </body>
+</html>

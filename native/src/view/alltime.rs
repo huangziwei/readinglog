@@ -4,8 +4,8 @@
 
 use crate::date;
 use crate::lang::Strings;
-use crate::settings::SittingFloor;
-use crate::stats::{Fold, SITTING_BANDS, SITTING_STEP_SECS};
+use crate::settings::{SittingFloor, WeekStart};
+use crate::stats::{Fold, SITTING_BANDS, SITTING_STEP_SECS, Stats};
 use crate::ui::paint::{self, LIGHT, PALE, Rect};
 use crate::ui::theme::Theme;
 use crate::ui::{charts, chrome};
@@ -27,15 +27,6 @@ struct Cell {
     value: String,
     label: &'static str,
     opens: Option<Hit>,
-}
-
-/// The figure alone, opening nothing.
-fn plain(value: String, label: &'static str) -> Cell {
-    Cell {
-        value,
-        label,
-        opens: None,
-    }
 }
 
 /// The page at `page`, and the arrows onto the one either side of it.
@@ -248,64 +239,76 @@ fn sitting_name(at: usize, first: usize, floor: SittingFloor, s: &Strings) -> St
     }
 }
 
-/// Books the record states as read through, longest first.
-fn finished_books(cx: &Ctx) -> Vec<usize> {
-    let mut out: Vec<usize> = cx.stats.finished_in(i64::MIN..=i64::MAX).collect();
-    out.sort_by_key(|at| -cx.stats.books[*at].seconds);
-    out
-}
-
-/// The twelve figures, row by row.
-fn cells(cx: &Ctx) -> Vec<Cell> {
-    let s = cx.s();
-    // The board states what the whole record came to.
-    let all = cx.stats.tally(cx.stats.opened(cx.today)..=cx.today);
-    let sittings = (cx.stats.sittings.len() as i64).max(1);
-    let books = cx.stats.book_count() as i64;
-    let finished = finished_books(cx);
-    let (best_day, best_day_secs) = best_day(cx);
-    let (sat_on, sat_secs) = longest_sitting(cx);
-
-    vec![
-        plain(date::duration_coarse(all.read, s), s.total_read),
-        plain(all.days_read.to_string(), s.days_read),
-        plain(date::duration(all.a_day, s), s.a_day),
-        plain(books.to_string(), s.book_count),
-        Cell {
-            value: all.finished.to_string(),
-            label: s.finished,
-            opens: (!finished.is_empty()).then_some(Hit::Shelved(Shelf::Finished, None)),
-        },
-        plain(a_book(cx, &finished, s), s.a_book),
-        plain(cx.stats.current_streak.to_string(), s.current_streak),
-        plain(cx.stats.longest_streak.to_string(), s.longest_streak),
-        plain(weeks_running(cx).to_string(), s.weeks_running),
-        Cell {
-            value: date::duration(best_day_secs, s),
-            label: s.best_day,
-            opens: (best_day_secs > 0).then_some(Hit::Day(best_day)),
-        },
-        Cell {
-            value: date::duration(sat_secs, s),
-            label: s.longest_sitting,
-            opens: (sat_secs > 0).then_some(Hit::Day(sat_on)),
-        },
-        plain(
-            date::duration(cx.stats.total_seconds / sittings, s),
-            s.a_sitting,
+/// The twelve figures of the board, row by row: what each states and what it
+/// is called. The board states what the whole record came to by `today`.
+pub fn board(
+    stats: &Stats,
+    today: i64,
+    week: WeekStart,
+    s: &Strings,
+) -> [(String, &'static str); 12] {
+    let all = stats.tally(stats.opened(today)..=today);
+    let best = stats
+        .busiest_day(i64::MIN..=i64::MAX)
+        .map_or(0, |(_, secs)| secs);
+    let sat = stats.longest_sitting().map_or(0, |(_, secs)| secs);
+    [
+        (date::duration_coarse(all.read, s), s.total_read),
+        (all.days_read.to_string(), s.days_read),
+        (date::duration(all.a_day, s), s.a_day),
+        (stats.book_count().to_string(), s.book_count),
+        (all.finished.to_string(), s.finished),
+        (a_book(stats.a_book(), s), s.a_book),
+        (stats.current_streak.to_string(), s.current_streak),
+        (stats.longest_streak.to_string(), s.longest_streak),
+        (
+            stats.weeks_running(today, week).to_string(),
+            s.weeks_running,
         ),
+        (date::duration(best, s), s.best_day),
+        (date::duration(sat, s), s.longest_sitting),
+        (date::duration(stats.a_sitting(), s), s.a_sitting),
     ]
 }
 
-/// How long a finished book took, averaged over the books in `finished`.
-///
-/// A record with no book read through states no average.
-fn a_book(cx: &Ctx, finished: &[usize], s: &Strings) -> String {
-    if finished.is_empty() {
-        return "—".into();
+/// [`board`]'s figures, three of them opening a page.
+fn cells(cx: &Ctx) -> Vec<Cell> {
+    let finished = cx.stats.finished_in(i64::MIN..=i64::MAX).next().is_some();
+    let (best_day, best_day_secs) = best_day(cx);
+    let (sat_on, sat_secs) = longest_sitting(cx);
+    // The page each figure opens, in the board's order.
+    let opens = [
+        None,
+        None,
+        None,
+        None,
+        finished.then_some(Hit::Shelved(Shelf::Finished, None)),
+        None,
+        None,
+        None,
+        None,
+        (best_day_secs > 0).then_some(Hit::Day(best_day)),
+        (sat_secs > 0).then_some(Hit::Day(sat_on)),
+        None,
+    ];
+    board(cx.stats, cx.today, cx.week, cx.s())
+        .into_iter()
+        .zip(opens)
+        .map(|((value, label), opens)| Cell {
+            value,
+            label,
+            opens,
+        })
+        .collect()
+}
+
+/// What a finished book took, off [`crate::stats::Stats::a_book`]. A record
+/// with no book read through states no average.
+fn a_book(secs: Option<i64>, s: &Strings) -> String {
+    match secs {
+        Some(secs) => date::duration_coarse(secs, s),
+        None => "—".into(),
     }
-    let spent: i64 = finished.iter().map(|at| cx.stats.books[*at].seconds).sum();
-    date::duration_coarse(spent / finished.len() as i64, s)
 }
 
 /// The fullest day of the record, and what was read on it.
@@ -317,30 +320,7 @@ fn best_day(cx: &Ctx) -> (i64, i64) {
 
 /// The longest single sitting of the record, and the day it fell on.
 fn longest_sitting(cx: &Ctx) -> (i64, i64) {
-    cx.stats
-        .sittings
-        .iter()
-        .max_by_key(|s| s.seconds)
-        .map(|s| (s.day, s.seconds))
-        .unwrap_or((cx.today, 0))
-}
-
-/// Weeks back from the one holding today with a day read in each.
-///
-/// A week with nothing read in it yet leaves the count on the week before it.
-fn weeks_running(cx: &Ctx) -> i64 {
-    let opens = |day: i64| day - cx.week.column_of(date::weekday(day)) as i64;
-    let any = |week: i64| (week..week + 7).any(|d| cx.stats.day_seconds(d) > 0);
-    let mut week = opens(cx.today);
-    if !any(week) {
-        week -= 7;
-    }
-    let mut running = 0;
-    while any(week) {
-        running += 1;
-        week -= 7;
-    }
-    running
+    cx.stats.longest_sitting().unwrap_or((cx.today, 0))
 }
 
 /// What the record covers, over the board.

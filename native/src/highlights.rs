@@ -11,9 +11,7 @@ use crate::identify::normalise;
 use crate::record::{self, Record};
 use crate::sidecar::{Roster, Sidecars, Survey};
 
-/// Characters kept of a body that is the book's own words. A note is the
-/// reader's and is kept whole; `My Clippings.txt` holds whatever runs past
-/// this, on the same Kindle.
+/// Characters kept of a passage's words; a note's are kept whole.
 pub const EXCERPT: usize = 600;
 
 /// What the ellipsis on a cut body is.
@@ -60,33 +58,25 @@ impl State {
 /// One highlight in one book, as the record holds it.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Highlight {
-    /// The book's `p_contentSize`, and 0 while nothing has identified the book. A
-    /// later pass re-resolves it when the library finally does.
+    /// The book's `p_contentSize`, 0 until a pass identifies the book.
     pub extent: i64,
-    /// The title as the source stated it, kept even once `extent` names a
-    /// book: it is what a re-read joins on, and it outlives `extent`.
+    /// The title as the source stated it: what a re-read joins on, outliving `extent`.
     pub title: String,
     pub kind: Kind,
     /// `YYYY-MM-DDTHH:MM:SS`, Kindle-local, as a sitting stores its own.
     pub at: String,
     pub state: State,
-    /// The sidecar's start position on the book's `p_contentSize` axis, and
-    /// -1 where no sidecar annotation stated one. **Not** a display location:
-    /// these are different axes and nothing converts between them.
+    /// The sidecar's start on the `p_contentSize` axis, -1 where none; never a location.
     pub start: i64,
     /// The sidecar's end position, -1 where none.
     pub end: i64,
-    /// The display location the clipping stated, -1 where none. A Kindle
-    /// location is roughly 150 positions wide: this places a highlight in a book
-    /// and never in `start`'s axis.
+    /// The display location the clipping stated, -1 where none, on no axis of `start`'s.
     pub location: i64,
     /// The publisher's page label the clipping carried, empty where none.
     pub page: String,
-    /// One of the eleven colour names a sidecar states, empty
-    /// where none. `My Clippings.txt` carries no colour.
+    /// One of the eleven colour names a sidecar states, empty where none.
     pub colour: String,
-    /// The words: a note's whole text, and [`EXCERPT`] characters of a
-    /// passage's.
+    /// A note's whole text, or [`EXCERPT`] characters of a passage's.
     pub body: String,
 }
 
@@ -102,10 +92,15 @@ impl Highlight {
         date::parse_day(date::day_of(&self.at))
     }
 
-    /// What identifies this highlight across passes: the fields a clipping states, which
-    /// stand whether or not a sidecar can be read.
-    pub fn identity(&self) -> (&str, Kind, &str, i64) {
-        (&self.at, self.kind, &self.title, self.location)
+    /// What identifies this highlight across passes: the fields a clipping states,
+    /// and, where no clipping placed it, the sidecar's position: highlights a
+    /// sidecar alone states can share a stamp, a kind and a title.
+    pub fn identity(&self) -> (&str, Kind, &str, i64, i64) {
+        let start = match self.location < 0 {
+            true => self.start,
+            false => -1,
+        };
+        (&self.at, self.kind, &self.title, self.location, start)
     }
 
     /// Take from `held` every sidecar field this highlight states none of:
@@ -216,8 +211,7 @@ pub struct Merge {
     pub held: usize,
 }
 
-/// **Bump with every change giving different rows over unchanged files**:
-/// [`gate`] holds the join back on files that have not moved.
+/// The join's version, raised by any change giving other rows over unchanged files.
 const RULES: u32 = 6;
 
 /// What a pass must have seen for the rows it wrote to stand.
@@ -233,8 +227,7 @@ pub struct Gate {
     /// or deleted since, and [`crate::sidecar::Survey::dirs`] beside it.
     pub sidecars: u64,
     pub dirs: usize,
-    /// [`RULES`] as the pass that wrote the rows read them. A row an older
-    /// build wrote states a lower number, and is merged again.
+    /// [`RULES`] at the pass that wrote the rows; a lower number merges them again.
     pub rules: u32,
 }
 
@@ -306,11 +299,9 @@ struct Held<'a> {
     roster: &'a Roster,
     /// The [`record::Book`] this roster belongs to, where a `p_location` names it.
     book: Option<&'a record::Book>,
-    /// `created` as epoch seconds, one per annotation: the side that has to be
-    /// placed on a clock before the clippings file's wall clock can meet it.
+    /// `created` as epoch seconds per annotation, placed on a clock to meet a clipping.
     created: Vec<i64>,
-    /// The offset a pair settled on, per annotation, and `None` for one no
-    /// clipping claimed.
+    /// The offset each annotation's pair settled on, `None` where no clipping claimed it.
     offset: Vec<Option<i64>>,
     claimed: Vec<bool>,
 }
@@ -614,8 +605,7 @@ fn offsets_seen(clippings: &[Clipping], sidecars: &Sidecars) -> Vec<i64> {
         }
     }
     let mut out: Vec<(i64, usize)> = count.into_iter().filter(|(_, n)| *n >= SUPPORT).collect();
-    // Most-supported first, and the larger offset first on a tie: the order
-    // is the same every time.
+    // Most-supported first, the larger offset first on a tie: one order every time.
     out.sort_by(|a, b| b.1.cmp(&a.1).then(b.0.cmp(&a.0)));
     out.into_iter().map(|(offset, _)| offset).collect()
 }
@@ -738,8 +728,7 @@ fn settle(mut highlights: Vec<Highlight>) -> Vec<Highlight> {
                 .find(|&held| words_hold(&out[held], &highlight)),
         };
         match at {
-            // The held row opened the highlight; the later one restates its
-            // words.
+            // The held row opened the highlight; the later one restates its words.
             Some(at) if !highlight.body.is_empty() => out[at].body = highlight.body,
             Some(_) => {}
             None => {
@@ -1349,8 +1338,7 @@ mod tests {
 
     #[test]
     fn a_note_folds_into_the_passage_its_own_range_sits_inside() {
-        // `Note` carries no id of a highlight — three fields, none of them a
-        // link — so the ranges are the whole of it.
+        // `Note` carries no id of a highlight: the ranges are the only link.
         let mut passage = highlight(State::Live, 325, 374);
         passage.at = "2026-09-04T00:52:49".into();
         let mut note = highlight(State::Live, 372, 374);

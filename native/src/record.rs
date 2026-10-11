@@ -1526,10 +1526,10 @@ impl Record {
         }
         let held = self.highlights.len();
         // `keep_from` takes the sidecar fields of a highlight `other` names too, and
-        // `push` adds one it does not.
+        // `push` adds one it does not. Only a highlight held before this fold can
+        // take one: two of `other`'s own never fold into each other.
         for fresh in &other.highlights {
-            match self
-                .highlights
+            match self.highlights[..held]
                 .iter_mut()
                 .find(|m| m.identity() == fresh.identity())
             {
@@ -5147,6 +5147,35 @@ m	260911:115340	7200
         assert_eq!(record.highlights.len(), 1, "one highlight, not two");
         assert_eq!(record.highlights[0].start, 246_588);
         assert_eq!(record.highlights[0].state, State::Live);
+    }
+
+    /// Highlights a sidecar alone states can share a stamp, a kind and a title.
+    /// A fold keeps each by its position, into a record holding none of them and
+    /// into one holding them all.
+    #[test]
+    fn highlights_sharing_a_stamp_all_come_back_from_a_backup() {
+        let placed = |start: i64| Highlight {
+            extent: 90_000,
+            title: "A Map of Small Rivers".into(),
+            kind: Kind::Highlight,
+            at: "2026-06-23T09:58:49".into(),
+            state: State::Live,
+            start,
+            end: start + 40,
+            location: -1,
+            page: String::new(),
+            colour: "yellow".into(),
+            body: String::new(),
+        };
+        let backup = Record {
+            highlights: vec![placed(1_920), placed(4_089), placed(6_119)],
+            ..Record::default()
+        };
+        let mut record = Record::default();
+        record.merge(&backup);
+        assert_eq!(record.highlights.len(), 3, "a reset record, restored");
+        record.merge(&backup);
+        assert_eq!(record.highlights.len(), 3, "the same backup twice");
     }
 
     /// [`Record::heal_from`] corrects a row held under [`Record::reset_at`], the

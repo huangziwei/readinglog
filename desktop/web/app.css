@@ -1,0 +1,387 @@
+/* The window, in the Kindle app's own colours: 紺 across the ramp, ink for
+   the words, the greys the panel draws its rules in. */
+:root {
+  --ink: #000000;
+  --dark: #606060;
+  --light: #c0c0c0;
+  --pale: #e0e0e0;
+  --paper: #ffffff;
+  --step-1: #dae2f3;
+  --step-3: #748fcf;
+  --step-4: #3d5eaf;
+  --mark: #cc4343;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: grid;
+  grid-template-columns: 13rem minmax(0, 1fr);
+  background: var(--paper);
+  color: var(--ink);
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans",
+    "PingFang SC", sans-serif;
+}
+
+body.bare {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  padding: 0.3rem 0.8rem;
+  border: 1px solid var(--ink);
+  background: var(--paper);
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--step-1);
+}
+
+button.primary {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+button.primary:hover {
+  background: var(--step-4);
+  border-color: var(--step-4);
+}
+
+button.quiet {
+  border-color: var(--light);
+  color: var(--dark);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+input[type="text"],
+select,
+textarea {
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--light);
+  background: var(--paper);
+}
+
+textarea {
+  resize: vertical;
+}
+
+/* The way round: the workspace and the four screens. */
+aside {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  border-right: 1px solid var(--pale);
+  overflow-y: auto;
+}
+
+aside .name {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+aside .where {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--dark);
+  word-break: break-all;
+}
+
+aside nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.5rem 0 auto;
+}
+
+aside nav button {
+  text-align: left;
+  border-color: transparent;
+}
+
+aside nav button.on {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+main {
+  overflow-y: auto;
+  padding: 1.25rem 1.5rem 3rem;
+}
+
+main.split {
+  display: grid;
+  grid-template-columns: minmax(22rem, 1fr) minmax(0, 1.1fr);
+  gap: 1.5rem;
+  padding-bottom: 1.25rem;
+  overflow: hidden;
+}
+
+main.split > .pane {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.4rem;
+}
+
+h2 {
+  margin: 1.5rem 0 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--pale);
+  padding-bottom: 0.3rem;
+}
+
+p.lede {
+  margin: 0 0 1rem;
+  color: var(--dark);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.chips button {
+  border-color: var(--light);
+}
+
+.chips button.on {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+
+/* The Books list. */
+table.books {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.75rem;
+}
+
+table.books td,
+table.books th {
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--pale);
+  text-align: left;
+  vertical-align: middle;
+}
+
+table.books th {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--dark);
+}
+
+table.books td.figure {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+table.books button.title {
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  font-weight: 600;
+}
+
+table.books button.title:hover {
+  text-decoration: underline;
+}
+
+.dim {
+  color: var(--dark);
+}
+
+.badge {
+  display: inline-block;
+  padding: 0 0.4em;
+  font-size: 0.75rem;
+  background: var(--step-1);
+}
+
+.badge.ink {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* A book: its choices and its highlights, beside its page. */
+label.field {
+  display: block;
+  margin: 0.5rem 0;
+}
+
+label.field span {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--dark);
+}
+
+label.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+ol.highlights {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+ol.highlights > li {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--pale);
+}
+
+blockquote {
+  margin: 0.35rem 0;
+  padding-left: 0.75rem;
+  border-left: 3px solid var(--step-3);
+  font-family: Georgia, "Hiragino Mincho ProN", "Songti SC", serif;
+}
+
+blockquote.note {
+  border-left-color: var(--ink);
+  font-family: inherit;
+}
+
+details {
+  margin-top: 0.35rem;
+}
+
+details summary {
+  cursor: pointer;
+  color: var(--dark);
+  font-size: 0.85rem;
+}
+
+iframe.page {
+  width: 100%;
+  height: 100%;
+  min-height: 30rem;
+  border: 1px solid var(--pale);
+  background: var(--paper);
+}
+
+/* Posts. */
+ul.posts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+ul.posts li button {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-bottom: 1px solid var(--pale);
+  padding: 0.5rem 0.25rem;
+}
+
+ul.posts li button.on {
+  background: var(--step-1);
+}
+
+textarea.post {
+  min-height: 24rem;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 13px;
+}
+
+/* Import. */
+.drop {
+  display: grid;
+  place-items: center;
+  min-height: 9rem;
+  margin: 1rem 0;
+  border: 2px dashed var(--light);
+  color: var(--dark);
+  text-align: center;
+}
+
+.drop.over {
+  border-color: var(--step-4);
+  background: var(--step-1);
+}
+
+ul.plain {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.problems {
+  margin: 0.75rem 0;
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid var(--mark);
+  background: #fbeeee;
+}
+
+.problems p {
+  margin: 0.2rem 0;
+}
+
+.warning {
+  margin: 0.75rem 0;
+  padding: 0.5rem 0.75rem;
+  background: var(--step-1);
+}
+
+form.site {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 1rem;
+  max-width: 44rem;
+}
+
+form.site .wide {
+  grid-column: 1 / -1;
+}
+
+#flash {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  max-width: 32rem;
+  margin: 0;
+  padding: 0.6rem 0.9rem;
+  background: var(--ink);
+  color: var(--paper);
+  white-space: pre-wrap;
+}
+
+#flash.wrong {
+  background: var(--mark);
+}

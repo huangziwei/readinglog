@@ -4,7 +4,9 @@
 
 use crate::date;
 use crate::font::Script;
+use crate::lang::Strings;
 use crate::settings::WeekStart;
+use crate::stats::Stats;
 use crate::ui::paint::{self, INK, LIGHT, PALE, Rect, WHITE, WHITE_RGB};
 use crate::ui::{charts, chrome, cover, theme::Theme};
 
@@ -28,8 +30,7 @@ fn bands(area: Rect, theme: &Theme, figures: i32, grid: i32, listed: bool) -> [R
     let bar = bar_height(theme);
     let (picker, rest) = area.split_top(tabs + air);
     let (nav, rest) = rest.split_top(bar + air);
-    // The span's name stands clear of the figures under it: the two are a
-    // heading and its body, not one block.
+    // The span's name stands clear of the figures under it: a heading over its body.
     let (stated, rest) = rest.split_top(figures + air * 2);
 
     let grid = match listed {
@@ -58,8 +59,7 @@ fn lists_books(span: Span) -> bool {
 fn grid_height(span: Span, area: Rect, theme: &Theme, day: i64, week: WeekStart) -> i32 {
     match span {
         Span::AllTime | Span::Month => area.h,
-        // A week has seven columns and a row of covers under them: the grid
-        // takes a share of the page and never less than its own height.
+        // Seven columns over a row of covers: a share of the page, at least its own.
         Span::Week => week_height(theme).max(area.h * 2 / 5),
         Span::Year => {
             let (year, _, _) = date::civil_from_days(day);
@@ -112,8 +112,7 @@ fn span_page(cx: &mut Ctx, area: Rect, state: &State) {
     let [bar, nav, stated, grid, list] = bands(area, theme, figures, want, listed);
 
     picker(cx, bar, state);
-    // The chip stands only where there is somewhere to go: the span holding
-    // today needs no way back to itself.
+    // The chip stands only where the span showing does not hold today.
     let adrift = !days.contains(&cx.today);
     span_nav(cx, nav, &span.name(day, cx.week, s), adrift);
     span_figures(cx, stated, span, day);
@@ -203,20 +202,29 @@ fn span_figure_px(theme: &Theme) -> f32 {
     theme.head_px
 }
 
-/// What the span holding `days` came to: the reading, the days it fell on,
-/// what one of those days averaged, and the books read through inside it. The
-/// last of those opens the Books list under this same span.
-fn span_figures(cx: &mut Ctx, area: Rect, span: Span, day: i64) {
-    let s = cx.s();
-    let days = span.days(day, cx.week);
-    let tally = cx.stats.tally(days);
-    let stated = [
+/// What `days` came to, each figure with its name: the reading, the days it
+/// fell on, what one of those days averaged, and the books read through
+/// inside it.
+pub fn tallied(
+    stats: &Stats,
+    days: std::ops::RangeInclusive<i64>,
+    s: &Strings,
+) -> [(String, &'static str); 4] {
+    let tally = stats.tally(days);
+    [
         (date::duration_coarse(tally.read, s), s.total_read),
         (tally.days_read.to_string(), s.days_read),
         (date::duration(tally.a_day, s), s.a_day),
         (tally.finished.to_string(), s.finished),
-    ];
-    let opens = [false, false, false, tally.finished > 0];
+    ]
+}
+
+/// [`tallied`] over the span holding `day`. The last figure opens the Books
+/// list under this same span.
+fn span_figures(cx: &mut Ctx, area: Rect, span: Span, day: i64) {
+    let days = span.days(day, cx.week);
+    let stated = tallied(cx.stats, days.clone(), cx.s());
+    let opens = [false, false, false, cx.stats.finished_over(days) > 0];
     let ceiling = span_figure_px(cx.theme);
     let cells = chrome::figures_at(cx.fb, cx.text, cx.theme, area, &stated, ceiling, &opens);
     if let (true, Some(cell)) = (opens[3], cells.get(3)) {
@@ -385,8 +393,7 @@ fn day_bar(cx: &mut Ctx, area: Rect, day: i64, most: i64, on: bool) {
     paint::fill_rgb(cx.fb, bar, ink);
     let hours = cx.stats.hours_over(day..=day);
     let busiest = hours.iter().copied().max().unwrap_or(0);
-    // `WHITE_RGB` cuts the hours out of the bar: the bar keeps its own weight
-    // on the page and the marks read as part of it.
+    // `WHITE_RGB` cuts the hours out of the bar, the marks reading as part of it.
     charts::hour_shape(cx.fb, clock_box(theme, bar), &hours, busiest, WHITE_RGB);
     cx.text.draw(
         cx.fb,
@@ -524,8 +531,7 @@ fn year_heatmap(cx: &mut Ctx, area: Rect, day: i64, picked: bool) {
     }
 }
 
-/// The band of the day's own level laid across the head of its cell, in
-/// design pixels, at a size told apart at arm's length.
+/// The band of a day's level across the head of its cell, in design pixels.
 const HEAD_BAND: i32 = 12;
 
 /// [`HEAD_BAND`] on this panel.
@@ -1143,8 +1149,7 @@ mod tests {
                 if clock.w <= 0 || clock.h <= 0 {
                     continue;
                 }
-                // Every hour of the day gets its own column of pixels, and
-                // none of the box is left over past the last of them.
+                // Every hour gets its own column of pixels, none of the box left over.
                 assert_eq!(clock.w % 24, 0, "{w}x{h} {tall}: {} wide", clock.w);
                 // Blue on all four sides: no mark opens onto the page.
                 assert!(clock.x > bar.x, "{w}x{h} {tall}");
