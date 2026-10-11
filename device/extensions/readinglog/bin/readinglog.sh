@@ -13,6 +13,9 @@ WAIT_SECS=10
 WATCH_SECS=8
 # REFILE_SECS bounds follow_open's call to file_view.
 REFILE_SECS=3
+# NO_SUCH_PROPERTY is lipc-set-prop's exit status for a property its target
+# does not publish.
+NO_SUCH_PROPERTY=8
 # TRACE_LINES of /var/log/messages reach $LOG.
 TRACE_LINES=120
 # $TRACE turns on the open-path tracing, which is the loudest thing this
@@ -35,11 +38,16 @@ appmgr_state() {
     done
 }
 
-# file_view files $1 as appmgrd's startView READER:1.
+# file_view files $1 as appmgrd's startView READER:1, and with start where
+# appmgrd publishes no startView.
 file_view() {
     lipc-set-prop com.lab126.appmgrd startView "READER:1:$1" 2>> "$LOG"
     status=$?
     echo "[$(date)] startView status=$status" >> "$LOG"
+    [ "$status" -eq "$NO_SUCH_PROPERTY" ] || return "$status"
+    lipc-set-prop com.lab126.appmgrd start "$1" 2>> "$LOG"
+    status=$?
+    echo "[$(date)] start status=$status" >> "$LOG"
     return "$status"
 }
 
