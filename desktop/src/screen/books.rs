@@ -121,11 +121,12 @@ fn tile(cx: &Ctx, out: &mut String, at: usize) {
         out,
         "<a class=\"tile\" href=\"{}\"><div class=\"cover\">{}</div>\
          <div class=\"progress\"><i style=\"width: {width}%\"></i></div>\
-         <p class=\"title\"{}>{}</p><p class=\"author\">{}</p><p class=\"meta\">{}</p>{}</a>",
+         <p class=\"title\"{}>{}</p><p class=\"author\"{}>{}</p><p class=\"meta\">{}</p>{}</a>",
         cx.book_link(at),
         cx.cover(at),
-        lang(&book.language),
+        lang(&book.language, &book.title),
         esc(&book.title),
+        lang(&book.language, &book.author),
         esc(&book.author),
         esc(&meta),
         match marks.is_empty() {

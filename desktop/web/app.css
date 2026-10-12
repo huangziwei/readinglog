@@ -1,9 +1,34 @@
 /* `#vars` holds the colours, off the palette the colour scheme names. */
 :root {
   --shade: rgba(0, 0, 0, 0.06);
-  --sans: -apple-system, system-ui, "Helvetica Neue", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "PingFang SC",
-    sans-serif;
-  --serif: "New York", "Iowan Old Style", Charter, Georgia, "Hiragino Mincho ProN", "Songti SC", serif;
+}
+
+/* `:lang()` gives each Han convention its own faces, and every character of a
+   run draws from one of them. `:root` holds the Simplified faces, which Han
+   that names no language takes, as a bare `zh` does. */
+:root,
+:lang(zh-Hans) {
+  --sans: -apple-system, system-ui, "Helvetica Neue", "PingFang SC", sans-serif;
+  --serif: "New York", "Iowan Old Style", Charter, Georgia, "Songti SC", serif;
+}
+:lang(zh-Hant) {
+  --sans: -apple-system, system-ui, "Helvetica Neue", "PingFang TC", sans-serif;
+  --serif: "New York", "Iowan Old Style", Charter, Georgia, "Songti TC", serif;
+}
+:lang(ja) {
+  --sans: -apple-system, system-ui, "Helvetica Neue", "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif;
+  --serif: "New York", "Iowan Old Style", Charter, Georgia, "Hiragino Mincho ProN", serif;
+}
+:lang(ko) {
+  --sans: -apple-system, system-ui, "Helvetica Neue", "Apple SD Gothic Neo", sans-serif;
+  --serif: "New York", "Iowan Old Style", Charter, Georgia, AppleMyungjo, serif;
+}
+
+/* `[lang]` sets a tagged element's own family off the stack `:lang()` above
+   picks for it; `.cover .made`, `.hero h1` and `.highlight blockquote` set the
+   serif ones further down. */
+[lang] {
+  font-family: var(--sans);
 }
 
 * {
@@ -39,7 +64,7 @@ img:not([src]) {
   min-height: 100vh;
 }
 
-/* The sidebar */
+/* `.side`, the sidebar */
 .side {
   position: sticky;
   top: 0;
@@ -151,7 +176,7 @@ img:not([src]) {
   margin-left: 6px;
 }
 
-/* The page */
+/* `.page`, the column a route is drawn in */
 .page {
   flex: 1;
   min-width: 0;
@@ -267,7 +292,7 @@ svg text {
   font-family: var(--sans);
 }
 
-/* A cover: the picture, or one made of the title on the book's tone */
+/* `.cover`: the picture, or one `.made` of the title on the book's tone */
 .cover {
   position: relative;
   overflow: hidden;
@@ -297,7 +322,7 @@ svg text {
   opacity: 0.85;
 }
 
-/* The cover grid */
+/* `.grid`, the cover grid */
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
@@ -339,96 +364,13 @@ svg text {
   color: var(--soft);
 }
 
-/* What was read, and the finished shelf */
-.ranks {
-  padding: 8px 20px;
-}
-.rank {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 7px 0;
-  border-bottom: 1px solid var(--edge);
-}
-.rank:last-of-type {
-  border-bottom: none;
-}
-.rank .thumb {
-  width: 28px;
-  flex: none;
-  aspect-ratio: 2 / 3;
-  border-radius: 2px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
-}
+/* `.thumb` covers carry no words */
 .thumb .made span,
 .thumb .made small {
   display: none;
 }
-.rank .what {
-  flex: 0 1 300px;
-  min-width: 0;
-}
-.rank .what p {
-  margin: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.rank .t {
-  font-size: 13px;
-  font-weight: 600;
-}
-.rank .a {
-  font-size: 12px;
-  color: var(--soft);
-}
-.rank .track {
-  flex: 1 1 120px;
-  height: 10px;
-}
-.rank .track i {
-  display: block;
-  height: 100%;
-  border-radius: 3px;
-}
-.rank b {
-  width: 64px;
-  flex: none;
-  text-align: right;
-  font-size: 13px;
-  font-weight: 600;
-}
-.ranks .more {
-  margin: 8px 0 4px 42px;
-}
-.shelf {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 18px 14px;
-}
-.spine {
-  width: 76px;
-}
-.spine .cover {
-  aspect-ratio: 2 / 3;
-  border-radius: 3px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 4px 10px rgba(0, 0, 0, 0.10);
-}
-.spine .cover .made {
-  padding: 6px;
-  font-size: 9px;
-}
-.spine .cover .made small {
-  display: none;
-}
-.spine p {
-  margin: 5px 0 0;
-  font-size: 11px;
-  color: var(--soft);
-  text-align: center;
-}
 
-/* All Time: a strip a year */
+/* `.years` and `.board`: All Time's strip a year and its board */
 .years .year {
   display: flex;
   align-items: center;
@@ -472,7 +414,7 @@ svg text {
   color: var(--soft);
 }
 
-/* A book */
+/* `.hero` and the rows under it: a book's page */
 .hero {
   display: flex;
   gap: 30px;
@@ -628,7 +570,7 @@ svg text {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
 }
 
-/* A record with no sitting yet */
+/* `.welcome`: a record with no sitting */
 .welcome {
   max-width: 560px;
   margin: 12vh auto 0;
@@ -666,7 +608,7 @@ svg text {
   font-size: 12px;
 }
 
-/* What the window lays over a page */
+/* `.tip`, `.veil` and `.flash`: what the window lays over a page */
 .tip {
   position: fixed;
   z-index: 3;
@@ -704,7 +646,7 @@ svg text {
   background: var(--mark);
 }
 
-/* Rhythm's head: the span picker, the span between its arrows */
+/* `.picker` and `.spannav`: Rhythm's head, the span between its arrows */
 .picker {
   margin-bottom: 16px;
 }
@@ -745,7 +687,7 @@ svg text {
   border-color: var(--ink);
 }
 
-/* A day: its figures, and a row a book */
+/* `.figures.day` and `.dayrow`: a day's figures, and a row a book */
 .figures.day {
   margin: 6px 0 22px;
 }
@@ -820,7 +762,7 @@ svg text {
   color: var(--ink);
 }
 
-/* What was read over a span, and the book list's own author line */
+/* `.grid.small`: what was read over a span; `.tile .author`: the book list's author line */
 .grid.small {
   grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
   gap: 22px 18px;

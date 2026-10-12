@@ -36,7 +36,7 @@ pub(super) fn page(cx: &Ctx, query: &str) -> String {
                 "<h3><span class=\"thumb cover\">{}</span><a href=\"{}\"{}>{}</a></h3>",
                 cx.cover(row.book),
                 cx.book_link(row.book),
-                lang(&named.language),
+                lang(&named.language, &named.title),
                 esc(&named.title)
             );
             last = Some(row.book);

@@ -1,4 +1,4 @@
-//! Rhythm as the Kindle's states it at each zoom: the picker, the span between
+//! Rhythm as the Kindle states it at each zoom: the picker, the span between
 //! its arrows, what it came to, its grid — a week's bars, a month's calendar, a
 //! year's strip — and what was read; and All Time, a strip a year over its board.
 
@@ -6,12 +6,11 @@ use std::fmt::Write as _;
 
 use readinglog_native::date;
 use readinglog_native::lang::counted;
-use readinglog_native::stats::SITTING_BANDS;
 use readinglog_native::view::book as book_view;
 use readinglog_native::view::{Shelf, Span, Window, alltime, covered, rhythm};
 
 use super::chart::{self, Weeks};
-use super::{Ctx, Route, esc, lang};
+use super::{Ctx, Route, esc, in_year, lang};
 
 /// The span picker: All Time, Year, Month and Week as the Kindle orders them,
 /// each a link onto that span around `day`, `on` lit.
@@ -56,7 +55,7 @@ pub(super) fn span(cx: &Ctx, span: Span, day: i64) -> String {
             cx.width,
             &|d| Route::Day(d).link(),
         ),
-        _ => year_strip(cx, date::civil_from_days(day).0, cx.width, true),
+        _ => year_strip(cx, day, cx.width, true),
     };
     let _ = write!(out, "<div class=\"card\">{grid}</div>");
     out.push_str(&what_was_read(cx, days));
@@ -91,8 +90,8 @@ fn nav(cx: &Ctx, span: Span, day: i64) -> String {
     )
 }
 
-/// `rhythm::tallied` over the span holding `day`, as one line; its finished
-/// books open the Books list under the same window.
+/// `rhythm::tallied` over the span holding `day`, as one line, its finished
+/// books a link onto the Books list under the same window.
 fn lede(cx: &Ctx, span: Span, day: i64) -> String {
     let days = span.days(day, cx.week);
     let finished = cx.stats.finished_over(days.clone());
@@ -118,9 +117,11 @@ fn lede(cx: &Ctx, span: Span, day: i64) -> String {
     out
 }
 
-/// One year as one strip, each day with reading opening its page and each
-/// month's name its month.
-fn year_strip(cx: &Ctx, year: i64, width: f32, months: bool) -> String {
+/// Draws the year holding `day` as one strip, each day with reading a link onto
+/// its page and each month's name onto that month at the day the arrows step
+/// `day` to.
+fn year_strip(cx: &Ctx, day: i64, width: f32, months: bool) -> String {
+    let (year, month, _) = date::civil_from_days(day);
     let weeks = Weeks::of(year, cx.week, 30.0, width);
     chart::strip(
         cx.stats,
@@ -131,7 +132,11 @@ fn year_strip(cx: &Ctx, year: i64, width: f32, months: bool) -> String {
         cx.today,
         months,
         &|d| Route::Day(d).link(),
-        &|d| Route::Span(Span::Month, d).link(),
+        &|first| {
+            let (y, m, _) = date::civil_from_days(first);
+            let to = Span::Month.step(day, (y - year) * 12 + m - month);
+            Route::Span(Span::Month, to).link()
+        },
     )
 }
 
@@ -164,7 +169,7 @@ fn what_was_read(cx: &Ctx, days: std::ops::RangeInclusive<i64>) -> String {
                  <p class=\"meta\">{}</p><p class=\"meta\">{}</p></a>",
                 cx.book_link(*at),
                 cx.cover(*at),
-                lang(&book.language),
+                lang(&book.language, &book.title),
                 esc(&book.title),
                 esc(&date::duration_tight(*secs, s)),
                 esc(&percent)
@@ -190,16 +195,14 @@ pub(super) fn all_time(cx: &Ctx, years: &[i64]) -> String {
         esc(&alltime::since(cx.stats, cx.today, s))
     );
     for (n, year) in years.iter().enumerate() {
-        let start = date::days_from_civil(*year, 1, 1);
-        let read = cx
-            .stats
-            .span_seconds(start..=date::days_from_civil(*year, 12, 31));
+        let day = in_year(cx.today, *year);
+        let read = cx.stats.span_seconds(Span::Year.days(day, cx.week));
         let _ = write!(
             out,
             "<div class=\"year\"><a class=\"named\" href=\"{}\"><b>{year}</b><span>{}</span></a>{}</div>",
-            Route::Span(Span::Year, start).link(),
+            Route::Span(Span::Year, day).link(),
             esc(&date::duration_coarse(read, s)),
-            year_strip(cx, *year, cx.width - 110.0, n == 0)
+            year_strip(cx, day, cx.width - 110.0, n == 0)
         );
     }
     out.push_str("</div>");
@@ -252,43 +255,40 @@ fn trends(cx: &Ctx) -> String {
     let month = cx.stats.by_month(cx.today);
     let months: Vec<String> = s.months_short.iter().map(|m| m.to_string()).collect();
     let bands = cx.stats.sitting_bands();
-    let first = cx.stats.first_band();
-    let lengths: Vec<String> = (0..bands.len())
-        .map(|at| match first + at + 1 == SITTING_BANDS {
-            true => format!("{}+", (first + at) * 5),
-            false => format!("{}", (first + at + 1) * 5),
-        })
+    let total = bands.iter().sum();
+    let sittings = cx.stats.fold(bands, total);
+    let (first, floor) = (cx.stats.first_band(), cx.stats.sitting_floor);
+    let lengths: Vec<String> = (0..sittings.values.len())
+        .map(|at| alltime::sitting_name(at, first, floor, s))
         .collect();
-    let busiest = bands
-        .iter()
-        .enumerate()
-        .max_by_key(|(_, n)| **n)
-        .filter(|(_, n)| **n > 0)
-        .map(|(at, _)| at);
     let panels = [
         (
             s.an_average_day,
-            date::duration(day.each, s),
+            chart::stated(&day, &hours, date::duration(day.each, s), s),
             chart::fold(&day, &hours, 3, s, &cx.look, half),
         ),
         (
             s.an_average_week,
-            date::duration(week.each, s),
+            chart::stated(&week, &weekdays, date::duration(week.each, s), s),
             chart::fold(&week, &weekdays, 1, s, &cx.look, half),
         ),
         (
             s.by_month,
-            date::duration_coarse(month.each, s),
+            chart::stated(&month, &months, date::duration(month.each, s), s),
             chart::fold(&month, &months, 1, s, &cx.look, half),
         ),
         (
             s.sitting_lengths,
-            format!("{} {}", bands.iter().sum::<i64>(), s.in_all),
+            chart::stated(&sittings, &lengths, format!("{total} {}", s.in_all), s),
             chart::columns(
-                &bands,
+                &sittings.values,
                 &lengths,
-                2,
-                busiest,
+                6,
+                sittings.busiest,
+                &|n| match n {
+                    0 => Vec::new(),
+                    n => vec![n.to_string()],
+                },
                 &|n| n.to_string(),
                 &cx.look,
                 half,

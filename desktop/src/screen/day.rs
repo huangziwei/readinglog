@@ -89,7 +89,15 @@ fn row(cx: &Ctx, day: i64, at: usize, secs: i64) -> String {
     let s = cx.s;
     let book = &cx.stats.books[at];
     let marks = highlights_said(s, cx.stats.highlights_counted_on(at, day));
-    let under = [book.author.as_str(), marks.as_str()]
+    let author = match book.author.is_empty() {
+        true => String::new(),
+        false => format!(
+            "<span{}>{}</span>",
+            lang(&book.language, &book.author),
+            esc(&book.author)
+        ),
+    };
+    let under = [author, esc(&marks)]
         .into_iter()
         .filter(|said| !said.is_empty())
         .collect::<Vec<_>>()
@@ -111,13 +119,12 @@ fn row(cx: &Ctx, day: i64, at: usize, secs: i64) -> String {
     };
     format!(
         "<a class=\"dayrow\" href=\"{}\"><div class=\"thumb cover\">{}</div><div class=\"words\">\
-         <p class=\"t\"{}>{}</p><p class=\"a\">{}</p><div class=\"meter\">{band}</div></div>\
+         <p class=\"t\"{}>{}</p><p class=\"a\">{under}</p><div class=\"meter\">{band}</div></div>\
          <b class=\"time\">{}</b><div class=\"spans\">{}</div></a>",
         cx.book_link(at),
         cx.cover(at),
-        lang(&book.language),
+        lang(&book.language, &book.title),
         esc(&book.title),
-        esc(&under),
         esc(&date::duration(secs, s)),
         chart::spans(
             &cx.stats.day_blocks_of(day, Some(at)),
@@ -153,7 +160,7 @@ fn highlights(cx: &Ctx, day: i64) -> String {
                 "<h3><span class=\"thumb cover\">{}</span><a href=\"{}\"{}>{}</a></h3>",
                 cx.cover(row.book),
                 cx.book_link(row.book),
-                lang(&named.language),
+                lang(&named.language, &named.title),
                 esc(&named.title)
             );
             last = Some(row.book);

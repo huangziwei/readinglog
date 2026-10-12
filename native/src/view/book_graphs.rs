@@ -16,7 +16,7 @@ use super::{Ctx, Hit};
 const WHOLE_BOOK: i64 = 100;
 
 /// One hour of the clock in this many is named.
-const HOURS_NAMED: usize = 3;
+pub const HOURS_NAMED: usize = 3;
 
 /// `listed` takes at most one in this many of the page's height.
 const LISTED: i32 = 2;
@@ -150,7 +150,7 @@ pub fn cut_to(
 /// Which runs state their length, spread evenly with the first and last kept,
 /// while the stated take at most half of `room` at their `widths` and a `gap`
 /// each; and the share cutting a stated break that wide against the rest.
-fn labelled(widths: &[i32], count: usize, room: i32, gap: i32) -> (Vec<bool>, f32) {
+pub fn labelled(widths: &[i32], count: usize, room: i32, gap: i32) -> (Vec<bool>, f32) {
     let runs = widths.len();
     for stating in (1..=runs).rev() {
         let marks = charts::spread(runs, stating);

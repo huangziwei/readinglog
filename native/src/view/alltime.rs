@@ -163,7 +163,7 @@ pub(super) fn band(
 /// A duration over its bar, as the rows it is set in: the hour and minute
 /// parts stack: `2h 22m` fits the width of `22m`. A bucket under a minute
 /// states nothing.
-pub(super) fn duration_rows(secs: i64, s: &Strings) -> Vec<String> {
+pub fn duration_rows(secs: i64, s: &Strings) -> Vec<String> {
     if secs < 60 {
         return Vec::new();
     }
@@ -222,7 +222,7 @@ fn sittings(cx: &mut Ctx, area: Rect) {
 }
 
 /// The length the band at `at` opens at, counting from `first`.
-fn sitting_name(at: usize, first: usize, floor: SittingFloor, s: &Strings) -> String {
+pub fn sitting_name(at: usize, first: usize, floor: SittingFloor, s: &Strings) -> String {
     // `floor.label` names the band the scale opens on.
     if at == 0 {
         return floor.label(s);

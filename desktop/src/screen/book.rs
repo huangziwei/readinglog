@@ -25,12 +25,13 @@ pub(super) fn page(cx: &Ctx, at: usize, reading: Option<usize>, way: Way, query:
         (false, false) => String::new(),
     };
     let mut out = format!(
-        "<div class=\"hero\"><div class=\"cover\">{}</div><div class=\"words\"><h1{}>{}</h1><p class=\"author\">{}</p>\
+        "<div class=\"hero\"><div class=\"cover\">{}</div><div class=\"words\"><h1{}>{}</h1><p class=\"author\"{}>{}</p>\
          <div class=\"meter\"><div class=\"track\"><i style=\"width: {percent}%; background: {}\"></i></div><b>{}</b></div>\
          <dl class=\"figures\">",
         cx.cover(at),
-        lang(&book.language),
+        lang(&book.language, &book.title),
         esc(&book.title),
+        lang(&book.language, &book.author),
         esc(&book.author),
         hex(tone),
         esc(&standing)
@@ -76,35 +77,32 @@ pub(super) fn page(cx: &Ctx, at: usize, reading: Option<usize>, way: Way, query:
             chart::book_sat(cx.stats, at, &strip, s, &cx.look, tone)
         );
     }
-    let half = (cx.width - 24.0) / 2.0 - 40.0;
     let (from, to) = picked.map_or((book.first_day, book.last_day), |on| reads[on]);
     let hours = cx.stats.book_hours(at, from..=to);
+    let fold = cx.stats.fold(hours.to_vec(), hours.iter().sum());
     let names: Vec<String> = (0..24).map(|h| format!("{h:02}")).collect();
-    let busiest = hours
-        .iter()
-        .enumerate()
-        .max_by_key(|(_, secs)| **secs)
-        .filter(|(_, secs)| **secs > 0)
-        .map(|(at, _)| at);
     let toned = Look {
         bar: tone,
         ..cx.look
     };
+    // `fold.busiest` names an hour only where the reading holds time in one.
+    if fold.busiest.is_some() {
+        let _ = write!(
+            out,
+            "<section><h2>{}<span class=\"said\">{}</span></h2><div class=\"card\">{}</div></section>",
+            esc(s.the_clock),
+            esc(&chart::stated(
+                &fold,
+                &names,
+                date::duration(fold.each, s),
+                s
+            )),
+            chart::fold(&fold, &names, book_graphs::HOURS_NAMED, s, &toned, cx.width)
+        );
+    }
     let _ = write!(
         out,
-        "<section class=\"split\"><div><h2>{}</h2><div class=\"card\">{}</div></div>\
-         <div><h2>{}</h2><div class=\"card\"><dl class=\"rows\">",
-        esc(s.the_clock),
-        chart::columns(
-            &hours,
-            &names,
-            3,
-            busiest,
-            &|secs| date::duration(secs, s),
-            &toned,
-            half,
-            140.0
-        ),
+        "<section><h2>{}</h2><div class=\"card\"><dl class=\"rows\">",
         esc(s.the_reading)
     );
     let mut rows = book_view::reading_rows(book, cx.from, s);
@@ -117,7 +115,7 @@ pub(super) fn page(cx: &Ctx, at: usize, reading: Option<usize>, way: Way, query:
             esc(value)
         );
     }
-    out.push_str("</dl></div></div></section>");
+    out.push_str("</dl></div></section>");
     out.push_str(&marks(cx, at, reading, way, query));
     out
 }
@@ -211,11 +209,17 @@ pub(super) fn highlight(
     let book = &cx.stats.books[at];
     let mut out = format!(
         "<div class=\"highlight\"><blockquote{}>{}</blockquote>",
-        lang(&book.language),
+        lang(&book.language, &highlight.body),
         esc(&highlight.body)
     );
+    // `note` holds the reader's own words, and `lang` reads them for a language.
     if let Some(note) = note {
-        let _ = write!(out, "<p class=\"note\">{}</p>", esc(&note.body));
+        let _ = write!(
+            out,
+            "<p class=\"note\"{}>{}</p>",
+            lang("", &note.body),
+            esc(&note.body)
+        );
     }
     let made = date::parse_day(date::day_of(&highlight.at))
         .map(|day| format!(" · {}", date::short_day(day, cx.s)))

@@ -1023,7 +1023,7 @@ fn clear_of_bars(theme: &Theme, cut: &Cut, heights: &[i32], at: usize) -> Option
 }
 
 /// `stating` marks spread evenly over `bars`, the first and the last included.
-pub(crate) fn spread(bars: usize, stating: usize) -> Vec<usize> {
+pub fn spread(bars: usize, stating: usize) -> Vec<usize> {
     match stating {
         0 => Vec::new(),
         1 => vec![0],

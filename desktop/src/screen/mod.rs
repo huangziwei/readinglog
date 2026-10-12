@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 use readinglog_native::covers;
 use readinglog_native::date;
+use readinglog_native::font::Script;
 use readinglog_native::lang::{Lang, Strings};
 use readinglog_native::record::Record;
 use readinglog_native::settings::{Settings, StatsFrom, WeekStart};
@@ -37,17 +38,19 @@ pub struct Page {
     pub main: String,
     /// [`Look::css`] for the colour scheme set.
     pub vars: String,
+    /// `Lang::language_tag` of the language set, for the page's `<html>`.
+    pub lang: String,
 }
 
-/// Where a page is asked for, as the window's hash states it: `/`,
-/// `/day/<date>`, `/week/<date>`, `/month/<yyyy-mm>`, `/year/<yyyy>`, `/all`,
-/// `/books`, `/book/<key>`, `/highlights` and `/settings`.
+/// Where a page is asked for, as the window's hash states it: `/`, `/day/`,
+/// `/week/`, `/month/` and `/year/` with a date (`<yyyy-mm>` and `<yyyy>` read
+/// as the first day), `/all`, `/books`, `/book/<key>`, `/highlights`, `/settings`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
     /// The record's newest day, as the Kindle's Today states it.
     Today,
     Day(i64),
-    /// A span of Rhythm, by a day inside it; `Span::AllTime` carries 0.
+    /// A span of Rhythm by the day it holds, the Kindle's `State::day`; `AllTime` 0.
     Span(Span, i64),
     Books {
         shelf: Shelf,
@@ -58,8 +61,7 @@ pub enum Route {
     },
     Book {
         key: String,
-        /// Which reading the graphs draw, counted from the first; `None` the
-        /// standing one.
+        /// Which reading the graphs draw, from the first; `None` the standing one.
         reading: Option<usize>,
         /// Which end the highlights open at.
         way: Way,
@@ -86,14 +88,19 @@ impl Route {
         };
         let parts: Vec<&str> = path.trim_matches('/').split('/').collect();
         let day = |said: &str| date::parse_day(said);
+        // `at` names a whole date, else a month or a year that `opens` completes.
+        let within = |at: &str, opens: &str| match at.len() {
+            10 => day(at),
+            _ => day(&format!("{at}{opens}")),
+        };
         match parts.as_slice() {
             ["day", at] => day(at).map_or(Route::Today, Route::Day),
             ["week", at] => day(at).map_or(Route::Today, |d| Route::Span(Span::Week, d)),
             ["month", at] => {
-                day(&format!("{at}-01")).map_or(Route::Today, |d| Route::Span(Span::Month, d))
+                within(at, "-01").map_or(Route::Today, |d| Route::Span(Span::Month, d))
             }
             ["year", at] => {
-                day(&format!("{at}-01-01")).map_or(Route::Today, |d| Route::Span(Span::Year, d))
+                within(at, "-01-01").map_or(Route::Today, |d| Route::Span(Span::Year, d))
             }
             ["all"] => Route::Span(Span::AllTime, 0),
             ["books"] => Route::Books {
@@ -154,8 +161,8 @@ impl Route {
             Route::Day(day) => format!("#/day/{}", day_key(*day)),
             Route::Span(Span::AllTime, _) => "#/all".into(),
             Route::Span(Span::Week, day) => format!("#/week/{}", day_key(*day)),
-            Route::Span(Span::Month, day) => format!("#/month/{}", &day_key(*day)[..7]),
-            Route::Span(Span::Year, day) => format!("#/year/{}", &day_key(*day)[..4]),
+            Route::Span(Span::Month, day) => format!("#/month/{}", day_key(*day)),
+            Route::Span(Span::Year, day) => format!("#/year/{}", day_key(*day)),
             Route::Books {
                 shelf,
                 order,
@@ -245,6 +252,11 @@ impl Route {
 fn day_key(day: i64) -> String {
     let (y, m, d) = date::civil_from_days(day);
     format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// The day of `year` the Kindle's arrows step `today` to, a year a step.
+fn in_year(today: i64, year: i64) -> i64 {
+    Span::Year.step(today, year - date::civil_from_days(today).0)
 }
 
 /// How a page names a cover file.
@@ -364,6 +376,7 @@ pub fn render(
             side: side(None, route, s, w, kindle),
             main,
             vars,
+            lang: lang.language_tag().into(),
         };
     };
     let cx = Ctx {
@@ -421,6 +434,7 @@ pub fn render(
         side: side(Some(shown), &route, s, w, kindle),
         main,
         vars,
+        lang: lang.language_tag().into(),
     }
 }
 
@@ -463,13 +477,14 @@ impl Ctx<'_> {
         }
         let [r, g, b] = self.tones[at];
         format!(
-            "<div class=\"made\" style=\"background: linear-gradient(160deg, rgb({r},{g},{b}), rgb({},{},{}))\">\
-             <span{}>{}</span><small>{}</small></div>",
+            "<div class=\"made\"{} style=\"background: linear-gradient(160deg, rgb({r},{g},{b}), rgb({},{},{}))\">\
+             <span>{}</span><small{}>{}</small></div>",
+            lang(&book.language, &book.title),
             r / 2,
             g / 2,
             b / 2,
-            lang(&book.language),
             esc(&book.title),
+            lang(&book.language, &book.author),
             esc(&book.author)
         )
     }
@@ -529,7 +544,7 @@ fn side(
             esc(s.year)
         );
         for year in shown.years() {
-            let to = Route::Span(Span::Year, date::days_from_civil(year, 1, 1));
+            let to = Route::Span(Span::Year, in_year(shown.as_of, year));
             let lit = matches!(route, Route::Span(Span::Year, day) if date::civil_from_days(*day).0 == year);
             item(&mut out, &to, &year.to_string(), lit);
         }
@@ -581,11 +596,25 @@ pub fn esc(text: &str) -> String {
         .replace('"', "&quot;")
 }
 
-/// A `lang` attribute stating `tag`, or nothing where `tag` is blank.
-fn lang(tag: &str) -> String {
-    match tag.trim().is_empty() {
+/// The language `text` of a book tagged `tag` is set in: the Han convention
+/// `Script::resolve` reads off the two, as the Kindle picks a face, else `tag`.
+fn language_of(tag: &str, text: &str) -> String {
+    let named = match Script::resolve(Script::of_language(tag), text) {
+        Script::Japanese => "ja",
+        Script::SimplifiedChinese => "zh-Hans",
+        Script::TraditionalChinese => "zh-Hant",
+        Script::Korean => "ko",
+        Script::Unknown => tag.trim(),
+    };
+    named.to_string()
+}
+
+/// A `lang` attribute stating [`language_of`], or nothing where it names none.
+fn lang(tag: &str, text: &str) -> String {
+    let named = language_of(tag, text);
+    match named.is_empty() {
         true => String::new(),
-        false => format!(" lang=\"{}\"", esc(tag.trim())),
+        false => format!(" lang=\"{}\"", esc(&named)),
     }
 }
 
@@ -667,8 +696,8 @@ mod tests {
             Route::Today,
             Route::Day(day),
             Route::Span(Span::Week, day),
-            Route::Span(Span::Month, date::parse_day("2026-09-01").unwrap()),
-            Route::Span(Span::Year, date::parse_day("2026-01-01").unwrap()),
+            Route::Span(Span::Month, day),
+            Route::Span(Span::Year, day),
             Route::Span(Span::AllTime, 0),
             Route::Books {
                 shelf: Shelf::Finished,
@@ -698,6 +727,15 @@ mod tests {
         }
         assert_eq!(Route::parse("/nowhere"), Route::Today);
         assert_eq!(Route::parse("/year/soon"), Route::Today);
+        let first = |said: &str| date::parse_day(said).unwrap();
+        assert_eq!(
+            Route::parse("/month/2026-09"),
+            Route::Span(Span::Month, first("2026-09-01"))
+        );
+        assert_eq!(
+            Route::parse("/year/2026"),
+            Route::Span(Span::Year, first("2026-01-01"))
+        );
     }
 
     #[test]
@@ -733,7 +771,11 @@ mod tests {
             "{}",
             today.side
         );
-        let year = draw("/year/2026");
+        assert!(
+            today.side.contains("href=\"#/year/2026-10-01\""),
+            "a year opens at the record's newest day"
+        );
+        let year = draw("/year/2026-09-02");
         assert!(
             year.main.contains("href=\"#/day/2026-09-02\""),
             "a day read on opens"
@@ -743,8 +785,12 @@ mod tests {
             "a day with none opens nothing"
         );
         assert!(
-            year.main.contains("href=\"#/month/2026-09\""),
-            "a month name opens its month"
+            year.main.contains("href=\"#/month/2026-08-02\""),
+            "a month name opens its month at the year's day"
+        );
+        assert!(
+            year.main.contains("href=\"#/week/2026-09-02\""),
+            "Week opens on the year's day"
         );
         let week = draw("/week/2026-09-02");
         assert!(week.main.contains("href=\"#/day/2026-09-01\""));
@@ -816,6 +862,45 @@ mod tests {
             None,
         );
         assert_eq!(page.title, "Today");
+    }
+
+    #[test]
+    fn a_book_read_on_one_day_draws_one_bar_a_row_wide_stating_its_time() {
+        let ws = read("screen-one-day");
+        let shown = Shown::of(&ws).unwrap();
+        let page = render(
+            Some(&shown),
+            &ws,
+            &Route::parse("/book/B2"),
+            1072.0,
+            Covers::Files,
+            None,
+        );
+        // `cx.width` is 952 here, and the strip's one bar stands in its middle.
+        assert!(
+            page.main
+                .contains("x=\"457.0\" y=\"0.0\" width=\"38.0\" height=\"150.0\""),
+            "{}",
+            page.main
+        );
+        assert!(
+            page.main
+                .contains("<text x=\"476.0\" y=\"12.9\" font-size=\"11.0\""),
+            "its time, inside the bar's head"
+        );
+        assert!(page.main.contains(">20m</text>"));
+        assert!(page.main.contains("<h1 lang=\"ja\">川辺の記録</h1>"));
+        assert_eq!(page.lang, "en");
+    }
+
+    #[test]
+    fn text_is_tagged_with_the_convention_its_book_and_characters_name() {
+        assert_eq!(language_of("", "川辺の記録"), "ja", "kana");
+        assert_eq!(language_of("", "盛世"), "zh-Hans", "bare Han");
+        assert_eq!(language_of("zh-TW", "盛世"), "zh-Hant");
+        assert_eq!(language_of("ja", "盛世"), "ja", "the tag before the text");
+        assert_eq!(language_of("en", "The Iliad"), "en");
+        assert_eq!(lang("", "The Iliad"), "", "nothing names a language");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 // The window's shell: `show` sets in place the route the hash names, as the
 // `page` command draws it, covers through the asset protocol and a chart's
-// figures as tooltips; the listeners carry the clicks, searches and drops.
+// figures as tooltips; each `addEventListener` carries a click, search or drop.
 
 const TAURI = window.__TAURI__;
 
@@ -48,6 +48,7 @@ async function show() {
   const typing = document.activeElement?.dataset?.search ? document.activeElement.selectionStart : null;
   const page = await call("page", { route, width });
   document.getElementById("vars").textContent = page.vars;
+  document.documentElement.lang = page.lang;
   document.title = page.title;
   side.innerHTML = page.side;
   main.innerHTML = page.main;
@@ -103,21 +104,32 @@ document.addEventListener("click", async (event) => {
   await show();
 });
 
-// `[data-search]` narrows its own route: the hash takes `q`, in place.
-main.addEventListener(
-  "input",
-  settled((event) => {
-    const box = event.target.closest("[data-search]");
-    if (!box) return;
-    const [path, query] = (location.hash.slice(1) || "/").split("?");
-    const params = new URLSearchParams(query ?? "");
-    if (box.value) params.set("q", box.value);
-    else params.delete("q");
-    const said = params.toString();
-    history.replaceState(null, "", `#${path}${said ? `?${said}` : ""}`);
-    show();
-  }, 220),
-);
+/** Whether an input method is composing text, which `show` throws away with the box it is typed in. */
+let composing = false;
+
+// `[data-search]` narrows its own route: the hash takes `q`, in place, from
+// what is typed, and from what an input method commits once `compositionend`
+// says it has.
+const search = settled((box) => {
+  if (composing) return;
+  const [path, query] = (location.hash.slice(1) || "/").split("?");
+  const params = new URLSearchParams(query ?? "");
+  if (box.value) params.set("q", box.value);
+  else params.delete("q");
+  const said = params.toString();
+  history.replaceState(null, "", `#${path}${said ? `?${said}` : ""}`);
+  show();
+}, 220);
+main.addEventListener("input", (event) => {
+  const box = event.target.closest("[data-search]");
+  if (box && !event.isComposing && !composing) search(box);
+});
+main.addEventListener("compositionstart", () => (composing = true));
+main.addEventListener("compositionend", (event) => {
+  composing = false;
+  const box = event.target.closest("[data-search]");
+  if (box) search(box);
+});
 
 main.addEventListener("mousemove", (event) => {
   const at = event.target.closest("[data-tip]");
@@ -142,7 +154,7 @@ TAURI.webview.getCurrentWebview().onDragDropEvent((event) => {
   if (payload.type === "drop") bring(payload.paths ?? []).catch(console.error);
 });
 
-// ← and → step a span or a day, through the arrows the page draws.
+// `ArrowLeft` and `ArrowRight` step a span or a day, through the page's `a[data-key]`.
 document.addEventListener("keydown", (event) => {
   if (event.target.closest("input") || event.metaKey || event.ctrlKey || event.altKey) return;
   const key = { ArrowLeft: "prev", ArrowRight: "next" }[event.key];
@@ -156,13 +168,15 @@ window.addEventListener("hashchange", () => show().catch(console.error));
 window.addEventListener(
   "resize",
   settled(() => {
-    if (Math.abs(main.clientWidth - drawn.width) > 8) show().catch(console.error);
+    if (!composing && Math.abs(main.clientWidth - drawn.width) > 8) show().catch(console.error);
   }, 150),
 );
 
-// `poll` draws the sidebar again where `kindle` changes: a Kindle plugged in or out.
+// `poll` draws the sidebar again where `kindle` changes, a Kindle plugged in or
+// out, and asks nothing while `composing`.
 let kindle;
 async function poll() {
+  if (composing) return;
   const now = await TAURI.core.invoke("kindle").catch(() => null);
   if (kindle !== undefined && now !== kindle) show().catch(console.error);
   kindle = now;
