@@ -538,22 +538,29 @@ svg text {
   padding: 16px 20px;
   box-shadow: 0 1px 2px var(--shade), 0 0 0 1px var(--edge);
 }
+/* `.highlight blockquote` takes its rule's colour from its own `style`. */
 .highlight blockquote {
   margin: 0;
+  padding: 2px 0 2px 16px;
+  border-left: 3px solid;
   font-family: var(--serif);
   font-size: 16px;
   line-height: 1.55;
 }
 .highlight .note {
   margin: 10px 0 0;
-  padding-left: 12px;
-  border-left: 3px solid var(--accent-soft);
-  font-size: 13px;
 }
 .highlight .where {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
   margin: 10px 0 0;
   font-size: 12px;
   color: var(--faint);
+}
+.highlight mark {
+  background: var(--accent-soft);
+  color: inherit;
 }
 .highlights h3 {
   display: flex;

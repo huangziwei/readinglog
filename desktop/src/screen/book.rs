@@ -5,6 +5,8 @@
 use std::fmt::Write as _;
 
 use readinglog_native::date;
+use readinglog_native::highlights::Highlight;
+use readinglog_native::ui::paint;
 use readinglog_native::view::Way;
 use readinglog_native::view::book as book_view;
 use readinglog_native::view::book_graphs;
@@ -192,25 +194,28 @@ fn marks(cx: &Ctx, at: usize, reading: Option<usize>, way: Way, query: &str) -> 
         let _ = write!(out, "<p class=\"lede\">{}</p>", esc(s.no_highlights_here));
     }
     for row in &listed {
-        out.push_str(&highlight(cx, at, &row.highlight, row.note.as_ref()));
+        out.push_str(&highlight(cx, at, &row.highlight, row.note.as_ref(), query));
     }
     out.push_str("</div></section>");
     out
 }
 
-/// One highlight of the book at `at`: its passage, the note written on it,
-/// and where and when it was made.
+/// One highlight of the book at `at` as the Kindle's highlights row sets it:
+/// the passage behind a rule in `paint::highlight_colour`, `note` under it at
+/// the margin, and the label with `Highlight::day` at the line's other end.
 pub(super) fn highlight(
     cx: &Ctx,
     at: usize,
-    highlight: &readinglog_native::highlights::Highlight,
-    note: Option<&readinglog_native::highlights::Highlight>,
+    highlight: &Highlight,
+    note: Option<&Highlight>,
+    needle: &str,
 ) -> String {
     let book = &cx.stats.books[at];
     let mut out = format!(
-        "<div class=\"highlight\"><blockquote{}>{}</blockquote>",
+        "<div class=\"highlight\"><blockquote style=\"border-color: {}\"{}>{}</blockquote>",
+        hex(paint::highlight_colour(&highlight.colour, true)),
         lang(&book.language, &highlight.body),
-        esc(&highlight.body)
+        washed(&highlight.body, needle)
     );
     // `note` holds the reader's own words, and `lang` reads them for a language.
     if let Some(note) = note {
@@ -218,17 +223,36 @@ pub(super) fn highlight(
             out,
             "<p class=\"note\"{}>{}</p>",
             lang("", &note.body),
-            esc(&note.body)
+            washed(&note.body, needle)
         );
     }
-    let made = date::parse_day(date::day_of(&highlight.at))
-        .map(|day| format!(" · {}", date::short_day(day, cx.s)))
+    let made = highlight
+        .day()
+        .map(|day| date::year_day(day, cx.s))
         .unwrap_or_default();
     let _ = write!(
         out,
-        "<p class=\"where\">{}{}</p></div>",
+        "<p class=\"where\"><span>{}</span><span>{}</span></p></div>",
         esc(&highlights_view::label(highlight, book.extent, cx.s)),
         esc(&made)
     );
+    out
+}
+
+/// `text` escaped, each run of `needle` `highlights_view::runs_in` finds in a
+/// `<mark>`.
+fn washed(text: &str, needle: &str) -> String {
+    let mut out = String::new();
+    let mut from = 0;
+    for (opens, closes) in highlights_view::runs_in(text, needle) {
+        let _ = write!(
+            out,
+            "{}<mark>{}</mark>",
+            esc(&text[from..opens]),
+            esc(&text[opens..closes])
+        );
+        from = closes;
+    }
+    out.push_str(&esc(&text[from..]));
     out
 }

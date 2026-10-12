@@ -41,7 +41,13 @@ pub(super) fn page(cx: &Ctx, query: &str) -> String {
             );
             last = Some(row.book);
         }
-        out.push_str(&book::highlight(cx, row.book, row.highlight, row.note));
+        out.push_str(&book::highlight(
+            cx,
+            row.book,
+            row.highlight,
+            row.note,
+            query,
+        ));
     }
     out.push_str("</div>");
     out

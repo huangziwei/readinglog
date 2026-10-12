@@ -539,7 +539,7 @@ fn bars(
         let colour = fill(at);
         let _ = write!(
             svg,
-            "<rect x=\"{x:.1}\" y=\"{y:.1}\" width=\"{bar:.1}\" height=\"{tall:.1}\" rx=\"1.5\" fill=\"{}\"><title>{}</title></rect>",
+            "<rect x=\"{x:.1}\" y=\"{y:.1}\" width=\"{bar:.1}\" height=\"{tall:.1}\" fill=\"{}\"><title>{}</title></rect>",
             hex(colour),
             esc(&tip(at))
         );
@@ -1056,20 +1056,23 @@ fn clock(secs: i64) -> String {
     format!("{:02}:{:02}", secs / 3600, secs % 3600 / 60)
 }
 
+/// The width a stretch draws at where its own is less: a line at its moment.
+const MOMENT: f32 = 2.0;
+
 /// Where `secs` into a day stands across `width`.
 fn hour_x(secs: i64, width: f32) -> f32 {
     width * secs.clamp(0, 86_400) as f32 / 86_400.0
 }
 
 /// One day's reading along its twenty-four hours, as `charts::timeline` draws
-/// it: a block for each stretch `Stats::day_blocks` holds, the hours named
-/// every six, each block's times its `<title>`.
+/// it: a block for each stretch `Stats::day_blocks` holds, [`MOMENT`] at the
+/// least, the hours named every six, each block's times its `<title>`.
 pub fn timeline(blocks: &[(i64, i64)], look: &Look, width: f32, s: &Strings) -> String {
     let (strip, axis) = (34.0, 18.0);
     let mut svg = open(width, strip + axis);
     let _ = write!(
         svg,
-        "<rect x=\"0.5\" y=\"0.5\" width=\"{:.1}\" height=\"{:.1}\" rx=\"4\" fill=\"none\" stroke=\"{}\"/>",
+        "<rect x=\"0.5\" y=\"0.5\" width=\"{:.1}\" height=\"{:.1}\" fill=\"none\" stroke=\"{}\"/>",
         width - 1.0,
         strip - 1.0,
         hex(look.rule)
@@ -1095,8 +1098,8 @@ pub fn timeline(blocks: &[(i64, i64)], look: &Look, width: f32, s: &Strings) -> 
         let (x0, x1) = (hour_x(*from, width), hour_x(*to, width));
         let _ = write!(
             svg,
-            "<rect x=\"{x0:.1}\" y=\"3\" width=\"{:.1}\" height=\"{:.1}\" rx=\"2\" fill=\"{}\"><title>{}–{} · {}</title></rect>",
-            (x1 - x0).max(3.0),
+            "<rect x=\"{x0:.1}\" y=\"3\" width=\"{:.1}\" height=\"{:.1}\" fill=\"{}\"><title>{}–{} · {}</title></rect>",
+            (x1 - x0).max(MOMENT),
             strip - 6.0,
             hex(look.accent),
             clock(*from),
@@ -1109,20 +1112,21 @@ pub fn timeline(blocks: &[(i64, i64)], look: &Look, width: f32, s: &Strings) -> 
 }
 
 /// One book's stretches of a day across the same twenty-four hours as
-/// [`timeline`], in the book's `tone`, over a track the width of the day.
+/// [`timeline`], [`MOMENT`] at the least, in the book's `tone`, over a track
+/// the width of the day.
 pub fn spans(blocks: &[(i64, i64)], look: &Look, tone: [u8; 3], width: f32) -> String {
     let mut svg = open(width, 8.0);
     let _ = write!(
         svg,
-        "<rect x=\"0\" y=\"3\" width=\"{width:.1}\" height=\"2\" rx=\"1\" fill=\"{}\"/>",
+        "<rect x=\"0\" y=\"3\" width=\"{width:.1}\" height=\"2\" fill=\"{}\"/>",
         hex(look.l0)
     );
     for (from, to) in blocks {
         let (x0, x1) = (hour_x(*from, width), hour_x(*to, width));
         let _ = write!(
             svg,
-            "<rect x=\"{x0:.1}\" y=\"0\" width=\"{:.1}\" height=\"8\" rx=\"2\" fill=\"{}\"><title>{}–{}</title></rect>",
-            (x1 - x0).max(3.0),
+            "<rect x=\"{x0:.1}\" y=\"0\" width=\"{:.1}\" height=\"8\" fill=\"{}\"><title>{}–{}</title></rect>",
+            (x1 - x0).max(MOMENT),
             hex(tone),
             clock(*from),
             clock(*to)
@@ -1187,7 +1191,7 @@ pub fn week(
             let (bx, by) = (x + (column - bw) / 2.0, base - h);
             let _ = write!(
                 drawn,
-                "<rect x=\"{bx:.1}\" y=\"{by:.1}\" width=\"{bw:.1}\" height=\"{h:.1}\" rx=\"2\" fill=\"{}\"/>",
+                "<rect x=\"{bx:.1}\" y=\"{by:.1}\" width=\"{bw:.1}\" height=\"{h:.1}\" fill=\"{}\"/>",
                 hex(look.bar)
             );
             // `hours` cut into the bar's foot in `look.card`.
@@ -1416,7 +1420,7 @@ pub fn month(
                 };
                 let _ = write!(
                     svg,
-                    "<rect x=\"{x:.1}\" y=\"{ly:.1}\" width=\"{w:.1}\" height=\"{:.1}\" rx=\"3\" fill=\"{}\"><title>{}</title></rect>\
+                    "<rect x=\"{x:.1}\" y=\"{ly:.1}\" width=\"{w:.1}\" height=\"{:.1}\" fill=\"{}\"><title>{}</title></rect>\
                      <text x=\"{:.1}\" y=\"{:.1}\" font-size=\"10.5\" fill=\"{}\" pointer-events=\"none\"{named}>{}</text>",
                     lane_h - 3.0,
                     hex(wash(tones[run.book])),

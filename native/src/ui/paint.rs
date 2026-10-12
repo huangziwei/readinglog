@@ -120,11 +120,13 @@ impl Palette {
     }
 }
 
-/// The eleven colours a sidecar names on 5.19, and the neutral a highlight
-/// stating none, or a name this table does not hold, takes.
+/// The `yellow` a highlight stating no colour takes.
+const YELLOW: [u8; 3] = [0xF3, 0xCE, 0x2B];
+
+/// The eleven colours a sidecar names on 5.19; `default` takes [`YELLOW`].
 const HIGHLIGHT_COLOURS: [(&str, [u8; 3]); 11] = [
     ("orange", [0xF5, 0xA6, 0x23]),
-    ("yellow", [0xF3, 0xCE, 0x2B]),
+    ("yellow", YELLOW),
     ("blue", [0x4A, 0x90, 0xD9]),
     ("dark_blue", [0x2A, 0x4B, 0x8D]),
     ("aqua", [0x3F, 0xB8, 0xAF]),
@@ -133,11 +135,12 @@ const HIGHLIGHT_COLOURS: [(&str, [u8; 3]); 11] = [
     ("purple", [0x9B, 0x59, 0xB6]),
     ("red", [0xD9, 0x4F, 0x45]),
     ("gray", [0x9E, 0x9E, 0x9E]),
-    ("default", [DARK; 3]),
+    ("default", YELLOW),
 ];
 
 /// What the bar beside a highlighted passage is drawn in: the colour the sidecar
-/// stated, and [`DARK`] on a panel drawing grey or for a highlight stating none.
+/// stated, [`YELLOW`] for none or a name the table does not hold, and [`DARK`]
+/// on a panel drawing grey.
 pub fn highlight_colour(name: &str, coloured: bool) -> [u8; 3] {
     if !coloured {
         return [DARK; 3];
@@ -145,7 +148,7 @@ pub fn highlight_colour(name: &str, coloured: bool) -> [u8; 3] {
     HIGHLIGHT_COLOURS
         .iter()
         .find(|(held, _)| *held == name)
-        .map_or([DARK; 3], |(_, rgb)| *rgb)
+        .map_or(YELLOW, |(_, rgb)| *rgb)
 }
 
 /// Whether `palette` can show a colour at all: [`Palette::GREY`] and a panel
@@ -524,6 +527,16 @@ mod tests {
         for step in Palette::GREY.steps {
             assert!(step[0] == step[1] && step[1] == step[2], "{step:?}");
         }
+    }
+
+    #[test]
+    fn a_highlight_stating_no_colour_is_yellow_where_the_panel_shows_colour() {
+        for name in ["", "default", "teal"] {
+            assert_eq!(highlight_colour(name, true), YELLOW, "{name:?}");
+            assert_eq!(highlight_colour(name, false), [DARK; 3], "{name:?}");
+        }
+        assert_eq!(highlight_colour("blue", true), [0x4A, 0x90, 0xD9]);
+        assert_eq!(highlight_colour("blue", false), [DARK; 3]);
     }
 
     #[test]

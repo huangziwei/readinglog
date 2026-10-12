@@ -809,7 +809,11 @@ mod tests {
         assert_eq!(one.title, "A Map of Small Rivers");
         assert!(one.main.contains("Some words"), "its highlight");
         assert!(draw("/all").main.contains("<svg"));
-        assert!(draw("/highlights?q=words").main.contains("Some words"));
+        assert!(
+            draw("/highlights?q=words")
+                .main
+                .contains("Some <mark>words</mark>")
+        );
         assert!(!draw("/highlights?q=nothing").main.contains("Some words"));
         assert!(draw("/settings").main.contains("data-set=\"show_unnamed\""));
         for route in [
@@ -876,7 +880,7 @@ mod tests {
             Covers::Files,
             None,
         );
-        // `cx.width` is 952 here, and the strip's one bar stands in its middle.
+        // `1072.0` leaves a 952 px chart, and `x` 457 sets the one 38 px bar in its middle.
         assert!(
             page.main
                 .contains("x=\"457.0\" y=\"0.0\" width=\"38.0\" height=\"150.0\""),
@@ -891,6 +895,52 @@ mod tests {
         assert!(page.main.contains(">20m</text>"));
         assert!(page.main.contains("<h1 lang=\"ja\">川辺の記録</h1>"));
         assert_eq!(page.lang, "en");
+    }
+
+    #[test]
+    fn a_stretch_draws_a_rectangle_and_a_moment_a_line() {
+        let look = Look::light(&Palette::GREY);
+        let s = Lang::English.strings();
+        // `stretches` holds 30 s at 01:00 and an hour from 02:00, drawn across 960 px.
+        let stretches = [(3600, 3630), (7200, 10_800)];
+        let day = chart::timeline(&stretches, &look, 960.0, s);
+        let book = chart::spans(&stretches, &look, [0x40, 0x60, 0x80], 960.0);
+        for drawn in [&day, &book] {
+            assert!(!drawn.contains("rx="), "{drawn}");
+        }
+        assert!(
+            day.contains("<rect x=\"40.0\" y=\"3\" width=\"2.0\""),
+            "{day}"
+        );
+        assert!(day.contains("<rect x=\"80.0\" y=\"3\" width=\"40.0\""));
+        assert!(
+            book.contains("<rect x=\"40.0\" y=\"0\" width=\"2.0\""),
+            "{book}"
+        );
+        assert!(book.contains("<rect x=\"80.0\" y=\"0\" width=\"40.0\""));
+    }
+
+    #[test]
+    fn a_highlight_stands_behind_a_rule_in_its_colour_with_what_a_search_found_washed() {
+        let ws = read("screen-highlight");
+        let shown = Shown::of(&ws).unwrap();
+        let page = render(
+            Some(&shown),
+            &ws,
+            &Route::parse("/highlights?q=WORDS"),
+            1072.0,
+            Covers::Files,
+            None,
+        );
+        // `read` holds a highlight stating no `colour`, drawn `#f3ce2b`.
+        assert!(
+            page.main.contains(
+                "<blockquote style=\"border-color: #f3ce2b\" lang=\"en\">Some <mark>words</mark></blockquote>"
+            ),
+            "{}",
+            page.main
+        );
+        assert!(page.main.contains("<span>Sep 1, 2026</span></p>"));
     }
 
     #[test]

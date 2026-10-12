@@ -512,7 +512,7 @@ fn keyed(ch: char) -> char {
 
 /// Every run of `needle` in `line`, as byte ranges, matched by [`keyed`] a
 /// character at a time.
-fn runs_in(line: &str, needle: &str) -> Vec<(usize, usize)> {
+pub fn runs_in(line: &str, needle: &str) -> Vec<(usize, usize)> {
     let want: Vec<char> = needle.chars().map(keyed).collect();
     if want.is_empty() {
         return Vec::new();
@@ -602,7 +602,7 @@ pub(super) fn row(cx: &mut Ctx, area: Rect, held: &Row, at: &Layout) {
     }
     let top = area.y + w.name.len() as i32 * m.small;
 
-    // An empty `highlight.colour` takes `paint::highlight_colour`'s neutral.
+    // An empty `highlight.colour` takes `paint::highlight_colour`'s yellow.
     let coloured = paint::is_coloured(&cx.palette);
     let ink = paint::highlight_colour(&held.highlight.colour, coloured);
     let quoted = m.quoted(theme, w.said.len());
