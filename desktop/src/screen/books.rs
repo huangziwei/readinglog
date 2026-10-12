@@ -8,9 +8,9 @@ use readinglog_native::date;
 use readinglog_native::lang::counted;
 use readinglog_native::view::books as books_view;
 use readinglog_native::view::search;
-use readinglog_native::view::{Shelf, Sort, Way, Window, highlights_said};
+use readinglog_native::view::{Shelf, Sort, Way, Window};
 
-use super::{Ctx, Route, chip, esc, lang};
+use super::{Ctx, Route, chip, esc, tile};
 
 pub(super) fn page(
     cx: &Ctx,
@@ -85,7 +85,7 @@ pub(super) fn page(
     }
     out.push_str("<div class=\"grid\">");
     for at in drawn {
-        tile(cx, &mut out, at);
+        out.push_str(&tile::tile(cx, at, None));
     }
     out.push_str("</div>");
     if !nameless.is_empty() {
@@ -98,40 +98,4 @@ pub(super) fn page(
         );
     }
     out
-}
-
-/// One book as the Kindle's row states it: its cover, a bar of its progress,
-/// its title and author, its highlights, its time and where it stands.
-fn tile(cx: &Ctx, out: &mut String, at: usize) {
-    let s = cx.s;
-    let book = &cx.stats.books[at];
-    let width = book.bar_percent().max(0);
-    let read = date::duration(book.read_seconds(cx.from), s);
-    let meta = match (book.is_finished(), book.has_percent()) {
-        (true, _) => format!("{read} · {}", s.shelf_finished),
-        (false, true) => format!(
-            "{read} · {}",
-            s.percent_plain
-                .replace("{d}", &book.percent_shown().to_string())
-        ),
-        (false, false) => read,
-    };
-    let marks = highlights_said(s, cx.stats.highlights_counted(at));
-    let _ = write!(
-        out,
-        "<a class=\"tile\" href=\"{}\"><div class=\"cover\">{}</div>\
-         <div class=\"progress\"><i style=\"width: {width}%\"></i></div>\
-         <p class=\"title\"{}>{}</p><p class=\"author\"{}>{}</p><p class=\"meta\">{}</p>{}</a>",
-        cx.book_link(at),
-        cx.cover(at),
-        lang(&book.language, &book.title),
-        esc(&book.title),
-        lang(&book.language, &book.author),
-        esc(&book.author),
-        esc(&meta),
-        match marks.is_empty() {
-            true => String::new(),
-            false => format!("<p class=\"meta\">{}</p>", esc(&marks)),
-        }
-    );
 }

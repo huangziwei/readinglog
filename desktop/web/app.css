@@ -328,6 +328,9 @@ svg text {
   grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
   gap: 30px 24px;
 }
+.tile {
+  display: block;
+}
 .tile .cover {
   aspect-ratio: 2 / 3;
   border-radius: 4px;
@@ -351,6 +354,9 @@ svg text {
   background: var(--accent);
 }
 .tile .title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   margin: 7px 0 1px;
   font-size: 13px;
   font-weight: 600;
@@ -358,13 +364,22 @@ svg text {
   max-height: 2.6em;
   overflow: hidden;
 }
-.tile .meta {
+.tile .author {
+  margin: 0 0 1px;
+  font-size: 12px;
+  color: var(--soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tile .meta,
+.run aside > .meta {
   margin: 0;
   font-size: 12px;
   color: var(--soft);
 }
 
-/* `.thumb` covers carry no words */
+/* `.thumb` sets no words on a made cover */
 .thumb .made span,
 .thumb .made small {
   display: none;
@@ -562,19 +577,21 @@ svg text {
   background: var(--accent-soft);
   color: inherit;
 }
-.highlights h3 {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 22px 0 2px;
-  font-size: 14px;
+
+/* `.run`: one book's `.highlights` beside its `.tile`, the `aside` held in view */
+.run {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+  margin-top: 30px;
 }
-.highlights h3 .thumb {
-  width: 26px;
-  flex: none;
-  aspect-ratio: 2 / 3;
-  border-radius: 2px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+h2 + .run {
+  margin-top: 0;
+}
+.run aside {
+  position: sticky;
+  top: 22px;
 }
 
 /* `.welcome`: a record with no sitting */
@@ -769,22 +786,7 @@ svg text {
   color: var(--ink);
 }
 
-/* `.grid.small`: what was read over a span; `.tile .author`: the book list's author line */
-.grid.small {
-  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
-  gap: 22px 18px;
-}
-.grid.small .title {
-  font-size: 12px;
-}
-.tile .author {
-  margin: 0 0 1px;
-  font-size: 12px;
-  color: var(--soft);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+/* `.board a`, `.search.wide` and `.said .chip`: a board figure opening its page, a book's own search, a chip in a heading */
 .board a {
   display: flex;
   flex-direction: column;

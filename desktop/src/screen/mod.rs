@@ -10,6 +10,7 @@ mod highlights;
 mod look;
 mod rhythm;
 mod settings;
+mod tile;
 mod words;
 
 use std::fmt::Write as _;
@@ -941,6 +942,46 @@ mod tests {
             page.main
         );
         assert!(page.main.contains("<span>Sep 1, 2026</span></p>"));
+    }
+
+    #[test]
+    fn a_book_stands_as_one_tile_wherever_books_stand_as_covers() {
+        let ws = read("screen-tiles");
+        let shown = Shown::of(&ws).unwrap();
+        let draw = |route: &str| {
+            render(
+                Some(&shown),
+                &ws,
+                &Route::parse(route),
+                1072.0,
+                Covers::Files,
+                None,
+            )
+            .main
+        };
+        let opens = "<a class=\"tile\" href=\"#/book/B1\"><div class=\"cover\">";
+        let named = "<p class=\"title\" lang=\"en\">A Map of Small Rivers</p>\
+                     <p class=\"author\" lang=\"en\">Someone</p>";
+        // `/books` and `/highlights` state the whole record, `/week/` and `/day/` their own days.
+        for (route, stands) in [
+            ("/books", "40m · 40%"),
+            ("/highlights", "40m · 40%"),
+            ("/week/2026-09-01", "10m"),
+            ("/day/2026-09-01", "10m"),
+        ] {
+            let main = draw(route);
+            assert!(main.contains(opens), "{route}: {main}");
+            assert!(main.contains(named), "{route}");
+            assert!(
+                main.contains(&format!(
+                    "<p class=\"meta\">{stands}</p><p class=\"meta\">1 highlight</p></a>"
+                )),
+                "{route}: {main}"
+            );
+        }
+        let highlights = draw("/highlights");
+        assert!(highlights.contains("<section class=\"run\"><aside><a class=\"tile\""));
+        assert!(highlights.contains("<p class=\"meta\">Last read Oct 1, 2026</p></aside>"));
     }
 
     #[test]

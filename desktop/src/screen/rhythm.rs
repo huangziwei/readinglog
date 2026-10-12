@@ -5,12 +5,11 @@
 use std::fmt::Write as _;
 
 use readinglog_native::date;
-use readinglog_native::lang::counted;
 use readinglog_native::view::book as book_view;
 use readinglog_native::view::{Shelf, Span, Window, alltime, covered, rhythm};
 
 use super::chart::{self, Weeks};
-use super::{Ctx, Route, esc, in_year, lang};
+use super::{Ctx, Route, esc, in_year, tile};
 
 /// The span picker: All Time, Year, Month and Week as the Kindle orders them,
 /// each a link onto that span around `day`, `on` lit.
@@ -117,9 +116,9 @@ fn lede(cx: &Ctx, span: Span, day: i64) -> String {
     out
 }
 
-/// Draws the year holding `day` as one strip, each day with reading a link onto
-/// its page and each month's name onto that month at the day the arrows step
-/// `day` to.
+/// The year holding `day` as one strip, each day with reading a link onto its
+/// page and each month's name onto that month at the day the arrows step `day`
+/// to.
 fn year_strip(cx: &Ctx, day: i64, width: f32, months: bool) -> String {
     let (year, month, _) = date::civil_from_days(day);
     let weeks = Weeks::of(year, cx.week, 30.0, width);
@@ -140,9 +139,9 @@ fn year_strip(cx: &Ctx, day: i64, width: f32, months: bool) -> String {
     )
 }
 
-/// Every book read over `days` as its cover, most recently put down first, as
-/// the Kindle's grid under a span states it: what was read of it there and
-/// where it stood as the span closed. [`Ctx::unidentified`] closes it.
+/// Every book read over `days` as its [`tile::tile`] over them, most recently
+/// put down first, as the Kindle's grid under a span lists them.
+/// [`Ctx::unidentified`] closes it.
 fn what_was_read(cx: &Ctx, days: std::ops::RangeInclusive<i64>) -> String {
     let s = cx.s;
     let mut read = cx.stats.book_totals_recent(days.clone());
@@ -155,25 +154,9 @@ fn what_was_read(cx: &Ctx, days: std::ops::RangeInclusive<i64>) -> String {
     if read.is_empty() {
         let _ = write!(out, "<p class=\"lede\">{}</p>", esc(s.nothing_read));
     } else {
-        out.push_str("<div class=\"grid small\">");
-        for (at, secs) in &read {
-            let book = &cx.stats.books[*at];
-            let percent = cx
-                .stats
-                .percent_over(*at, days.clone())
-                .map(|p| counted(s.percent_reached, p))
-                .unwrap_or_default();
-            let _ = write!(
-                out,
-                "<a class=\"tile\" href=\"{}\"><div class=\"cover\">{}</div><p class=\"title\"{}>{}</p>\
-                 <p class=\"meta\">{}</p><p class=\"meta\">{}</p></a>",
-                cx.book_link(*at),
-                cx.cover(*at),
-                lang(&book.language, &book.title),
-                esc(&book.title),
-                esc(&date::duration_tight(*secs, s)),
-                esc(&percent)
-            );
+        out.push_str("<div class=\"grid\">");
+        for (at, _) in &read {
+            out.push_str(&tile::tile(cx, *at, Some(days.clone())));
         }
         out.push_str("</div>");
     }

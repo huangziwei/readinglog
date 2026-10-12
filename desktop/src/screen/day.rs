@@ -7,7 +7,7 @@ use std::fmt::Write as _;
 use readinglog_native::date;
 use readinglog_native::view::{covered, highlights_said, home, rhythm};
 
-use super::{Ctx, Route, book, chart, esc, lang};
+use super::{Ctx, Route, chart, esc, lang};
 
 /// `day` in full: `today` states `home::today_figures`, the current streak
 /// among them, and a picked day `rhythm::day_figures`.
@@ -135,7 +135,8 @@ fn row(cx: &Ctx, day: i64, at: usize, secs: i64) -> String {
     )
 }
 
-/// The highlights made on `day`, each run under its book, newest first.
+/// The highlights made on `day`, newest first, each book's run as
+/// `highlights::run` sets it over `day`.
 fn highlights(cx: &Ctx, day: i64) -> String {
     let rows: Vec<_> = cx
         .stats
@@ -147,26 +148,13 @@ fn highlights(cx: &Ctx, day: i64) -> String {
         return String::new();
     }
     let mut out = format!(
-        "<section><h2>{}<span class=\"said\">{}</span></h2><div class=\"highlights\">",
+        "<section><h2>{}<span class=\"said\">{}</span></h2>",
         esc(cx.s.highlights_tab),
         rows.len()
     );
-    let mut last: Option<usize> = None;
-    for row in &rows {
-        if last != Some(row.book) {
-            let named = &cx.stats.books[row.book];
-            let _ = write!(
-                out,
-                "<h3><span class=\"thumb cover\">{}</span><a href=\"{}\"{}>{}</a></h3>",
-                cx.cover(row.book),
-                cx.book_link(row.book),
-                lang(&named.language, &named.title),
-                esc(&named.title)
-            );
-            last = Some(row.book);
-        }
-        out.push_str(&book::highlight(cx, row.book, row.highlight, row.note, ""));
+    for held in rows.chunk_by(|a, b| a.book == b.book) {
+        out.push_str(&super::highlights::run(cx, held, "", Some(day..=day)));
     }
-    out.push_str("</div></section>");
+    out.push_str("</section>");
     out
 }

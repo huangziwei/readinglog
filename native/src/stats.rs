@@ -58,11 +58,11 @@ pub struct BookStat {
     pub covered: f64,
     /// The seconds those pages were open: `covered`'s numerator, off the same page metrics.
     pub covered_seconds: i64,
-    /// `timer.model`'s own figures for this book, off `Book::timer_ms`,
-    /// `timer_words` and `timer_covered`. These reach reading before
-    /// [`Record::reset_at`], under the timer's own test.
+    /// `Book::timer_ms` in seconds, reaching reading before [`Record::reset_at`].
     pub timer_seconds: i64,
+    /// `Book::timer_words`, over the same reading as `timer_seconds`.
     pub timer_words: i64,
+    /// `Book::timer_covered`, the share of the book `timer_seconds` covers.
     pub timer_covered: f64,
     /// `Sitting::time_left` as the newest sitting closed.
     pub stated_time_left: Option<i64>,
@@ -152,8 +152,8 @@ impl BookStat {
         }
     }
 
-    /// This book's reading: `Stats::build` credits each sitting through
-    /// `sitting_seconds`, and the sum of those is this field.
+    /// This book's reading: `seconds`, the sum `Stats::build` credits each
+    /// sitting through `sitting_seconds`.
     pub fn read_seconds(&self, _from: StatsFrom) -> i64 {
         self.seconds
     }
@@ -181,8 +181,7 @@ impl BookStat {
             StatsFrom::Kindle => (self.timer_seconds, self.timer_covered),
             StatsFrom::App => (self.covered_seconds, self.covered),
         };
-        // `DataSufficient:NO` and -3 stand in the log on a
-        // zero here, beside a zero `TotalTime` and a zero `TotalWords`.
+        // `covered` or `read` at zero leaves nothing to project from.
         if covered <= 0.0 || read <= 0 {
             return None;
         }
@@ -190,8 +189,8 @@ impl BookStat {
     }
 
     /// Words a minute: `stated_wpm` under [`StatsFrom::Kindle`], else this
-    /// mode's own words over this mode's own seconds. The two sides always
-    /// come from one source, never the pages over the counter.
+    /// mode's own words over this mode's own seconds, both off one source and
+    /// never the pages over the counter.
     pub fn wpm(&self, from: StatsFrom) -> Option<i64> {
         if let (StatsFrom::Kindle, Some(stated)) = (from, self.stated_wpm) {
             return Some(stated);
@@ -235,9 +234,9 @@ pub struct Sitting {
     pub stretches: Vec<Stretch>,
 }
 
-/// The sitting histogram: five minutes a band, and one band above them all.
-/// [`Stats::first_band`] is the band the scale opens on.
+/// The width of one band of the sitting histogram; [`Stats::first_band`] names the first.
 pub const SITTING_STEP_SECS: i64 = 5 * 60;
+/// The bands of the sitting histogram, the last holding every longer sitting.
 pub const SITTING_BANDS: usize = 25;
 
 /// What a span of days came to, from [`Stats::tally`].
@@ -303,9 +302,9 @@ pub struct Across<'a> {
 }
 
 impl Stats {
-    /// Total up everything the record holds; `library` is not read here. `today`
-    /// places the current streak, `unidentified` and `floor` settle which sittings
-    /// count, and `from` picks the seconds, per [`sitting_seconds`].
+    /// Everything the record holds, totalled, with no library read. `today`
+    /// places the current streak, `unidentified` and `floor` settle which
+    /// sittings count, and `from` picks the seconds, per [`sitting_seconds`].
     pub fn build(
         record: &Record,
         today: i64,
@@ -317,7 +316,7 @@ impl Stats {
             sitting_floor: floor,
             ..Self::default()
         };
-        // One slot per book, in first-seen order; the sort comes last.
+        // One slot per book, in first-seen order, until `sort_books` orders them.
         let mut index: Vec<(i64, usize)> = Vec::new();
         for s in &record.sittings {
             let Some(day) = date::parse_day(date::day_of(&s.started_at)) else {
@@ -386,8 +385,8 @@ impl Stats {
             }
         }
 
-        // A book `Record::clear_book` emptied has no sitting to be found by,
-        // and is listed at zero.
+        // `record.books` lists at zero a book `Record::clear_book` emptied of
+        // every sitting.
         for stored in record.books.iter().filter(|b| b.kept && b.is_book()) {
             let extent = match stored.extent {
                 0 => continue,
@@ -409,8 +408,8 @@ impl Stats {
         out
     }
 
-    /// Give each book the number of distinct days it was read on, in one pass
-    /// over the sittings.
+    /// Each book's `days`: the distinct days it was read on, in one pass over
+    /// the sittings.
     fn hold_days(&mut self) {
         let mut seen: Vec<(usize, i64)> = self
             .sittings
@@ -427,9 +426,9 @@ impl Stats {
         }
     }
 
-    /// Hand every `a` row to the book it names, after `sort_books`, at that
-    /// book's index in [`Self::books`]. A highlight naming no book there is held
-    /// in [`Self::highlights`] all the same.
+    /// Every `a` row handed to the book it names, after `sort_books`, at that
+    /// book's index in [`Self::books`]; [`Self::highlights`] holds one naming no
+    /// book there all the same.
     fn hold_highlights(&mut self, record: &Record) {
         self.highlights = record.highlights.clone();
         // Both ways in, built once, each holding the *first* slot under a key.
@@ -441,8 +440,7 @@ impl Stats {
                 .entry(crate::identify::normalise(&book.title))
                 .or_insert(at);
         }
-        // The folding comes after the handing out. A highlight no book holds is
-        // not folded.
+        // `self.folded` holds `None` for a highlight no book holds.
         self.folded = Vec::with_capacity(self.highlights.len());
         let mut held: Vec<(usize, usize)> = Vec::new();
         for (at, highlight) in self.highlights.iter().enumerate() {
@@ -488,9 +486,9 @@ impl Stats {
         crate::highlights::paired(&held)
     }
 
-    /// Every book's [`Self::book_highlights`] rows as one list, `Highlight::at` descending,
-    /// each carrying its `book` and its `at` in that book's own list. A highlight
-    /// carrying an empty `Highlight::at` stands at the end.
+    /// Every book's [`Self::book_highlights`] rows as one list, `Highlight::at`
+    /// descending and an empty one last, each carrying its `book` and its `at`
+    /// in that book's own list.
     pub fn highlights_across(&self) -> Vec<Across<'_>> {
         let mut out: Vec<Across<'_>> = Vec::new();
         for book in 0..self.books.len() {
@@ -520,9 +518,9 @@ impl Stats {
         out
     }
 
-    /// One book's highlights as a row states them: passages highlighted, and notes
-    /// written. A note counts under the second and its passage under the
-    /// first, and the two never double-count a row.
+    /// One book's highlights as a row states them: passages highlighted, and
+    /// notes written, a note under the second and its passage under the
+    /// first, no row counted twice.
     pub fn highlights_counted(&self, book: usize) -> (usize, usize) {
         Self::counted(
             self.book_highlights(book)
@@ -535,12 +533,21 @@ impl Stats {
     /// [`Self::highlights_counted`] over the highlights made on `day` alone, which is
     /// what a row listing that book's reading on that day states.
     pub fn highlights_counted_on(&self, book: usize, day: i64) -> (usize, usize) {
+        self.highlights_counted_over(book, day..=day)
+    }
+
+    /// [`Self::highlights_counted`] over the highlights made inside `days`, a
+    /// row counting where its passage or its note was made there.
+    pub fn highlights_counted_over(
+        &self,
+        book: usize,
+        days: std::ops::RangeInclusive<i64>,
+    ) -> (usize, usize) {
+        let made = |m: &Highlight| m.day().is_some_and(|day| days.contains(&day));
         let held = self.book_highlights(book);
         let mine: Vec<&crate::highlights::Paired<'_>> = held
             .iter()
-            .filter(|m| {
-                m.highlight.day() == Some(day) || m.note.is_some_and(|n| n.day() == Some(day))
-            })
+            .filter(|m| made(m.highlight) || m.note.is_some_and(made))
             .collect();
         Self::counted(&mine)
     }
@@ -581,8 +588,8 @@ impl Stats {
             .collect()
     }
 
-    /// One book's highlights by colour, most first. A highlight the sidecar never
-    /// reached states none and is left out: no clipping carries a colour.
+    /// One book's highlights by the `colour` the sidecar names, most first, an
+    /// empty `colour` left out.
     pub fn highlights_by_colour(&self, book: usize) -> Vec<(String, usize)> {
         let mut out: Vec<(String, usize)> = Vec::new();
         for highlight in self.highlights_of(book).filter(|m| !m.colour.is_empty()) {
@@ -595,9 +602,9 @@ impl Stats {
         out
     }
 
-    /// The longest streak over the days `book` does not stand alone on.
-    /// [`Self::book_days`] holds that book's seconds per day, and a day with
-    /// seconds past them goes to [`streaks`].
+    /// The longest streak over the days `book` does not stand alone on: those
+    /// whose seconds run past that book's own in [`Self::book_days`], through
+    /// [`streaks`].
     pub fn streak_without(&self, book: usize) -> i64 {
         let mine = self.book_days(book);
         let left: Vec<(i64, i64)> = self
@@ -620,9 +627,9 @@ impl Stats {
             .map_or(0, |i| self.days[i].1)
     }
 
-    /// Where a day's reading fell, as spans of seconds into the day.
-    /// `Sitting::hours` states the seconds read in each clock hour, and each
-    /// block stands in that hour, as many seconds long as were read there.
+    /// Where a day's reading fell, as spans of seconds into the day: a block in
+    /// each clock hour `Sitting::hours` states, as many seconds long as were
+    /// read there.
     pub fn day_blocks(&self, day: i64) -> Vec<(i64, i64)> {
         self.day_blocks_of(day, None)
     }
@@ -703,7 +710,7 @@ impl Stats {
 
     /// Where one book stood as each of its sittings ended: one entry per
     /// [`Self::book_sittings`], ascending, the day and the progress as a whole per
-    /// cent. A sitting with no `Sitting::progress` holds `None`.
+    /// cent, `None` where `Sitting::progress` states none.
     pub fn book_progress(&self, book: usize) -> Vec<(i64, Option<i64>)> {
         let mut out: Vec<((i64, i64), Option<f64>)> = self
             .book_sittings(book)
@@ -721,8 +728,8 @@ impl Stats {
     }
 
     /// One entry per [`Self::book_sittings`], ascending and in step with
-    /// [`Self::book_progress`], each stretch a pair of whole per cents. A sitting
-    /// stating no stretch holds an empty list.
+    /// [`Self::book_progress`], each stretch a pair of whole per cents, an
+    /// empty list where a sitting states no stretch.
     pub fn book_stretches(&self, book: usize) -> Vec<Vec<(i64, i64)>> {
         /// One sitting's stretches, keyed by its close as [`Stats::book_progress`] keys.
         type Closed = ((i64, i64), Vec<(i64, i64)>);
@@ -738,9 +745,9 @@ impl Stats {
         out.into_iter().map(|(_, stretches)| stretches).collect()
     }
 
-    /// Each reading of one book: the first and last day it was read on. A day
-    /// in `BookStat::restarted_on` opens a reading and closes the one before
-    /// it. Only the last entry can name a reading left open.
+    /// Each reading of one book: the first and last day it was read on, each
+    /// day in `BookStat::restarted_on` opening one and closing the one before,
+    /// the last entry alone naming a reading left open.
     pub fn book_readings(&self, book: usize) -> Vec<(i64, i64)> {
         let Some(stat) = self.books.get(book) else {
             return Vec::new();
@@ -766,8 +773,8 @@ impl Stats {
     }
 
     /// One book's reading over `days` cut by the clock hour it happened in, as
-    /// [`Stats::hours_over`] cuts a span of days. The span is one reading of
-    /// the book, off [`Stats::book_readings`].
+    /// [`Stats::hours_over`] cuts a span of days. `days` is one reading of the
+    /// book, off [`Stats::book_readings`].
     pub fn book_hours(&self, book: usize, days: std::ops::RangeInclusive<i64>) -> [i64; 24] {
         let mut out = [0i64; 24];
         for sitting in self.book_sittings(book).filter(|s| days.contains(&s.day)) {
@@ -787,9 +794,9 @@ impl Stats {
             .sum()
     }
 
-    /// Seconds read of each book over a span of days, longest first. A sitting
-    /// on an unidentified book carries none and is left out: these need not add up
-    /// to [`Stats::day_seconds`] over the same days.
+    /// Seconds read of each book over a span of days, longest first, a sitting
+    /// on an unidentified book left out: [`Stats::day_seconds`] over the same
+    /// days can come to more.
     pub fn book_totals(&self, days: std::ops::RangeInclusive<i64>) -> Vec<(usize, i64)> {
         let mut out: Vec<(usize, i64)> = Vec::new();
         for sitting in self.sittings_over(days.clone()) {
@@ -840,9 +847,9 @@ impl Stats {
             .map(|(_, p)| whole_per_cent((p * 100.0).clamp(0.0, 100.0)))
     }
 
-    /// Unidentified books read over `days`, and the seconds on them.
-    /// A book is one [`Sitting::key`]: two sittings whose library number no
-    /// line ever stated carry a word position apiece and count as two.
+    /// Unidentified books read over `days`, and the seconds on them, a book to
+    /// each [`Sitting::key`]: two sittings no line stated a library number for,
+    /// a word position apiece, counting as two.
     pub fn unidentified_over(&self, days: std::ops::RangeInclusive<i64>) -> (usize, i64) {
         let mut keys: Vec<i64> = Vec::new();
         let mut seconds = 0;
@@ -876,9 +883,9 @@ impl Stats {
         self.days.last().map(|(d, _)| *d).unwrap_or(0)
     }
 
-    /// Everything read over `days`, cut by the clock hour it happened in. A
-    /// sitting states its own seconds per hour: one running past midnight is
-    /// counted where it was read, never where it started.
+    /// Everything read over `days`, cut by the clock hour it happened in, off
+    /// each sitting's own `hours`: a sitting past midnight counted where it
+    /// was read, never where it started.
     pub fn hours_over(&self, days: std::ops::RangeInclusive<i64>) -> [i64; 24] {
         let mut out = [0i64; 24];
         for sitting in self.sittings_over(days.clone()) {
@@ -909,9 +916,8 @@ impl Stats {
         out
     }
 
-    /// One fold of the record onto a cycle: what each bucket holds, what one
-    /// turn averages, and the fullest bucket. Each bucket divides by however
-    /// many of it the record covers.
+    /// One fold of the record onto a cycle: `values`, each bucket's figure;
+    /// `each`, what one turn averages; and the fullest bucket.
     pub fn fold(&self, values: Vec<i64>, each: i64) -> Fold {
         let busiest = values
             .iter()
@@ -937,8 +943,7 @@ impl Stats {
     }
 
     /// The record folded onto one day: the seconds each of the twenty-four
-    /// hours holds in an average day read on. Every such day holds all
-    /// twenty-four, and every bucket takes the same divisor.
+    /// hours holds in an average day read on, every hour over the one divisor.
     pub fn average_day(&self, today: i64) -> Fold {
         let over = self.opened(today)..=today;
         // `days_over` counts the days with reading on them, the `a_day` divisor.
@@ -1079,8 +1084,8 @@ impl Stats {
     }
 
     /// Weeks back from the one holding `today` with a day read in each, every
-    /// week opening on the day `week` starts on. A week with nothing read in it
-    /// yet leaves the count on the week before it.
+    /// week opening on the day `week` starts on, a week with nothing read in it
+    /// yet counted from the week before it.
     pub fn weeks_running(&self, today: i64, week: WeekStart) -> i64 {
         let opens = |day: i64| day - week.column_of(date::weekday(day)) as i64;
         let any = |from: i64| (from..from + 7).any(|d| self.day_seconds(d) > 0);
@@ -1104,7 +1109,7 @@ impl Stats {
             let b = &self.books[i];
             std::cmp::Reverse((b.last_day, b.last_secs, b.seconds))
         });
-        // Every sitting names its book by slot.
+        // `Sitting::book` names a slot, which `moved` carries across the sort.
         let mut moved: Vec<usize> = vec![0; order.len()];
         for (to, &from) in order.iter().enumerate() {
             moved[from] = to;
@@ -1216,9 +1221,9 @@ fn hours_at(hours: &[(u8, i64)], sum: i64, target: i64, from: i64, to: i64) -> V
     out
 }
 
-/// `secs` across the clock hours between `from` and `to`, seconds into the day.
-/// Each hour of `held` takes the share of the span it holds, and the hour `from`
-/// falls in takes the remainder, as `log::sitting` books a page turn.
+/// `secs` across the clock hours between `from` and `to`, seconds into the day:
+/// `held` gives each hour its share of the span and the hour `from` falls in
+/// the remainder, as `log::sitting` books a page turn.
 fn spread_over(secs: i64, from: i64, to: i64) -> Vec<(u8, i64)> {
     let hour = |at: i64| (at / 3600).clamp(0, 23) as usize;
     if secs <= 0 {
@@ -1258,7 +1263,7 @@ fn credit(book: &mut BookStat, s: &sitting::Sitting, day: i64, secs: i64, words:
     book.sittings += 1;
     book.page_turns += s.page_turns;
     book.words += words;
-    // The share and the seconds over it come off the same pages together.
+    // `s.covered` and `s.paged_seconds` come off the same pages, and add together.
     if s.covered > 0.0 {
         book.covered += s.covered;
         book.covered_seconds += s.paged_seconds;
@@ -1376,15 +1381,14 @@ pub(crate) mod tests {
         assert_eq!((book.percent_shown(), book.bar_percent()), (55, 55));
         assert!(!book.is_finished());
 
-        // The figure holds where the reading stands; the bar fills.
+        // `finished` fills `bar_percent` and leaves `percent_shown` standing.
         book.finished = true;
         assert_eq!((book.percent_shown(), book.bar_percent()), (55, 100));
         assert!(book.is_finished());
 
         book.percent = 100.0;
         assert_eq!((book.percent_shown(), book.bar_percent()), (100, 100));
-        // A book the library states no progress for states no figure, and
-        // its bar fills on the mark alone.
+        // `percent` -1 states no figure, and `finished` alone fills the bar.
         book.percent = -1.0;
         assert!(!book.has_percent());
         assert_eq!(book.bar_percent(), 100);
@@ -1397,7 +1401,7 @@ pub(crate) mod tests {
         assert_eq!(book.times_finished(), 0);
         book.finished = true;
         assert_eq!(book.times_finished(), 1);
-        // Restarted out of that reading: the record banks it and the mark goes.
+        // `restarted_on` banks that reading, and `finished` clears.
         book.finished = false;
         book.restarted_on = vec![0];
         assert_eq!(
@@ -1444,8 +1448,8 @@ pub(crate) mod tests {
     fn a_bar_and_the_figure_beside_it_state_one_progress() {
         let stored = record::Book::default();
         let mut book = fresh(1, &stored, 0);
-        // The pairs straddle the rounding: a truncated value and a rounded
-        // one part company.
+        // `raw` straddles the rounding in each pair, where truncating and
+        // rounding part company.
         for (raw, shown) in [(99.6, 100), (99.4, 99), (0.4, 0), (100.0, 100)] {
             book.percent = raw;
             assert_eq!(book.percent_shown(), shown, "{raw}");
@@ -1454,9 +1458,9 @@ pub(crate) mod tests {
 
     #[test]
     fn every_month_the_record_touches_states_what_was_read_in_it() {
-        // A record opening on 27 July and running to 4 September: five days of
-        // July, all of August, four of September. Each month states its own
-        // reading, whatever share of that month the record holds.
+        // `days` from 27 July to 4 September: five days of July, all of
+        // August, four of September, each month stating its own reading
+        // whatever share of it the record holds.
         let days: Vec<i64> = (at(2026, 7, 27)..=at(2026, 9, 4)).collect();
         let today = at(2026, 9, 5);
         let stats = Stats::build(
@@ -1477,8 +1481,8 @@ pub(crate) mod tests {
 
     #[test]
     fn the_board_and_a_span_state_the_same_days_the_same_way() {
-        // Ten days of an hour with three empty: days read and days covered
-        // differ, and the two figures cannot agree by accident.
+        // `days`, ten of an hour with three empty, holds days read apart from
+        // days covered, two figures that cannot agree by accident.
         let days: Vec<i64> = (0..10)
             .filter(|i| i % 4 != 0)
             .map(|i| at(2026, 3, 1) + i)
@@ -1517,7 +1521,7 @@ pub(crate) mod tests {
         assert_eq!(running(at(2026, 3, 20)), 3);
         // The Monday after, with nothing read in its week yet.
         assert_eq!(running(at(2026, 3, 23)), 3);
-        // A whole week with nothing read in it ends the run.
+        // `at(2026, 3, 30)` follows a whole week with nothing read: the run ends.
         assert_eq!(running(at(2026, 3, 30)), 0);
     }
 
@@ -1562,10 +1566,10 @@ pub(crate) mod tests {
         assert_eq!(stats.percent_over(0, first..=first), Some(31));
         assert_eq!(stats.percent_over(0, last..=last), Some(62));
         assert_eq!(stats.percent_over(0, first..=last), Some(62));
-        // A day with no sitting of this book carries no per cent.
+        // `first - 1` holds no sitting of this book, and no per cent.
         assert_eq!(stats.percent_over(0, first - 1..=first - 1), None);
 
-        // A sitting with no `progress` leaves the one before it standing.
+        // `progress` `None` on a sitting leaves the one before it standing.
         record.sittings[3].progress = None;
         let stats = Stats::build(
             &record,
@@ -1607,7 +1611,7 @@ pub(crate) mod tests {
         let stats = Stats::build(&record, ended, true, StatsFrom::Kindle, SittingFloor::All);
         assert_eq!(stats.books[0].percent_shown(), 100);
         assert_eq!(stats.percent_over(0, ended..=ended), Some(100));
-        // A day before the last one takes the sample it holds.
+        // `ended + 1` as `today` leaves `ended` the last day, at the library's 100.
         let stats = Stats::build(
             &record,
             ended + 1,
@@ -1699,7 +1703,7 @@ pub(crate) mod tests {
         assert_eq!(minute.total_words, 100, "nor its words");
         assert_eq!(minute.sitting_bands()[0], 1);
 
-        // A floor above every sitting leaves `day` unread and `longest_streak` 0.
+        // `SittingFloor::FifteenMinutes`, above every sitting, leaves `day` unread.
         let quarter = counted(SittingFloor::FifteenMinutes);
         assert!(quarter.sittings.is_empty());
         assert_eq!(quarter.total_seconds, 0);
@@ -1710,8 +1714,8 @@ pub(crate) mod tests {
 
     #[test]
     fn the_floor_reads_the_clock_the_stats_are_taken_from() {
-        // Forty counted seconds, three minutes the turn lines credit: under
-        // [Kindle] this is a skim, under [App] it is a sitting.
+        // 40 counted seconds and 180 `timed_seconds`: a skim under
+        // [`StatsFrom::Kindle`], a sitting under [`StatsFrom::App`].
         let day = at(2026, 3, 1);
         let mut record = on_days(&[day], 40);
         record.sittings[0].timed_seconds = 180;
@@ -1722,8 +1726,8 @@ pub(crate) mod tests {
         assert_eq!(counted(StatsFrom::App).total_seconds, 180);
     }
 
-    /// The turn lines are what [`StatsFrom::App`] stands on; the pages are what
-    /// is left without them.
+    /// [`StatsFrom::App`] stands on `timed_seconds`, and on `paged_seconds`
+    /// without them.
     #[test]
     fn app_stats_take_the_turn_lines_over_the_pages() {
         let day = at(2026, 3, 1);
@@ -1763,7 +1767,7 @@ pub(crate) mod tests {
             Stats::build(record, at(2026, 3, 2), true, from, SittingFloor::OneMinute)
         };
 
-        // Neither source reaches 455: `seconds` answers under both.
+        // 455 is past both sources: `seconds` answers under both.
         let app = built(&record, StatsFrom::App);
         assert_eq!((app.total_seconds, app.total_words), (455, 1_819));
         assert_eq!(built(&record, StatsFrom::Kindle).total_seconds, 455);
@@ -1814,15 +1818,15 @@ pub(crate) mod tests {
         assert_eq!(kindle.books[0].wpm(StatsFrom::Kindle), Some(100));
         assert_eq!(app.books[0].wpm(StatsFrom::App), Some(300));
 
-        // A sitting whose pages state nothing keeps the counter's words.
+        // `paged_words` 0 keeps the counter's words.
         record.sittings[0].paged_words = 0;
         assert_eq!(built(&record, StatsFrom::App).total_words, 1_000);
     }
 
     #[test]
     fn a_book_reached_by_nothing_but_skims_is_listed_at_zero() {
-        // Every one of the identified book's sittings cut under a minute; the
-        // unidentified book's sitting is left long.
+        // `148_207`'s sittings cut under a minute, and the unidentified book's
+        // left long.
         let mut record = record();
         for s in &mut record.sittings {
             if s.end_position == 148_207 {
@@ -1855,14 +1859,14 @@ pub(crate) mod tests {
             stats.sittings.iter().all(|s| s.book.is_none()),
             "and no sitting of it survived"
         );
-        // The one long sitting is the whole of the record's reading.
+        // `1_800`, the one long sitting, is the whole of the record's reading.
         assert_eq!(stats.total_seconds, 1_800);
     }
 
     #[test]
     fn a_skim_before_the_reading_does_not_take_the_books_first_day() {
-        // The skim opens the row on `NO_DAY`; the sitting after it must give
-        // the book a real first day, not a minimum taken against `i64::MIN`.
+        // `record.sittings[0]`, a skim, opens the row on `NO_DAY`, and the
+        // sitting after it gives the book a real first day, not `i64::MIN`.
         let mut record = record();
         record.sittings[0].seconds = 30;
         record.sittings[0].hours = vec![(9, 30)];
@@ -1891,7 +1895,7 @@ pub(crate) mod tests {
             Stats::build(&record, at(2026, 3, 2), true, StatsFrom::Kindle, floor).sitting_bands()
         };
 
-        // Every floor drops the sittings under it and none above it.
+        // `bands` under each floor drops the sittings under it and none above.
         let all = bands(SittingFloor::All);
         assert_eq!(all.len(), SITTING_BANDS);
         assert_eq!(
@@ -1947,8 +1951,8 @@ pub(crate) mod tests {
     }
 
     /// `BookStat::sittings` and [`Stats::book_sittings`] count one population,
-    /// whatever floor [`Stats::build`] took. Every figure over a book's
-    /// sittings reads one of the two.
+    /// whatever floor [`Stats::build`] took, the one every figure over a
+    /// book's sittings reads.
     #[test]
     fn a_book_states_one_count_of_its_sittings() {
         for floor in SittingFloor::ALL {
@@ -1960,9 +1964,8 @@ pub(crate) mod tests {
                     "{floor:?} book {at}"
                 );
                 assert_eq!(stats.book_progress(at).len() as i64, book.sittings);
-                // The band draws one cluster mark a sitting off `book_progress`
-                // and its bars off `book_stretches`; the two walk in step or
-                // the bars belong to the wrong sittings.
+                // `book_stretches` walks in step with `book_progress`, a
+                // band's bars and its marks each drawn off one sitting.
                 assert_eq!(stats.book_stretches(at).len() as i64, book.sittings);
                 assert_eq!(stats.book_days(at).len() as i64, book.days);
                 let whole = i64::MIN..=i64::MAX;
@@ -2095,8 +2098,8 @@ pub(crate) mod tests {
 
     #[test]
     fn a_month_of_the_year_sums_every_occurrence_the_record_holds() {
-        // Two Augusts of an hour each against one October of an hour: a total
-        // states two hours against one.
+        // `days` holds two Augusts of an hour each against one October of an
+        // hour: two hours against one.
         let days = [
             at(2023, 7, 1),
             at(2023, 8, 10),
@@ -2118,8 +2121,8 @@ pub(crate) mod tests {
 
     #[test]
     fn every_hour_of_an_average_day_divides_by_the_days_covered() {
-        // Ten days, an hour read in the ninth hour of each: an average day
-        // holds that hour and nothing else.
+        // `days`, ten of an hour read in the ninth hour: an average day of
+        // that hour and nothing else.
         let days: Vec<i64> = (0..10).map(|i| at(2026, 3, 1) + i).collect();
         let today = at(2026, 3, 10);
         let stats = Stats::build(
@@ -2207,7 +2210,7 @@ pub(crate) mod tests {
                     9,
                 ),
             ],
-            // The first book's page events key it 148207; the library, 148209.
+            // `ends` takes the page events' 148207 to the library's 148209.
             ends: vec![(148_207, 148_209)],
             keys: Vec::new(),
             counters: Vec::new(),
@@ -2307,7 +2310,7 @@ pub(crate) mod tests {
             StatsFrom::Kindle,
             SittingFloor::All,
         );
-        // The second book of the two the sittings name is unidentified.
+        // `stats.books` holds one of the two books the sittings name.
         assert_eq!(stats.books.len(), 1);
         let bible = stats
             .books
@@ -2334,7 +2337,7 @@ pub(crate) mod tests {
         // 555 is the one key no book carries, read once on the sixth.
         assert_eq!(stats.unidentified_over(sixth..=sixth), (1, 1_800));
         assert_eq!(stats.unidentified_books(), 1);
-        // A day of identified reading alone counts none.
+        // `seventh` holds identified reading alone, and counts none.
         let seventh = day(2026, 8, 7);
         assert_eq!(stats.unidentified_over(seventh..=seventh), (0, 0));
     }
@@ -2391,7 +2394,7 @@ pub(crate) mod tests {
         assert_eq!(kept.day_seconds(sixth) - dropped.day_seconds(sixth), 1_800);
         assert_eq!(dropped.sittings.len(), kept.sittings.len() - 1);
         assert!(dropped.sittings.iter().all(|s| s.book.is_some()));
-        // The books themselves are untouched.
+        // `books` stands untouched by the drop.
         assert_eq!(dropped.books, kept.books);
         // `book_count` holds the unidentified key; `books` holds none of it.
         assert_eq!(kept.book_count(), dropped.book_count() + 1);
@@ -2410,10 +2413,10 @@ pub(crate) mod tests {
         assert!(!stats.books.iter().any(|b| b.extent == 555));
         assert!(!stats.books.iter().any(|b| b.title.starts_with("Book at")));
         assert_eq!(stats.unidentified_seconds, 1_800);
-        // Its time is in the day and in the all-time total.
+        // `unidentified_seconds` reaches the day and the all-time total.
         assert_eq!(stats.total_seconds, 1_800 + 1_200 + 1_800 + 600);
         assert_eq!(stats.day_seconds(day(2026, 8, 6)), 1_200 + 1_800);
-        // Its sitting is on the calendar, pointing at no book.
+        // `sittings_on` holds its sitting, pointing at no book.
         let unidentified = stats
             .sittings_on(day(2026, 8, 6))
             .find(|s| s.book.is_none())
@@ -2525,7 +2528,7 @@ pub(crate) mod tests {
             SittingFloor::All,
         );
         assert!(bare.books.is_empty());
-        // Every second is held, and every sitting is on the calendar.
+        // `bare` holds every second and every sitting.
         assert_eq!(bare.total_seconds, 1_800 + 1_200 + 1_800 + 600);
         assert_eq!(bare.unidentified_seconds, bare.total_seconds);
         assert_eq!(bare.sittings.len(), 4);
@@ -2581,7 +2584,7 @@ pub(crate) mod tests {
         );
         assert!(!stats.books.iter().any(|b| b.title == "Reading Log"));
         assert_eq!(stats.skipped_seconds, 720);
-        // The totals are the ones from `record()` alone.
+        // `total_seconds` and `day_seconds` are `record()`'s alone.
         assert_eq!(stats.total_seconds, 1_800 + 1_200 + 1_800 + 600);
         assert_eq!(stats.day_seconds(day(2026, 8, 7)), 600);
     }
@@ -2704,7 +2707,7 @@ pub(crate) mod tests {
         );
         for s in &stats.sittings {
             let book = &stats.books[s.book.expect("every book identified")];
-            // The 22:00 sitting is the only one on the second book.
+            // `22 * 3600` opens the second book's one sitting.
             let expected = if s.from_secs == 22 * 3600 {
                 555
             } else {
@@ -2791,7 +2794,7 @@ pub(crate) mod tests {
         assert_eq!(all[9], 1_800 + 600);
         assert_eq!(all[22], 1_800);
 
-        // The 7th alone holds the one sitting read on it.
+        // `seventh` alone holds the one sitting read on it.
         let seventh = day(2026, 8, 7)..=day(2026, 8, 7);
         let one = stats.hours_over(seventh.clone());
         assert_eq!(one.iter().sum::<i64>(), 600);
@@ -2881,7 +2884,7 @@ pub(crate) mod tests {
         let week = stats.book_totals(day(2026, 8, 1)..=day(2026, 8, 7));
         assert_eq!(week.len(), 2);
         assert!(week[0].1 >= week[1].1, "out of order: {week:?}",);
-        // One day of it, and a day outside the span holds nothing.
+        // `sixth`, one day of it, and `empty`, a day outside it holding nothing.
         let sixth = day(2026, 8, 6);
         assert_eq!(stats.book_totals(sixth..=sixth).len(), 2);
         let empty = day(2026, 8, 4);
@@ -2901,7 +2904,7 @@ pub(crate) mod tests {
         assert_eq!(sixth.len(), 2);
         assert_eq!(sixth[0].from_secs, 21 * 3600, "in the order they happened");
         assert_eq!(sixth[1].from_secs, 22 * 3600);
-        // The 22:00 sitting is on an unidentified book.
+        // `22 * 3600` opens a sitting on an unidentified book.
         let sixth = day(2026, 8, 6);
         let fifth = day(2026, 8, 5);
         assert_eq!(stats.book_totals(sixth..=sixth).len(), 1);
@@ -2952,7 +2955,7 @@ pub(crate) mod tests {
     #[test]
     fn what_is_left_is_projected_from_the_share_the_sittings_carried() {
         let mut record = record();
-        // The three sittings carry the whole quarter the library states.
+        // `carrying` gives the three sittings the whole quarter the library states.
         carrying(&mut record, 148_207, 0.25);
         let stats = Stats::build(
             &record,
@@ -2966,7 +2969,7 @@ pub(crate) mod tests {
         assert_eq!(bible.time_left(StatsFrom::App), Some(10_800));
         assert_eq!(bible.per_day(StatsFrom::Kindle), 1_200);
         assert_eq!(bible.per_sitting(StatsFrom::Kindle), 1_200);
-        // A book the library states no progress for is projected from nothing.
+        // `gone`, a book the library states no progress for, projects nothing.
         let other = Stats::build(
             &record_both_identified(),
             day(2026, 8, 7),
@@ -2979,11 +2982,11 @@ pub(crate) mod tests {
     }
 
     /// `percent` counts reading before [`Record::reset_at`] and `covered` counts
-    /// none of it. The library's own figure is never the divisor.
+    /// none of it, `percent` never the divisor.
     #[test]
     fn a_book_read_before_the_record_is_projected_off_the_share_watched() {
         let mut record = record();
-        // A fiftieth of a book the library states is a quarter done.
+        // `carrying` gives a fiftieth of a book the library states a quarter done.
         carrying(&mut record, 148_207, 0.02);
         let stats = Stats::build(
             &record,
@@ -3026,8 +3029,8 @@ pub(crate) mod tests {
         assert_eq!(bible.time_left(StatsFrom::App), Some(135_000));
     }
 
-    /// A row an older build wrote states no share, and a sitting whose pages
-    /// never reached the log carries none.
+    /// `covered` 0 off a row an older build wrote, or a sitting whose pages
+    /// never reached the log.
     #[test]
     fn a_book_no_sitting_states_a_share_for_is_projected_from_nothing() {
         let stats = Stats::build(
@@ -3042,9 +3045,9 @@ pub(crate) mod tests {
         assert_eq!(bible.time_left(StatsFrom::App), None);
     }
 
-    /// The `t` row is a running total in the book's own sidecar, lost whenever
-    /// that sidecar is written anew. It never stands in for the sum of the
-    /// sittings: that drops every one made before the reset.
+    /// The `t` row, a running total in the book's own sidecar lost whenever
+    /// that sidecar is written anew, never stands in for the sum of the
+    /// sittings, every one made before the reset dropped from it.
     #[test]
     fn a_reset_kindle_counter_never_shrinks_the_book() {
         let mut record = record();
@@ -3105,9 +3108,9 @@ pub(crate) mod tests {
                 .seconds
         };
         assert_eq!(at(&app), at(&kindle) * 3 / 2);
-        // Each mode divides its own words by its own seconds. These sittings
-        // state no page words: [`StatsFrom::App`] takes the counter's words over
-        // a span half again as long, at two thirds the rate.
+        // `wpm` divides each mode's own words by its own seconds, and with no
+        // page words [`StatsFrom::App`] takes the counter's words over a span
+        // half again as long, at two thirds the rate.
         let rate = |s: &Stats, from| {
             s.books
                 .iter()
@@ -3117,12 +3120,12 @@ pub(crate) mod tests {
         };
         assert_eq!(rate(&kindle, StatsFrom::Kindle), Some(30));
         assert_eq!(rate(&app, StatsFrom::App), Some(20));
-        // The hours keep the shape of the sitting and sum to the new figure.
+        // `sitting.hours` keeps the shape of the sitting and sums to the new figure.
         for sitting in &app.sittings {
             let summed: i64 = sitting.hours.iter().map(|(_, s)| s).sum();
             assert_eq!(summed, sitting.seconds);
         }
-        // A sitting whose turn lines credit nothing keeps `Sitting::seconds`.
+        // `timed_seconds` 0 keeps `Sitting::seconds`.
         for s in record.sittings.iter_mut() {
             s.timed_seconds = 0;
         }
@@ -3194,8 +3197,8 @@ pub(crate) mod tests {
     }
 
     /// Two books carrying highlights: the first an English passage with a note
-    /// written on it, the second a passage and a `Kind::Bookmark`. Both
-    /// passages hold `port`, and the second book's carries the later `at`.
+    /// written on it, the second a passage and a `Kind::Bookmark`, both
+    /// passages holding `port` and the second book's the later `at`.
     pub(crate) fn highlighted_books() -> Stats {
         let highlight =
             |extent: i64, kind: Kind, at: &str, body: &str, span: (i64, i64)| Highlight {
@@ -3255,11 +3258,27 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_span_counts_the_highlights_made_inside_it() {
+        let stats = highlighted_books();
+        let made = day(2026, 1, 2);
+        assert_eq!(stats.highlights_counted_over(0, made..=made), (1, 1));
+        assert_eq!(stats.highlights_counted_on(0, made), (1, 1));
+        assert_eq!(
+            stats.highlights_counted_over(0, day(2026, 1, 1)..=day(2026, 1, 31)),
+            stats.highlights_counted(0)
+        );
+        assert_eq!(
+            stats.highlights_counted_over(0, day(2026, 1, 3)..=day(2026, 3, 31)),
+            (0, 0)
+        );
+    }
+
+    #[test]
     fn the_whole_record_lists_its_highlights_newest_first() {
         let stats = highlighted_books();
         let across = stats.highlights_across();
-        // Two passages: the note folds into the first book's row, and the
-        // bookmark spans no passage at all.
+        // `across` holds two passages, the note folded into the first book's
+        // row and the bookmark, spanning no passage, left out.
         assert_eq!(across.len(), 2);
         assert_eq!((across[0].book, across[0].at), (1, 0));
         assert!(across[0].note.is_none());
@@ -3268,8 +3287,8 @@ pub(crate) mod tests {
             across[1].note.map(|n| n.body.as_str()),
             Some("a borrowed line")
         );
-        // Every row stands where its own book's list holds it, which is what
-        // the Highlights tab opens at.
+        // `row.at` names the place its own book's list holds it, where the
+        // Highlights tab opens.
         for row in &across {
             assert_eq!(
                 stats.book_highlights(row.book)[row.at].highlight,
