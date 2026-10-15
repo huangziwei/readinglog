@@ -1,9 +1,6 @@
-//! An import into the workspace: a Kindle read over [`crate::device`], kept
-//! under its serial, or a backup, kept where no Kindle is named. Each is kept
-//! byte for byte under a `backups/` first, then folded into the record beside
-//! it: a Kindle's newest record stands whole with its earlier imports folded
-//! under it, and a backup naming no Kindle folds by `backup::restore`, the
-//! Kindle's own Restore. The same import twice adds nothing.
+//! An import into the workspace: a Kindle read over [`crate::device`] or a backup, kept
+//! byte for byte under the `backups/` of the Kindle its cut serial names, whose record is
+//! its latest backup whole; a backup naming no Kindle folds by `backup::restore`.
 
 use std::path::{Path, PathBuf};
 
@@ -19,6 +16,9 @@ use crate::workspace::{BACKUPS, RECORD, Workspace};
 
 /// The record's name inside a backup, and in the Kindle's own folder.
 const RECORD_NAME: &str = "sessions.tsv";
+
+/// The manifest's name inside a backup.
+const ABOUT_NAME: &str = "about.tsv";
 
 /// The folder the Kindle keeps its cover copies in, inside a backup too.
 const PICTURES: &str = readinglog_native::covers::COVERS_DIR;
@@ -43,10 +43,10 @@ pub struct Imported {
     pub about: About,
 }
 
-/// Import the backup at `from`, a `readinglog-*.zip` or `book-*.zip`, where no
-/// Kindle is named.
+/// Import the backup at `from`, a `readinglog-*.zip` or `book-*.zip`: under
+/// the Kindle its `about.tsv` names, else where no Kindle is named.
 pub fn backup(ws: &Workspace, from: &Path) -> Result<Imported> {
-    // A file carrying no record is refused before it is kept.
+    // `backup::peek` refuses a file carrying no record before it is kept.
     backup::peek(from)
         .map_err(|err| anyhow!("{} is not a Reading Log backup: {err}", from.display()))?;
     let bytes = std::fs::read(from).with_context(|| format!("reading {}", from.display()))?;
@@ -54,7 +54,12 @@ pub fn backup(ws: &Workspace, from: &Path) -> Result<Imported> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "backup.zip".into());
-    let backups = ws.backups();
+    let serial = backup::about(from).map(|a| a.serial).unwrap_or_default();
+    let (group, fold) = match serial.is_empty() {
+        true => (ws.dir.clone(), Fold::Restore),
+        false => (ws.kindle_dir(&serial), Fold::Latest),
+    };
+    let backups = group.join(BACKUPS);
     let (kept, again) = match held(&backups, |at| {
         std::fs::read(at).ok().as_ref() == Some(&bytes)
     }) {
@@ -69,29 +74,37 @@ pub fn backup(ws: &Workspace, from: &Path) -> Result<Imported> {
             (at, false)
         }
     };
-    settle(ws, &ws.dir, kept, again, Fold::Restore)
+    settle(ws, &group, kept, again, fold)
 }
 
 /// Import the Kindle `device` names: its record and covers, read over its
-/// transport, kept and folded under its serial. Nothing is written to it.
+/// transport, kept and folded under its cut serial.
 pub fn kindle(ws: &Workspace, device: &DeviceInfo) -> Result<Imported> {
     let transport = device.open_transport()?;
-    take(ws, Some(&device.serial), transport.as_ref())
+    take(
+        ws,
+        Some(&backup::cut_serial(&device.serial)),
+        transport.as_ref(),
+    )
 }
 
 /// Import the folder `dir` dropped on the window: a Kindle's volume, or the
 /// app's own folder on one. The volume `plugged` is mounted at is kept under
-/// that Kindle's serial; any other folder names no Kindle.
+/// that Kindle's cut serial; any other folder names no Kindle.
 pub fn folder(ws: &Workspace, dir: &Path, plugged: Option<&DeviceInfo>) -> Result<Imported> {
     let serial = plugged
         .filter(|d| d.mass_storage_mount().as_deref() == Some(dir))
-        .map(|d| d.serial.as_str());
-    take(ws, serial, &MassStorageTransport::new(dir.to_path_buf()))
+        .map(|d| backup::cut_serial(&d.serial));
+    take(
+        ws,
+        serial.as_deref(),
+        &MassStorageTransport::new(dir.to_path_buf()),
+    )
 }
 
 /// The record and covers `transport` reads, kept in one backup laid out as the
-/// Kindle lays its own and folded: under `serial`'s Kindle, or where no Kindle
-/// is named.
+/// Kindle lays its own and folded: under `serial`'s Kindle, its `about.tsv`
+/// naming it, or where no Kindle is named.
 fn take(ws: &Workspace, serial: Option<&str>, transport: &dyn Transport) -> Result<Imported> {
     let app = [TPath::parse(APP_DIR), TPath::new()]
         .into_iter()
@@ -104,7 +117,7 @@ fn take(ws: &Workspace, serial: Option<&str>, transport: &dyn Transport) -> Resu
         })?;
     let bytes = transport.read(&app.join(RECORD_NAME))?;
     let (group, fold) = match serial {
-        Some(serial) => (ws.kindle_dir(serial), Fold::Newest),
+        Some(serial) => (ws.kindle_dir(serial), Fold::Latest),
         None => (ws.dir.clone(), Fold::Restore),
     };
     let backups = group.join(BACKUPS);
@@ -117,14 +130,21 @@ fn take(ws: &Workspace, serial: Option<&str>, transport: &dyn Transport) -> Resu
         .flat_map(|(_, files)| files)
         .collect();
     pictures.sort();
+    let stamp = backup::stamped_now();
+    let about = serial
+        .map(|serial| format!("written\t{stamp}\nserial\t{serial}\n"))
+        .unwrap_or_default();
     let mut entries: Vec<(String, Source<'_>)> = vec![(RECORD_NAME.into(), Source::Bytes(&bytes))];
+    if !about.is_empty() {
+        entries.push((ABOUT_NAME.into(), Source::Bytes(about.as_bytes())));
+    }
     entries.extend(
         pictures
             .iter()
             .map(|(name, picture)| (format!("{PICTURES}/{name}"), Source::Bytes(picture))),
     );
     std::fs::create_dir_all(&backups)?;
-    let named = backup::name(Kind::Record, &backup::stamped_now(), "kindle");
+    let named = backup::name(Kind::Record, &stamp, "kindle");
     let at = free(&backups, &named);
     archive::write(&at, &entries).with_context(|| format!("writing {}", at.display()))?;
     settle(ws, &group, at, false, fold)
@@ -132,13 +152,11 @@ fn take(ws: &Workspace, serial: Option<&str>, transport: &dyn Transport) -> Resu
 
 /// How a backup folds into the record beside it.
 enum Fold {
-    /// `backup::restore`, the Kindle's own Restore, under which the record
-    /// held keeps each book's state: for backups naming no Kindle, which may
-    /// come from several.
+    /// `backup::restore`, the Kindle's own Restore: for backups naming no
+    /// Kindle, which may come from several.
     Restore,
-    /// [`newest`]: for one Kindle's imports, the newest of which states what
-    /// that Kindle holds now.
-    Newest,
+    /// [`latest`]: for one Kindle's backups.
+    Latest,
 }
 
 /// Fold the backup kept at `kept` into the record under `group`, saving it only
@@ -160,9 +178,9 @@ fn settle(
             backup::restore(&dir, &kept, &mut record, &mut |_, _| {})
                 .with_context(|| format!("folding in {}", kept.display()))?;
         }
-        Fold::Newest => {
-            newest(&dir, &kept, &mut record)
-                .with_context(|| format!("folding in {}", kept.display()))?;
+        Fold::Latest => {
+            record =
+                latest(group, &kept).with_context(|| format!("folding in {}", kept.display()))?;
         }
     }
     if record.text() != was {
@@ -185,29 +203,22 @@ fn settle(
     })
 }
 
-/// Fold the backup at `at` into `record`, a Kindle's record under `dir`. Of
-/// the two, the one whose watermark is newer stands whole, its books' rows and
-/// its `e` rows with it, and `Record::merge` folds the other under it, which
-/// fills only what the standing one states none of: a Kindle's rows only widen
-/// from one record to the next. Each cover the backup carries that `dir` does
-/// not hold is written.
-fn newest(dir: &Path, at: &Path, record: &mut Record) -> Result<()> {
-    let text = inside(at).ok_or_else(|| anyhow!("{} carries no record", at.display()))?;
-    let carried = Record::from_backup(&String::from_utf8_lossy(&text));
-    let held = std::mem::take(record);
-    let (mut newer, older) = match carried.watermark >= held.watermark {
-        true => (carried, held),
-        false => (held, carried),
-    };
-    let ends = newer.ends.clone();
-    newer.merge(&older);
-    for (key, end) in ends {
-        if let Ok(i) = newer.ends.binary_search_by_key(&key, |(k, _)| *k) {
-            newer.ends[i].1 = end;
-        }
-    }
-    *record = newer;
-    take_pictures(dir, at)
+/// The record of the newest whole-record backup under `group` by its name's stamp, `at`
+/// among those sharing it; each cover `at` carries goes to the record's folder where it
+/// holds none.
+fn latest(group: &Path, at: &Path) -> Result<Record> {
+    take_pictures(&group.join(RECORD), at)?;
+    let records: Vec<backup::Backup> = backup::list(group)
+        .into_iter()
+        .filter(|b| b.kind == Kind::Record)
+        .collect();
+    let top = records.first().map(|b| b.stamp.clone());
+    let pick = records
+        .iter()
+        .find(|b| b.path == at && Some(&b.stamp) == top.as_ref())
+        .or(records.first())
+        .map_or_else(|| at.to_path_buf(), |b| b.path.clone());
+    backup::peek(&pick).map_err(|err| anyhow!("reading {}: {err}", pick.display()))
 }
 
 /// Write each cover the backup at `at` carries that `dir` does not hold, by its
@@ -261,8 +272,7 @@ fn inside(at: &Path) -> Option<Vec<u8>> {
     open.read(&entry).ok()
 }
 
-/// `named` under `dir`, stepping `-2`, `-3` while a file stands there: a
-/// backup is never written over another.
+/// `named` under `dir`, stepping `-2`, `-3` while a file stands there.
 fn free(dir: &Path, named: &str) -> PathBuf {
     let at = dir.join(named);
     if !at.exists() {
@@ -321,6 +331,22 @@ mod tests {
         }
     }
 
+    /// A backup as the Kindle writes one, named for `stamp`, its `about.tsv`
+    /// naming `serial` where one is given.
+    fn kindle_backup(name: &str, record: &Record, stamp: &str, serial: Option<&str>) -> PathBuf {
+        let at = scratch(name).join(backup::name(Kind::Record, stamp, ""));
+        let text = record.text();
+        let about = serial
+            .map(|s| format!("written\t{stamp}\nserial\t{s}\n"))
+            .unwrap_or_default();
+        let mut entries = vec![(RECORD_NAME.to_string(), Source::Bytes(text.as_bytes()))];
+        if !about.is_empty() {
+            entries.push((ABOUT_NAME.to_string(), Source::Bytes(about.as_bytes())));
+        }
+        archive::write(&at, &entries).unwrap();
+        at
+    }
+
     fn one() -> Record {
         record_of(
             vec![book(100, "B1", "One")],
@@ -329,25 +355,25 @@ mod tests {
     }
 
     #[test]
-    fn a_kindle_is_kept_whole_under_its_serial_and_twice_adds_nothing() {
+    fn a_kindle_is_kept_whole_under_its_cut_serial_and_twice_adds_nothing() {
         let ws = Workspace::create(&scratch("import-kindle")).unwrap();
         let root = kindle_dir("import-kindle-volume", &one());
-        let first = kindle(&ws, &plugged(&root, "G000K1")).unwrap();
+        let first = kindle(&ws, &plugged(&root, "G003H21234567890")).unwrap();
         assert!(!first.again);
         assert_eq!((first.sittings, first.books, first.pictures), (1, 1, 1));
-        assert!(
-            first
-                .kept
-                .starts_with(ws.kindle_dir("G000K1").join(BACKUPS))
+        let kept = ws.kindle_dir("G003H2-7890").join(BACKUPS);
+        assert!(first.kept.starts_with(&kept));
+        assert_eq!(
+            first.about.serial, "G003H2-7890",
+            "the backup names its Kindle"
         );
         assert_eq!(ws.record().sittings.len(), 1);
         assert_eq!(std::fs::read_dir(ws.backups()).unwrap().count(), 0);
 
-        let second = kindle(&ws, &plugged(&root, "G000K1")).unwrap();
+        let second = kindle(&ws, &plugged(&root, "G003H21234567890")).unwrap();
         assert!(second.again);
         assert_eq!(second.kept, first.kept);
         assert_eq!((second.sittings, second.books, second.pictures), (0, 0, 0));
-        let kept = ws.kindle_dir("G000K1").join(BACKUPS);
         assert_eq!(std::fs::read_dir(kept).unwrap().count(), 1);
     }
 
@@ -361,12 +387,11 @@ mod tests {
         read.timer_words = 20_000;
         read.timer_covered = 1.0;
         let mut on = record_of(vec![read], vec![sitting("2026-09-01T09:00:00", 100, 600)]);
-        on.watermark = "260901:100000".into();
         let root = kindle_dir("import-again-volume", &on);
         kindle(&ws, &plugged(&root, "G000K1")).unwrap();
 
-        // On the Kindle since: restarted and read past the restart, taken off
-        // the Kindle, its timer moved on.
+        // `on` as the Kindle holds it since: restarted and read past the
+        // restart, off the Kindle, its timer moved on.
         let again = &mut on.books[0];
         again.finished = false;
         again.restarted_on.push(20_336);
@@ -376,7 +401,6 @@ mod tests {
         again.timer_words = 300;
         again.timer_covered = 0.02;
         on.sittings.push(sitting("2026-09-05T09:00:00", 100, 60));
-        on.watermark = "260905:100000".into();
         on.save(&root.join("extensions").join("readinglog"))
             .unwrap();
         kindle(&ws, &plugged(&root, "G000K1")).unwrap();
@@ -395,31 +419,62 @@ mod tests {
     }
 
     #[test]
-    fn an_older_record_of_a_kindle_adds_only_what_the_newer_states_none_of() {
-        let ws = Workspace::create(&scratch("import-older")).unwrap();
-        let mut newer = one();
-        newer.books[0].percent = 80.0;
-        newer.watermark = "260910:100000".into();
-        let mut older = record_of(
+    fn a_kindles_record_is_its_latest_backup_whole() {
+        let ws = Workspace::create(&scratch("import-latest")).unwrap();
+        let older = record_of(
             vec![book(100, "B1", "One")],
             vec![
                 sitting("2026-08-20T09:00:00", 100, 300),
                 sitting("2026-09-01T09:00:00", 100, 600),
             ],
         );
-        older.books[0].percent = 40.0;
-        older.watermark = "260901:100000".into();
-        kindle(&ws, &plugged(&kindle_dir("import-newer", &newer), "G000K1")).unwrap();
-        kindle(&ws, &plugged(&kindle_dir("import-older", &older), "G000K1")).unwrap();
+        let dropped = kindle_backup(
+            "import-latest-older",
+            &older,
+            "260901:100000",
+            Some("G000K1"),
+        );
+        let first = backup(&ws, &dropped).unwrap();
+        assert!(
+            first
+                .kept
+                .starts_with(ws.kindle_dir("G000K1").join(BACKUPS))
+        );
+        assert_eq!(ws.record().sittings.len(), 2);
 
-        let held = ws.record();
-        assert_eq!(held.sittings.len(), 2, "the older one's sitting stays");
-        assert_eq!(held.books[0].percent, 80.0, "the newer record's book");
-        assert_eq!(held.watermark, "260910:100000");
+        // `one()`, the Kindle's record since, a sitting fewer, read over USB.
+        kindle(
+            &ws,
+            &plugged(&kindle_dir("import-latest-volume", &one()), "G000K1"),
+        )
+        .unwrap();
+        assert_eq!(ws.record().sittings.len(), 1, "the latest backup stands");
+
+        // `dropped` again: held, and the latest stands.
+        let again = backup(&ws, &dropped).unwrap();
+        assert!(again.again);
+        assert_eq!(ws.record().sittings.len(), 1);
     }
 
     #[test]
-    fn two_kindles_are_kept_apart_and_drawn_together() {
+    fn a_backup_naming_no_kindle_is_kept_where_no_kindle_is_named() {
+        let ws = Workspace::create(&scratch("import-unnamed")).unwrap();
+        let zip = kindle_backup("import-unnamed-zip", &one(), "260901:100000", None);
+        let added = backup(&ws, &zip).unwrap();
+        assert!(added.kept.starts_with(ws.backups()));
+        assert!(ws.kindles().is_empty());
+        assert_eq!((added.sittings, added.books), (1, 1));
+        assert_eq!(
+            std::fs::read(&added.kept).unwrap(),
+            std::fs::read(&zip).unwrap()
+        );
+        let again = backup(&ws, &zip).unwrap();
+        assert!(again.again);
+        assert_eq!(again.sittings, 0);
+    }
+
+    #[test]
+    fn two_kindles_are_kept_apart_and_drawn_apart() {
         let ws = Workspace::create(&scratch("import-two")).unwrap();
         let mut near = one();
         near.books[0].percent = 10.0;
@@ -430,39 +485,26 @@ mod tests {
         far.books[0].percent = 60.0;
         kindle(&ws, &plugged(&kindle_dir("import-two-a", &near), "G000K1")).unwrap();
         let added = kindle(&ws, &plugged(&kindle_dir("import-two-b", &far), "G000K2")).unwrap();
-        assert_eq!((added.sittings, added.books), (1, 0));
+        assert_eq!((added.sittings, added.books), (1, 1), "a book of its own");
         assert_eq!(ws.kindles().len(), 2);
         let held = ws.record();
-        assert_eq!(held.books.len(), 1);
-        assert_eq!(held.books[0].percent, 60.0);
+        let mut percents: Vec<f64> = held.books.iter().map(|b| b.percent).collect();
+        percents.sort_by(f64::total_cmp);
+        assert_eq!(percents, vec![10.0, 60.0]);
         assert_eq!(held.sittings.len(), 2);
     }
 
     #[test]
-    fn a_dropped_volume_is_its_kindles_only_where_that_kindle_is_mounted_there() {
-        let ws = Workspace::create(&scratch("import-dropped")).unwrap();
-        let root = kindle_dir("import-dropped-volume", &one());
-        let elsewhere = plugged(&scratch("import-dropped-other"), "G000K9");
-        folder(&ws, &root, Some(&elsewhere)).unwrap();
-        assert!(ws.kindles().is_empty(), "no Kindle is named");
-        assert_eq!(std::fs::read_dir(ws.backups()).unwrap().count(), 1);
-
-        folder(&ws, &root, Some(&plugged(&root, "G000K1"))).unwrap();
-        assert_eq!(ws.kindles(), vec![ws.kindle_dir("G000K1")]);
-        assert_eq!(ws.record().sittings.len(), 1);
-
-        let app = root.join("extensions").join("readinglog");
-        let alone = Workspace::create(&scratch("import-dropped-app")).unwrap();
-        assert_eq!(folder(&alone, &app, None).unwrap().sittings, 1);
-    }
-
-    #[test]
-    fn a_backup_is_kept_byte_for_byte_and_its_reading_added_to_whats_held() {
+    fn a_backup_naming_its_kindle_joins_that_kindle() {
         let ws = Workspace::create(&scratch("import-zip")).unwrap();
-        let root = kindle_dir("import-zip-volume", &one());
-        let made = kindle(&ws, &plugged(&root, "G000K1")).unwrap();
+        kindle(
+            &ws,
+            &plugged(&kindle_dir("import-zip-volume", &one()), "G000K1"),
+        )
+        .unwrap();
 
-        // A second Kindle's backup: one more sitting, on another book.
+        // `more`, a second Kindle's record, kept as the window keeps one: one
+        // more sitting, on another book.
         let other = Workspace::create(&scratch("import-zip-other")).unwrap();
         let more = record_of(
             vec![book(100, "B1", "One"), book(200, "B2", "Two")],
@@ -479,18 +521,39 @@ mod tests {
         .kept;
         let added = backup(&ws, &zip).unwrap();
         assert!(!added.again);
-        assert_eq!((added.sittings, added.books), (1, 1));
+        assert!(
+            added
+                .kept
+                .starts_with(ws.kindle_dir("G000K2").join(BACKUPS))
+        );
         assert_eq!(
             std::fs::read(&added.kept).unwrap(),
             std::fs::read(&zip).unwrap()
         );
-        assert!(added.kept.starts_with(ws.backups()));
-        assert_ne!(added.kept, made.kept);
-        assert_eq!(ws.record().sittings.len(), 2);
+        assert_eq!((added.sittings, added.books), (2, 2));
+        assert_eq!(ws.record().sittings.len(), 3, "each Kindle's own");
+    }
 
-        let again = backup(&ws, &zip).unwrap();
-        assert!(again.again);
-        assert_eq!(again.sittings, 0);
+    #[test]
+    fn a_dropped_volume_is_its_kindles_only_where_that_kindle_is_mounted_there() {
+        let ws = Workspace::create(&scratch("import-dropped")).unwrap();
+        let root = kindle_dir("import-dropped-volume", &one());
+        let elsewhere = plugged(&scratch("import-dropped-other"), "G000K9");
+        folder(&ws, &root, Some(&elsewhere)).unwrap();
+        assert!(ws.kindles().is_empty(), "no Kindle is named");
+        assert_eq!(std::fs::read_dir(ws.backups()).unwrap().count(), 1);
+
+        folder(&ws, &root, Some(&plugged(&root, "G000K1"))).unwrap();
+        assert_eq!(ws.kindles(), vec![ws.kindle_dir("G000K1")]);
+        assert_eq!(
+            ws.record().sittings.len(),
+            2,
+            "the Kindle's, and the backup's"
+        );
+
+        let app = root.join("extensions").join("readinglog");
+        let alone = Workspace::create(&scratch("import-dropped-app")).unwrap();
+        assert_eq!(folder(&alone, &app, None).unwrap().sittings, 1);
     }
 
     #[test]

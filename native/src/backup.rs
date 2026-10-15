@@ -23,6 +23,9 @@ const MODEL: &str = "/proc/device-tree/model";
 /// The firmware's version line.
 const FIRMWARE: &str = "/etc/prettyversion.txt";
 
+/// The Kindle's serial, the one its USB descriptor states.
+const SERIAL: &str = "/proc/usid";
+
 /// What a backup holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -68,8 +71,7 @@ pub fn stamped_now() -> String {
 const STAMP_LEN: usize = 13;
 
 /// A backup's name: `stamp` with every `:` written as `-`, and `tag` where
-/// one names the book. Two backups of one book at one second differ in
-/// nothing else, and [`free`] steps them apart.
+/// one names the book; [`free`] steps apart two names that match.
 pub fn name(kind: Kind, stamp: &str, tag: &str) -> String {
     let stamp = stamp.replace(':', "-");
     match tag.is_empty() {
@@ -79,8 +81,6 @@ pub fn name(kind: Kind, stamp: &str, tag: &str) -> String {
 }
 
 /// `named` under `dir`, stepping `-2`, `-3` while a file stands at it.
-/// `archive::write` renames onto its path, and a backup is never the file
-/// that goes.
 fn free(dir: &Path, named: &str) -> PathBuf {
     let at = dir.join(named);
     if !at.exists() {
@@ -93,8 +93,8 @@ fn free(dir: &Path, named: &str) -> PathBuf {
         .unwrap_or(at)
 }
 
-/// What a backup states about itself, beside the record it carries. A
-/// backup written without an [`ABOUT`] entry answers every field empty.
+/// What a backup states about itself, beside the record it carries: every
+/// field empty for one with no [`ABOUT`] entry.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct About {
     /// The clock the backup was written at, `YYMMDD:HHMMSS`.
@@ -105,6 +105,8 @@ pub struct About {
     pub kindle: String,
     /// [`FIRMWARE`], one line.
     pub firmware: String,
+    /// [`SERIAL`] through [`cut_serial`]: the Kindle the backup was written on.
+    pub serial: String,
     /// The length of `Record::sittings`.
     pub sittings: usize,
     /// The day the first and the last sitting started on, `YYYY-MM-DD`.
@@ -130,6 +132,7 @@ fn about_text(record: &Record, stamp: &str) -> String {
         ("app", crate::update::VERSION.to_string()),
         ("device", one_line(MODEL)),
         ("firmware", one_line(FIRMWARE)),
+        ("serial", cut_serial(&one_line(SERIAL))),
         ("sittings", record.sittings.len().to_string()),
         ("first", day(record.sittings.first())),
         ("last", day(record.sittings.last())),
@@ -137,6 +140,27 @@ fn about_text(record: &Record, stamp: &str) -> String {
     .iter()
     .map(|(name, value)| format!("{name}\t{value}\n"))
     .collect()
+}
+
+/// The characters of a serial [`cut_serial`] keeps from its head: the lead
+/// and the model's code.
+const SERIAL_HEAD: usize = 6;
+
+/// The characters of a serial [`cut_serial`] keeps from its tail.
+const SERIAL_TAIL: usize = 4;
+
+/// `serial`'s first [`SERIAL_HEAD`] characters and its last [`SERIAL_TAIL`],
+/// `-` between them; a serial of at most the two together, whole.
+pub fn cut_serial(serial: &str) -> String {
+    let chars: Vec<char> = serial.trim().chars().collect();
+    match chars.len() > SERIAL_HEAD + SERIAL_TAIL {
+        true => {
+            let head: String = chars[..SERIAL_HEAD].iter().collect();
+            let tail: String = chars[chars.len() - SERIAL_TAIL..].iter().collect();
+            format!("{head}-{tail}")
+        }
+        false => chars.into_iter().collect(),
+    }
 }
 
 /// The first line of the file at `at`, without its control characters. Empty
@@ -172,6 +196,7 @@ fn read_about(text: &str) -> About {
             "app" => out.app = value.to_string(),
             "device" => out.kindle = value.to_string(),
             "firmware" => out.firmware = value.to_string(),
+            "serial" => out.serial = value.to_string(),
             "sittings" => out.sittings = value.parse().unwrap_or(0),
             "first" => out.first = value.to_string(),
             "last" => out.last = value.to_string(),
@@ -291,8 +316,7 @@ pub fn drop_nested(dir: &Path, record: &mut Record) -> archive::Result<Option<(u
     Ok(Some((went, kept)))
 }
 
-/// Every backup under `dir`, newest first. A name no [`Kind::stem`] opens is
-/// left out.
+/// Every backup under `dir` whose name a [`Kind::stem`] opens, newest first.
 pub fn list(dir: &Path) -> Vec<Backup> {
     let Ok(entries) = std::fs::read_dir(self::dir(dir)) else {
         return Vec::new();
@@ -487,9 +511,8 @@ mod tests {
         );
     }
 
-    /// The backup was named for `Record::watermark`, the newest log line read. Two
-    /// written under one watermark landed on one path, and `archive::write` renames
-    /// onto it.
+    /// Two `keep_record` calls on one stamp, and two `keep_book` calls on one stamp
+    /// for two books, each write a file of its own.
     #[test]
     fn two_backups_of_one_second_are_two_files() {
         let dir = scratch("collide");
@@ -798,6 +821,14 @@ mod tests {
         assert_eq!(said.first, "2026-08-07");
         assert_eq!(said.last, "2026-08-07");
         assert!(!said.is_empty());
+        assert_eq!(read_about("serial\tG003H2-7890\n").serial, "G003H2-7890");
+        assert_eq!(cut_serial("G003H21234567890\n"), "G003H2-7890");
+        assert_eq!(
+            cut_serial("G003H21234"),
+            "G003H21234",
+            "no longer than head and tail"
+        );
+        assert_eq!(cut_serial(""), "");
 
         // A backup carrying no `ABOUT` entry.
         let older = self::dir(&dir).join("readinglog-260101-000000.zip");

@@ -1,6 +1,6 @@
 //! A Kindle plugged in over USB: [`detect`] finds it, mounted or over MTP, and
 //! names it by its serial; a [`Transport`] reads its files, the same calls on
-//! either. Nothing here writes to a Kindle.
+//! either.
 
 use std::path::PathBuf;
 
@@ -8,6 +8,7 @@ use anyhow::Result;
 
 pub mod detect;
 pub mod mass_storage;
+pub mod model;
 pub mod mtp;
 pub mod transport;
 

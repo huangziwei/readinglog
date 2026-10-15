@@ -1,6 +1,6 @@
 //! The site, built in memory from a workspace: every page, the stylesheet and
-//! each shown book's cover, as a path and its bytes. A page states each figure
-//! through its Kindle screen's own function, and one workspace builds one set of bytes.
+//! each shown book's cover, as a path and its bytes, one workspace building one
+//! set of bytes.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -112,7 +112,7 @@ pub struct Published {
 }
 
 /// Build the site `ws` holds and write it to its folder, pinning in `books.toml`
-/// each address made from a title: a title corrected later moves no link.
+/// each address made from a title.
 pub fn publish(ws: &Workspace) -> Result<Published> {
     let at = ws.out();
     if trespasses(ws, &at) {
@@ -175,9 +175,11 @@ fn lexical(path: &Path) -> PathBuf {
 pub fn build(ws: &Workspace) -> Result<Site> {
     let (settings, mut problems) = ws.site.settings();
     let edits = Edits::load(&ws.dir)?;
+    let sources = ws.sources();
+    let dirs: Vec<PathBuf> = sources.iter().map(|s| s.dir.clone()).collect();
     let public = Public::of(
-        &ws.record(),
-        &ws.record_dirs(),
+        &crate::kindles::together(&sources),
+        &dirs,
         &edits,
         &settings,
         ws.site.new_books,
@@ -271,7 +273,7 @@ fn highlight_item(highlight: &Highlight) -> String {
 }
 
 /// Each book's address: the one `books.toml` holds, else one made from the
-/// title shown. A made one never takes an address another book holds.
+/// title shown that no other book holds.
 fn places(stats: &Stats, edits: &Edits) -> Vec<Placed> {
     let mut taken: BTreeSet<String> = BTreeSet::new();
     let mut out: Vec<Option<Placed>> = vec![None; stats.books.len()];
@@ -286,7 +288,7 @@ fn places(stats: &Stats, edits: &Edits) -> Vec<Placed> {
             out[at] = Some(placed(book, edits, slug, true));
         }
     }
-    // The rest in key order, which a new book arriving does not reorder.
+    // `rest` in key order.
     let mut rest: Vec<usize> = (0..stats.books.len())
         .filter(|at| out[*at].is_none())
         .collect();
@@ -297,7 +299,7 @@ fn places(stats: &Stats, edits: &Edits) -> Vec<Placed> {
     for at in rest {
         let book = &stats.books[at];
         let title = title_of(book, edits);
-        // A title mostly in another script names the book by its key.
+        // `named` is empty for a title `posts::latin` rejects, and `keyed` stands.
         let named = match posts::latin(&title) {
             true => posts::slug(&title),
             false => String::new(),
@@ -350,8 +352,8 @@ fn author_of(book: &BookStat, edits: &Edits) -> String {
         .unwrap_or_else(|| book.author.clone())
 }
 
-/// The books `post` names, by their place among `placed`. A name reaching no
-/// book on the site is passed over and said.
+/// The books `post` names, by their place among `placed`, and in `problems` a
+/// line for each name reaching no book on the site.
 fn named(post: &Post, placed: &[Placed], problems: &mut Vec<String>) -> Vec<usize> {
     let mut out = Vec::new();
     for name in &post.books {
@@ -810,7 +812,7 @@ impl Ctx<'_> {
     }
 
     /// One row of a book's highlights: the passage, the note written on it, its
-    /// comment, and where and when it was made. A corrected passage keeps the
+    /// comment, where and when it was made, and under a corrected passage the
     /// record's own words one tap away.
     fn highlight(
         &self,

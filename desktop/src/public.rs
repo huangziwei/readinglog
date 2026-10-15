@@ -1,10 +1,9 @@
 //! The public record: the record less every book, sitting and highlight `Edits`
-//! hides. Every figure on the site is `Stats::build` over it: one population for
-//! a total and its parts, holding none of a hidden book's reading.
+//! hides. `Public::stats` is `Stats::build` over it: one population for a total
+//! and its parts, holding none of a hidden book's reading.
 
 use std::path::PathBuf;
 
-use readinglog_native::covers;
 use readinglog_native::date;
 use readinglog_native::highlights::Highlight;
 use readinglog_native::record::{self, Record};
@@ -14,7 +13,7 @@ use readinglog_native::stats::Stats;
 use crate::edits::Edits;
 use crate::workspace::NewBooks;
 
-/// What the site is built from.
+/// The public record and its `Stats`.
 pub struct Public {
     pub record: Record,
     pub stats: Stats,
@@ -23,8 +22,8 @@ pub struct Public {
 }
 
 impl Public {
-    /// `record` less what `edits` hides, its covers looked for under each of
-    /// `record_dirs`, stated under `settings`.
+    /// `record` less what `edits` hides, its covers found in `record_dirs` by
+    /// `kindles::cover`, stated under `settings`.
     pub fn of(
         record: &Record,
         record_dirs: &[PathBuf],
@@ -34,8 +33,8 @@ impl Public {
     ) -> Self {
         let shown =
             |b: &record::Book| b.is_book() && edits.book_shown(&b.cde_key, b.extent, new_books);
-        // A sitting stands on the book `Stats::build` places it on; an
-        // unidentified one stands on none.
+        // `sittings`: each on the book `Stats::build` places it on, an
+        // unidentified one on none.
         let sittings = record
             .sittings
             .iter()
@@ -77,18 +76,11 @@ impl Public {
     }
 }
 
-/// `book` with its cover pointing at the copy under the first of
-/// `record_dirs` holding one, and at none where no copy there draws. The record
-/// names the Kindle's own paths.
+/// `book` with its cover pointing at the copy `kindles::cover` finds under
+/// `record_dirs`, at none where no copy there draws, and no `thumbnail`.
 fn on_this_computer(book: &record::Book, record_dirs: &[PathBuf]) -> record::Book {
-    let cover = record_dirs
-        .iter()
-        .find(|dir| covers::held(dir, &book.cde_key))
-        .map(|dir| {
-            covers::path(dir, &book.cde_key)
-                .to_string_lossy()
-                .into_owned()
-        })
+    let cover = crate::kindles::cover(record_dirs, &book.cde_key)
+        .map(|at| at.to_string_lossy().into_owned())
         .unwrap_or_default();
     record::Book {
         cover,
@@ -149,7 +141,7 @@ mod tests {
             vec![
                 sitting("2026-09-01T09:00:00", 100, 600),
                 sitting("2026-09-02T09:00:00", 200, 1200),
-                // No book carries this one: unidentified.
+                // `300` names no book: an unidentified sitting.
                 sitting("2026-09-03T09:00:00", 300, 900),
             ],
         );
@@ -170,7 +162,7 @@ mod tests {
         assert_eq!(public.stats.total_seconds, kindle.total_seconds);
         assert_eq!(public.stats.days, kindle.days);
         assert_eq!(public.stats.books.len(), kindle.books.len());
-        // The unidentified day is the Kindle's last, and not the site's.
+        // `public.as_of` is the last shown sitting's day, before the unidentified one.
         assert_eq!(public.as_of, date::parse_day("2026-09-02"));
     }
 
@@ -199,7 +191,7 @@ mod tests {
         assert_eq!(public.stats.day_seconds(day), 300);
         assert_eq!(public.stats.hours_over(day..=day)[9], 0);
 
-        // Hidden by default, and shown by its own row.
+        // `B1`, hidden by default, shown by its own row.
         let mut edits = Edits::default();
         edits.book_mut("B1", 100).shown = Some(true);
         let public = Public::of(
@@ -244,8 +236,8 @@ mod tests {
                 sitting("2026-09-02T09:00:00", 200, 600),
             ],
         );
-        // Two editions sharing a title, the second hidden: its highlight is
-        // its own, never the shown edition's.
+        // `B1` and `B2` share a title, `B2` hidden: its highlight is its own,
+        // never `B1`'s.
         record.highlights = vec![
             highlight(100, "One", "2026-09-01T09:10:00"),
             highlight(200, "One", "2026-09-02T09:10:00"),

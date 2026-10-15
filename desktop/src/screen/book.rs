@@ -26,8 +26,12 @@ pub(super) fn page(cx: &Ctx, at: usize, reading: Option<usize>, way: Way, query:
         (false, true) => s.percent_plain.replace("{d}", &percent.to_string()),
         (false, false) => String::new(),
     };
+    let kindle = cx
+        .kindle(at)
+        .map(|k| format!("<p class=\"meta\">{}</p>", esc(k)))
+        .unwrap_or_default();
     let mut out = format!(
-        "<div class=\"hero\"><div class=\"cover\">{}</div><div class=\"words\"><h1{}>{}</h1><p class=\"author\"{}>{}</p>\
+        "<div class=\"hero\"><div class=\"cover\">{}</div><div class=\"words\"><h1{}>{}</h1><p class=\"author\"{}>{}</p>{kindle}\
          <div class=\"meter\"><div class=\"track\"><i style=\"width: {percent}%; background: {}\"></i></div><b>{}</b></div>\
          <dl class=\"figures\">",
         cx.cover(at),
@@ -233,7 +237,11 @@ pub(super) fn highlight(
     let _ = write!(
         out,
         "<p class=\"where\"><span>{}</span><span>{}</span></p></div>",
-        esc(&highlights_view::label(highlight, book.extent, cx.s)),
+        esc(&highlights_view::label(
+            highlight,
+            crate::kindles::origin(book.extent).1,
+            cx.s
+        )),
         esc(&made)
     );
     out

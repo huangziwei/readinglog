@@ -10,6 +10,7 @@ use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
+use readinglog_native::backup::cut_serial;
 use readinglog_native::covers::COVERS_DIR;
 use readinglog_native::lang::counted;
 use readinglog_native::record::Record;
@@ -154,21 +155,21 @@ async fn page(app: AppHandle, open: State<'_, Open>, route: String, width: f64) 
         }
     }
     drop(served);
-    let kindle = plugged();
+    let kindle = plugged().map(|d| cut_serial(&d.serial));
     Ok(screen::render(
         built.as_deref(),
         &ws,
         &Route::parse(&route),
         width as f32,
         Covers::Window,
-        kindle.as_ref().map(|d| d.serial.as_str()),
+        kindle.as_deref(),
     ))
 }
 
-/// The serial of the Kindle plugged in that Import can read.
+/// The cut serial of the Kindle plugged in that Import can read.
 #[tauri::command]
 async fn kindle() -> Option<String> {
-    plugged().map(|d| d.serial)
+    plugged().map(|d| cut_serial(&d.serial))
 }
 
 /// Import each of `paths`: a backup, or a Kindle's volume or its folder. Answers
@@ -193,16 +194,15 @@ async fn import(app: AppHandle, open: State<'_, Open>, paths: Vec<String>) -> An
     Ok(gained(&ws, &done))
 }
 
-/// Import the Kindle plugged in that `serial` names, off the window's thread:
-/// over MTP a read takes seconds. Answers what the record gained, in the
-/// window's words.
+/// Import the Kindle plugged in that the cut serial `serial` names, off the
+/// window's thread. Answers what the record gained, in the window's words.
 #[tauri::command]
 async fn import_kindle(app: AppHandle, open: State<'_, Open>, serial: String) -> Answer<String> {
     let dir = folder(&app, &open)?;
     let ws = Workspace::create(&dir).map_err(said)?;
     remember(&app, &dir)?;
     let device = plugged()
-        .filter(|d| d.serial == serial)
+        .filter(|d| cut_serial(&d.serial) == serial)
         .ok_or_else(|| "the Kindle is no longer plugged in".to_string())?;
     let at = ws.clone();
     let done = tauri::async_runtime::spawn_blocking(move || import::kindle(&at, &device))

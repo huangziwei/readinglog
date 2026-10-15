@@ -82,9 +82,9 @@ fn books(cx: &Ctx, day: i64) -> String {
     out
 }
 
-/// One book of `day`: its cover, title, author and that day's highlights, the
-/// time read, the band at the day's close, and its own stretches under the
-/// day's hours.
+/// One book of `day`: its cover, title, author, Kindle and that day's
+/// highlights, the time read, the band at the day's close, and its own
+/// stretches under the day's hours.
 fn row(cx: &Ctx, day: i64, at: usize, secs: i64) -> String {
     let s = cx.s;
     let book = &cx.stats.books[at];
@@ -97,7 +97,8 @@ fn row(cx: &Ctx, day: i64, at: usize, secs: i64) -> String {
             esc(&book.author)
         ),
     };
-    let under = [author, esc(&marks)]
+    let kindle = cx.kindle(at).map(esc).unwrap_or_default();
+    let under = [author, kindle, esc(&marks)]
         .into_iter()
         .filter(|said| !said.is_empty())
         .collect::<Vec<_>>()

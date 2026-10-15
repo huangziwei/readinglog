@@ -2,9 +2,8 @@
 
 use anyhow::Result;
 
-/// A path on the Kindle, e.g. `extensions/readinglog/sessions.tsv`, held as its
-/// segments so each transport maps them to its own namespace: a path on disk,
-/// or a chain of MTP objects.
+/// A path on the Kindle, e.g. `extensions/readinglog/sessions.tsv`, as its
+/// segments: each transport maps them to a path on disk or a chain of MTP objects.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct TPath {
     segments: Vec<String>,
@@ -88,8 +87,7 @@ pub trait Transport: Send + Sync {
     }
 
     /// For each folder in `dir` that `pick_dir` takes, every file in it that
-    /// `pick_file` takes. `dir` and each folder are found once, so MTP stays
-    /// linear.
+    /// `pick_file` takes, `dir` and each folder found once.
     fn read_files_in_children(
         &self,
         dir: &TPath,

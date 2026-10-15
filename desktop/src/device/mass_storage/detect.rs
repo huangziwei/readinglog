@@ -18,8 +18,7 @@ const AMAZON_VID: u16 = 0x1949;
 /// MTP one when both are plugged in.
 const USB_CLASS_MASS_STORAGE: u8 = 0x08;
 
-/// The first mounted Kindle. A Kindle that offers only MTP mounts no volume and
-/// is never found here.
+/// The first mounted Kindle.
 pub fn detect() -> Option<DeviceInfo> {
     for root in candidate_roots() {
         if let Ok(entries) = std::fs::read_dir(&root) {
@@ -76,8 +75,7 @@ fn inspect(mount: &Path) -> Option<DeviceInfo> {
     })
 }
 
-/// A name for a Kindle whose serial cannot be read, by where it is mounted, so
-/// two such Kindles do not share one.
+/// A name for a Kindle whose serial cannot be read: `anon-` and its volume's name.
 fn anon_serial(mount: &Path) -> String {
     let name = mount
         .file_name()

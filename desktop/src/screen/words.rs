@@ -15,6 +15,8 @@ pub struct Words {
     pub change_folder: &'static str,
     pub added: &'static str,
     pub nothing_new: &'static str,
+    /// What a book from a backup naming no Kindle is said to be from.
+    pub from_backup: &'static str,
 }
 
 const ENGLISH: Words = Words {
@@ -28,6 +30,7 @@ const ENGLISH: Words = Words {
     change_folder: "Change…",
     added: "Added",
     nothing_new: "Nothing new in this backup.",
+    from_backup: "Backup",
 };
 
 const GERMAN: Words = Words {
@@ -41,6 +44,7 @@ const GERMAN: Words = Words {
     change_folder: "Ändern…",
     added: "Hinzugefügt",
     nothing_new: "Nichts Neues in dieser Sicherung.",
+    from_backup: "Sicherung",
 };
 
 const JAPANESE: Words = Words {
@@ -54,6 +58,7 @@ const JAPANESE: Words = Words {
     change_folder: "変更…",
     added: "追加",
     nothing_new: "このバックアップに新しい記録はありません。",
+    from_backup: "バックアップ",
 };
 
 const SIMPLIFIED: Words = Words {
@@ -67,6 +72,7 @@ const SIMPLIFIED: Words = Words {
     change_folder: "更改…",
     added: "已添加",
     nothing_new: "此备份中没有新内容。",
+    from_backup: "备份",
 };
 
 const TRADITIONAL: Words = Words {
@@ -80,6 +86,7 @@ const TRADITIONAL: Words = Words {
     change_folder: "更改…",
     added: "已新增",
     nothing_new: "此備份中沒有新內容。",
+    from_backup: "備份",
 };
 
 impl Words {

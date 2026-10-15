@@ -269,7 +269,8 @@ pub enum Covers {
 }
 
 /// The record as every screen states it: `Stats` as of the newest sitting
-/// under the settings `Workspace::site` names, and each book's cover and tone.
+/// under the settings `Workspace::site` names, and each book's cover, tone and
+/// Kindle.
 pub struct Shown {
     pub record: Record,
     pub stats: Stats,
@@ -278,12 +279,16 @@ pub struct Shown {
     pub as_of: i64,
     pub covers: Vec<Option<PathBuf>>,
     pub tones: Vec<[u8; 3]>,
+    /// Each book's Kindle as `kindles::labels` calls it, `None` throughout for
+    /// one source.
+    pub kindles: Vec<Option<String>>,
 }
 
 impl Shown {
     /// `None` where the record holds no sitting.
     pub fn of(ws: &Workspace) -> Option<Shown> {
-        let record = ws.record();
+        let sources = ws.sources();
+        let record = crate::kindles::together(&sources);
         let as_of = record
             .sittings
             .iter()
@@ -297,12 +302,24 @@ impl Shown {
             settings.stats_from,
             settings.sitting_floor,
         );
+        let dirs: Vec<PathBuf> = sources.iter().map(|s| s.dir.clone()).collect();
         let covers: Vec<Option<PathBuf>> = stats
             .books
             .iter()
             .map(|b| match b.cde_key.is_empty() {
                 true => None,
-                false => ws.cover(&b.cde_key),
+                false => crate::kindles::cover(&dirs, &b.cde_key),
+            })
+            .collect();
+        let labels = crate::kindles::labels(&sources, Words::of(ws.site.lang()).from_backup);
+        let kindles = stats
+            .books
+            .iter()
+            .map(|b| match sources.len() > 1 {
+                true => crate::kindles::origin(b.extent)
+                    .0
+                    .and_then(|n| labels.get(n).cloned()),
+                false => None,
             })
             .collect();
         let tones = stats
@@ -323,6 +340,7 @@ impl Shown {
             as_of,
             covers,
             tones,
+            kindles,
         })
     }
 
@@ -350,7 +368,7 @@ pub fn key_of(book: &readinglog_native::stats::BookStat) -> String {
 }
 
 /// `route` drawn `width` wide off `shown`, the sidebar beside it. `kindle` is
-/// the serial of a Kindle plugged in that Import can read.
+/// the cut serial of a Kindle plugged in that Import can read.
 pub fn render(
     shown: Option<&Shown>,
     ws: &Workspace,
@@ -389,6 +407,7 @@ pub fn render(
         look,
         tones: &shown.tones,
         covers: &shown.covers,
+        kindles: &shown.kindles,
         links,
         uncovered: shown.settings.show_uncovered,
         width: (width - 120.0).max(320.0),
@@ -451,6 +470,7 @@ struct Ctx<'a> {
     look: Look,
     tones: &'a [[u8; 3]],
     covers: &'a [Option<PathBuf>],
+    kindles: &'a [Option<String>],
     links: Covers,
     /// `Settings::show_uncovered`, which `view::books::listed` takes.
     uncovered: bool,
@@ -462,6 +482,11 @@ impl Ctx<'_> {
     /// The route of the book at `at` in `Stats::books`.
     fn book_link(&self, at: usize) -> String {
         Route::book(key_of(&self.stats.books[at])).link()
+    }
+
+    /// The Kindle the book at `at` is from, where `kindles` names one.
+    fn kindle(&self, at: usize) -> Option<&str> {
+        self.kindles.get(at).and_then(|k| k.as_deref())
     }
 
     /// The cover of the book at `at`, or one made of its title on its tone.
@@ -504,7 +529,7 @@ impl Ctx<'_> {
 }
 
 /// The sidebar: under `shown`, the screens, the years with reading, a Kindle
-/// mounted and the way to a backup; under any record, the way to the settings.
+/// plugged in and the way to a backup; under any record, the way to the settings.
 fn side(
     shown: Option<&Shown>,
     route: &Route,

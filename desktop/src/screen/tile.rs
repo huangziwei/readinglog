@@ -1,6 +1,6 @@
 //! One book as its cover tile, the one every page laying books out as covers
-//! draws: the cover, a bar of its progress, its title and author, its time and
-//! where it stands, and its highlights.
+//! draws: the cover, a bar of its progress, its title, author and Kindle, its
+//! time and where it stands, and its highlights.
 
 use std::fmt::Write as _;
 use std::ops::RangeInclusive;
@@ -42,10 +42,14 @@ pub(super) fn tile(cx: &Ctx, at: usize, over: Option<RangeInclusive<i64>>) -> St
         ),
         (false, None) => read,
     };
+    let kindle = cx
+        .kindle(at)
+        .map(|k| format!("<p class=\"meta\">{}</p>", esc(k)))
+        .unwrap_or_default();
     let mut out = format!(
         "<a class=\"tile\" href=\"{}\"><div class=\"cover\">{}</div>\
          <div class=\"progress\"><i style=\"width: {bar}%\"></i></div>\
-         <p class=\"title\"{}>{}</p><p class=\"author\"{}>{}</p><p class=\"meta\">{}</p>",
+         <p class=\"title\"{}>{}</p><p class=\"author\"{}>{}</p>{kindle}<p class=\"meta\">{}</p>",
         cx.book_link(at),
         cx.cover(at),
         lang(&book.language, &book.title),

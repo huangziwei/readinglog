@@ -1,30 +1,32 @@
-//! A workspace: every Kindle's imports and record under its serial, the
+//! A workspace: every Kindle's imports and record under its cut serial, the
 //! backups no Kindle was named for and the record they fold into, the edits,
-//! the posts and `site.toml`. The site is built from it into a folder of its own.
+//! the posts and `site.toml`.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use readinglog_native::covers;
 use readinglog_native::lang::Lang;
 use readinglog_native::record::Record;
 use readinglog_native::settings::{ColorScheme, Settings, SittingFloor, StatsFrom, WeekStart};
 
+use crate::kindles::Source;
+
 /// The file naming the site and the settings its figures are stated under.
 pub const SITE_FILE: &str = "site.toml";
 
-/// Every backup imported, byte for byte.
+/// The folder of backups kept byte for byte, in the workspace and in each
+/// Kindle's folder.
 pub const BACKUPS: &str = "backups";
 
-/// The record those backups fold into: `sessions.tsv` and its cover copies.
+/// The folder of a record, `sessions.tsv` and its cover copies, beside `BACKUPS`.
 pub const RECORD: &str = "record";
 
 /// One Markdown file per post.
 pub const POSTS: &str = "posts";
 
-/// A folder per Kindle, named for its serial, each holding that Kindle's
+/// A folder per Kindle, named for its cut serial, each holding that Kindle's
 /// `BACKUPS` and `RECORD` as the workspace holds those no Kindle was named for.
 pub const KINDLES: &str = "kindles";
 
@@ -335,12 +337,23 @@ impl Workspace {
         out
     }
 
-    /// The copy of the cover `key` names, off the first record holding one.
-    pub fn cover(&self, key: &str) -> Option<PathBuf> {
-        self.record_dirs()
+    /// Each record the workspace holds that states a sitting or a book: every
+    /// Kindle's, then the one no Kindle was named for.
+    pub fn sources(&self) -> Vec<Source> {
+        self.kindles()
             .into_iter()
-            .find(|dir| covers::held(dir, key))
-            .map(|dir| covers::path(&dir, key))
+            .map(|kindle| Source {
+                record: Record::load(&kindle.join(RECORD)),
+                serial: kindle.file_name().map(|n| n.to_string_lossy().into_owned()),
+                dir: kindle.join(RECORD),
+            })
+            .chain([Source {
+                record: Record::load(&self.record_dir()),
+                dir: self.record_dir(),
+                serial: None,
+            }])
+            .filter(|s| !s.record.sittings.is_empty() || !s.record.books.is_empty())
+            .collect()
     }
 
     pub fn posts(&self) -> PathBuf {
@@ -359,12 +372,7 @@ impl Workspace {
     /// Every record the workspace holds as one, through
     /// [`crate::kindles::together`]; empty where nothing has been imported.
     pub fn record(&self) -> Record {
-        let kindles: Vec<Record> = self
-            .kindles()
-            .iter()
-            .map(|k| Record::load(&k.join(RECORD)))
-            .collect();
-        crate::kindles::together(&kindles, &Record::load(&self.record_dir()))
+        crate::kindles::together(&self.sources())
     }
 }
 

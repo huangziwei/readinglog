@@ -81,8 +81,7 @@ impl Transport for MtpTransport {
             let handle = resolve(storage, path)
                 .await?
                 .ok_or_else(|| anyhow!("MTP read: object not found at `{path}`"))?;
-            // In bounded chunks: a Scribe stalls a multi-megabyte single
-            // `GetObject`.
+            // The object in `download_stream`'s bounded chunks.
             let mut dl = storage.download_stream(handle).await.map_err(map_mtp_err)?;
             let total = dl.size();
             let mut buf = Vec::with_capacity(total as usize);
@@ -201,8 +200,7 @@ mod tests {
 
     #[test]
     fn exclusive_access_error_gets_actionable_text() {
-        // The words nusb answers on macOS where another process holds the
-        // device.
+        // `io_err`, as macOS words a device another process holds.
         let io_err = std::io::Error::other("could not be opened for exclusive access");
         let mapped = map_mtp_err(mtp_rs::Error::Io(io_err));
         let msg = format!("{mapped:#}");

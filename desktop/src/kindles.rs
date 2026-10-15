@@ -1,190 +1,255 @@
-//! Every Kindle's record laid together as the one the screens draw: a sitting
-//! two records hold counts once, a book's state is the Kindle's that read it
-//! furthest, and the record no Kindle was named for never outranks a Kindle's.
+//! [`together`] lays each [`Source`]'s record beside the others' as one record, and
+//! [`labels`] names each source's Kindle.
 
-use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
-use readinglog_native::record::{Book, Record};
+use readinglog_native::covers;
+use readinglog_native::record::Record;
 
-/// Every book row of `records`, by `(extent, cde_key)`, in their order.
-fn rows_of<'a>(
-    records: impl Iterator<Item = &'a Record>,
-) -> HashMap<(i64, &'a str), Vec<&'a Book>> {
-    let mut out: HashMap<(i64, &str), Vec<&Book>> = HashMap::new();
-    for book in records.flat_map(|r| &r.books) {
-        out.entry((book.extent, book.cde_key.as_str()))
-            .or_default()
-            .push(book);
+/// A record, the folder it was loaded from, and the Kindle it is from.
+pub struct Source {
+    pub record: Record,
+    /// The folder the record was loaded from, holding its covers.
+    pub dir: PathBuf,
+    /// The Kindle's serial, cut; `None` for backups naming no Kindle.
+    pub serial: Option<String>,
+}
+
+/// [`together`] moves the `n`th source's extents and end positions above
+/// `(n + 1) * SPACE`, past any a Kindle states.
+const SPACE: i64 = 1 << 40;
+
+/// Between a `cde_key` and the number of the source [`together`] took it from.
+const KEY_MARK: char = '@';
+
+/// `sources` as one record, each through `Record::drop_nested`: one as it is, two
+/// or more each in a space of its own — every extent, end position and key moved —
+/// and the newest watermark standing.
+pub fn together(sources: &[Source]) -> Record {
+    let loaded = |record: &Record| {
+        let mut out = record.clone();
+        out.drop_nested();
+        out
+    };
+    match sources {
+        [] => Record::default(),
+        [one] => loaded(&one.record),
+        many => {
+            let text: String = many
+                .iter()
+                .enumerate()
+                .map(|(n, source)| apart(&loaded(&source.record), n).text())
+                .collect();
+            let mut out = Record::from_text(&text);
+            out.watermark = many
+                .iter()
+                .map(|s| s.record.watermark.as_str())
+                .max()
+                .unwrap_or_default()
+                .to_string();
+            out
+        }
+    }
+}
+
+/// `record` in the space of the `n`th source.
+fn apart(record: &Record, n: usize) -> Record {
+    let into = |value: i64| match value > 0 {
+        true => value + (n as i64 + 1) * SPACE,
+        false => value,
+    };
+    let mark = |key: &str| match key.is_empty() {
+        true => String::new(),
+        false => format!("{key}{KEY_MARK}{n}"),
+    };
+    let mut out = record.clone();
+    for sitting in &mut out.sittings {
+        sitting.end_position = into(sitting.end_position);
+        sitting.asin = sitting.asin.as_deref().map(mark);
+    }
+    for book in &mut out.books {
+        book.extent = into(book.extent);
+        book.cde_key = mark(&book.cde_key);
+    }
+    for highlight in &mut out.highlights {
+        highlight.extent = into(highlight.extent);
+    }
+    for end in &mut out.ends {
+        *end = (into(end.0), into(end.1));
+    }
+    for counter in &mut out.counters {
+        counter.0 = into(counter.0);
+    }
+    for (extent, key) in &mut out.keys {
+        *extent = into(*extent);
+        *key = mark(key);
+    }
+    for (extent, file) in &mut out.pairs {
+        *extent = into(*extent);
+        *file = mark(file);
+    }
+    for cleared in &mut out.cleared {
+        cleared.extent = into(cleared.extent);
+        cleared.key = mark(&cleared.key);
     }
     out
 }
 
-/// `kindles`' records and `unnamed`, the backups no Kindle was named for, as
-/// one record:
-///
-/// - every sitting once per `(started_at, end_position)`, as `Record::merge`
-///   keeps one;
-/// - every book once per `(extent, cde_key)`. Where Kindles hold it, the row of
-///   the one that read furthest stands whole, finished and kept where any of
-///   them says so, with every restart's day, and on a Kindle where any holds
-///   it. `unnamed`'s row stands only where no Kindle holds the book;
-/// - every highlight once per `Highlight::identity`.
-///
-/// Where two records state one sitting or book alike, the one whose watermark
-/// is newer stands: a backup restored onto a second Kindle leaves both holding
-/// a sitting only one of them goes on measuring. A text field the standing row
-/// states none of is taken from another row, and the newest watermark stands.
-pub fn together(kindles: &[Record], unnamed: &Record) -> Record {
-    let mut kindles: Vec<&Record> = kindles.iter().collect();
-    kindles.sort_by(|a, b| b.watermark.cmp(&a.watermark));
-    let every = || kindles.iter().copied().chain(std::iter::once(unnamed));
-    let mut out = Record::default();
-    for record in every() {
-        out.merge(record);
+/// The source [`together`] took `extent` from, and the extent as that source
+/// states it; `None` and `extent` itself for one it did not move.
+pub fn origin(extent: i64) -> (Option<usize>, i64) {
+    match extent > SPACE {
+        true => (Some((extent / SPACE - 1) as usize), extent % SPACE),
+        false => (None, extent),
     }
-    let held = rows_of(kindles.iter().copied());
-    let none = rows_of(std::iter::once(unnamed));
-    for book in &mut out.books {
-        let key = (book.extent, book.cde_key.as_str());
-        let (held, none) = (
-            held.get(&key).map_or(&[][..], Vec::as_slice),
-            none.get(&key).map_or(&[][..], Vec::as_slice),
-        );
-        let rows = match held.is_empty() {
-            true => none,
-            false => held,
-        };
-        let Some(furthest) = rows
-            .iter()
-            .copied()
-            .reduce(|a, b| if b.percent > a.percent { b } else { a })
-        else {
-            continue;
-        };
-        let mut row = furthest.clone();
-        for other in rows {
-            row.finished |= other.finished;
-            row.kept |= other.kept;
-            row.on_kindle |= other.on_kindle;
-            for day in &other.restarted_on {
-                if !row.restarted_on.contains(day) {
-                    row.restarted_on.push(*day);
+}
+
+/// The source [`together`] took `key` from, and the key as that source states
+/// it; `None` and `key` itself for one it did not mark.
+pub fn key_origin(key: &str) -> (Option<usize>, &str) {
+    match key.rsplit_once(KEY_MARK) {
+        Some((own, n)) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => {
+            (n.parse().ok(), own)
+        }
+        _ => (None, key),
+    }
+}
+
+/// The copy of the cover `key` names: in its own source's folder for a key
+/// [`together`] marked, else in the first of `dirs` holding one.
+pub fn cover(dirs: &[PathBuf], key: &str) -> Option<PathBuf> {
+    let held = |dir: &Path, key: &str| covers::held(dir, key).then(|| covers::path(dir, key));
+    match key_origin(key) {
+        (Some(n), own) => dirs.get(n).and_then(|dir| held(dir, own)),
+        (None, own) => dirs.iter().find_map(|dir| held(dir, own)),
+    }
+}
+
+/// What each of `sources` is called: its Kindle's model, with the serial's
+/// last four where two share one; `unnamed` for the backups naming no Kindle.
+pub fn labels(sources: &[Source], unnamed: &str) -> Vec<String> {
+    let models: Vec<Option<&str>> = sources
+        .iter()
+        .map(|s| {
+            s.serial
+                .as_deref()
+                .map(|serial| crate::device::model::of(serial).unwrap_or("Kindle"))
+        })
+        .collect();
+    sources
+        .iter()
+        .zip(&models)
+        .map(|(source, model)| match (model, &source.serial) {
+            (Some(model), Some(serial)) => {
+                match models.iter().filter(|m| *m == &Some(*model)).count() > 1 {
+                    true => format!("{model} {}", tail(serial)),
+                    false => (*model).to_string(),
                 }
             }
-        }
-        row.restarted_on.sort_unstable();
-        for other in held.iter().chain(none) {
-            for (field, stated) in [
-                (&mut row.cde_type, &other.cde_type),
-                (&mut row.title, &other.title),
-                (&mut row.author, &other.author),
-                (&mut row.thumbnail, &other.thumbnail),
-                (&mut row.language, &other.language),
-                (&mut row.cover, &other.cover),
-            ] {
-                if field.is_empty() {
-                    field.clone_from(stated);
-                }
-            }
-        }
-        *book = row;
-    }
-    out.watermark = every()
-        .map(|r| r.watermark.as_str())
-        .max()
-        .unwrap_or_default()
-        .to_string();
-    out
+            _ => unnamed.to_string(),
+        })
+        .collect()
+}
+
+/// `serial`'s last four characters.
+fn tail(serial: &str) -> String {
+    let chars: Vec<char> = serial.chars().collect();
+    chars[chars.len().saturating_sub(4)..].iter().collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tests::{book, record_of, sitting};
+    use readinglog_native::record::Book;
+    use readinglog_native::stats::Stats;
 
-    /// A book at `percent` with its timer at `ms`, on the Kindle or not.
-    fn at(percent: f64, ms: i64, on: bool) -> Book {
-        Book {
-            percent,
-            timer_ms: ms,
-            on_kindle: on,
-            ..book(100, "B1", "One")
+    fn source(record: Record, serial: Option<&str>) -> Source {
+        Source {
+            record,
+            dir: PathBuf::from("/nowhere"),
+            serial: serial.map(String::from),
+        }
+    }
+
+    /// One book, `B1` at extent 100, at `percent`, read for `seconds` on the
+    /// first of September.
+    fn reading(percent: f64, seconds: i64) -> Record {
+        record_of(
+            vec![Book {
+                percent,
+                ..book(100, "B1", "One")
+            }],
+            vec![sitting("2026-09-01T09:00:00", 100, seconds)],
+        )
+    }
+
+    #[test]
+    fn one_source_stands_as_it_is() {
+        let only = reading(40.0, 600);
+        let one = together(&[source(only.clone(), Some("G003H2-7890"))]);
+        assert_eq!(one.text(), only.text());
+    }
+
+    #[test]
+    fn a_book_two_kindles_hold_is_two_books() {
+        let sources = [
+            source(reading(10.0, 600), Some("G003H2-7890")),
+            source(reading(60.0, 900), Some("G0027J-ABCD")),
+        ];
+        let one = together(&sources);
+        assert_eq!(one.books.len(), 2);
+        assert_eq!(one.sittings.len(), 2, "each Kindle's sitting is its own");
+        let stats = Stats::build(
+            &one,
+            readinglog_native::date::parse_day("2026-09-01").unwrap(),
+            true,
+            readinglog_native::settings::StatsFrom::App,
+            readinglog_native::settings::SittingFloor::All,
+        );
+        assert_eq!(stats.books.len(), 2);
+        let mut read: Vec<(Option<usize>, i64, i64)> = stats
+            .books
+            .iter()
+            .map(|b| {
+                let (from, extent) = origin(b.extent);
+                (from, extent, b.seconds)
+            })
+            .collect();
+        read.sort();
+        assert_eq!(read, vec![(Some(0), 100, 600), (Some(1), 100, 900)]);
+        for b in &stats.books {
+            let (from, key) = key_origin(&b.cde_key);
+            assert_eq!((from, key), (origin(b.extent).0, "B1"));
         }
     }
 
     #[test]
-    fn a_book_two_kindles_hold_is_the_one_read_furthest() {
-        let near = record_of(
-            vec![at(10.0, 60_000, true)],
-            vec![sitting("2026-09-01T09:00:00", 100, 600)],
-        );
-        let mut far_book = at(60.0, 3_600_000, false);
-        far_book.restarted_on = vec![20_300];
-        let far = record_of(
-            vec![far_book],
-            vec![sitting("2026-09-02T09:00:00", 100, 900)],
-        );
-        let one = together(&[near, far], &Record::default());
-        assert_eq!(one.books.len(), 1);
-        let held = &one.books[0];
-        assert_eq!((held.percent, held.timer_ms), (60.0, 3_600_000));
-        assert!(held.on_kindle, "on the Kindle that holds it");
-        assert_eq!(held.restarted_on, vec![20_300]);
-        assert_eq!(one.sittings.len(), 2);
+    fn a_key_or_extent_together_did_not_move_names_no_source() {
+        assert_eq!(origin(100), (None, 100));
+        assert_eq!(origin(0), (None, 0));
+        assert_eq!(key_origin("B1"), (None, "B1"));
+        assert_eq!(key_origin("name@home"), (None, "name@home"));
+        assert_eq!(key_origin("*1a9c@3"), (Some(3), "*1a9c"));
     }
 
     #[test]
-    fn a_sitting_two_kindles_hold_counts_once() {
-        let first = record_of(
-            vec![book(100, "B1", "One")],
-            vec![sitting("2026-09-01T09:00:00", 100, 600)],
+    fn a_kindle_is_called_by_its_model_and_twins_by_their_serials() {
+        let named = |serials: &[Option<&str>]| {
+            let sources: Vec<Source> = serials
+                .iter()
+                .map(|s| source(Record::default(), *s))
+                .collect();
+            labels(&sources, "Backup")
+        };
+        assert_eq!(
+            named(&[Some("G003H2-7890"), Some("G0027J-ABCD"), None]),
+            vec!["Kindle Colorsoft", "Kindle Scribe", "Backup"]
         );
-        let restored = record_of(
-            vec![book(100, "B1", "One")],
-            vec![
-                sitting("2026-09-01T09:00:00", 100, 600),
-                sitting("2026-09-03T09:00:00", 100, 300),
-            ],
+        assert_eq!(
+            named(&[Some("G003H2-7890"), Some("G003H4-1234")]),
+            vec!["Kindle Colorsoft 7890", "Kindle Colorsoft 1234"]
         );
-        let one = together(&[first, restored], &Record::default());
-        assert_eq!(one.sittings.len(), 2);
-    }
-
-    #[test]
-    fn a_sitting_two_kindles_hold_is_the_one_the_newer_record_states() {
-        let mut older = record_of(
-            vec![book(100, "B1", "One")],
-            vec![sitting("2026-09-01T09:00:00", 100, 600)],
-        );
-        older.sittings[0].seconds = 6;
-        older.watermark = "260907:100000".into();
-        let mut newer = older.clone();
-        newer.sittings[0].seconds = 106;
-        newer.watermark = "260910:100000".into();
-        for (first, second) in [(&older, &newer), (&newer, &older)] {
-            let one = together(&[first.clone(), second.clone()], &Record::default());
-            assert_eq!(one.sittings.len(), 1);
-            assert_eq!(one.sittings[0].seconds, 106);
-        }
-    }
-
-    #[test]
-    fn a_record_no_kindle_was_named_for_never_outranks_a_kindles() {
-        let mut stale = at(100.0, 3_600_000, true);
-        stale.finished = true;
-        let mut stale_record = record_of(vec![stale], vec![]);
-        stale_record.books.push(book(200, "B2", "Only in a backup"));
-        let mut restarted = at(2.0, 60_000, false);
-        restarted.restarted_on = vec![20_336];
-        restarted.title = String::new();
-        let kindle = record_of(vec![restarted], vec![]);
-
-        let one = together(&[kindle], &stale_record);
-        let held = &one.books[0];
-        assert!(!held.finished);
-        assert_eq!((held.percent, held.timer_ms), (2.0, 60_000));
-        assert!(!held.on_kindle);
-        assert_eq!(held.title, "One", "a title the Kindle's row states none of");
-        assert_eq!(one.books[1].title, "Only in a backup");
+        assert_eq!(named(&[Some("G00ZZZ-0000")]), vec!["Kindle"]);
     }
 }
