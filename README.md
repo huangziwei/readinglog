@@ -1,4 +1,6 @@
-# Reading Log
+# Reading Log 札記
+
+<p align="center"><img src=".github/assets/icon.png" width="128" height="128"/></p>
 
 Keep track of your reading stats by parsing the local system logs on your jailbroken Kindle.  
 
