@@ -2,7 +2,7 @@
 //! hides. Every figure on the site is `Stats::build` over it: one population for
 //! a total and its parts, holding none of a hidden book's reading.
 
-use std::path::Path;
+use std::path::PathBuf;
 
 use readinglog_native::covers;
 use readinglog_native::date;
@@ -23,11 +23,11 @@ pub struct Public {
 }
 
 impl Public {
-    /// `record` less what `edits` hides, its covers looked for under
-    /// `record_dir`, stated under `settings`.
+    /// `record` less what `edits` hides, its covers looked for under each of
+    /// `record_dirs`, stated under `settings`.
     pub fn of(
         record: &Record,
-        record_dir: &Path,
+        record_dirs: &[PathBuf],
         edits: &Edits,
         settings: &Settings,
         new_books: NewBooks,
@@ -49,7 +49,7 @@ impl Public {
             .books
             .iter()
             .filter(|b| shown(b))
-            .map(|b| on_this_computer(b, record_dir))
+            .map(|b| on_this_computer(b, record_dirs))
             .collect();
         let public = Record {
             sittings,
@@ -77,15 +77,19 @@ impl Public {
     }
 }
 
-/// `book` with its cover pointing at the copy under `record_dir`, and at none
-/// where no copy there draws. The record names the Kindle's own paths.
-fn on_this_computer(book: &record::Book, record_dir: &Path) -> record::Book {
-    let cover = match covers::held(record_dir, &book.cde_key) {
-        true => covers::path(record_dir, &book.cde_key)
-            .to_string_lossy()
-            .into_owned(),
-        false => String::new(),
-    };
+/// `book` with its cover pointing at the copy under the first of
+/// `record_dirs` holding one, and at none where no copy there draws. The record
+/// names the Kindle's own paths.
+fn on_this_computer(book: &record::Book, record_dirs: &[PathBuf]) -> record::Book {
+    let cover = record_dirs
+        .iter()
+        .find(|dir| covers::held(dir, &book.cde_key))
+        .map(|dir| {
+            covers::path(dir, &book.cde_key)
+                .to_string_lossy()
+                .into_owned()
+        })
+        .unwrap_or_default();
     record::Book {
         cover,
         thumbnail: String::new(),
@@ -151,7 +155,7 @@ mod tests {
         );
         let public = Public::of(
             &record,
-            Path::new("/nowhere"),
+            &[PathBuf::from("/nowhere")],
             &Edits::default(),
             &settings(),
             NewBooks::Shown,
@@ -184,7 +188,7 @@ mod tests {
         edits.book_mut("B2", 200).shown = Some(false);
         let public = Public::of(
             &record,
-            Path::new("/nowhere"),
+            &[PathBuf::from("/nowhere")],
             &edits,
             &settings(),
             NewBooks::Shown,
@@ -200,7 +204,7 @@ mod tests {
         edits.book_mut("B1", 100).shown = Some(true);
         let public = Public::of(
             &record,
-            Path::new("/nowhere"),
+            &[PathBuf::from("/nowhere")],
             &edits,
             &settings(),
             NewBooks::Hidden,
@@ -221,7 +225,7 @@ mod tests {
         edits.sitting_mut(&record.sittings[1]).shown = Some(false);
         let public = Public::of(
             &record,
-            Path::new("/nowhere"),
+            &[PathBuf::from("/nowhere")],
             &edits,
             &settings(),
             NewBooks::Shown,
@@ -251,7 +255,7 @@ mod tests {
         let shown = |edits: &Edits| {
             Public::of(
                 &record,
-                Path::new("/nowhere"),
+                &[PathBuf::from("/nowhere")],
                 edits,
                 &settings(),
                 NewBooks::Shown,

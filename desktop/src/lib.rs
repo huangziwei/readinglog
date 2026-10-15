@@ -1,10 +1,14 @@
-//! Reading Log on the desktop: [`import`] folds backups into a [`workspace`],
-//! [`screen`] draws its record and [`app`] is the window. [`edits`], [`posts`],
-//! [`public`], [`site`], [`out`] and [`shelf`] build the record into a site.
+//! Reading Log on the desktop: [`import`] folds backups and Kindles read over
+//! [`device`] into a [`workspace`], [`kindles`] lays every Kindle's record
+//! together, [`screen`] draws it and [`app`] is the window. [`edits`],
+//! [`posts`], [`public`], [`site`], [`out`] and [`shelf`] build the record into
+//! a site.
 
 pub mod app;
+pub mod device;
 pub mod edits;
 pub mod import;
+pub mod kindles;
 pub mod out;
 pub mod posts;
 pub mod public;

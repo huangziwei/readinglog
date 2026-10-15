@@ -23,7 +23,7 @@ use crate::edits::Edits;
 use crate::out;
 use crate::posts::{self, Post};
 use crate::public::Public;
-use crate::workspace::{SiteToml, Workspace};
+use crate::workspace::{KINDLES, SiteToml, Workspace};
 
 /// A site in memory.
 pub struct Site {
@@ -141,9 +141,14 @@ fn trespasses(ws: &Workspace, out: &Path) -> bool {
     let home = lexical(&ws.dir);
     out == home
         || home.starts_with(&out)
-        || [ws.record_dir(), ws.backups(), ws.posts()]
-            .iter()
-            .any(|kept| out.starts_with(lexical(kept)))
+        || [
+            ws.record_dir(),
+            ws.backups(),
+            ws.posts(),
+            ws.dir.join(KINDLES),
+        ]
+        .iter()
+        .any(|kept| out.starts_with(lexical(kept)))
 }
 
 /// `path` made whole against the working folder, its `.` and `..` resolved
@@ -172,7 +177,7 @@ pub fn build(ws: &Workspace) -> Result<Site> {
     let edits = Edits::load(&ws.dir)?;
     let public = Public::of(
         &ws.record(),
-        &ws.record_dir(),
+        &ws.record_dirs(),
         &edits,
         &settings,
         ws.site.new_books,

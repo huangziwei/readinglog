@@ -1,4 +1,5 @@
-//! A workspace: every backup imported, the record they fold into, the edits,
+//! A workspace: every Kindle's imports and record under its serial, the
+//! backups no Kindle was named for and the record they fold into, the edits,
 //! the posts and `site.toml`. The site is built from it into a folder of its own.
 
 use std::path::{Path, PathBuf};
@@ -6,6 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use readinglog_native::covers;
 use readinglog_native::lang::Lang;
 use readinglog_native::record::Record;
 use readinglog_native::settings::{ColorScheme, Settings, SittingFloor, StatsFrom, WeekStart};
@@ -21,6 +23,10 @@ pub const RECORD: &str = "record";
 
 /// One Markdown file per post.
 pub const POSTS: &str = "posts";
+
+/// A folder per Kindle, named for its serial, each holding that Kindle's
+/// `BACKUPS` and `RECORD` as the workspace holds those no Kindle was named for.
+pub const KINDLES: &str = "kindles";
 
 /// Whether a book `books.toml` makes no choice about is on the site.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -290,13 +296,51 @@ impl Workspace {
         write_toml(&self.dir.join(SITE_FILE), &self.site)
     }
 
+    /// The backups no Kindle was named for.
     pub fn backups(&self) -> PathBuf {
         self.dir.join(BACKUPS)
     }
 
-    /// The folder `Record::load` and `Record::save` take.
+    /// The record those backups fold into, the folder `Record::load` and
+    /// `Record::save` take.
     pub fn record_dir(&self) -> PathBuf {
         self.dir.join(RECORD)
+    }
+
+    /// The folder the Kindle `serial` names keeps its imports and its record in.
+    pub fn kindle_dir(&self, serial: &str) -> PathBuf {
+        self.dir.join(KINDLES).join(folder_name(serial))
+    }
+
+    /// Each Kindle's folder, in the order their names sort.
+    pub fn kindles(&self) -> Vec<PathBuf> {
+        let mut out: Vec<PathBuf> = std::fs::read_dir(self.dir.join(KINDLES))
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|e| e.path())
+                    .filter(|p| p.is_dir())
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.sort();
+        out
+    }
+
+    /// Every record the workspace holds, by its folder: each Kindle's, then the
+    /// one no Kindle was named for.
+    pub fn record_dirs(&self) -> Vec<PathBuf> {
+        let mut out: Vec<PathBuf> = self.kindles().iter().map(|k| k.join(RECORD)).collect();
+        out.push(self.record_dir());
+        out
+    }
+
+    /// The copy of the cover `key` names, off the first record holding one.
+    pub fn cover(&self, key: &str) -> Option<PathBuf> {
+        self.record_dirs()
+            .into_iter()
+            .find(|dir| covers::held(dir, key))
+            .map(|dir| covers::path(&dir, key))
     }
 
     pub fn posts(&self) -> PathBuf {
@@ -312,9 +356,34 @@ impl Workspace {
         }
     }
 
-    /// The record as it stands, empty where nothing has been imported.
+    /// Every record the workspace holds as one, through
+    /// [`crate::kindles::together`]; empty where nothing has been imported.
     pub fn record(&self) -> Record {
-        Record::load(&self.record_dir())
+        let kindles: Vec<Record> = self
+            .kindles()
+            .iter()
+            .map(|k| Record::load(&k.join(RECORD)))
+            .collect();
+        crate::kindles::together(&kindles, &Record::load(&self.record_dir()))
+    }
+}
+
+/// `serial` as one folder name: its ASCII letters, digits, `-` and `_`, any
+/// other character as `_`.
+fn folder_name(serial: &str) -> String {
+    let name: String = serial
+        .trim()
+        .chars()
+        .map(
+            |c| match c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                true => c,
+                false => '_',
+            },
+        )
+        .collect();
+    match name.is_empty() {
+        true => "kindle".into(),
+        false => name,
     }
 }
 

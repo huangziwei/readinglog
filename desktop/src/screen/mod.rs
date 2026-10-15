@@ -14,9 +14,8 @@ mod tile;
 mod words;
 
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use readinglog_native::covers;
 use readinglog_native::date;
 use readinglog_native::font::Script;
 use readinglog_native::lang::{Lang, Strings};
@@ -298,13 +297,12 @@ impl Shown {
             settings.stats_from,
             settings.sitting_floor,
         );
-        let dir = ws.record_dir();
         let covers: Vec<Option<PathBuf>> = stats
             .books
             .iter()
-            .map(|b| {
-                (!b.cde_key.is_empty() && covers::held(&dir, &b.cde_key))
-                    .then(|| covers::path(&dir, &b.cde_key))
+            .map(|b| match b.cde_key.is_empty() {
+                true => None,
+                false => ws.cover(&b.cde_key),
             })
             .collect();
         let tones = stats
@@ -351,15 +349,15 @@ pub fn key_of(book: &readinglog_native::stats::BookStat) -> String {
     }
 }
 
-/// `route` drawn `width` wide off `shown`, the sidebar beside it. `kindle` is a
-/// Kindle mounted with a record on it.
+/// `route` drawn `width` wide off `shown`, the sidebar beside it. `kindle` is
+/// the serial of a Kindle plugged in that Import can read.
 pub fn render(
     shown: Option<&Shown>,
     ws: &Workspace,
     route: &Route,
     width: f32,
     links: Covers,
-    kindle: Option<&Path>,
+    kindle: Option<&str>,
 ) -> Page {
     let lang = shown.map_or(ws.site.lang(), |s| s.lang);
     let s = lang.strings();
@@ -512,7 +510,7 @@ fn side(
     route: &Route,
     s: &Strings,
     w: &Words,
-    kindle: Option<&Path>,
+    kindle: Option<&str>,
 ) -> String {
     let mut out = String::from("<p class=\"name\">Reading Log</p>");
     let item = |out: &mut String, to: &Route, name: &str, lit: bool| {
@@ -554,12 +552,12 @@ fn side(
         out.push_str("</div>");
     }
     out.push_str("<div class=\"foot\">");
-    if let (Some(_), Some(root)) = (shown, kindle) {
+    if let (Some(_), Some(serial)) = (shown, kindle) {
         let _ = write!(
             out,
-            "<div class=\"kindle\"><b>Kindle</b>{}<button type=\"button\" class=\"button\" data-act=\"kindle\" data-root=\"{}\">{}</button></div>",
+            "<div class=\"kindle\"><b>Kindle</b>{}<button type=\"button\" class=\"button\" data-act=\"kindle\" data-serial=\"{}\">{}</button></div>",
             esc(w.connected),
-            esc(&root.to_string_lossy()),
+            esc(serial),
             esc(w.import)
         );
     }
@@ -998,20 +996,19 @@ mod tests {
     fn a_record_with_no_sitting_opens_on_the_welcome() {
         let ws = Workspace::open(&scratch("screen-empty")).unwrap();
         assert!(Shown::of(&ws).is_none());
-        let kindle = Path::new("/Volumes/Kindle");
         let page = render(
             None,
             &ws,
             &Route::Today,
             1072.0,
             Covers::Window,
-            Some(kindle),
+            Some("G0001234"),
         );
         let w = Words::of(Lang::English);
         assert!(page.main.contains(w.drop_hint), "{}", page.main);
         assert!(
-            page.main.contains("data-root=\"/Volumes/Kindle\""),
-            "the Kindle mounted"
+            page.main.contains("data-serial=\"G0001234\""),
+            "the Kindle plugged in"
         );
         assert!(!page.side.contains("class=\"nav\""), "no screen to go to");
         assert!(

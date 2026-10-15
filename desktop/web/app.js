@@ -86,7 +86,8 @@ document.addEventListener("click", async (event) => {
       break;
     }
     case "kindle":
-      await bring([act.dataset.root]);
+      flash(await call("import_kindle", { serial: act.dataset.serial }));
+      await show();
       break;
     case "reveal":
       await call("reveal", { path: act.dataset.path });

@@ -37,6 +37,15 @@ toml = "1"
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 # A book's tone off its cover; the decoders `readinglog-native` builds already.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+# Reading a Kindle that offers MTP and no mass storage (2024 and after), as
+# sidle reads one. Pinned exact as sidle pins it: a young crate whose API moves,
+# bumped only with a round trip on a real Kindle.
+mtp-rs = "=0.15.0"
+# Drives `mtp-rs`'s async calls from the `Transport` trait's plain ones.
+futures = "0.3"
+# A mounted Kindle's serial, off its USB `iSerial` descriptor. The version
+# `mtp-rs` resolves, so one copy is built.
+nusb = "=0.2.3"
 
 [dev-dependencies]
 # What the window sends a command, read the way Tauri reads it.

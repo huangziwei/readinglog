@@ -3,8 +3,8 @@
 //! backups imported into it; and the welcome a record holding no sitting opens on.
 
 use std::fmt::Write as _;
-use std::path::Path;
 
+use readinglog_native::backup;
 use readinglog_native::lang::Strings;
 use readinglog_native::view::config::{self, Summary};
 
@@ -25,7 +25,14 @@ pub(super) fn page(ws: &Workspace, shown: Option<&Shown>, s: &Strings, w: &Words
             _ => "",
         }
     };
-    let summary = shown.map(|shown| Summary::of(&shown.record, &shown.stats, &ws.dir, false));
+    let summary = shown.map(|shown| {
+        let mut summary = Summary::of(&shown.record, &shown.stats, &ws.dir, false);
+        for kindle in ws.kindles() {
+            summary.backups += backup::list(&kindle).len();
+            summary.backup_bytes += backup::sizes(&kindle).1;
+        }
+        summary
+    });
     let recorded = summary
         .as_ref()
         .and_then(|summary| config::recorded(summary, s));
@@ -95,19 +102,32 @@ pub(super) fn page(ws: &Workspace, shown: Option<&Shown>, s: &Strings, w: &Words
     out
 }
 
-/// The backups imported into the record's folder, as the Kindle's own list
-/// states each: when it was written, what it weighs and what it holds.
+/// The backups imported into the record's folder, every Kindle's and those no
+/// Kindle was named for, newest first, as the Kindle's own list states each:
+/// when it was written, what it weighs and what it holds.
 fn backups(ws: &Workspace, shown: &Shown, s: &Strings) -> String {
-    let listed = Summary::listed(&ws.dir, &shown.record, shown.lang);
-    if listed.rows.is_empty() {
+    let mut rows = Vec::new();
+    let mut weight = 0;
+    for dir in ws.kindles().into_iter().chain([ws.dir.clone()]) {
+        let held = backup::list(&dir);
+        weight += held.iter().map(|b| b.bytes).sum::<u64>();
+        let listed = Summary::listed(&dir, &shown.record, shown.lang);
+        rows.extend(held.into_iter().map(|b| b.stamp).zip(listed.rows));
+    }
+    if rows.is_empty() {
         return String::new();
     }
+    rows.sort_by(|a, b| b.0.cmp(&a.0));
+    let said = s
+        .n_files
+        .replace("{n}", &rows.len().to_string())
+        .replace("{size}", &config::bytes(weight));
     let mut out = format!(
         "<section><h2>{}<span class=\"said\">{}</span></h2><div class=\"card rows\">",
         esc(s.backups_row),
-        esc(&listed.said)
+        esc(&said)
     );
-    for row in &listed.rows {
+    for (_, row) in &rows {
         let _ = write!(
             out,
             "<div class=\"row\"><span>{}<br><small>{}</small></span><span>{}</span></div>",
@@ -120,22 +140,22 @@ fn backups(ws: &Workspace, shown: &Shown, s: &Strings) -> String {
     out
 }
 
-/// The page a record holding no sitting opens on: a backup to drop or pick, a
-/// Kindle mounted, and where a Kindle keeps its backups.
-pub(super) fn welcome(w: &Words, kindle: Option<&Path>) -> String {
+/// The page a record holding no sitting opens on: a backup to drop or pick, the
+/// Kindle plugged in by its serial, and where a Kindle keeps its backups.
+pub(super) fn welcome(w: &Words, kindle: Option<&str>) -> String {
     let mut out = format!(
         "<div class=\"welcome\"><h1>Reading Log</h1><p class=\"lede\">{}</p>\
          <button type=\"button\" class=\"drop\" data-act=\"pick\">{}</button>",
         esc(w.drop_hint),
         esc(w.choose_backup)
     );
-    if let Some(root) = kindle {
+    if let Some(serial) = kindle {
         let _ = write!(
             out,
             "<div class=\"kindle wide\"><b>Kindle</b> {} \
-             <button type=\"button\" class=\"button\" data-act=\"kindle\" data-root=\"{}\">{}</button></div>",
+             <button type=\"button\" class=\"button\" data-act=\"kindle\" data-serial=\"{}\">{}</button></div>",
             esc(w.connected),
-            esc(&root.to_string_lossy()),
+            esc(serial),
             esc(w.import)
         );
     }

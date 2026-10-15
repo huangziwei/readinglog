@@ -14,7 +14,8 @@ use readinglog_native::covers::COVERS_DIR;
 use readinglog_native::lang::counted;
 use readinglog_native::record::Record;
 
-use crate::import;
+use crate::device::{self, DeviceInfo};
+use crate::import::{self, Imported};
 use crate::screen::{self, Covers, Page, Route, Shown};
 use crate::workspace::{SITE_FILE, Workspace};
 
@@ -23,22 +24,47 @@ use crate::workspace::{SITE_FILE, Workspace};
 struct Open {
     dir: Mutex<Option<PathBuf>>,
     shown: Mutex<Option<(Stamp, Arc<Shown>)>>,
-    /// The covers folder the asset protocol serves.
-    served: Mutex<Option<PathBuf>>,
+    /// The covers folders the asset protocol serves.
+    served: Mutex<Vec<PathBuf>>,
 }
 
-/// When the record and `SITE_FILE` were last written, and the record's size.
-type Stamp = (PathBuf, Option<SystemTime>, Option<u64>, Option<SystemTime>);
+/// When each record and `SITE_FILE` were last written, and each record's size.
+type Stamp = (
+    PathBuf,
+    Vec<(Option<SystemTime>, Option<u64>)>,
+    Option<SystemTime>,
+);
 
 fn stamp(ws: &Workspace) -> Stamp {
-    let record = std::fs::metadata(Record::file(&ws.record_dir())).ok();
+    let records = ws
+        .record_dirs()
+        .iter()
+        .map(|dir| {
+            let record = std::fs::metadata(Record::file(dir)).ok();
+            (
+                record.as_ref().and_then(|m| m.modified().ok()),
+                record.as_ref().map(|m| m.len()),
+            )
+        })
+        .collect();
     let site = std::fs::metadata(ws.dir.join(SITE_FILE)).ok();
     (
         ws.dir.clone(),
-        record.as_ref().and_then(|m| m.modified().ok()),
-        record.as_ref().map(|m| m.len()),
+        records,
         site.and_then(|m| m.modified().ok()),
     )
+}
+
+/// The Kindle plugged in that Import can read: a mounted one holding the app's
+/// record, or one over MTP, which shows nothing without a session.
+fn plugged() -> Option<DeviceInfo> {
+    let found = device::detect::detect()?;
+    match found.mass_storage_mount() {
+        Some(mount) => Record::file(&mount.join("extensions").join("readinglog"))
+            .is_file()
+            .then_some(found),
+        None => Some(found),
+    }
 }
 
 /// The file under the app's config folder naming the folder last opened.
@@ -112,33 +138,37 @@ fn shown(open: &State<'_, Open>, ws: &Workspace) -> Answer<Option<Arc<Shown>>> {
 async fn page(app: AppHandle, open: State<'_, Open>, route: String, width: f64) -> Answer<Page> {
     let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
     let built = shown(&open, &ws)?;
-    let covers = ws.record_dir().join(COVERS_DIR);
     let mut served = open
         .served
         .lock()
         .map_err(|_| "the covers could not be served".to_string())?;
-    if built.is_some() && served.as_ref() != Some(&covers) {
-        app.asset_protocol_scope()
-            .allow_directory(&covers, false)
-            .map_err(|e| e.to_string())?;
-        *served = Some(covers);
+    if built.is_some() {
+        for covers in ws.record_dirs().iter().map(|dir| dir.join(COVERS_DIR)) {
+            if served.contains(&covers) {
+                continue;
+            }
+            app.asset_protocol_scope()
+                .allow_directory(&covers, false)
+                .map_err(|e| e.to_string())?;
+            served.push(covers);
+        }
     }
     drop(served);
-    let kindle = import::mounted(&import::volumes());
+    let kindle = plugged();
     Ok(screen::render(
         built.as_deref(),
         &ws,
         &Route::parse(&route),
         width as f32,
         Covers::Window,
-        kindle.as_deref(),
+        kindle.as_ref().map(|d| d.serial.as_str()),
     ))
 }
 
-/// The volume of a Kindle mounted with a record on it.
+/// The serial of the Kindle plugged in that Import can read.
 #[tauri::command]
-fn kindle() -> Option<String> {
-    import::mounted(&import::volumes()).map(|p| p.to_string_lossy().into_owned())
+async fn kindle() -> Option<String> {
+    plugged().map(|d| d.serial)
 }
 
 /// Import each of `paths`: a backup, or a Kindle's volume or its folder. Answers
@@ -148,21 +178,48 @@ async fn import(app: AppHandle, open: State<'_, Open>, paths: Vec<String>) -> An
     let dir = folder(&app, &open)?;
     let ws = Workspace::create(&dir).map_err(said)?;
     remember(&app, &dir)?;
-    let (mut sittings, mut books, mut highlights) = (0, 0, 0);
+    let kindle = plugged();
+    let mut done = Vec::new();
     for path in &paths {
         let from = Path::new(path);
-        let done = match from.is_dir() {
-            true => import::kindle(&ws, from),
-            false => import::backup(&ws, from),
-        }
-        .map_err(said)?;
-        sittings += done.sittings;
-        books += done.books;
-        highlights += done.highlights;
+        done.push(
+            match from.is_dir() {
+                true => import::folder(&ws, from, kindle.as_ref()),
+                false => import::backup(&ws, from),
+            }
+            .map_err(said)?,
+        );
     }
+    Ok(gained(&ws, &done))
+}
+
+/// Import the Kindle plugged in that `serial` names, off the window's thread:
+/// over MTP a read takes seconds. Answers what the record gained, in the
+/// window's words.
+#[tauri::command]
+async fn import_kindle(app: AppHandle, open: State<'_, Open>, serial: String) -> Answer<String> {
+    let dir = folder(&app, &open)?;
+    let ws = Workspace::create(&dir).map_err(said)?;
+    remember(&app, &dir)?;
+    let device = plugged()
+        .filter(|d| d.serial == serial)
+        .ok_or_else(|| "the Kindle is no longer plugged in".to_string())?;
+    let at = ws.clone();
+    let done = tauri::async_runtime::spawn_blocking(move || import::kindle(&at, &device))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(said)?;
+    Ok(gained(&ws, &[done]))
+}
+
+/// What `done` added to the record, in `ws`'s language.
+fn gained(ws: &Workspace, done: &[Imported]) -> String {
+    let sittings: usize = done.iter().map(|d| d.sittings).sum();
+    let books: usize = done.iter().map(|d| d.books).sum();
+    let highlights: usize = done.iter().map(|d| d.highlights).sum();
     let lang = ws.site.lang();
     let (s, w) = (lang.strings(), screen::Words::of(lang));
-    let gained: Vec<String> = [
+    let counts: Vec<String> = [
         (s.n_sittings, sittings),
         (s.n_books, books),
         (s.n_highlights, highlights),
@@ -171,10 +228,10 @@ async fn import(app: AppHandle, open: State<'_, Open>, paths: Vec<String>) -> An
     .filter(|(_, n)| *n > 0)
     .map(|(said, n)| counted(said, n as i64))
     .collect();
-    Ok(match gained.is_empty() {
+    match counts.is_empty() {
         true => w.nothing_new.to_string(),
-        false => format!("{}: {}", w.added, gained.join(", ")),
-    })
+        false => format!("{}: {}", w.added, counts.join(", ")),
+    }
 }
 
 /// Set `key` in `Workspace::site` to `value`, as the Kindle's settings file spells it.
@@ -238,6 +295,7 @@ pub fn run() {
             page,
             kindle,
             import,
+            import_kindle,
             set_setting,
             choose_folder,
             pick_backup,
