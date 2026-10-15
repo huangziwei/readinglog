@@ -34,12 +34,17 @@ git clone https://github.com/huangziwei/readinglog && cd readinglog/
 
 ## How It Works
 
+### Data source
+
 On your Kindle, live log is kept in `/var/log/messages`. Every 15 mins or at sleep, the live log will be rotated out and be stored as a `.gz` file in `/var/local/log`. There's a total size limit around 3MB for the roated logs, once reached, the oldest logs will be pruned and lost. The first time you turn on the device in any given day, a daily backup will be generated from the files in `/var/local/log`, and be saved to `/mnt/us/system/logbackup`, only 30 back logs will be kept on the device. All your reading statistics are buried in those logs. 
 
 Book identity is redacted in most of the logs, but can be recovered by looking up some shared stats in `/var/local/metadata/cc.db`, if the books are still on the device. Books already removed from the device before the first use of this app can only be rescued to a certain extend via correlating the logs with some indirect sources, such as `/mnt/us/system/vocabulary/vocab.db` (if you ever look up a word in that book), `/mnt/us/documents/My Clippings.txt` (if you ever highlighted a sentence in that book) and the `.sdr` of each book (if you didn't remove them from the device after removing the book).
 
-It's recommended to open ReadingLog **after each sitting**. Your data can be lost or incomplete if you don't open the ReadingLog very often. 
+To avoid data loss, it's recommended to open ReadingLog **after each sitting**. Your data can be lost or incomplete if you don't open the ReadingLog very often. 
 
+### What will be counted?
+
+A longer and more detailed explanation can be found in [the release note of v0.3.2](https://github.com/huangziwei/readinglog/releases/tag/v0.3.2). But in short, counting time can be intricated and opinionatd. We don't count the whole screen time while the book is opened, but also take into account of the reading speed, e.g. if a page is being idle for some time it will be disconted.
 
 ## More Screenshots
 
