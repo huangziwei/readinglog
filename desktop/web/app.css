@@ -175,6 +175,11 @@ img:not([src]) {
   box-shadow: 0 0 0 1px var(--rule);
   margin-left: 6px;
 }
+/* `.acts.below`: the buttons under a card, at its right */
+.acts.below {
+  margin: 10px 0 0;
+  text-align: right;
+}
 
 /* `.page`, the column a route is drawn in */
 .page {
@@ -534,6 +539,12 @@ svg text {
 .rows dd {
   margin: 0;
   font-weight: 600;
+}
+.rows .acts {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  white-space: nowrap;
 }
 .rows .path {
   color: var(--ink);

@@ -7,10 +7,12 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use readinglog_native::backup;
 use readinglog_native::lang::Lang;
 use readinglog_native::record::Record;
 use readinglog_native::settings::{ColorScheme, Settings, SittingFloor, StatsFrom, WeekStart};
 
+use crate::edits::{BOOKS_FILE, HIGHLIGHTS_FILE, SITTINGS_FILE};
 use crate::kindles::Source;
 
 /// The file naming the site and the settings its figures are stated under.
@@ -29,6 +31,21 @@ pub const POSTS: &str = "posts";
 /// A folder per Kindle, named for its cut serial, each holding that Kindle's
 /// `BACKUPS` and `RECORD` as the workspace holds those no Kindle was named for.
 pub const KINDLES: &str = "kindles";
+
+/// Every entry a workspace keeps in its folder, by its name there.
+const KEPT: [&str; 8] = [
+    KINDLES,
+    BACKUPS,
+    RECORD,
+    POSTS,
+    SITE_FILE,
+    BOOKS_FILE,
+    HIGHLIGHTS_FILE,
+    SITTINGS_FILE,
+];
+
+/// The file the macOS Finder writes into a folder it has shown.
+const FINDER_FILE: &str = ".DS_Store";
 
 /// Whether a book `books.toml` makes no choice about is on the site.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -374,6 +391,67 @@ impl Workspace {
     pub fn record(&self) -> Record {
         crate::kindles::together(&self.sources())
     }
+
+    /// Every backup the workspace keeps, by the folder it sits under: each
+    /// Kindle's, then those naming no Kindle; newest first within each.
+    pub fn every_backup(&self) -> Vec<(PathBuf, backup::Backup)> {
+        self.kindles()
+            .into_iter()
+            .chain([self.dir.clone()])
+            .flat_map(|group| {
+                backup::list(&group)
+                    .into_iter()
+                    .map(move |held| (group.clone(), held))
+            })
+            .collect()
+    }
+
+    /// Each of [`KEPT`] standing in the folder.
+    pub fn kept(&self) -> Vec<PathBuf> {
+        KEPT.iter()
+            .map(|name| self.dir.join(name))
+            .filter(|at| at.symlink_metadata().is_ok())
+            .collect()
+    }
+
+    /// The bytes [`Self::kept`] takes on disk.
+    pub fn kept_bytes(&self) -> u64 {
+        self.kept().iter().map(|at| bytes_under(at)).sum()
+    }
+
+    /// Remove each of [`Self::kept`], then the folder itself where nothing but
+    /// a `FINDER_FILE` is left in it. Every other entry stays where it is.
+    pub fn reset(&self) -> Result<()> {
+        for at in self.kept() {
+            match at.symlink_metadata().is_ok_and(|m| m.is_dir()) {
+                true => std::fs::remove_dir_all(&at),
+                false => std::fs::remove_file(&at),
+            }
+            .with_context(|| format!("removing {}", at.display()))?;
+        }
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return Ok(());
+        };
+        let left: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+        if !left.iter().all(|at| at.ends_with(FINDER_FILE)) {
+            return Ok(());
+        }
+        for at in &left {
+            std::fs::remove_file(at).with_context(|| format!("removing {}", at.display()))?;
+        }
+        std::fs::remove_dir(&self.dir).with_context(|| format!("removing {}", self.dir.display()))
+    }
+}
+
+/// The bytes `at` takes: a file's length, a folder's files all the way down.
+fn bytes_under(at: &Path) -> u64 {
+    match std::fs::symlink_metadata(at) {
+        Ok(meta) if meta.is_dir() => std::fs::read_dir(at)
+            .map(|entries| entries.flatten().map(|e| bytes_under(&e.path())).sum())
+            .unwrap_or(0),
+        Ok(meta) => meta.len(),
+        Err(_) => 0,
+    }
 }
 
 /// `serial` as one folder name: its ASCII letters, digits, `-` and `_`, any
@@ -480,6 +558,37 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_reset_takes_every_entry_the_workspace_keeps_and_nothing_else() {
+        let dir = scratch("workspace-reset");
+        let ws = Workspace::create(&dir).unwrap();
+        let kindle = ws.kindle_dir("G003H2-0001");
+        for at in [kindle.join(BACKUPS), kindle.join(RECORD)] {
+            std::fs::create_dir_all(&at).unwrap();
+            std::fs::write(at.join("held"), b"12345").unwrap();
+        }
+        std::fs::write(ws.backups().join("readinglog-260910-200851.zip"), b"zip").unwrap();
+        std::fs::write(dir.join(BOOKS_FILE), b"").unwrap();
+        assert_eq!(ws.kept().len(), 6, "{:?}", ws.kept());
+        assert!(ws.kept_bytes() >= 13, "{}", ws.kept_bytes());
+        let mine = dir.join("notes.txt");
+        std::fs::write(&mine, b"mine").unwrap();
+        ws.reset().unwrap();
+        assert!(ws.kept().is_empty(), "{:?}", ws.kept());
+        assert_eq!(
+            std::fs::read(&mine).unwrap(),
+            b"mine",
+            "a file it did not make"
+        );
+
+        // A folder left holding only what the Finder wrote goes with the rest.
+        let bare = scratch("workspace-reset-bare");
+        let ws = Workspace::create(&bare).unwrap();
+        std::fs::write(bare.join(FINDER_FILE), b"finder").unwrap();
+        ws.reset().unwrap();
+        assert!(!bare.exists());
     }
 
     #[test]

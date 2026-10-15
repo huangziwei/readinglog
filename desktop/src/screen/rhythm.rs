@@ -63,7 +63,7 @@ pub(super) fn span(cx: &Ctx, span: Span, day: i64) -> String {
 
 /// The span's name between the arrows onto the span either side, an arrow
 /// standing only where the record reaches that way, and `s.now` where the span
-/// does not hold the record's newest day.
+/// does not hold `cx.today`.
 fn nav(cx: &Ctx, span: Span, day: i64) -> String {
     let days = span.days(day, cx.week);
     let arrow = |by: i64, key: &str, said: &str, open: bool| match open {

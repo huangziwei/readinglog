@@ -132,7 +132,15 @@ fn take(ws: &Workspace, serial: Option<&str>, transport: &dyn Transport) -> Resu
     pictures.sort();
     let stamp = backup::stamped_now();
     let about = serial
-        .map(|serial| format!("written\t{stamp}\nserial\t{serial}\n"))
+        .map(|serial| {
+            let read = Record::from_text(&String::from_utf8_lossy(&bytes));
+            About {
+                firmware: transport.firmware().unwrap_or_default(),
+                serial: serial.to_string(),
+                ..About::of(&read, &stamp)
+            }
+            .text()
+        })
         .unwrap_or_default();
     let mut entries: Vec<(String, Source<'_>)> = vec![(RECORD_NAME.into(), Source::Bytes(&bytes))];
     if !about.is_empty() {
@@ -366,6 +374,12 @@ mod tests {
         assert_eq!(
             first.about.serial, "G003H2-7890",
             "the backup names its Kindle"
+        );
+        let stated = &first.about;
+        assert_eq!(
+            (stated.sittings, stated.first.as_str(), stated.last.as_str()),
+            (1, "2026-09-01", "2026-09-01"),
+            "and states what it holds, as the Kindle's own backups do"
         );
         assert_eq!(ws.record().sittings.len(), 1);
         assert_eq!(std::fs::read_dir(ws.backups()).unwrap().count(), 0);

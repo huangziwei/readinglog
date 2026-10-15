@@ -40,7 +40,8 @@ pub(super) fn page(cx: &Ctx, day: i64, today: bool) -> String {
 }
 
 /// The day's name between the arrows onto the day either side, an arrow
-/// standing only where the record holds a day that way.
+/// standing only where the record holds a day that way, and `s.now` where
+/// `day` is not `cx.today`.
 fn nav(cx: &Ctx, day: i64) -> String {
     let arrow = |to: i64, key: &str, said: &str, open: bool| match open {
         true => format!(
@@ -49,8 +50,16 @@ fn nav(cx: &Ctx, day: i64) -> String {
         ),
         false => format!("<span class=\"arrow off\">{said}</span>"),
     };
+    let now = match day == cx.today {
+        true => String::new(),
+        false => format!(
+            "<a class=\"chip\" href=\"{}\">{}</a>",
+            Route::Day(cx.today).link(),
+            esc(cx.s.now)
+        ),
+    };
     format!(
-        "<div class=\"spannav\">{}<h1>{}</h1>{}</div>",
+        "<div class=\"spannav\">{}<h1>{}</h1>{}{now}</div>",
         arrow(day - 1, "prev", "‹", day > cx.opened),
         esc(&date::long_day(day, cx.s)),
         arrow(day + 1, "next", "›", day < cx.today)

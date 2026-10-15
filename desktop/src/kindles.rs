@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use readinglog_native::covers;
-use readinglog_native::record::Record;
+use readinglog_native::record::{self, Record};
 
 /// A record, the folder it was loaded from, and the Kindle it is from.
 pub struct Source {
@@ -122,6 +122,22 @@ pub fn cover(dirs: &[PathBuf], key: &str) -> Option<PathBuf> {
     match key_origin(key) {
         (Some(n), own) => dirs.get(n).and_then(|dir| held(dir, own)),
         (None, own) => dirs.iter().find_map(|dir| held(dir, own)),
+    }
+}
+
+/// `book` with its cover pointing at the copy [`cover`] finds under `dirs`, at
+/// none where no copy there draws or `cde_key` is empty, and no `thumbnail`.
+pub fn on_this_computer(book: &record::Book, dirs: &[PathBuf]) -> record::Book {
+    let cover = match book.cde_key.is_empty() {
+        true => None,
+        false => cover(dirs, &book.cde_key),
+    }
+    .map(|at| at.to_string_lossy().into_owned())
+    .unwrap_or_default();
+    record::Book {
+        cover,
+        thumbnail: String::new(),
+        ..book.clone()
     }
 }
 

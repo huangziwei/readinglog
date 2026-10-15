@@ -95,6 +95,20 @@ document.addEventListener("click", async (event) => {
     case "folder":
       if (await call("choose_folder")) await show();
       break;
+    case "delete":
+      if (await call("delete_backup", { path: act.dataset.path })) await show();
+      break;
+    case "delete-all":
+      if (await call("delete_backups")) await show();
+      break;
+    case "reset": {
+      const said = await call("reset");
+      if (!said) break;
+      flash(said);
+      history.replaceState(null, "", "#/");
+      await show();
+      break;
+    }
   }
 });
 
@@ -173,14 +187,20 @@ window.addEventListener(
   }, 150),
 );
 
-// `poll` draws the sidebar again where `kindle` changes, a Kindle plugged in or
-// out, and asks nothing while `composing`.
+// `poll` draws the page again where `kindle` changes, a Kindle plugged in or
+// out, or `today` does, and asks nothing while `composing`.
 let kindle;
+let today;
 async function poll() {
   if (composing) return;
-  const now = await TAURI.core.invoke("kindle").catch(() => null);
-  if (kindle !== undefined && now !== kindle) show().catch(console.error);
-  kindle = now;
+  const [plugged, day] = await Promise.all([
+    TAURI.core.invoke("kindle").catch(() => null),
+    TAURI.core.invoke("today").catch(() => null),
+  ]);
+  const moved = (kindle !== undefined && plugged !== kindle) || (today !== undefined && day !== today);
+  if (moved) show().catch(console.error);
+  kindle = plugged;
+  today = day;
 }
 setInterval(poll, 3000);
 poll();

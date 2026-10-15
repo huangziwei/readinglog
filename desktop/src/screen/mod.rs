@@ -1,5 +1,5 @@
-//! The window's screens: each [`Route`] drawn as HTML off the record as of its
-//! newest sitting, the charts inline SVG, every figure a Kindle view's own and
+//! The window's screens: each [`Route`] drawn as HTML off the record as of the
+//! clock's day, the charts inline SVG, every figure a Kindle view's own and
 //! every day, span and book a link to its own page.
 
 mod book;
@@ -47,7 +47,7 @@ pub struct Page {
 /// as the first day), `/all`, `/books`, `/book/<key>`, `/highlights`, `/settings`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
-    /// The record's newest day, as the Kindle's Today states it.
+    /// The clock's day, as the Kindle's Today states it.
     Today,
     Day(i64),
     /// A span of Rhythm by the day it holds, the Kindle's `State::day`; `AllTime` 0.
@@ -268,15 +268,15 @@ pub enum Covers {
     Files,
 }
 
-/// The record as every screen states it: `Stats` as of the newest sitting
-/// under the settings `Workspace::site` names, and each book's cover, tone and
-/// Kindle.
+/// The record as every screen states it: `Stats` as of `today` under the
+/// settings `Workspace::site` names, and each book's cover, tone and Kindle.
 pub struct Shown {
     pub record: Record,
     pub stats: Stats,
     pub settings: Settings,
     pub lang: Lang,
-    pub as_of: i64,
+    /// The clock's day, which every screen states as today.
+    pub today: i64,
     pub covers: Vec<Option<PathBuf>>,
     pub tones: Vec<[u8; 3]>,
     /// Each book's Kindle as `kindles::labels` calls it, `None` throughout for
@@ -285,31 +285,33 @@ pub struct Shown {
 }
 
 impl Shown {
+    /// The record `ws` holds as of `today`, the day `date::now` answers;
     /// `None` where the record holds no sitting.
-    pub fn of(ws: &Workspace) -> Option<Shown> {
+    pub fn of(ws: &Workspace, today: i64) -> Option<Shown> {
         let sources = ws.sources();
-        let record = crate::kindles::together(&sources);
-        let as_of = record
-            .sittings
+        let mut record = crate::kindles::together(&sources);
+        if record.sittings.is_empty() {
+            return None;
+        }
+        let dirs: Vec<PathBuf> = sources.iter().map(|s| s.dir.clone()).collect();
+        record.books = record
+            .books
             .iter()
-            .filter_map(|s| date::parse_day(date::day_of(&s.started_at)))
-            .max()?;
+            .map(|b| crate::kindles::on_this_computer(b, &dirs))
+            .collect();
         let (settings, _) = ws.site.settings();
         let stats = Stats::build(
             &record,
-            as_of,
+            today,
             settings.show_unidentified,
             settings.stats_from,
             settings.sitting_floor,
         );
-        let dirs: Vec<PathBuf> = sources.iter().map(|s| s.dir.clone()).collect();
+        // `thumbnail`: the copy `on_this_computer` names, where `has_cover`.
         let covers: Vec<Option<PathBuf>> = stats
             .books
             .iter()
-            .map(|b| match b.cde_key.is_empty() {
-                true => None,
-                false => crate::kindles::cover(&dirs, &b.cde_key),
-            })
+            .map(|b| b.has_cover().then(|| PathBuf::from(&b.thumbnail)))
             .collect();
         let labels = crate::kindles::labels(&sources, Words::of(ws.site.lang()).from_backup);
         let kindles = stats
@@ -337,7 +339,7 @@ impl Shown {
             stats,
             lang: ws.site.lang(),
             settings,
-            as_of,
+            today,
             covers,
             tones,
             kindles,
@@ -402,8 +404,8 @@ pub fn render(
         lang,
         week: shown.settings.week_start,
         from: shown.settings.stats_from,
-        today: shown.as_of,
-        opened: shown.stats.opened(shown.as_of),
+        today: shown.today,
+        opened: shown.stats.opened(shown.today),
         look,
         tones: &shown.tones,
         covers: &shown.covers,
@@ -417,7 +419,7 @@ pub fn render(
         other => other.clone(),
     };
     let (title, main) = match &route {
-        Route::Today => (s.today.to_string(), day::page(&cx, shown.as_of, true)),
+        Route::Today => (s.today.to_string(), day::page(&cx, shown.today, true)),
         Route::Day(day) => (date::long_day(*day, s), day::page(&cx, *day, false)),
         Route::Span(Span::AllTime, _) => (
             s.all_time.to_string(),
@@ -463,7 +465,7 @@ struct Ctx<'a> {
     lang: Lang,
     week: WeekStart,
     from: StatsFrom,
-    /// The record's newest day, which every page reads as today.
+    /// The clock's day, which every page reads as today.
     today: i64,
     /// The record's first day with reading on it.
     opened: i64,
@@ -549,7 +551,7 @@ fn side(
     };
     if let Some(shown) = shown {
         out.push_str("<div class=\"nav\">");
-        let today = matches!(route, Route::Today) || *route == Route::Day(shown.as_of);
+        let today = matches!(route, Route::Today) || *route == Route::Day(shown.today);
         item(&mut out, &Route::Today, s.today, today);
         let rhythm = !today && matches!(route, Route::Span(..) | Route::Day(_));
         item(&mut out, &Route::Span(Span::AllTime, 0), s.rhythm, rhythm);
@@ -568,7 +570,7 @@ fn side(
             esc(s.year)
         );
         for year in shown.years() {
-            let to = Route::Span(Span::Year, in_year(shown.as_of, year));
+            let to = Route::Span(Span::Year, in_year(shown.today, year));
             let lit = matches!(route, Route::Span(Span::Year, day) if date::civil_from_days(*day).0 == year);
             item(&mut out, &to, &year.to_string(), lit);
         }
@@ -769,11 +771,17 @@ mod tests {
         assert_eq!(unescape("a+b%20c"), "a b c");
     }
 
+    /// The day the clock stands at in these tests, a fortnight past the newest
+    /// sitting [`read`] holds.
+    fn clock() -> i64 {
+        date::parse_day("2026-10-15").unwrap()
+    }
+
     #[test]
-    fn every_route_draws_off_the_record_as_of_its_newest_sitting() {
+    fn every_route_draws_off_the_record_as_of_the_clocks_day() {
         let ws = read("screen-routes");
-        let shown = Shown::of(&ws).unwrap();
-        assert_eq!(Some(shown.as_of), date::parse_day("2026-10-01"));
+        let shown = Shown::of(&ws, clock()).unwrap();
+        let s = Lang::English.strings();
         let draw = |route: &str| {
             render(
                 Some(&shown),
@@ -787,17 +795,25 @@ mod tests {
         let today = draw("/");
         assert_eq!(today.title, "Today");
         assert!(
-            today.main.contains("A Map of Small Rivers"),
-            "the day's book"
+            today.main.contains(&date::long_day(clock(), s)),
+            "{}",
+            today.main
         );
+        assert!(today.main.contains(s.nothing_read), "nothing read on it");
         assert!(
             today.side.contains("class=\"on\">Today</a>"),
             "{}",
             today.side
         );
         assert!(
-            today.side.contains("href=\"#/year/2026-10-01\""),
-            "a year opens at the record's newest day"
+            today.side.contains("href=\"#/year/2026-10-15\""),
+            "a year opens at the clock's day"
+        );
+        assert!(
+            draw("/day/2026-10-01")
+                .main
+                .contains("A Map of Small Rivers"),
+            "the newest sitting's day states its book"
         );
         let year = draw("/year/2026-09-02");
         assert!(
@@ -859,9 +875,57 @@ mod tests {
     }
 
     #[test]
+    fn every_width_opens_on_now_and_offers_now_away_from_it() {
+        let ws = read("screen-now");
+        let shown = Shown::of(&ws, clock()).unwrap();
+        let draw = |route: &str| {
+            render(
+                Some(&shown),
+                &ws,
+                &Route::parse(route),
+                1072.0,
+                Covers::Files,
+                None,
+            )
+            .main
+        };
+        let all = draw("/all");
+        for span in ["week", "month", "year"] {
+            assert!(
+                all.contains(&format!("class=\"chip\" href=\"#/{span}/2026-10-15\"")),
+                "{span}: {all}"
+            );
+        }
+        for (away, now) in [
+            ("/day/2026-09-02", "#/day/2026-10-15"),
+            ("/week/2026-09-02", "#/week/2026-10-15"),
+            ("/month/2026-09-02", "#/month/2026-10-15"),
+            ("/year/2025-10-15", "#/year/2026-10-15"),
+        ] {
+            let page = draw(away);
+            assert!(
+                page.contains(&format!("<a class=\"chip\" href=\"{now}\">Now</a>")),
+                "{away}: {page}"
+            );
+            assert!(page.contains("data-key=\"next\""), "{away}");
+        }
+        for at in [
+            "/",
+            "/day/2026-10-15",
+            "/week/2026-10-15",
+            "/month/2026-10-15",
+            "/year/2026-10-15",
+        ] {
+            let page = draw(at);
+            assert!(!page.contains(">Now</a>"), "{at}: {page}");
+            assert!(!page.contains("data-key=\"next\""), "{at}: no › past now");
+        }
+    }
+
+    #[test]
     fn a_window_narrows_the_books_to_its_span() {
         let ws = read("screen-window");
-        let shown = Shown::of(&ws).unwrap();
+        let shown = Shown::of(&ws, clock()).unwrap();
         let page = render(
             Some(&shown),
             &ws,
@@ -880,7 +944,7 @@ mod tests {
     #[test]
     fn a_book_no_route_names_draws_today() {
         let ws = read("screen-lost");
-        let shown = Shown::of(&ws).unwrap();
+        let shown = Shown::of(&ws, clock()).unwrap();
         let page = render(
             Some(&shown),
             &ws,
@@ -895,7 +959,7 @@ mod tests {
     #[test]
     fn a_book_read_on_one_day_draws_one_bar_a_row_wide_stating_its_time() {
         let ws = read("screen-one-day");
-        let shown = Shown::of(&ws).unwrap();
+        let shown = Shown::of(&ws, clock()).unwrap();
         let page = render(
             Some(&shown),
             &ws,
@@ -947,7 +1011,7 @@ mod tests {
     #[test]
     fn a_highlight_stands_behind_a_rule_in_its_colour_with_what_a_search_found_washed() {
         let ws = read("screen-highlight");
-        let shown = Shown::of(&ws).unwrap();
+        let shown = Shown::of(&ws, clock()).unwrap();
         let page = render(
             Some(&shown),
             &ws,
@@ -970,7 +1034,7 @@ mod tests {
     #[test]
     fn a_book_stands_as_one_tile_wherever_books_stand_as_covers() {
         let ws = read("screen-tiles");
-        let shown = Shown::of(&ws).unwrap();
+        let shown = Shown::of(&ws, clock()).unwrap();
         let draw = |route: &str| {
             render(
                 Some(&shown),
@@ -1020,7 +1084,7 @@ mod tests {
     #[test]
     fn a_record_with_no_sitting_opens_on_the_welcome() {
         let ws = Workspace::open(&scratch("screen-empty")).unwrap();
-        assert!(Shown::of(&ws).is_none());
+        assert!(Shown::of(&ws, clock()).is_none());
         let page = render(
             None,
             &ws,
@@ -1043,12 +1107,90 @@ mod tests {
     }
 
     #[test]
+    fn a_book_whose_cover_is_held_here_stands_where_books_without_one_are_hidden() {
+        let mut ws = read("screen-uncovered");
+        // Each book names its cover by the Kindle's own path; `B1` alone has a
+        // copy on this computer.
+        let mut record = Record::load(&ws.record_dir());
+        for book in &mut record.books {
+            book.cover = format!("/mnt/us/extensions/readinglog/covers/{}.jpg", book.cde_key);
+        }
+        record.save(&ws.record_dir()).unwrap();
+        let cover = ws.record_dir().join("covers").join("B1.jpg");
+        std::fs::create_dir_all(cover.parent().unwrap()).unwrap();
+        std::fs::write(&cover, b"\xff\xd8\xff\xe0 a cover").unwrap();
+        ws.site.show_uncovered = "no".into();
+        let shown = Shown::of(&ws, clock()).unwrap();
+        let draw = |route: &str| {
+            render(
+                Some(&shown),
+                &ws,
+                &Route::parse(route),
+                1072.0,
+                Covers::Files,
+                None,
+            )
+            .main
+        };
+        for route in ["/books", "/week/2026-09-01"] {
+            let main = draw(route);
+            assert!(main.contains("A Map of Small Rivers"), "{route}: {main}");
+            assert!(main.contains("src=\"file://"), "{route}: its cover drawn");
+        }
+        assert!(!draw("/books").contains("川辺の記録"), "no cover anywhere");
+    }
+
+    #[test]
+    fn a_backup_states_what_it_holds_against_its_own_kindle_and_carries_its_delete() {
+        use readinglog_native::update::archive::{self, Source};
+        let ws = read("screen-backups");
+        let text = Record::load(&ws.record_dir()).text();
+        // `about` states `written` and `serial` alone.
+        let about = "written\t261015:200600\nserial\tG003H2-0001\n";
+        let zip = scratch("screen-backups-zip").join("readinglog-261015-200600-kindle.zip");
+        archive::write(
+            &zip,
+            &[
+                ("sessions.tsv".to_string(), Source::Bytes(text.as_bytes())),
+                ("about.tsv".to_string(), Source::Bytes(about.as_bytes())),
+            ],
+        )
+        .unwrap();
+        crate::import::backup(&ws, &zip).unwrap();
+        let shown = Shown::of(&ws, clock()).unwrap();
+        let page = render(
+            Some(&shown),
+            &ws,
+            &Route::Settings,
+            1072.0,
+            Covers::Files,
+            None,
+        )
+        .main;
+        assert!(
+            page.contains("3 sittings · 2026-09-01 to 2026-10-01 · all of it in the record"),
+            "{page}"
+        );
+        let kept = ws
+            .kindle_dir("G003H2-0001")
+            .join("backups")
+            .join("readinglog-261015-200600-kindle.zip");
+        let delete = format!(
+            "data-act=\"delete\" data-path=\"{}\"",
+            esc(&kept.to_string_lossy())
+        );
+        assert!(page.contains(&delete), "{page}");
+        assert!(page.contains("data-act=\"delete-all\""));
+        assert!(page.contains("data-act=\"reset\""));
+    }
+
+    #[test]
     fn a_cover_is_named_for_the_window_or_for_the_disk() {
         let ws = read("screen-covers");
         let cover = ws.record_dir().join("covers").join("B1.jpg");
         std::fs::create_dir_all(cover.parent().unwrap()).unwrap();
         std::fs::write(&cover, b"\xff\xd8\xff\xe0 a cover").unwrap();
-        let shown = Shown::of(&ws).unwrap();
+        let shown = Shown::of(&ws, clock()).unwrap();
         let route = Route::parse("/book/B1");
         let window = render(Some(&shown), &ws, &route, 1072.0, Covers::Window, None);
         let path = esc(&cover.to_string_lossy());

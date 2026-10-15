@@ -1,19 +1,21 @@
-//! The window: Tauri over the modules beside this one. [`page`] draws the route
-//! the window's hash names through [`screen::render`]; the other commands
-//! import, set a setting, and open the dialogs and the record's folder.
+//! The window: [`page`] draws the route its hash names through
+//! [`screen::render`]; the other commands import, set a setting, delete a
+//! backup, every backup or everything, and open the dialogs and the folder.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use tauri::{AppHandle, Manager, State};
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_opener::OpenerExt;
 
-use readinglog_native::backup::cut_serial;
+use readinglog_native::backup::{self, cut_serial};
 use readinglog_native::covers::COVERS_DIR;
+use readinglog_native::date;
 use readinglog_native::lang::counted;
 use readinglog_native::record::Record;
+use readinglog_native::view::config;
 
 use crate::device::{self, DeviceInfo};
 use crate::import::{self, Imported};
@@ -29,14 +31,16 @@ struct Open {
     served: Mutex<Vec<PathBuf>>,
 }
 
-/// When each record and `SITE_FILE` were last written, and each record's size.
+/// When each record and `SITE_FILE` were last written, each record's size,
+/// and the clock's day.
 type Stamp = (
     PathBuf,
     Vec<(Option<SystemTime>, Option<u64>)>,
     Option<SystemTime>,
+    i64,
 );
 
-fn stamp(ws: &Workspace) -> Stamp {
+fn stamp(ws: &Workspace, today: i64) -> Stamp {
     let records = ws
         .record_dirs()
         .iter()
@@ -53,6 +57,7 @@ fn stamp(ws: &Workspace) -> Stamp {
         ws.dir.clone(),
         records,
         site.and_then(|m| m.modified().ok()),
+        today,
     )
 }
 
@@ -116,10 +121,11 @@ fn remember(app: &AppHandle, dir: &Path) -> Answer<()> {
     std::fs::write(config.join(LAST), dir.to_string_lossy().as_bytes()).map_err(|e| e.to_string())
 }
 
-/// The record at `ws` built for the screens, built again only where its
-/// [`stamp`] has moved.
+/// The record at `ws` built for the screens as of the clock's day, built again
+/// only where its [`stamp`] has moved.
 fn shown(open: &State<'_, Open>, ws: &Workspace) -> Answer<Option<Arc<Shown>>> {
-    let now = stamp(ws);
+    let (today, _) = date::now();
+    let now = stamp(ws, today);
     let mut held = open
         .shown
         .lock()
@@ -129,7 +135,7 @@ fn shown(open: &State<'_, Open>, ws: &Workspace) -> Answer<Option<Arc<Shown>>> {
     {
         return Ok(Some(built.clone()));
     }
-    let built = Shown::of(ws).map(Arc::new);
+    let built = Shown::of(ws, today).map(Arc::new);
     *held = built.clone().map(|b| (now, b));
     Ok(built)
 }
@@ -170,6 +176,12 @@ async fn page(app: AppHandle, open: State<'_, Open>, route: String, width: f64) 
 #[tauri::command]
 async fn kindle() -> Option<String> {
     plugged().map(|d| cut_serial(&d.serial))
+}
+
+/// The clock's day, the one [`page`] draws as today.
+#[tauri::command]
+fn today() -> i64 {
+    date::now().0
 }
 
 /// Import each of `paths`: a backup, or a Kindle's volume or its folder. Answers
@@ -285,6 +297,109 @@ fn reveal(app: AppHandle, path: String) -> Answer<()> {
         .map_err(|e| e.to_string())
 }
 
+/// Whether `asked` is answered `yes` in a warning dialog stating `note`.
+fn ask(app: &AppHandle, asked: &str, note: String, yes: &str, no: &str) -> bool {
+    app.dialog()
+        .message(note)
+        .title(asked)
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(yes.into(), no.into()))
+        .blocking_show()
+}
+
+/// Delete the backup at `path`, one of `Workspace::every_backup`, once a
+/// dialog stating what goes is answered yes. Answers whether it went.
+#[tauri::command]
+async fn delete_backup(app: AppHandle, open: State<'_, Open>, path: String) -> Answer<bool> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    let Some((_, held)) = ws
+        .every_backup()
+        .into_iter()
+        .find(|(_, held)| held.path == Path::new(&path))
+    else {
+        return Err(format!("{path} is no backup in {}", ws.dir.display()));
+    };
+    let lang = ws.site.lang();
+    let (s, w) = (lang.strings(), screen::Words::of(lang));
+    let named = held.path.file_name().unwrap_or_default().to_string_lossy();
+    let note = w
+        .delete_note
+        .replace("{file}", &named)
+        .replace("{size}", &config::bytes(held.bytes));
+    if !ask(&app, s.delete_ask, note, s.delete_do, s.cancel) {
+        return Ok(false);
+    }
+    backup::remove(&held.path).map_err(|e| format!("{}: {e}", held.path.display()))?;
+    Ok(true)
+}
+
+/// Delete every one of `Workspace::every_backup`, once a dialog stating what
+/// goes is answered yes. Answers whether they went.
+#[tauri::command]
+async fn delete_backups(app: AppHandle, open: State<'_, Open>) -> Answer<bool> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    let every = ws.every_backup();
+    if every.is_empty() {
+        return Ok(false);
+    }
+    let lang = ws.site.lang();
+    let (s, w) = (lang.strings(), screen::Words::of(lang));
+    let weight = every.iter().map(|(_, held)| held.bytes).sum();
+    let note = w
+        .delete_all_note
+        .replace("{n}", &every.len().to_string())
+        .replace("{size}", &config::bytes(weight));
+    if !ask(&app, w.delete_all_ask, note, w.delete_all_do, s.cancel) {
+        return Ok(false);
+    }
+    for (_, held) in &every {
+        backup::remove(&held.path).map_err(|e| format!("{}: {e}", held.path.display()))?;
+    }
+    Ok(true)
+}
+
+/// Remove everything the app keeps, once a dialog stating what goes is
+/// answered yes: [`Workspace::reset`], then the file naming the folder last
+/// opened. Answers what the window says after, empty where nothing went.
+#[tauri::command]
+async fn reset(app: AppHandle, open: State<'_, Open>) -> Answer<String> {
+    let dir = folder(&app, &open)?;
+    let ws = Workspace::open(&dir).map_err(said)?;
+    if ws.kept().is_empty() {
+        return Ok(String::new());
+    }
+    let lang = ws.site.lang();
+    let (s, w) = (lang.strings(), screen::Words::of(lang));
+    let (sittings, books) = shown(&open, &ws)?.map_or((0, 0), |held| {
+        (held.record.sittings.len(), held.stats.book_count())
+    });
+    let what = format!(
+        "{} · {}",
+        counted(s.n_sittings, sittings as i64),
+        counted(s.n_books, books as i64)
+    );
+    let note = w
+        .reset_note
+        .replace("{what}", &what)
+        .replace("{folder}", &dir.to_string_lossy())
+        .replace("{size}", &config::bytes(ws.kept_bytes()));
+    if !ask(&app, w.reset_ask, note, w.reset_do, s.cancel) {
+        return Ok(String::new());
+    }
+    ws.reset().map_err(said)?;
+    forget(&app)?;
+    Ok(w.reset_done.to_string())
+}
+
+/// Take away the file naming the folder last opened, where one stands.
+fn forget(app: &AppHandle) -> Answer<()> {
+    let config = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    match std::fs::remove_file(config.join(LAST)) {
+        Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(err.to_string()),
+        _ => Ok(()),
+    }
+}
+
 /// Open the window.
 pub fn run() {
     tauri::Builder::default()
@@ -294,12 +409,16 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             page,
             kindle,
+            today,
             import,
             import_kindle,
             set_setting,
             choose_folder,
             pick_backup,
             reveal,
+            delete_backup,
+            delete_backups,
+            reset,
         ])
         .run(tauri::generate_context!())
         .expect("the window could not open");

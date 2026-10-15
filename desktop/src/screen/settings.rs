@@ -1,15 +1,17 @@
-//! Config: the Kindle's settings the record is stated under, in the sections,
-//! order and words of the Kindle's own config page, the record's folder and the
-//! backups imported into it; and the welcome a record holding no sitting opens on.
+//! Config: the Kindle's settings in the sections, order and words of its own
+//! config page, the record's folder, Reset and the backups; and the welcome a
+//! record holding no sitting opens on.
 
 use std::fmt::Write as _;
+use std::path::Path;
 
 use readinglog_native::backup;
 use readinglog_native::lang::Strings;
+use readinglog_native::record::Record;
 use readinglog_native::view::config::{self, Summary};
 
 use super::{Shown, Words, esc};
-use crate::workspace::{self, Workspace};
+use crate::workspace::{self, RECORD, Workspace};
 
 pub(super) fn page(ws: &Workspace, shown: Option<&Shown>, s: &Strings, w: &Words) -> String {
     let offered = workspace::offered(ws.site.lang());
@@ -93,51 +95,87 @@ pub(super) fn page(ws: &Workspace, shown: Option<&Shown>, s: &Strings, w: &Words
                 esc(w.show_folder),
                 esc(w.change_folder)
             );
+            // `reset`: one button, standing where `ws.kept` names an entry.
+            if !ws.kept().is_empty() {
+                let _ = write!(
+                    out,
+                    "<div class=\"row\"><span>{}</span><span class=\"acts\">\
+                     <button type=\"button\" data-act=\"reset\">{}</button></span></div>",
+                    esc(s.reset_row),
+                    esc(w.remove_everything)
+                );
+            }
         }
         out.push_str("</div></section>");
     }
-    if let Some(shown) = shown {
-        out.push_str(&backups(ws, shown, s));
-    }
+    out.push_str(&backups(ws, s, w));
     out
 }
 
-/// The backups imported into the record's folder, every Kindle's and those no
-/// Kindle was named for, newest first, as the Kindle's own list states each:
-/// when it was written, what it weighs and what it holds.
-fn backups(ws: &Workspace, shown: &Shown, s: &Strings) -> String {
+/// Every backup in the record's folder, newest first, as the Kindle's own list
+/// states it against its own folder's record, each with its delete, and under
+/// them the delete for them all.
+fn backups(ws: &Workspace, s: &Strings, w: &Words) -> String {
+    let every = ws.every_backup();
     let mut rows = Vec::new();
-    let mut weight = 0;
-    for dir in ws.kindles().into_iter().chain([ws.dir.clone()]) {
-        let held = backup::list(&dir);
-        weight += held.iter().map(|b| b.bytes).sum::<u64>();
-        let listed = Summary::listed(&dir, &shown.record, shown.lang);
-        rows.extend(held.into_iter().map(|b| b.stamp).zip(listed.rows));
+    for run in every.chunk_by(|a, b| a.0 == b.0) {
+        let own = Record::load(&run[0].0.join(RECORD));
+        for (_, held) in run {
+            rows.push((held, config::row(held, &stated(&held.path), &own, s)));
+        }
     }
     if rows.is_empty() {
         return String::new();
     }
-    rows.sort_by(|a, b| b.0.cmp(&a.0));
-    let said = s
-        .n_files
-        .replace("{n}", &rows.len().to_string())
-        .replace("{size}", &config::bytes(weight));
+    rows.sort_by(|a, b| b.0.stamp.cmp(&a.0.stamp));
+    let said = s.n_files.replace("{n}", &rows.len().to_string()).replace(
+        "{size}",
+        &config::bytes(rows.iter().map(|(b, _)| b.bytes).sum()),
+    );
     let mut out = format!(
         "<section><h2>{}<span class=\"said\">{}</span></h2><div class=\"card rows\">",
         esc(s.backups_row),
         esc(&said)
     );
-    for (_, row) in &rows {
+    for (held, row) in &rows {
         let _ = write!(
             out,
-            "<div class=\"row\"><span>{}<br><small>{}</small></span><span>{}</span></div>",
+            "<div class=\"row\"><span>{}<br><small>{}</small></span><span class=\"acts\">{}\
+             <button type=\"button\" data-act=\"delete\" data-path=\"{}\">{}</button></span></div>",
             esc(&row.when),
             esc(&row.holds),
-            esc(&row.size)
+            esc(&row.size),
+            esc(&held.path.to_string_lossy()),
+            esc(w.delete)
         );
     }
-    out.push_str("</div></section>");
+    let _ = write!(
+        out,
+        "</div><p class=\"acts below\"><button type=\"button\" data-act=\"delete-all\">{}</button></p></section>",
+        esc(w.delete_all)
+    );
     out
+}
+
+/// What the backup at `at` states of itself, the record inside it standing in
+/// for the sittings and days an `about.tsv` naming no first day leaves out.
+fn stated(at: &Path) -> backup::About {
+    let said = backup::about(at).unwrap_or_default();
+    if said.is_empty() || !said.first.is_empty() {
+        return said;
+    }
+    match backup::peek(at) {
+        Ok(inside) => {
+            let read = backup::About::of(&inside, &said.written);
+            backup::About {
+                sittings: read.sittings,
+                first: read.first,
+                last: read.last,
+                ..said
+            }
+        }
+        Err(_) => said,
+    }
 }
 
 /// The page a record holding no sitting opens on: a backup to drop or pick, the

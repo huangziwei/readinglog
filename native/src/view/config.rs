@@ -121,11 +121,7 @@ impl Summary {
             .iter()
             .map(|backup| {
                 let said = crate::backup::about(&backup.path).unwrap_or_default();
-                crate::view::backups::Row {
-                    when: when(backup, &said, s),
-                    size: bytes(backup.bytes),
-                    holds: holds(&backup.path, record, &said, s),
-                }
+                row(backup, &said, record, s)
             })
             .collect();
         crate::view::backups::Listed {
@@ -135,6 +131,21 @@ impl Summary {
                 .replace("{n}", &held.len().to_string())
                 .replace("{size}", &bytes(held.iter().map(|b| b.bytes).sum())),
         }
+    }
+}
+
+/// `backup` as [`crate::view::backups`] lists it, by what `said` states of it:
+/// when it was written, what it weighs, and what it holds against `record`.
+pub fn row(
+    backup: &crate::backup::Backup,
+    said: &crate::backup::About,
+    record: &crate::record::Record,
+    s: &crate::lang::Strings,
+) -> crate::view::backups::Row {
+    crate::view::backups::Row {
+        when: when(backup, said, s),
+        size: bytes(backup.bytes),
+        holds: holds(&backup.path, record, said, s),
     }
 }
 
@@ -165,11 +176,15 @@ fn holds(
     if said.is_empty() {
         return s.backup_silent.to_string();
     }
-    let mut out = s
-        .backup_holds
-        .replace("{n}", &said.sittings.to_string())
-        .replace("{from}", &said.first)
-        .replace("{to}", &said.last);
+    // A backup stating no first or last day states its count alone.
+    let mut out = match said.first.is_empty() || said.last.is_empty() {
+        true => crate::lang::counted(s.n_sittings, said.sittings as i64),
+        false => s
+            .backup_holds
+            .replace("{n}", &said.sittings.to_string())
+            .replace("{from}", &said.first)
+            .replace("{to}", &said.last),
+    };
     if crate::backup::peek(at).is_ok_and(|inside| crate::backup::holds(record, &inside)) {
         out.push_str(" · ");
         out.push_str(s.backup_whole);
@@ -205,8 +220,7 @@ pub fn recorded(summary: &Summary, s: &crate::lang::Strings) -> Option<String> {
             crate::lang::counted(s.n_sittings, summary.sittings as i64),
             crate::lang::counted(s.n_books, summary.books as i64)
         );
-        // What the backups take, over the controls that read against it.
-        // `backup::remove` is the one call that takes one away.
+        // `summary.backup_bytes`, where any backup is on disk.
         if summary.backup_bytes > 0 {
             said.push_str(" · ");
             said.push_str(
@@ -866,6 +880,33 @@ mod tests {
             .map(|f| f(s))
             .chain(rest.iter().copied())
             .collect()
+    }
+
+    #[test]
+    fn a_backup_stating_no_days_lists_its_count_alone() {
+        let s = Lang::English.strings();
+        let backup = crate::backup::Backup {
+            path: "/nowhere/readinglog-260910-200851.zip".into(),
+            stamp: "260910-200851".into(),
+            kind: crate::backup::Kind::Record,
+            bytes: 2048,
+        };
+        let record = crate::record::Record::default();
+        let bare = crate::backup::About {
+            written: "260910:200851".into(),
+            ..crate::backup::About::default()
+        };
+        assert_eq!(super::row(&backup, &bare, &record, s).holds, "0 sittings");
+        let spanned = crate::backup::About {
+            sittings: 572,
+            first: "2026-08-01".into(),
+            last: "2026-09-10".into(),
+            ..bare
+        };
+        assert_eq!(
+            super::row(&backup, &spanned, &record, s).holds,
+            "572 sittings · 2026-08-01 to 2026-09-10"
+        );
     }
 
     #[test]

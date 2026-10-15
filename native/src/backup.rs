@@ -119,27 +119,52 @@ impl About {
     pub fn is_empty(&self) -> bool {
         *self == About::default()
     }
+
+    /// What `record` states of itself, written at `stamp`: the clock, its
+    /// sittings and the days the first and the last started on.
+    pub fn of(record: &Record, stamp: &str) -> About {
+        let day = |at: Option<&crate::log::sitting::Sitting>| {
+            at.map(|s| crate::date::day_of(&s.started_at).to_string())
+                .unwrap_or_default()
+        };
+        About {
+            written: stamp.to_string(),
+            sittings: record.sittings.len(),
+            first: day(record.sittings.first()),
+            last: day(record.sittings.last()),
+            ..About::default()
+        }
+    }
+
+    /// One line per field, the name and the value tab apart, as [`about`]
+    /// reads them back.
+    pub fn text(&self) -> String {
+        [
+            ("written", self.written.clone()),
+            ("app", self.app.clone()),
+            ("device", self.kindle.clone()),
+            ("firmware", self.firmware.clone()),
+            ("serial", self.serial.clone()),
+            ("sittings", self.sittings.to_string()),
+            ("first", self.first.clone()),
+            ("last", self.last.clone()),
+        ]
+        .iter()
+        .map(|(name, value)| format!("{name}\t{value}\n"))
+        .collect()
+    }
 }
 
-/// One line per field, the name and the value tab apart.
+/// [`About::text`] of `record` at `stamp`, as this Kindle states itself.
 fn about_text(record: &Record, stamp: &str) -> String {
-    let day = |at: Option<&crate::log::sitting::Sitting>| {
-        at.map(|s| crate::date::day_of(&s.started_at).to_string())
-            .unwrap_or_default()
-    };
-    [
-        ("written", stamp.to_string()),
-        ("app", crate::update::VERSION.to_string()),
-        ("device", one_line(MODEL)),
-        ("firmware", one_line(FIRMWARE)),
-        ("serial", cut_serial(&one_line(SERIAL))),
-        ("sittings", record.sittings.len().to_string()),
-        ("first", day(record.sittings.first())),
-        ("last", day(record.sittings.last())),
-    ]
-    .iter()
-    .map(|(name, value)| format!("{name}\t{value}\n"))
-    .collect()
+    About {
+        app: crate::update::VERSION.to_string(),
+        kindle: one_line(MODEL),
+        firmware: one_line(FIRMWARE),
+        serial: cut_serial(&one_line(SERIAL)),
+        ..About::of(record, stamp)
+    }
+    .text()
 }
 
 /// The characters of a serial [`cut_serial`] keeps from its head: the lead

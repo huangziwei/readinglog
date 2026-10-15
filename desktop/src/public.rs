@@ -48,7 +48,7 @@ impl Public {
             .books
             .iter()
             .filter(|b| shown(b))
-            .map(|b| on_this_computer(b, record_dirs))
+            .map(|b| crate::kindles::on_this_computer(b, record_dirs))
             .collect();
         let public = Record {
             sittings,
@@ -73,19 +73,6 @@ impl Public {
             stats,
             as_of,
         }
-    }
-}
-
-/// `book` with its cover pointing at the copy `kindles::cover` finds under
-/// `record_dirs`, at none where no copy there draws, and no `thumbnail`.
-fn on_this_computer(book: &record::Book, record_dirs: &[PathBuf]) -> record::Book {
-    let cover = crate::kindles::cover(record_dirs, &book.cde_key)
-        .map(|at| at.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    record::Book {
-        cover,
-        thumbnail: String::new(),
-        ..book.clone()
     }
 }
 
