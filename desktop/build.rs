@@ -2,12 +2,13 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 fn main() {
-    // `generate_context!` embeds `web/`, which Cargo does not watch: the
-    // tree's fingerprint goes into a rustc env var.
+    // Every file under `web` and `icons`: a `rerun-if-changed`, its path and
+    // bytes hashed into `READINGLOG_EMBEDDED_FINGERPRINT`.
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     fingerprint_dir(Path::new("web"), &mut hasher);
+    fingerprint_dir(Path::new("icons"), &mut hasher);
     println!(
-        "cargo:rustc-env=READINGLOG_WEB_FINGERPRINT={:x}",
+        "cargo:rustc-env=READINGLOG_EMBEDDED_FINGERPRINT={:x}",
         hasher.finish()
     );
 
@@ -19,7 +20,7 @@ fn fingerprint_dir(dir: &Path, hasher: &mut impl Hasher) {
         return;
     };
     let mut paths: Vec<_> = entries.flatten().map(|e| e.path()).collect();
-    // One tree, one fingerprint: the paths in a fixed order.
+    // `paths` in name order, the order `hasher` takes them in.
     paths.sort();
     for path in paths {
         println!("cargo:rerun-if-changed={}", path.display());
