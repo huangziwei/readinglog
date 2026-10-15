@@ -8,6 +8,8 @@ Keep track of your reading stats by parsing the local system logs on your jailbr
     <img src=".github/assets/rhythm/year.png" width="250" alt="Year" />
 </p>
 
+Reading Log does not track or record any reading data, it only parses what are already on the Kindle. It works best on firmware from 5.16.* to 5.18.* because their system logs are better known. It should work on older ones, but will likely not work on newer ones. If you want me to diagnose your specific firmware, post the data in an issue by following the instruction [here](https://github.com/huangziwei/readinglog/tree/main/scripts). 
+
 ## Install
 
 Download and unzip the latest `readinglog-v<x.y.z>-kindle.zip` from the [release page](https://github.com/huangziwei/readinglog/releases), then copy two things onto the device:
@@ -32,11 +34,12 @@ git clone https://github.com/huangziwei/readinglog && cd readinglog/
 
 ## How It Works
 
-On your Kindle, live log is kept in `/var/log/messages`. Every 15 mins, the live log will be rotated out and be kept in `/var/local/log`, and then a daily backup will be generated the first time you turn on the device in a given day, and be saved to `/mnt/us/system/logbackup`. All your reading statistics are buried in those logs. 
+On your Kindle, live log is kept in `/var/log/messages`. Every 15 mins or at sleep, the live log will be rotated out and be stored as a `.gz` file in `/var/local/log`. There's a total size limit around 3MB for the roated logs, once reached, the oldest logs will be pruned and lost. The first time you turn on the device in any given day, a daily backup will be generated from the files in `/var/local/log`, and be saved to `/mnt/us/system/logbackup`, only 30 back logs will be kept on the device. All your reading statistics are buried in those logs. 
 
-Book identity is redacted in most of the logs, but can be recovered by looking up some shared stats in `/var/local/metadata/cc.db`, given the books are still on the device. Books already removed from the device before the first use of this app can only be rescued to a certain extend via correlating the logs with some indirect sources, such as `/mnt/us/system/vocabulary/vocab.db` (if you ever look up a word in that book), `/mnt/us/documents/My Clippings.txt` (if you ever highlighted a sentence in that book) and the `.sdr` of each book (if you didn't remove them from the device after removing the book).
+Book identity is redacted in most of the logs, but can be recovered by looking up some shared stats in `/var/local/metadata/cc.db`, if the books are still on the device. Books already removed from the device before the first use of this app can only be rescued to a certain extend via correlating the logs with some indirect sources, such as `/mnt/us/system/vocabulary/vocab.db` (if you ever look up a word in that book), `/mnt/us/documents/My Clippings.txt` (if you ever highlighted a sentence in that book) and the `.sdr` of each book (if you didn't remove them from the device after removing the book).
 
-Backlogs can only go back 30 days of use, and they might not even be complete due to file size limit, and removed sideloaded books will not have covers. Don't expect too much from the backlogs, you might be happier if you just reset the history and start tracking from today. 
+It's recommended to open ReadingLog **after each sitting**. Your data can be lost or incomplete if you don't open the ReadingLog very often. 
+
 
 ## More Screenshots
 
