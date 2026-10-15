@@ -18,3 +18,5 @@ artifacts/
 # Written by hand: the host path READINGLOG_FONTS takes.
 /preview.env
 /ref
+desktop/gen/schemas/
+desktop/target/
