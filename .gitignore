@@ -1,22 +1,11 @@
 /target
-# desktop/ is a workspace of its own, building into its own target/.
 /desktop/target
-# Written by tauri-build on every build.
 /desktop/gen
-# Anywhere, not only the root: a tool run from a subdirectory writes its own
-# scratch under one there.
 artifacts/
 .DS_Store
 .claude
-
-# Staged by build.sh from target/. Named, never the directory: ignoring `bin/`
-# would drop bin/readinglog.sh from the release zip.
 /device/extensions/readinglog/bin/readinglog
-# Staged by build.sh from scripts/dumplogs.sh.
 /device/extensions/readinglog/bin/dump.sh
 .github/assets/calendar.png
-# Written by hand: the host path READINGLOG_FONTS takes.
 /preview.env
 /ref
-desktop/gen/schemas/
-desktop/target/
