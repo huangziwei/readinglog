@@ -23,8 +23,7 @@ pub enum TextSize {
 impl TextSize {
     pub const ALL: [TextSize; 3] = [TextSize::Small, TextSize::Medium, TextSize::Large];
 
-    /// The factor `Theme::sized` multiplies `BODY_PX` by. `Theme::tab_px`
-    /// takes `BODY_PX` unscaled.
+    /// The factor `Theme::sized` multiplies `BODY_PX` by.
     pub fn scale(self) -> f32 {
         match self {
             TextSize::Small => 0.85,
@@ -51,16 +50,15 @@ impl TextSize {
     }
 }
 
-/// The colours `ui::charts` draws in, one bar hue apiece: 鳶 23°, 若竹 97°,
-/// 紺 222°. `ui::paint::Palette::for_panel` reads it under `eink::fb::has_cfa`.
+/// The colours `ui::charts` draws in, one `ui::paint::Palette` apiece.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ColorScheme {
-    /// 鳶 across the ramp, marked in 黄金.
+    /// `ui::paint::Palette::TOBI_KOGANE`.
     TobiKogane,
-    /// 若竹 and 松葉 across the ramp, marked at 桜's hue.
+    /// `ui::paint::Palette::SAKURA_WAKATAKE`.
     #[default]
     SakuraWakatake,
-    /// 紺's hue across the ramp, marked at 紅's.
+    /// `ui::paint::Palette::KURENAI_KON`.
     KurenaiKon,
     /// `ui::paint::Palette::GREY`.
     Grey,
@@ -115,9 +113,7 @@ impl StatsFrom {
     }
 }
 
-/// The shortest sitting `stats::Stats::build` counts as reading. A sitting under it
-/// carries no `Stats::sittings` entry and no total; its book keeps a row in
-/// `Stats::books`, at zero.
+/// The shortest sitting `stats::Stats::build` counts as reading.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SittingFloor {
     /// Every sitting, however short.
@@ -187,7 +183,6 @@ impl WeekStart {
     pub const ALL: [WeekStart; 2] = [WeekStart::Monday, WeekStart::Sunday];
 
     /// The rotation `WeekStart::column_of` and `WeekStart::day_in` apply.
-    /// `date::weekday` counts from Monday.
     pub fn shift(self) -> usize {
         match self {
             WeekStart::Monday => 0,
@@ -221,7 +216,7 @@ impl WeekStart {
     }
 }
 
-/// Which list the search names, which its head row picks between.
+/// Which list `view::search` searches.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Scope {
     /// Titles and authors, through `view::search::listed`.
@@ -263,7 +258,7 @@ pub struct Settings {
     pub show_unidentified: bool,
     /// Whether `view::books::listed` keeps a book failing `BookStat::has_cover`.
     pub show_uncovered: bool,
-    /// Which list the search opens on, which is the one it last showed.
+    /// The list `view::search` opens on.
     pub scope: Scope,
     /// The lines `Settings::parse` matched no key for, held for `to_text`.
     unknown: Vec<String>,
@@ -286,8 +281,8 @@ impl Settings {
         }
     }
 
-    /// The first `SETTINGS_PATHS` entry that is a file, over
-    /// [`Settings::new`]. A path naming no file yields [`Settings::new`].
+    /// The first `SETTINGS_PATHS` entry that is a file, through
+    /// [`Settings::load_from`]; [`Settings::new`] where none is.
     pub fn load(detected: Lang) -> Self {
         match SETTINGS_PATHS.iter().map(Path::new).find(|p| p.is_file()) {
             Some(path) => Self::load_from(path, detected),
@@ -303,8 +298,8 @@ impl Settings {
         Self::parse(&text, detected)
     }
 
-    /// `key=value` a line, `#` a comment. A value `of_token` reads as `None`
-    /// keeps the [`Settings::new`] default for that one field.
+    /// `key=value` a line, `#` a comment. A `value` `of_token` reads as `None`
+    /// keeps the [`Settings::new`] default for its field.
     pub fn parse(text: &str, detected: Lang) -> Self {
         let mut out = Self::new(detected);
         for line in text.lines() {
@@ -384,7 +379,7 @@ impl Settings {
     }
 
     /// Writes [`Settings::to_text`] to the first `SETTINGS_PATHS` entry whose
-    /// parent is a directory. A failed write prints to stderr.
+    /// parent is a directory, printing each failed `std::fs::write` to stderr.
     pub fn save(&self) {
         for path in SETTINGS_PATHS.iter().map(PathBuf::from) {
             let Some(dir) = path.parent() else { continue };
@@ -410,7 +405,7 @@ mod tests {
         assert_eq!(s.language, Lang::Japanese);
         assert_eq!(s.week_start, WeekStart::Monday);
         assert_eq!(s.stats_from, StatsFrom::App);
-        // A path naming no file.
+        // `/nonexistent/settings` names no file.
         let missing = Settings::load_from(Path::new("/nonexistent/settings"), Lang::German);
         assert_eq!(missing.language, Lang::German);
     }
@@ -455,7 +450,7 @@ mod tests {
         let s = Settings::parse("language=e\ntext_size=large\n", Lang::English);
         assert_eq!(s.color_scheme, ColorScheme::SakuraWakatake);
         assert_eq!(s.text_size, TextSize::Large, "the rest still reads");
-        // Tokens `ColorScheme::of_token` answers `None` for.
+        // Each `token` is one `ColorScheme::of_token` answers `None` for.
         for token in ["notacolour", "azure", "asagi"] {
             let odd = Settings::parse(&format!("color_scheme={token}\n"), Lang::English);
             assert_eq!(odd.color_scheme, ColorScheme::SakuraWakatake, "{token}");
@@ -472,12 +467,12 @@ mod tests {
         let old = Settings::parse("language=e\nfigures=app\n", Lang::English);
         assert_eq!(old.sitting_floor, SittingFloor::OneMinute);
         assert_eq!(old.stats_from, StatsFrom::App, "the rest still reads");
-        // A token `of_token` answers `None` for keeps the default.
+        // A `token` `of_token` answers `None` for keeps the default.
         for token in ["", "1", "60", "none", "2m"] {
             let odd = Settings::parse(&format!("sitting_floor={token}\n"), Lang::English);
             assert_eq!(odd.sitting_floor, SittingFloor::OneMinute, "{token}");
         }
-        // Every floor survives a write, on a token of its own.
+        // Every `floor` survives a write, on a token of its own.
         for floor in SittingFloor::ALL {
             let mut s = Settings::new(Lang::English);
             s.sitting_floor = floor;
@@ -536,15 +531,15 @@ mod tests {
     #[test]
     fn the_search_opens_on_the_books_until_it_has_been_flipped() {
         assert_eq!(Settings::new(Lang::English).scope, Scope::Books);
-        // A file written before the scope existed.
+        // Text with no `scope` line.
         let old = Settings::parse("language=e\nshow_uncovered=no\n", Lang::English);
         assert_eq!(old.scope, Scope::Books);
         let highlights = Settings::parse("scope=marks\n", Lang::English);
         assert_eq!(highlights.scope, Scope::Highlights);
-        // A token `of_token` answers `None` for keeps the default.
+        // `scope=highlights` keeps the default: `Scope::of_token` answers `None`.
         let odd = Settings::parse("scope=highlights\n", Lang::English);
         assert_eq!(odd.scope, Scope::Books);
-        // And every scope survives a write.
+        // Every `scope` survives a write.
         for scope in Scope::ALL {
             let mut s = Settings::new(Lang::English);
             s.scope = scope;
@@ -578,7 +573,7 @@ mod tests {
 
     #[test]
     fn a_sunday_week_shows_the_same_days_in_another_order() {
-        // `date::weekday` answers the Monday-first index.
+        // `column_of` takes the Monday-first index.
         let (mon, sun) = (WeekStart::Monday, WeekStart::Sunday);
         assert_eq!(mon.column_of(0), 0, "Monday leads a Monday week");
         assert_eq!(sun.column_of(6), 0, "Sunday leads a Sunday week");
