@@ -58,9 +58,9 @@ pub enum ColorScheme {
     /// 鳶 across the ramp, marked in 黄金.
     TobiKogane,
     /// 若竹 and 松葉 across the ramp, marked at 桜's hue.
+    #[default]
     SakuraWakatake,
     /// 紺's hue across the ramp, marked at 紅's.
-    #[default]
     KurenaiKon,
     /// `ui::paint::Palette::GREY`.
     Grey,
@@ -453,12 +453,12 @@ mod tests {
     #[test]
     fn a_file_written_before_the_schemes_existed_opens_on_the_default() {
         let s = Settings::parse("language=e\ntext_size=large\n", Lang::English);
-        assert_eq!(s.color_scheme, ColorScheme::KurenaiKon);
+        assert_eq!(s.color_scheme, ColorScheme::SakuraWakatake);
         assert_eq!(s.text_size, TextSize::Large, "the rest still reads");
         // Tokens `ColorScheme::of_token` answers `None` for.
         for token in ["notacolour", "azure", "asagi"] {
             let odd = Settings::parse(&format!("color_scheme={token}\n"), Lang::English);
-            assert_eq!(odd.color_scheme, ColorScheme::KurenaiKon, "{token}");
+            assert_eq!(odd.color_scheme, ColorScheme::SakuraWakatake, "{token}");
         }
     }
 
