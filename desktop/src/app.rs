@@ -1,6 +1,6 @@
 //! The window: [`page`] draws the route its hash names through
-//! [`screen::render`]; the other commands import, set a setting, delete a
-//! backup, every backup or everything, and open the dialogs and the folder.
+//! [`screen::render`]; the other commands import, set a setting or a highlight's
+//! words, delete a backup, every backup or everything, and open the dialogs.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -18,6 +18,7 @@ use readinglog_native::record::Record;
 use readinglog_native::view::config;
 
 use crate::device::{self, DeviceInfo};
+use crate::edits::{self, HIGHLIGHTS_FILE, HighlightId};
 use crate::import::{self, Imported};
 use crate::screen::{self, Covers, Page, Route, Shown};
 use crate::workspace::{SITE_FILE, Workspace};
@@ -31,32 +32,36 @@ struct Open {
     served: Mutex<Vec<PathBuf>>,
 }
 
-/// When each record and `SITE_FILE` were last written, each record's size,
-/// and the clock's day.
+/// When each record, `SITE_FILE` and `HIGHLIGHTS_FILE` were last written,
+/// each record's and `HIGHLIGHTS_FILE`'s size, and the clock's day.
 type Stamp = (
     PathBuf,
     Vec<(Option<SystemTime>, Option<u64>)>,
     Option<SystemTime>,
+    (Option<SystemTime>, Option<u64>),
     i64,
 );
+
+/// When the file at `path` was last written, and its size.
+fn written(path: &Path) -> (Option<SystemTime>, Option<u64>) {
+    let held = std::fs::metadata(path).ok();
+    (
+        held.as_ref().and_then(|m| m.modified().ok()),
+        held.as_ref().map(|m| m.len()),
+    )
+}
 
 fn stamp(ws: &Workspace, today: i64) -> Stamp {
     let records = ws
         .record_dirs()
         .iter()
-        .map(|dir| {
-            let record = std::fs::metadata(Record::file(dir)).ok();
-            (
-                record.as_ref().and_then(|m| m.modified().ok()),
-                record.as_ref().map(|m| m.len()),
-            )
-        })
+        .map(|dir| written(&Record::file(dir)))
         .collect();
-    let site = std::fs::metadata(ws.dir.join(SITE_FILE)).ok();
     (
         ws.dir.clone(),
         records,
-        site.and_then(|m| m.modified().ok()),
+        written(&ws.dir.join(SITE_FILE)).0,
+        written(&ws.dir.join(HIGHLIGHTS_FILE)),
         today,
     )
 }
@@ -289,6 +294,29 @@ async fn pick_backup(app: AppHandle) -> Option<String> {
         .map(|p| p.to_string())
 }
 
+/// One highlight's words as the window sets them; `text` `None` gives the
+/// Kindle's own back.
+#[derive(Debug, serde::Deserialize)]
+struct Correction {
+    id: HighlightId,
+    text: Option<String>,
+}
+
+/// Set the words of each highlight `changes` names in the record of the
+/// Kindle whose cut serial is `kindle`, empty for the backups naming none.
+#[tauri::command]
+fn edit_highlight(
+    app: AppHandle,
+    open: State<'_, Open>,
+    kindle: String,
+    changes: Vec<Correction>,
+) -> Answer<()> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    let changes: Vec<(HighlightId, Option<String>)> =
+        changes.into_iter().map(|c| (c.id, c.text)).collect();
+    edits::correct_words(&ws, &kindle, &changes).map_err(said)
+}
+
 /// Show `path` in its folder.
 #[tauri::command]
 fn reveal(app: AppHandle, path: String) -> Answer<()> {
@@ -413,6 +441,7 @@ pub fn run() {
             import,
             import_kindle,
             set_setting,
+            edit_highlight,
             choose_folder,
             pick_backup,
             reveal,
@@ -422,4 +451,26 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("the window could not open");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_correction_reads_as_the_window_sends_it() {
+        // What `app.js` sends for a note saved and for a row's words given back.
+        let saved: Vec<Correction> = serde_json::from_str(
+            r#"[{"id":{"at":"2026-10-07T09:46:44","kind":"note","title":"A Therapeutic Journey","location":42,"start":-1},"text":"letting everyone down?"}]"#,
+        )
+        .unwrap();
+        assert_eq!(saved[0].id.at, "2026-10-07T09:46:44");
+        assert_eq!((saved[0].id.location, saved[0].id.start), (42, -1));
+        assert_eq!(saved[0].text.as_deref(), Some("letting everyone down?"));
+        let given_back: Vec<Correction> = serde_json::from_str(
+            r#"[{"id":{"at":"2026-10-07T09:46:51","kind":"highlight","title":"A Therapeutic Journey","location":42,"start":-1},"text":null}]"#,
+        )
+        .unwrap();
+        assert_eq!(given_back[0].text, None);
+    }
 }

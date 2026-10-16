@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::clippings::Kind;
 use crate::clock::Clock;
 use crate::covers;
-use crate::highlights::{Gate, Highlight, State};
+use crate::highlights::{Gate, Highlight, Spoken, State};
 use crate::library;
 use crate::log::line::{line_stamp, log_stamp};
 use crate::log::sitting::{Measure, SITTING_GAP_SECS, Sitting, Stretch};
@@ -203,7 +203,7 @@ pub struct Record {
     pub reset_at: String,
     /// Books put back to zero, ascending by `extent` then `key`.
     pub cleared: Vec<Cleared>,
-    /// Every highlight by stamp, written whole by [`crate::highlights::fold`].
+    /// Every highlight by stamp, each pass laid over them by [`crate::highlights::fold`].
     pub highlights: Vec<Highlight>,
     /// What the pass that wrote [`Self::highlights`] saw, `None` where no pass has.
     pub gate: Option<Gate>,
@@ -429,22 +429,20 @@ impl Record {
         out
     }
 
-    /// Take `highlights` as the whole of [`Self::highlights`], with the gate the pass
-    /// that read them stood at. Answers whether anything moved.
-    pub fn take_highlights(&mut self, mut highlights: Vec<Highlight>, gate: Gate) -> bool {
-        // `held` lends each fresh highlight the `start`, `end`, `colour` and
-        // `State::Live` of the held one sharing its `identity`.
-        let held: std::collections::HashMap<_, &Highlight> =
-            self.highlights.iter().map(|m| (m.identity(), m)).collect();
-        for highlight in &mut highlights {
-            if let Some(stored) = held.get(&highlight.identity()).copied() {
-                highlight.keep_from(stored);
-            }
-        }
-        let moved = self.highlights != highlights || self.gate != Some(gate);
-        self.highlights = highlights;
-        self.gate = Some(gate);
+    /// Take `highlights`, one pass's rows, over [`Self::highlights`] as
+    /// [`crate::highlights::over`] lays them, with the gate the pass stood
+    /// at. Answers whether anything moved.
+    pub fn take_highlights(
+        &mut self,
+        highlights: Vec<Highlight>,
+        spoken: &Spoken,
+        gate: Gate,
+    ) -> bool {
+        let held = std::mem::take(&mut self.highlights);
+        self.highlights = crate::highlights::over(&held, highlights, spoken);
         self.sort_highlights();
+        let moved = self.highlights != held || self.gate != Some(gate);
+        self.gate = Some(gate);
         moved
     }
 
@@ -1401,8 +1399,8 @@ impl Record {
     }
 
     /// The first book carrying `extent`, over the key [`Self::sort_books`]
-    /// orders on. `partition_point` answers the **first** of a run of books
-    /// sharing an extent, never `binary_search`.
+    /// orders on: `partition_point` answers the **first** of a run of books
+    /// sharing an extent.
     fn slot_at(&self, extent: i64) -> Option<usize> {
         let at = self.books.partition_point(|b| b.extent < extent);
         self.books
@@ -2451,9 +2449,9 @@ fn read_stretches(said: &str) -> Vec<Stretch> {
 mod tests {
     use super::*;
 
-    /// `remember` reaches a book through an index of `cde_key` to slot. It
-    /// must pick the same book a pass over `books` in order picks, including
-    /// which of several under one key.
+    /// `remember` reaches a book through an index of `cde_key` to slot, picking
+    /// the book a pass over `books` in order picks, including which of several
+    /// under one key.
     #[test]
     fn the_key_index_answers_what_the_scan_answered() {
         let mut record = Record::default();
@@ -3060,7 +3058,7 @@ mod tests {
             Path::new("/nonexistent/My Clippings.txt"),
             &Default::default(),
         );
-        assert!(record.take_highlights(vec![one_highlight()], gate));
+        assert!(record.take_highlights(vec![one_highlight()], &Spoken::default(), gate));
         let back = Record::from_text(&record.text());
         assert_eq!(back.highlights, vec![one_highlight()]);
         assert_eq!(back.gate, Some(gate));
@@ -3068,7 +3066,7 @@ mod tests {
         assert_eq!(back.highlights[0].start, 11_521);
         assert_eq!(back.highlights[0].location, 111);
         // `take_highlights` again with the same sources writes nothing new.
-        assert!(!record.take_highlights(vec![one_highlight()], gate));
+        assert!(!record.take_highlights(vec![one_highlight()], &Spoken::default(), gate));
     }
 
     #[test]
@@ -3107,6 +3105,7 @@ mod tests {
         mine.extent = extent;
         record.take_highlights(
             vec![mine],
+            &Spoken::default(),
             crate::highlights::gate(
                 Path::new("/nonexistent/My Clippings.txt"),
                 &Default::default(),
@@ -5101,7 +5100,7 @@ m	260911:115340	7200
             colour: String::new(),
             ..held.clone()
         };
-        record.take_highlights(vec![thin], Gate::default());
+        record.take_highlights(vec![thin], &Spoken::default(), Gate::default());
 
         assert_eq!(record.highlights.len(), 1);
         let kept = &record.highlights[0];

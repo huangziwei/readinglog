@@ -5,13 +5,12 @@
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
-use readinglog_native::clippings::Kind;
 use readinglog_native::date;
 use readinglog_native::highlights::Highlight;
 use readinglog_native::stats::{BookStat, Stats};
 use readinglog_native::view::highlights as highlights_view;
 
-use crate::edits::Edits;
+use crate::edits::{Edits, HighlightId};
 use crate::posts;
 use crate::workspace::{POSTS, Workspace, write_file};
 
@@ -41,46 +40,6 @@ pub struct BookRow {
     pub highlights_shown: Option<bool>,
     /// Its address on the site, once one is pinned.
     pub slug: Option<String>,
-}
-
-/// What names one highlight across imports: `Highlight::identity`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HighlightId {
-    pub at: String,
-    pub kind: String,
-    pub title: String,
-    pub location: i64,
-    pub start: i64,
-}
-
-impl HighlightId {
-    fn of(highlight: &Highlight) -> Self {
-        let (at, kind, title, location, start) = highlight.identity();
-        Self {
-            at: at.into(),
-            kind: kind.as_str().into(),
-            title: title.into(),
-            location,
-            start,
-        }
-    }
-
-    /// A highlight answering to this identity, for `Edits` to find its row by.
-    fn highlight(&self) -> Result<Highlight> {
-        let kind = Kind::from_stored(&self.kind)
-            .ok_or_else(|| anyhow!("{} is no kind of highlight", self.kind))?;
-        Ok(Highlight {
-            at: self.at.clone(),
-            kind,
-            title: self.title.clone(),
-            location: self.location,
-            start: match self.location < 0 {
-                true => self.start,
-                false => -1,
-            },
-            ..Highlight::default()
-        })
-    }
 }
 
 /// One `a` row of a book, with its edit.

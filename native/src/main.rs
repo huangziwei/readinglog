@@ -46,9 +46,7 @@ fn main() {
         "--version" => version(),
         _ => show(),
     };
-    // A launch that dies before `show` states its header block sits under
-    // the previous build's block and reads as that build's. The failure
-    // names its own.
+    // A failure names its build, `show`'s header block not standing above it.
     if let Err(err) = result {
         eprintln!(
             "!! readinglog: {err:#} — build {} {}",
@@ -95,9 +93,8 @@ fn collect_into(
         Err(err) => eprintln!("!! record: the nested sittings stand: {err}"),
     }
     let pass = record.update(on);
-    // A clock that stepped back left the span it stepped over below the
-    // watermark; the pass pulled the watermark back and read that span again. Rare
-    // enough to be worth its own line when it happens.
+    // `pass.rewound`: the seconds a clock stepping back pulled the watermark
+    // back by, the span under it read again.
     if pass.rewound > 0 {
         eprintln!(
             "clock: the Kindle stepped back {}, and the log was read again from there",
@@ -116,7 +113,12 @@ fn collect_into(
     let (survey, identifying, highlights) =
         identify::asked(record, Path::new(vocab::VOCAB_DB), clips, documents);
     let sidecars = match identifying.is_some() || highlights {
-        true => identify::sidecars_for(record, documents, identifying.is_some()),
+        true => identify::sidecars_for(
+            record,
+            documents,
+            identifying.is_some(),
+            highlights.then_some(dir),
+        ),
         false => sidecar::Sidecars::default(),
     };
     // One read of `My Clippings.txt`, for whichever of the two passes wants
@@ -128,9 +130,7 @@ fn collect_into(
         true => clippings::read(clips),
         false => Vec::new(),
     };
-    // Whether this pass moved the gate, which is a change to the record like
-    // any other: a gate written and not saved is a gate that never holds, and
-    // the sources are read again on every launch for ever.
+    // Whether this pass moved the gate, which saves the record like any other change.
     let gated = identifying.is_some();
     // Measured before either pass: both place a true instant on the Kindle's
     // own clock, and this is what says which clock that was.
@@ -217,8 +217,8 @@ fn highlights_said(merge: &highlights::Merge) -> Option<String> {
         return None;
     }
     Some(format!(
-        "ann={}c{}s/{}L{}r{}?",
-        merge.clippings, merge.sidecars, merge.live, merge.retired, merge.unconfirmed,
+        "ann={}c{}s{}p/{}L{}r{}?",
+        merge.clippings, merge.sidecars, merge.parsed, merge.live, merge.retired, merge.unconfirmed,
     ))
 }
 

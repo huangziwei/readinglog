@@ -29,13 +29,21 @@ fn fixtures() -> Option<PathBuf> {
     }
 }
 
+/// The rare half of every sidecar under `documents`, each file parsed, the
+/// rosters kept in a folder of their own.
+fn rosters(documents: &Path) -> sidecar::Sidecars {
+    let kept = std::env::temp_dir().join("readinglog-timezone-travel-rosters");
+    let _ = std::fs::remove_dir_all(&kept);
+    sidecar::read(documents, false, Some(&kept))
+}
+
 /// One fixture folded the way a launch folds it: the clocks measured off the
 /// two files, then the merge over them.
 fn folded(at: &Path) -> (Record, highlights::Merge) {
     let documents = at.join("documents");
     let clips = documents.join("My Clippings.txt");
     let clippings = clippings::read(&clips);
-    let sidecars = sidecar::read(&documents, false);
+    let sidecars = rosters(&documents);
     let survey = sidecar::survey(&documents);
     let mut record = Record {
         books: vec![record::Book {
@@ -67,7 +75,7 @@ fn hours(record: &Record) -> Vec<u32> {
     out
 }
 
-/// What one fold came to, and the reader's own hours, as a report states them.
+/// What one fold came to, and the hours its highlights stand at, as a report states them.
 fn report(name: &str, record: &Record, merge: &highlights::Merge) {
     let paired = record
         .highlights
@@ -130,8 +138,8 @@ fn a_fortnight_read_four_hours_east_keeps_it_too() {
 
 // ---- a vocab lookup against the sitting it was made in --------------------
 
-/// Three nights at the reader's hour, each one sitting on an end position no
-/// book answers to, as the log wrote them on the Kindle's own clock.
+/// Three nights at one hour, each one sitting on an end position no book
+/// answers to, as the log writes them on the Kindle's own clock.
 fn three_nights(offset: i64) -> Record {
     let sitting = |at: &str, to: &str, end: i64| Sitting {
         started_at: at.into(),
@@ -218,7 +226,7 @@ fn a_real_captures_two_files_state_the_clock_its_record_holds() {
     let at = PathBuf::from(at);
     let clips = at.join("My Clippings.txt");
     let clippings = clippings::read(&clips);
-    let sidecars = sidecar::read(&at.join("Sidle"), false);
+    let sidecars = rosters(&at.join("Sidle"));
     let seen = highlights::clocks_seen(&clippings, &sidecars);
     let mut clock = Clock::default();
     clock.observe(seen.clone());
@@ -314,7 +322,7 @@ fn re_merging_a_real_captures_files_moves_none_of_its_highlights() {
     let clips = at.join("My Clippings.txt");
     let clippings = clippings::read(&clips);
     let documents = at.join("Sidle");
-    let sidecars = sidecar::read(&documents, false);
+    let sidecars = rosters(&documents);
     let survey = sidecar::survey(&documents);
     record
         .clock

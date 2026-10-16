@@ -13,6 +13,7 @@ mod settings;
 mod tile;
 mod words;
 
+use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
@@ -28,6 +29,7 @@ use readinglog_native::view::{Shelf, Sort, Span, Way, Window};
 pub use look::Look;
 pub use words::Words;
 
+use crate::edits::{Edits, HighlightId};
 use crate::workspace::Workspace;
 
 /// One screen as the window sets it.
@@ -282,13 +284,35 @@ pub struct Shown {
     /// Each book's Kindle as `kindles::labels` calls it, `None` throughout for
     /// one source.
     pub kindles: Vec<Option<String>>,
+    /// Each source's Kindle by its cut serial, empty for the backups naming none.
+    pub serials: Vec<String>,
+    /// The highlights in words `highlights.toml` sets, by their Kindle's serial.
+    pub corrected: HashSet<(String, HighlightId)>,
 }
 
 impl Shown {
-    /// The record `ws` holds as of `today`, the day `date::now` answers;
-    /// `None` where the record holds no sitting.
+    /// The record `ws` holds as of `today`, the day `date::now` answers, each
+    /// highlight in the words `highlights.toml` sets; `None` where the record
+    /// holds no sitting.
     pub fn of(ws: &Workspace, today: i64) -> Option<Shown> {
-        let sources = ws.sources();
+        let mut sources = ws.sources();
+        let edits = Edits::load(&ws.dir).unwrap_or_else(|err| {
+            eprintln!("!! {err:#}");
+            Edits::default()
+        });
+        let serials: Vec<String> = sources
+            .iter()
+            .map(|s| s.serial.clone().unwrap_or_default())
+            .collect();
+        let mut corrected = HashSet::new();
+        for (source, serial) in sources.iter_mut().zip(&serials) {
+            corrected.extend(
+                edits
+                    .correct(&mut source.record, serial)
+                    .into_iter()
+                    .map(|id| (serial.clone(), id)),
+            );
+        }
         let mut record = crate::kindles::together(&sources);
         if record.sittings.is_empty() {
             return None;
@@ -343,6 +367,8 @@ impl Shown {
             covers,
             tones,
             kindles,
+            serials,
+            corrected,
         })
     }
 
@@ -410,6 +436,8 @@ pub fn render(
         tones: &shown.tones,
         covers: &shown.covers,
         kindles: &shown.kindles,
+        serials: &shown.serials,
+        corrected: &shown.corrected,
         links,
         uncovered: shown.settings.show_uncovered,
         width: (width - 120.0).max(320.0),
@@ -418,7 +446,7 @@ pub fn render(
         Route::Book { key, .. } if shown.book(key).is_none() => Route::Today,
         other => other.clone(),
     };
-    let (title, main) = match &route {
+    let (title, mut main) = match &route {
         Route::Today => (s.today.to_string(), day::page(&cx, shown.today, true)),
         Route::Day(day) => (date::long_day(*day, s), day::page(&cx, *day, false)),
         Route::Span(Span::AllTime, _) => (
@@ -449,6 +477,7 @@ pub fn render(
         Route::Highlights(query) => (s.highlights_tab.to_string(), highlights::page(&cx, query)),
         Route::Settings => (s.config.to_string(), settings::page(ws, Some(shown), s, w)),
     };
+    main.push_str(&editor(s, w));
     Page {
         title,
         side: side(Some(shown), &route, s, w, kindle),
@@ -456,6 +485,21 @@ pub fn render(
         vars,
         lang: lang.language_tag().into(),
     }
+}
+
+/// The editor `app.js` opens a highlight in: the text areas go above these
+/// buttons, and `revert` stays only on a highlight in words set here.
+fn editor(s: &Strings, w: &Words) -> String {
+    format!(
+        "<template id=\"editor\"><div class=\"editor\"><p class=\"acts\">\
+         <button data-act=\"revert\" data-tip=\"{}\">{}</button>\
+         <button data-act=\"cancel\">{}</button>\
+         <button class=\"save\" data-act=\"save\">{}</button></p></div></template>",
+        esc(w.revert_tip),
+        esc(w.revert),
+        esc(s.cancel),
+        esc(w.save)
+    )
 }
 
 /// What every page of one render reads.
@@ -473,6 +517,9 @@ struct Ctx<'a> {
     tones: &'a [[u8; 3]],
     covers: &'a [Option<PathBuf>],
     kindles: &'a [Option<String>],
+    /// [`Shown::serials`] and [`Shown::corrected`].
+    serials: &'a [String],
+    corrected: &'a HashSet<(String, HighlightId)>,
     links: Covers,
     /// `Settings::show_uncovered`, which `view::books::listed` takes.
     uncovered: bool,
@@ -484,6 +531,20 @@ impl Ctx<'_> {
     /// The route of the book at `at` in `Stats::books`.
     fn book_link(&self, at: usize) -> String {
         Route::book(key_of(&self.stats.books[at])).link()
+    }
+
+    /// The cut serial of the Kindle the book at `at` is from, empty for the
+    /// backups naming none.
+    fn serial(&self, at: usize) -> &str {
+        let book = &self.stats.books[at];
+        let from = match self.serials.len() {
+            1 => Some(0),
+            _ => crate::kindles::origin(book.extent)
+                .0
+                .or_else(|| crate::kindles::key_origin(&book.cde_key).0),
+        };
+        from.and_then(|n| self.serials.get(n))
+            .map_or("", String::as_str)
     }
 
     /// The Kindle the book at `at` is from, where `kindles` names one.
@@ -1028,7 +1089,9 @@ mod tests {
             "{}",
             page.main
         );
-        assert!(page.main.contains("<span>Sep 1, 2026</span></p>"));
+        assert!(page.main.contains(
+            "<span class=\"when\"><button class=\"edit\" data-act=\"edit\">Edit</button>Sep 1, 2026</span></p>"
+        ));
     }
 
     #[test]
@@ -1182,6 +1245,99 @@ mod tests {
         assert!(page.contains(&delete), "{page}");
         assert!(page.contains("data-act=\"delete-all\""));
         assert!(page.contains("data-act=\"reset\""));
+    }
+
+    #[test]
+    fn a_corrected_note_is_drawn_once_across_imports_of_its_kindles_own_words() {
+        use readinglog_native::clippings::Kind;
+        use readinglog_native::highlights::Highlight;
+        use readinglog_native::update::archive::{self, Source};
+        let ws = Workspace::create(&scratch("screen-corrected")).unwrap();
+        let title = "A Map of Small Rivers";
+        let passage = Highlight {
+            start: 10,
+            end: 40,
+            body: "a passage about rivers".into(),
+            ..highlight(100, title, "2026-09-01T09:05:00")
+        };
+        let note = |words: &str| Highlight {
+            kind: Kind::Note,
+            start: 38,
+            end: 40,
+            body: words.into(),
+            ..highlight(100, title, "2026-09-01T09:05:10")
+        };
+        // One backup of the Kindle `G003H2-0001`, written at `stamp`.
+        let import = |stamp: &str, highlights: Vec<Highlight>| {
+            let mut record = record_of(
+                vec![book(100, "B1", title)],
+                vec![sitting("2026-09-01T09:00:00", 100, 600)],
+            );
+            record.highlights = highlights;
+            let text = record.text();
+            let about = format!("written\t{stamp}\nserial\tG003H2-0001\n");
+            let zip = scratch("screen-corrected-zip").join(format!("readinglog-{stamp}.zip"));
+            archive::write(
+                &zip,
+                &[
+                    ("sessions.tsv".to_string(), Source::Bytes(text.as_bytes())),
+                    ("about.tsv".to_string(), Source::Bytes(about.as_bytes())),
+                ],
+            )
+            .unwrap();
+            crate::import::backup(&ws, &zip).unwrap();
+        };
+        let page = || {
+            let shown = Shown::of(&ws, clock()).unwrap();
+            render(
+                Some(&shown),
+                &ws,
+                &Route::parse("/book/B1"),
+                1072.0,
+                Covers::Files,
+                None,
+            )
+            .main
+        };
+        let (typo, fixed) = ("letting everyone done?", "letting everyone down?");
+        import("261015-200600", vec![passage.clone(), note(typo)]);
+        crate::edits::correct_words(
+            &ws,
+            "G003H2-0001",
+            &[(HighlightId::of(&note(typo)), Some(fixed.into()))],
+        )
+        .unwrap();
+        let drawn = page();
+        assert_eq!(drawn.matches(fixed).count(), 1, "{drawn}");
+        assert!(!drawn.contains(typo));
+        assert_eq!(drawn.matches("<div class=\"highlight\"").count(), 1);
+        assert!(drawn.contains(" data-edited"));
+        assert!(drawn.contains("data-kindle=\"G003H2-0001\""));
+        assert!(drawn.contains("data-note-at=\"2026-09-01T09:05:10\""));
+
+        // The next import: the Kindle states the words the correction was set
+        // over, beside a highlight made since.
+        let since = Highlight {
+            start: 900,
+            end: 960,
+            body: "a highlight made since".into(),
+            ..highlight(100, title, "2026-09-03T21:00:00")
+        };
+        import(
+            "261016-200600",
+            vec![passage.clone(), note(typo), since.clone()],
+        );
+        let drawn = page();
+        assert_eq!(drawn.matches(fixed).count(), 1, "{drawn}");
+        assert!(!drawn.contains(typo));
+        assert_eq!(drawn.matches("<div class=\"highlight\"").count(), 2);
+
+        // The Kindle corrected it too: its words stand over the older ones set here.
+        import("261017-200600", vec![passage, note("down, at last"), since]);
+        let drawn = page();
+        assert!(drawn.contains("down, at last"), "{drawn}");
+        assert!(!drawn.contains(fixed));
+        assert!(!drawn.contains(" data-edited"));
     }
 
     #[test]

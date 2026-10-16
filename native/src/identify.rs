@@ -72,10 +72,10 @@ pub fn from_sources(
 }
 
 /// Every sidecar under `documents`, which both this module and
-/// [`crate::highlights`] stand on. `counters` is the frequent half, read only
-/// while an end position is unidentified.
-pub fn walk(documents: &Path, counters: bool) -> sidecar::Sidecars {
-    sidecar::read(documents, counters)
+/// [`crate::highlights`] stand on: the frequent half where `counters`, the
+/// rare half where `rosters` names the folder its rosters are kept in.
+pub fn walk(documents: &Path, counters: bool, rosters: Option<&Path>) -> sidecar::Sidecars {
+    sidecar::read(documents, counters, rosters)
 }
 
 /// The rules an identifying pass reads its sources under. A `g` row an older build
@@ -130,17 +130,23 @@ pub fn asked(
 }
 
 /// The sidecars, parsed, for a pass that has something to do. The frequent half
-/// is [`Record::recover`]'s alone and only while an end position is unidentified.
-pub fn sidecars_for(record: &Record, documents: &Path, identifying: bool) -> sidecar::Sidecars {
+/// is [`Record::recover`]'s alone and only while an end position is unidentified;
+/// the rare half is the highlights pass's, kept in `rosters`.
+pub fn sidecars_for(
+    record: &Record,
+    documents: &Path,
+    identifying: bool,
+    rosters: Option<&Path>,
+) -> sidecar::Sidecars {
     walk(
         documents,
         identifying && record.wants_identifying(IdentifiedBy::Sidecar),
+        rosters,
     )
 }
 
-/// [`from_sources`] over the three sources named. `clips` is `My Clippings.txt`,
-/// parsed: [`crate::highlights::fold`] wants the same clippings a few
-/// lines later, and the launch reads the file once for both.
+/// [`from_sources`] over the three sources named, `clips` the parsed
+/// `My Clippings.txt` that [`crate::highlights::fold`] reads too.
 pub fn from_sources_at(
     record: &mut Record,
     db: &Path,
@@ -262,8 +268,7 @@ mod tests {
         record
     }
 
-    /// The gate is only worth having if a launch that changed nothing leaves
-    /// it standing — that is the launch it exists for.
+    /// The gate stands where nothing it is stamped from moved.
     #[test]
     fn a_launch_that_moved_nothing_asks_the_sources_nothing() {
         let dir = documents_at("quiet");
@@ -281,7 +286,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// And only safe if every one of the four things it stands on opens it.
+    /// The gate opens on each thing it is stamped from moving.
     #[test]
     fn anything_an_identifying_pass_reads_opens_the_gate() {
         let dir = documents_at("moved");
@@ -334,6 +339,25 @@ mod tests {
             held.rules -= 1;
         }
         assert!(opened(&record), "an older build wrote the row");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A `.yjf` rewritten opens the identifying gate, and `highlights::wants`
+    /// answers false until the `.yjr` moves.
+    #[test]
+    fn a_page_turn_opens_no_highlights_pass() {
+        let dir = documents_at("turned");
+        let db = dir.join("vocab.db");
+        let clips = dir.join("My Clippings.txt");
+        let mut record = stored(&dir);
+        record.gate = Some(crate::highlights::gate(&clips, &sidecar::survey(&dir)));
+        std::fs::write(dir.join("A Book.sdr/A Book.yjf"), b"frequent, a turn on").expect("a turn");
+        let (_, identifying, highlights) = asked(&record, &db, &clips, &dir);
+        assert!(identifying.is_some(), "the counters moved");
+        assert!(!highlights, "no highlight was made, edited or deleted");
+        std::fs::write(dir.join("A Book.sdr/A Book.yjr"), b"rare, a note saved")
+            .expect("a note saved");
+        assert!(asked(&record, &db, &clips, &dir).2, "the rare half moved");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

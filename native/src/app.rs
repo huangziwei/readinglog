@@ -70,8 +70,7 @@ impl App {
             settings.stats_from,
             settings.sitting_floor,
         );
-        // The header block states this; the schemes it gates are what matters
-        // here.
+        // `colour` gates the schemes; the header block states it too.
         let colour = crate::eink::fb::has_cfa();
         Self {
             theme,
@@ -1140,9 +1139,8 @@ impl App {
                 about,
                 sittings: held,
                 books: self.stats.book_count(),
-                // The backup's weight, or the room `covers::sweep` returns.
-                // The record's size comes off the file: serializing the record
-                // for its length is one `format!` per row, under a tap.
+                // The backup's weight, the record's off its file, or the room
+                // `covers::sweep` returns.
                 bytes: match keep {
                     true => covers + record_bytes(self.dir()),
                     false => covers,
@@ -1230,7 +1228,7 @@ impl App {
             clips,
             &survey,
         );
-        let sidecars = crate::identify::walk(documents, true);
+        let sidecars = crate::identify::walk(documents, true, Some(&dir));
         // One read of the file, for both passes.
         let clippings = crate::clippings::read(clips);
         // Measured before either pass places an instant on a clock.

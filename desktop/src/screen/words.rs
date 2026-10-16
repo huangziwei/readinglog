@@ -36,6 +36,15 @@ pub struct Words {
     pub delete_all_ask: &'static str,
     pub delete_all_note: &'static str,
     pub delete_all_do: &'static str,
+    /// The button on each highlight opening its words, and the editor's `save`
+    /// and `revert` beside the Kindle's `cancel`; `revert_tip` is `revert`'s tooltip.
+    pub edit: &'static str,
+    pub save: &'static str,
+    pub revert: &'static str,
+    pub revert_tip: &'static str,
+    /// What a highlight in words set here says, `edited_tip` its tooltip.
+    pub edited: &'static str,
+    pub edited_tip: &'static str,
 }
 
 const ENGLISH: Words = Words {
@@ -66,6 +75,12 @@ const ENGLISH: Words = Words {
     delete_all_note: "Every backup, {n} files, goes off this computer for good, freeing \
                       {size}. The record itself is not touched.",
     delete_all_do: "Delete All",
+    edit: "Edit",
+    save: "Save",
+    revert: "Revert",
+    revert_tip: "Use the words the Kindle states.",
+    edited: "Edited",
+    edited_tip: "Edited on this computer. The Kindle keeps its own words.",
 };
 
 const GERMAN: Words = Words {
@@ -97,6 +112,12 @@ const GERMAN: Words = Words {
                       Computer und geben {size} frei. Die Aufzeichnung selbst bleibt \
                       unberührt.",
     delete_all_do: "Alle löschen",
+    edit: "Bearbeiten",
+    save: "Speichern",
+    revert: "Rückgängig",
+    revert_tip: "Den Wortlaut des Kindle übernehmen.",
+    edited: "Bearbeitet",
+    edited_tip: "Auf diesem Computer bearbeitet. Der Kindle behält seinen eigenen Wortlaut.",
 };
 
 const JAPANESE: Words = Words {
@@ -126,6 +147,12 @@ const JAPANESE: Words = Words {
     delete_all_note: "バックアップ {n} 件をこのコンピュータから完全に削除し、{size} を\
                       解放します。記録そのものはそのまま残ります。",
     delete_all_do: "すべて削除",
+    edit: "編集",
+    save: "保存",
+    revert: "元に戻す",
+    revert_tip: "Kindle の記録にある文面に戻します。",
+    edited: "編集済み",
+    edited_tip: "このコンピュータで編集しました。Kindle の文面はそのままです。",
 };
 
 const SIMPLIFIED: Words = Words {
@@ -153,6 +180,12 @@ const SIMPLIFIED: Words = Words {
     delete_all_ask: "删除所有备份？",
     delete_all_note: "全部 {n} 个备份将从这台电脑上彻底删除，释放 {size}。记录本身不受影响。",
     delete_all_do: "全部删除",
+    edit: "编辑",
+    save: "保存",
+    revert: "还原",
+    revert_tip: "改回 Kindle 记录的文字。",
+    edited: "已编辑",
+    edited_tip: "在这台电脑上编辑过。Kindle 上的文字保持不变。",
 };
 
 const TRADITIONAL: Words = Words {
@@ -180,6 +213,12 @@ const TRADITIONAL: Words = Words {
     delete_all_ask: "刪除所有備份？",
     delete_all_note: "全部 {n} 個備份將從這台電腦上徹底刪除，釋放 {size}。記錄本身不受影響。",
     delete_all_do: "全部刪除",
+    edit: "編輯",
+    save: "儲存",
+    revert: "復原",
+    revert_tip: "改回 Kindle 記錄的文字。",
+    edited: "已編輯",
+    edited_tip: "在這台電腦上編輯過。Kindle 上的文字保持不變。",
 };
 
 impl Words {

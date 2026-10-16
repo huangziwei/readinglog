@@ -14,7 +14,8 @@ use readinglog_native::view::highlights as highlights_view;
 
 use super::chart::{self, BookStrip};
 use super::look::{Look, hex};
-use super::{Ctx, Route, esc, key_of, lang};
+use super::{Ctx, Route, Words, esc, key_of, lang};
+use crate::edits::HighlightId;
 
 pub(super) fn page(cx: &Ctx, at: usize, reading: Option<usize>, way: Way, query: &str) -> String {
     let s = cx.s;
@@ -205,8 +206,8 @@ fn marks(cx: &Ctx, at: usize, reading: Option<usize>, way: Way, query: &str) -> 
 }
 
 /// One highlight of the book at `at` as the Kindle's highlights row sets it:
-/// the passage behind a rule in `paint::highlight_colour`, `note` under it at
-/// the margin, and the label with `Highlight::day` at the line's other end.
+/// the passage behind a rule in `paint::highlight_colour`, `note` under it,
+/// the label with `Highlight::day` and Edit at the line's other end.
 pub(super) fn highlight(
     cx: &Ctx,
     at: usize,
@@ -215,13 +216,24 @@ pub(super) fn highlight(
     needle: &str,
 ) -> String {
     let book = &cx.stats.books[at];
+    let w = Words::of(cx.lang);
+    let serial = cx.serial(at);
+    let edited = std::iter::once(highlight).chain(note).any(|h| {
+        cx.corrected
+            .contains(&(serial.to_string(), HighlightId::of(h)))
+    });
     let mut out = format!(
-        "<div class=\"highlight\"><blockquote style=\"border-color: {}\"{}>{}</blockquote>",
+        "<div class=\"highlight\" data-kindle=\"{}\"{}{}{}>\
+         <blockquote style=\"border-color: {}\"{}>{}</blockquote>",
+        esc(serial),
+        named("", highlight),
+        note.map(|n| named("note-", n)).unwrap_or_default(),
+        if edited { " data-edited" } else { "" },
         hex(paint::highlight_colour(&highlight.colour, true)),
         lang(&book.language, &highlight.body),
         washed(&highlight.body, needle)
     );
-    // `note` holds the reader's own words, and `lang` reads them for a language.
+    // `note`'s words name no book's language, and `lang` reads one off them.
     if let Some(note) = note {
         let _ = write!(
             out,
@@ -234,17 +246,41 @@ pub(super) fn highlight(
         .day()
         .map(|day| date::year_day(day, cx.s))
         .unwrap_or_default();
+    let marked = match edited {
+        true => format!(
+            "<em class=\"edited\" data-tip=\"{}\">{}</em>",
+            esc(w.edited_tip),
+            esc(w.edited)
+        ),
+        false => String::new(),
+    };
     let _ = write!(
         out,
-        "<p class=\"where\"><span>{}</span><span>{}</span></p></div>",
+        "<p class=\"where\"><span>{}</span><span class=\"when\">{marked}\
+         <button class=\"edit\" data-act=\"edit\">{}</button>{}</span></p></div>",
         esc(&highlights_view::label(
             highlight,
             crate::kindles::origin(book.extent).1,
             cx.s
         )),
+        esc(w.edit),
         esc(&made)
     );
     out
+}
+
+/// `highlight`'s `HighlightId` as data attributes, each name opening `prefix`.
+fn named(prefix: &str, highlight: &Highlight) -> String {
+    let id = HighlightId::of(highlight);
+    format!(
+        " data-{prefix}at=\"{}\" data-{prefix}kind=\"{}\" data-{prefix}title=\"{}\" \
+         data-{prefix}location=\"{}\" data-{prefix}start=\"{}\"",
+        esc(&id.at),
+        esc(&id.kind),
+        esc(&id.title),
+        id.location,
+        id.start
+    )
 }
 
 /// `text` escaped, each run of `needle` `highlights_view::runs_in` finds in a
