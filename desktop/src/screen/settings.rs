@@ -14,16 +14,16 @@ use super::{Shown, Words, esc};
 use crate::workspace::{self, RECORD, Workspace};
 
 pub(super) fn page(ws: &Workspace, shown: Option<&Shown>, s: &Strings, w: &Words) -> String {
-    let offered = workspace::offered(ws.site.lang());
+    let offered = workspace::offered(ws.config.lang());
     let set = |key: &str| -> &str {
         match key {
-            "language" => &ws.site.language,
-            "week_start" => &ws.site.week_start,
-            "color_scheme" => &ws.site.color_scheme,
-            "figures" => &ws.site.figures,
-            "sitting_floor" => &ws.site.sitting_floor,
-            "show_unnamed" => &ws.site.show_unnamed,
-            "show_uncovered" => &ws.site.show_uncovered,
+            "language" => &ws.config.language,
+            "week_start" => &ws.config.week_start,
+            "color_scheme" => &ws.config.color_scheme,
+            "figures" => &ws.config.figures,
+            "sitting_floor" => &ws.config.sitting_floor,
+            "show_unnamed" => &ws.config.show_unnamed,
+            "show_uncovered" => &ws.config.show_uncovered,
             _ => "",
         }
     };

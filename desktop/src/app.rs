@@ -21,7 +21,7 @@ use crate::device::{self, DeviceInfo};
 use crate::edits::{self, HIGHLIGHTS_FILE, HighlightId};
 use crate::import::{self, Imported};
 use crate::screen::{self, Covers, Page, Route, Shown};
-use crate::workspace::{SITE_FILE, Workspace};
+use crate::workspace::{CONFIG_FILE, Workspace};
 
 /// The folder the window shows, and the record as last built off it.
 #[derive(Default)]
@@ -32,7 +32,7 @@ struct Open {
     served: Mutex<Vec<PathBuf>>,
 }
 
-/// When each record, `SITE_FILE` and `HIGHLIGHTS_FILE` were last written,
+/// When each record, `CONFIG_FILE` and `HIGHLIGHTS_FILE` were last written,
 /// each record's and `HIGHLIGHTS_FILE`'s size, and the clock's day.
 type Stamp = (
     PathBuf,
@@ -60,7 +60,7 @@ fn stamp(ws: &Workspace, today: i64) -> Stamp {
     (
         ws.dir.clone(),
         records,
-        written(&ws.dir.join(SITE_FILE)).0,
+        written(&ws.dir.join(CONFIG_FILE)).0,
         written(&ws.dir.join(HIGHLIGHTS_FILE)),
         today,
     )
@@ -113,11 +113,11 @@ fn folder(app: &AppHandle, open: &State<'_, Open>) -> Answer<PathBuf> {
     Ok(dir)
 }
 
-/// The folder last opened, where it holds a `SITE_FILE`.
+/// The folder last opened, where it holds a `CONFIG_FILE`.
 fn last(app: &AppHandle) -> Option<PathBuf> {
     let file = app.path().app_config_dir().ok()?.join(LAST);
     let dir = PathBuf::from(std::fs::read_to_string(file).ok()?.trim());
-    dir.join(SITE_FILE).is_file().then_some(dir)
+    dir.join(CONFIG_FILE).is_file().then_some(dir)
 }
 
 fn remember(app: &AppHandle, dir: &Path) -> Answer<()> {
@@ -234,7 +234,7 @@ fn gained(ws: &Workspace, done: &[Imported]) -> String {
     let sittings: usize = done.iter().map(|d| d.sittings).sum();
     let books: usize = done.iter().map(|d| d.books).sum();
     let highlights: usize = done.iter().map(|d| d.highlights).sum();
-    let lang = ws.site.lang();
+    let lang = ws.config.lang();
     let (s, w) = (lang.strings(), screen::Words::of(lang));
     let counts: Vec<String> = [
         (s.n_sittings, sittings),
@@ -251,22 +251,22 @@ fn gained(ws: &Workspace, done: &[Imported]) -> String {
     }
 }
 
-/// Set `key` in `Workspace::site` to `value`, as the Kindle's settings file spells it.
+/// Set `key` in `Workspace::config` to `value`, as the Kindle's settings file spells it.
 #[tauri::command]
 fn set_setting(app: AppHandle, open: State<'_, Open>, key: String, value: String) -> Answer<()> {
     let mut ws = Workspace::create(&folder(&app, &open)?).map_err(said)?;
     let field = match key.as_str() {
-        "language" => &mut ws.site.language,
-        "week_start" => &mut ws.site.week_start,
-        "color_scheme" => &mut ws.site.color_scheme,
-        "figures" => &mut ws.site.figures,
-        "sitting_floor" => &mut ws.site.sitting_floor,
-        "show_unnamed" => &mut ws.site.show_unnamed,
-        "show_uncovered" => &mut ws.site.show_uncovered,
+        "language" => &mut ws.config.language,
+        "week_start" => &mut ws.config.week_start,
+        "color_scheme" => &mut ws.config.color_scheme,
+        "figures" => &mut ws.config.figures,
+        "sitting_floor" => &mut ws.config.sitting_floor,
+        "show_unnamed" => &mut ws.config.show_unnamed,
+        "show_uncovered" => &mut ws.config.show_uncovered,
         other => return Err(format!("{other} is no setting")),
     };
     *field = value;
-    ws.save_site().map_err(said)
+    ws.save_config().map_err(said)
 }
 
 /// Show the folder picked in a dialog from here on. Answers whether one was.
@@ -347,7 +347,7 @@ async fn delete_backup(app: AppHandle, open: State<'_, Open>, path: String) -> A
     else {
         return Err(format!("{path} is no backup in {}", ws.dir.display()));
     };
-    let lang = ws.site.lang();
+    let lang = ws.config.lang();
     let (s, w) = (lang.strings(), screen::Words::of(lang));
     let named = held.path.file_name().unwrap_or_default().to_string_lossy();
     let note = w
@@ -370,7 +370,7 @@ async fn delete_backups(app: AppHandle, open: State<'_, Open>) -> Answer<bool> {
     if every.is_empty() {
         return Ok(false);
     }
-    let lang = ws.site.lang();
+    let lang = ws.config.lang();
     let (s, w) = (lang.strings(), screen::Words::of(lang));
     let weight = every.iter().map(|(_, held)| held.bytes).sum();
     let note = w
@@ -396,7 +396,7 @@ async fn reset(app: AppHandle, open: State<'_, Open>) -> Answer<String> {
     if ws.kept().is_empty() {
         return Ok(String::new());
     }
-    let lang = ws.site.lang();
+    let lang = ws.config.lang();
     let (s, w) = (lang.strings(), screen::Words::of(lang));
     let (sittings, books) = shown(&open, &ws)?.map_or((0, 0), |held| {
         (held.record.sittings.len(), held.stats.book_count())

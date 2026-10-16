@@ -1,6 +1,5 @@
 //! `posts/<name>.md`: TOML front matter between two `+++` lines, then
-//! Markdown. A review is a post naming one book; a post naming several books,
-//! or none, is the same file.
+//! Markdown. A post names any number of books, or none.
 
 use std::path::Path;
 
@@ -21,9 +20,9 @@ pub struct Post {
     pub title: String,
     /// The day it is dated, as a day count.
     pub date: i64,
-    /// The books it is about, each by key or by its slug on the site.
+    /// The books it is about, each by key.
     pub books: Vec<String>,
-    /// Whether it stays off the site.
+    /// Whether its front matter marks it a draft.
     pub draft: bool,
     /// The Markdown under the front matter.
     pub body: String,
@@ -161,14 +160,6 @@ pub fn slug(text: &str) -> String {
 /// The longest address [`slug`] makes.
 const SLUG_MAX: usize = 60;
 
-/// Whether Latin letters are most of `text`'s letters: the texts [`slug`] makes
-/// a readable address of.
-pub fn latin(text: &str) -> bool {
-    let letters = text.chars().filter(|c| c.is_alphabetic()).count();
-    let latin = text.chars().filter(|c| c.is_ascii_alphabetic()).count();
-    latin > 0 && latin * 2 >= letters
-}
-
 /// `markdown` as HTML.
 pub fn html(markdown: &str) -> String {
     use pulldown_cmark::{Options, Parser, html::push_html};
@@ -232,11 +223,5 @@ mod tests {
         assert_eq!(slug("Won’t Look Back"), "wont-look-back");
         let long = slug(&"word ".repeat(30));
         assert!(long.len() <= SLUG_MAX && long.ends_with("word"), "{long}");
-        assert!(latin("A Map of Small Rivers"));
-        assert!(latin(
-            "山中書簡：随筆集1901-1912 (Mountain Letters Edition)"
-        ));
-        assert!(!latin("川辺の記録 ～新装版～ 14 (Bunko)"));
-        assert!(!latin("2001"));
     }
 }

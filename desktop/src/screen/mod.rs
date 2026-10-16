@@ -271,7 +271,7 @@ pub enum Covers {
 }
 
 /// The record as every screen states it: `Stats` as of `today` under the
-/// settings `Workspace::site` names, and each book's cover, tone and Kindle.
+/// settings `Workspace::config` names, and each book's cover, tone and Kindle.
 pub struct Shown {
     pub record: Record,
     pub stats: Stats,
@@ -323,7 +323,7 @@ impl Shown {
             .iter()
             .map(|b| crate::kindles::on_this_computer(b, &dirs))
             .collect();
-        let (settings, _) = ws.site.settings();
+        let (settings, _) = ws.config.settings();
         let stats = Stats::build(
             &record,
             today,
@@ -337,7 +337,7 @@ impl Shown {
             .iter()
             .map(|b| b.has_cover().then(|| PathBuf::from(&b.thumbnail)))
             .collect();
-        let labels = crate::kindles::labels(&sources, Words::of(ws.site.lang()).from_backup);
+        let labels = crate::kindles::labels(&sources, Words::of(ws.config.lang()).from_backup);
         let kindles = stats
             .books
             .iter()
@@ -361,7 +361,7 @@ impl Shown {
         Some(Shown {
             record,
             stats,
-            lang: ws.site.lang(),
+            lang: ws.config.lang(),
             settings,
             today,
             covers,
@@ -405,10 +405,10 @@ pub fn render(
     links: Covers,
     kindle: Option<&str>,
 ) -> Page {
-    let lang = shown.map_or(ws.site.lang(), |s| s.lang);
+    let lang = shown.map_or(ws.config.lang(), |s| s.lang);
     let s = lang.strings();
     let w = Words::of(lang);
-    let (settings, _) = ws.site.settings();
+    let (settings, _) = ws.config.settings();
     let look = Look::light(&Palette::of(settings.color_scheme));
     let vars = look.css();
     let Some(shown) = shown else {
@@ -1182,7 +1182,7 @@ mod tests {
         let cover = ws.record_dir().join("covers").join("B1.jpg");
         std::fs::create_dir_all(cover.parent().unwrap()).unwrap();
         std::fs::write(&cover, b"\xff\xd8\xff\xe0 a cover").unwrap();
-        ws.site.show_uncovered = "no".into();
+        ws.config.show_uncovered = "no".into();
         let shown = Shown::of(&ws, clock()).unwrap();
         let draw = |route: &str| {
             render(
