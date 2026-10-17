@@ -16,7 +16,7 @@ use readinglog_native::backup::{self, cut_serial};
 use readinglog_native::covers::COVERS_DIR;
 use readinglog_native::date;
 use readinglog_native::lang::counted;
-use readinglog_native::record::Record;
+use readinglog_native::record::{PARTIAL_FILE, Record};
 use readinglog_native::view::config;
 
 use crate::device::mtp::transport::InUse;
@@ -69,14 +69,15 @@ fn stamp(ws: &Workspace, today: i64) -> Stamp {
 }
 
 /// [`DeviceInfo`] of the Kindle plugged in that `import::kindle` reads: one
-/// mounted with a record under `extensions/readinglog`, or one over MTP, which
-/// shows nothing without a session.
+/// mounted with a `sessions.tsv` or `sessions.tsv.partial` under
+/// `extensions/readinglog`, or one over MTP, which shows nothing without a session.
 fn plugged() -> Option<DeviceInfo> {
     let found = device::detect::detect()?;
     match found.mass_storage_mount() {
-        Some(mount) => Record::file(&mount.join("extensions").join("readinglog"))
-            .is_file()
-            .then_some(found),
+        Some(mount) => {
+            let dir = mount.join("extensions").join("readinglog");
+            (Record::file(&dir).is_file() || dir.join(PARTIAL_FILE).is_file()).then_some(found)
+        }
         None => Some(found),
     }
 }

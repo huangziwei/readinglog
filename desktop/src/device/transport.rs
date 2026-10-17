@@ -1,9 +1,15 @@
-//! Reading a Kindle's files, whichever way it is plugged in.
+//! [`Transport`]: a Kindle's files, whichever way it is plugged in.
 
 use anyhow::Result;
 
+/// Whether `partial`, the bytes at a `<name>.partial`, stands until `path` is in
+/// place: `held`, the bytes at `path`, missing or a cut copy of it.
+pub fn partial_kept(held: Option<&[u8]>, partial: &[u8]) -> bool {
+    held.is_none_or(|h| partial.len() > h.len() && partial.starts_with(h))
+}
+
 /// A path on the Kindle, e.g. `extensions/readinglog/sessions.tsv`, as its
-/// segments: each transport maps them to a path on disk or a chain of MTP objects.
+/// segments: each [`Transport`] maps them to a path on disk or a chain of MTP objects.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct TPath {
     segments: Vec<String>,
@@ -116,8 +122,9 @@ pub trait Transport: Send + Sync {
         Ok(out)
     }
 
-    /// Write `bytes` at `path`: the old file or the new one on a mounted volume;
-    /// over MTP a whole `<name>.partial` stands beside `path` until it is in place.
+    /// Write `bytes` at `path` through `<name>.partial` beside it, a whole copy
+    /// at one of the two throughout: a partial [`partial_kept`] answers true of
+    /// stands until `path` holds `bytes`; over MTP each upload reads back first.
     fn write_atomic(&self, path: &TPath, bytes: &[u8]) -> Result<()>;
 
     fn exists(&self, path: &TPath) -> Result<bool>;
@@ -137,6 +144,17 @@ pub trait Transport: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_partial_stands_for_a_file_missing_or_cut_and_for_nothing_else() {
+        let whole = b"a whole copy\n";
+        assert!(partial_kept(None, whole));
+        assert!(partial_kept(Some(&whole[..4]), whole));
+        assert!(partial_kept(Some(b""), whole));
+        assert!(!partial_kept(Some(whole), whole));
+        assert!(!partial_kept(Some(b"a whole copy\nand more\n"), whole));
+        assert!(!partial_kept(Some(b"another\n"), whole));
+    }
 
     #[test]
     fn tpath_parse_drops_empty_segments() {

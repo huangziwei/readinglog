@@ -805,7 +805,7 @@ mod tests {
         assert_eq!(Record::load(&dir).notes, held.notes);
         assert_eq!(std::fs::read_to_string(&file).unwrap(), whole);
         assert!(!dir.join(PARTIAL_FILE).exists());
-        // `file` gone between a delete and a rename: the same.
+        // `file` missing beside a whole `PARTIAL_FILE`: the same.
         std::fs::write(dir.join(PARTIAL_FILE), &whole).unwrap();
         std::fs::remove_file(&file).unwrap();
         assert_eq!(Record::open(&dir).notes, held.notes);

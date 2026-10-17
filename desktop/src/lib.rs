@@ -13,7 +13,7 @@ pub mod workspace;
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use readinglog_native::clippings::Kind;
     use readinglog_native::date;
@@ -33,6 +33,33 @@ pub(crate) mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// The Kindle `serial` names over MTP, its storage the folder `root`.
+    pub fn over_mtp(root: &Path, serial: &str) -> crate::device::DeviceInfo {
+        let at = mtp_rs::register_virtual_device(&mtp_rs::VirtualDeviceConfig {
+            manufacturer: "Amazon".into(),
+            model: "Kindle".into(),
+            serial: serial.into(),
+            storages: vec![mtp_rs::VirtualStorageConfig {
+                description: "Internal Storage".into(),
+                capacity: 1 << 30,
+                backing_dir: root.to_path_buf(),
+                read_only: false,
+            }],
+            supports_rename: true,
+            event_poll_interval: std::time::Duration::ZERO,
+            watch_backing_dirs: false,
+        });
+        crate::device::DeviceInfo {
+            serial: serial.into(),
+            model: None,
+            firmware: None,
+            transport: crate::device::TransportKind::Mtp {
+                location_id: at.location_id,
+                product_id: at.product_id,
+            },
+        }
     }
 
     /// A book the library listed at `extent` under `key`.

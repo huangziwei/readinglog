@@ -1,6 +1,6 @@
-//! [`kindle`] and [`backup`] keep what they read byte for byte under the `backups/` of the
-//! Kindle its cut serial names, the record the latest backup whole but the `w` and `r`
-//! rows of both; a [`folder`] or [`backup`] naming no Kindle folds by `backup::restore`.
+//! [`kindle`] and [`backup`] keep what they read under the `backups/` of the Kindle its cut
+//! serial names, its record the latest whole but the `w` and `r` rows of both; a [`folder`]
+//! or [`backup`] naming no Kindle folds by `backup::restore`; `keep_latest` leaves one in each.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
@@ -8,7 +8,7 @@ use std::sync::{Mutex, PoisonError};
 use anyhow::{Context, Result, anyhow};
 
 use readinglog_native::backup::{self, About, Kind};
-use readinglog_native::record::Record;
+use readinglog_native::record::{self, PARTIAL_FILE, Record};
 use readinglog_native::update::archive::{self, Archive, Source};
 use readinglog_native::written;
 
@@ -45,8 +45,8 @@ pub struct Imported {
     pub about: About,
 }
 
-/// What one sync of a Kindle did: its import, and whether its own record
-/// took the notes and corrections written here.
+/// What one sync of a Kindle did: its import, and whether its own
+/// `sessions.tsv` was written.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Synced {
     pub imported: Imported,
@@ -104,32 +104,61 @@ pub fn kindle(ws: &Workspace, device: &DeviceInfo, putting: impl FnOnce()) -> Re
 }
 
 /// Write the workspace copy's `w` and `r` rows for `serial` into the Kindle's
-/// own `sessions.tsv`, read again and merged first, every other line as the
-/// Kindle holds it. Answers whether the Kindle's rows moved.
+/// `sessions.tsv` as [`record_on`] reads it, every other line as it stands,
+/// where a row moves or `record_on` reads the partial. Answers whether it wrote.
 fn put_back(ws: &Workspace, serial: &str, transport: &dyn Transport) -> Result<bool> {
-    let at = app_folder(transport)?.join(RECORD_NAME);
-    let held = String::from_utf8_lossy(&transport.read(&at)?).into_owned();
+    let app = app_folder(transport)?;
+    let (bytes, in_place) = record_on(transport, &app)?;
+    let held = String::from_utf8_lossy(&bytes).into_owned();
     let mut merged = Record::from_text(&held);
-    if !merged.take_written(&Record::load(&ws.kindle_dir(serial).join(RECORD))) {
-        return Ok(false);
-    }
-    let text = written::splice(&held, &merged);
-    transport.write_atomic(&at, text.as_bytes())?;
+    let text = match merged.take_written(&Record::load(&ws.kindle_dir(serial).join(RECORD))) {
+        true => written::splice(&held, &merged),
+        false if in_place => return Ok(false),
+        false => held,
+    };
+    transport.write_atomic(&app.join(RECORD_NAME), text.as_bytes())?;
     Ok(true)
 }
 
-/// The folder on `transport` holding the app's record: its own, or the root of
-/// a folder dropped as one.
+/// The folder on `transport` holding the app's record, as `sessions.tsv` or
+/// `sessions.tsv.partial`: its own, or the root of a folder dropped as one.
 fn app_folder(transport: &dyn Transport) -> Result<TPath> {
     [TPath::parse(APP_DIR), TPath::new()]
         .into_iter()
-        .find(|at| transport.exists(&at.join(RECORD_NAME)).unwrap_or(false))
-        .ok_or_else(|| {
-            anyhow!(
-                "{} holds no Reading Log record",
-                transport.display_path(&TPath::parse(APP_DIR))
-            )
+        .find(|at| {
+            [RECORD_NAME, PARTIAL_FILE]
+                .iter()
+                .any(|name| transport.exists(&at.join(name)).unwrap_or(false))
         })
+        .ok_or_else(|| no_record(transport))
+}
+
+/// The record `app` on `transport` holds, as bytes, and whether `sessions.tsv`
+/// holds them: a `sessions.tsv.partial` beside it where `record::partial_stands`
+/// says it stands for the record, as `Record::load` takes one.
+fn record_on(transport: &dyn Transport, app: &TPath) -> Result<(Vec<u8>, bool)> {
+    let read = |name: &str| -> Result<Option<Vec<u8>>> {
+        let at = app.join(name);
+        match transport.exists(&at)? {
+            true => transport.read(&at).map(Some),
+            false => Ok(None),
+        }
+    };
+    let file = read(RECORD_NAME)?;
+    match read(PARTIAL_FILE)?.filter(|p| record::partial_stands(file.as_deref(), p)) {
+        Some(whole) => Ok((whole, false)),
+        None => file
+            .map(|bytes| (bytes, true))
+            .ok_or_else(|| no_record(transport)),
+    }
+}
+
+/// The error [`app_folder`] and [`record_on`] answer for a Kindle holding no record.
+fn no_record(transport: &dyn Transport) -> anyhow::Error {
+    anyhow!(
+        "{} holds no Reading Log record",
+        transport.display_path(&TPath::parse(APP_DIR))
+    )
 }
 
 /// Import the folder `dir` dropped on the window: a Kindle's volume, or the
@@ -151,7 +180,7 @@ pub fn folder(ws: &Workspace, dir: &Path, plugged: Option<&DeviceInfo>) -> Resul
 /// naming it, or where no Kindle is named.
 fn take(ws: &Workspace, serial: Option<&str>, transport: &dyn Transport) -> Result<Imported> {
     let app = app_folder(transport)?;
-    let bytes = transport.read(&app.join(RECORD_NAME))?;
+    let (bytes, _) = record_on(transport, &app)?;
     let (group, fold) = match serial {
         Some(serial) => (ws.kindle_dir(serial), Fold::Latest),
         None => (ws.dir.clone(), Fold::Restore),
@@ -196,11 +225,11 @@ fn take(ws: &Workspace, serial: Option<&str>, transport: &dyn Transport) -> Resu
 
 /// How a backup folds into the record beside it.
 enum Fold {
-    /// `backup::restore`, the Kindle's own Restore: for backups naming no
-    /// Kindle, which may come from several.
+    /// `backup::restore`, the Kindle's own Restore, then [`keep_latest`]: for
+    /// backups naming no Kindle, which may come from several.
     Restore,
-    /// [`latest`], the `w` and `r` rows of both taken by `Record::take_written`:
-    /// for one Kindle's backups.
+    /// [`latest`], the `w` and `r` rows of both taken by `Record::take_written`,
+    /// then [`keep_latest`]: for one Kindle's backups.
     Latest,
 }
 
@@ -217,6 +246,7 @@ fn settle(
     let dir = group.join(RECORD);
     let before = ws.record();
     let pictures = pictures_in(&dir);
+    let about = backup::about(&kept).unwrap_or_default();
     match fold {
         Fold::Restore => {
             let _held = writing();
@@ -229,9 +259,10 @@ fn settle(
                     .save(&dir)
                     .with_context(|| format!("saving the record in {}", dir.display()))?;
             }
+            keep_latest(group, &newest(group, &kept), &record);
         }
         Fold::Latest => {
-            let (text, mut fresh) =
+            let (picked, text, mut fresh) =
                 latest(group, &kept).with_context(|| format!("folding in {}", kept.display()))?;
             let _held = writing();
             fresh.take_written(&Record::load(&dir));
@@ -241,11 +272,12 @@ fn settle(
                 write_file(&file, merged.as_bytes())
                     .with_context(|| format!("saving the record in {}", dir.display()))?;
             }
+            keep_latest(group, &picked, &fresh);
         }
     }
     let after = ws.record();
     Ok(Imported {
-        about: backup::about(&kept).unwrap_or_default(),
+        about,
         kept,
         again,
         sittings: after.sittings.len().saturating_sub(before.sittings.len()),
@@ -258,27 +290,44 @@ fn settle(
     })
 }
 
-/// The record of the newest whole-record backup under `group` by its name's stamp, `at`
-/// among those sharing it, as its file reads and as parsed; each cover `at` carries goes
-/// to the record's folder where it holds none.
-fn latest(group: &Path, at: &Path) -> Result<(String, Record)> {
+/// [`newest`], and its record as its file reads and as parsed; each cover `at`
+/// carries goes to the record's folder where it holds none.
+fn latest(group: &Path, at: &Path) -> Result<(PathBuf, String, Record)> {
     take_pictures(&group.join(RECORD), at)?;
-    let records: Vec<backup::Backup> = backup::list(group)
-        .into_iter()
-        .filter(|b| b.kind == Kind::Record)
-        .collect();
-    let top = records.first().map(|b| b.stamp.clone());
-    let pick = records
-        .iter()
-        .find(|b| b.path == at && Some(&b.stamp) == top.as_ref())
-        .or(records.first())
-        .map_or_else(|| at.to_path_buf(), |b| b.path.clone());
+    let pick = newest(group, at);
     backup::peek(&pick).map_err(|err| anyhow!("reading {}: {err}", pick.display()))?;
     let text = inside(&pick)
         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
         .ok_or_else(|| anyhow!("{} holds no record", pick.display()))?;
     let record = Record::from_text(&text);
-    Ok((text, record))
+    Ok((pick, text, record))
+}
+
+/// The newest whole-record backup under `group` by its name's stamp, `at` among
+/// those sharing it; `at` where `group` holds none.
+fn newest(group: &Path, at: &Path) -> PathBuf {
+    let records: Vec<backup::Backup> = backup::list(group)
+        .into_iter()
+        .filter(|b| b.kind == Kind::Record)
+        .collect();
+    let top = records.first().map(|b| b.stamp.clone());
+    records
+        .iter()
+        .find(|b| b.path == at && Some(&b.stamp) == top.as_ref())
+        .or(records.first())
+        .map_or_else(|| at.to_path_buf(), |b| b.path.clone())
+}
+
+/// Remove each backup under `group` but `picked` that `record` holds all of, by
+/// `backup::holds`; one holding a row `record` lacks stays.
+fn keep_latest(group: &Path, picked: &Path, record: &Record) {
+    for held in backup::list(group) {
+        if held.path != picked
+            && backup::peek(&held.path).is_ok_and(|inside| backup::holds(record, &inside))
+        {
+            let _ = backup::remove(&held.path);
+        }
+    }
 }
 
 /// Write each cover the backup at `at` carries that `dir` does not hold, by its
@@ -356,7 +405,7 @@ fn pictures_in(dir: &Path) -> usize {
 mod tests {
     use super::*;
     use crate::device::TransportKind;
-    use crate::tests::{book, record_of, scratch, sitting};
+    use crate::tests::{book, over_mtp, record_of, scratch, sitting};
 
     /// A Kindle's volume holding `record` and one cover, as the app keeps
     /// them, and the firmware's version line.
@@ -448,6 +497,31 @@ mod tests {
     }
 
     #[test]
+    fn a_kindle_keeps_one_backup_each_sync_taking_the_place_of_one_the_record_holds() {
+        let ws = Workspace::create(&scratch("import-one")).unwrap();
+        let mut on = one();
+        let root = kindle_dir("import-one-volume", &on);
+        let dir = root.join(APP_DIR);
+        let synced = |ws: &Workspace| {
+            kindle(ws, &plugged(&root, "G000K1"), || {})
+                .unwrap()
+                .imported
+        };
+        synced(&ws);
+        for (n, day) in [(2, "2026-09-02"), (3, "2026-09-03")] {
+            on.sittings
+                .push(sitting(&format!("{day}T09:00:00"), 100, 600));
+            on.save(&dir).unwrap();
+            let next = synced(&ws);
+            let kept = backup::list(&ws.kindle_dir("G000K1"));
+            assert_eq!(kept.len(), 1, "{kept:?}");
+            assert_eq!(kept[0].path, next.kept);
+            assert_eq!(backup::peek(&next.kept).unwrap().sittings.len(), n);
+        }
+        assert_eq!(ws.record().sittings.len(), 3);
+    }
+
+    #[test]
     fn a_kindle_imported_again_states_what_it_holds_now() {
         let ws = Workspace::create(&scratch("import-again")).unwrap();
         let mut read = book(100, "B1", "One");
@@ -520,11 +594,75 @@ mod tests {
         )
         .unwrap();
         assert_eq!(ws.record().sittings.len(), 1, "the latest backup stands");
+        assert_eq!(
+            backup::list(&ws.kindle_dir("G000K1")).len(),
+            2,
+            "`dropped` holds a sitting the record lacks, and stays"
+        );
 
         // `dropped` again: held, and the latest stands.
         let again = backup(&ws, &dropped).unwrap();
         assert!(again.again);
         assert_eq!(ws.record().sittings.len(), 1);
+    }
+
+    #[test]
+    fn a_whole_partial_stands_for_a_record_missing_or_cut_and_goes_back_in_its_place() {
+        let ws = Workspace::create(&scratch("import-partial")).unwrap();
+        let serial = "G000P1";
+        let root = kindle_dir("import-partial-volume", &one());
+        let dir = root.join(APP_DIR);
+        let (file, partial) = (Record::file(&dir), dir.join(PARTIAL_FILE));
+        let whole = std::fs::read_to_string(&file).unwrap();
+        // `file` missing beside a whole `partial`.
+        std::fs::rename(&file, &partial).unwrap();
+        let done = kindle(&ws, &plugged(&root, serial), || {}).unwrap();
+        assert_eq!((done.imported.sittings, done.put), (1, true));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), whole);
+        assert!(!partial.exists());
+        // `file` cut short beside a whole `partial`.
+        std::fs::write(&partial, &whole).unwrap();
+        std::fs::write(&file, &whole[..whole.len() / 2]).unwrap();
+        assert!(kindle(&ws, &plugged(&root, serial), || {}).unwrap().put);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), whole);
+        assert!(!partial.exists());
+        // `partial` cut itself, or whole and no fuller copy of `file`: `file` stands.
+        let mut two = one();
+        two.sittings.push(sitting("2026-09-02T09:00:00", 100, 600));
+        for stale in [whole[..whole.len() - 3].to_string(), two.text()] {
+            std::fs::write(&partial, &stale).unwrap();
+            assert!(!kindle(&ws, &plugged(&root, serial), || {}).unwrap().put);
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), whole);
+            assert_eq!(ws.record().sittings.len(), 1);
+        }
+    }
+
+    #[test]
+    fn a_kindle_over_mtp_holding_a_whole_partial_alone_takes_its_record_back_and_the_notes() {
+        let ws = Workspace::create(&scratch("import-mtp")).unwrap();
+        let serial = "G000M1";
+        let root = kindle_dir("import-mtp-storage", &one());
+        let dir = root.join(APP_DIR);
+        let (file, partial) = (Record::file(&dir), dir.join(PARTIAL_FILE));
+        let whole = std::fs::read_to_string(&file).unwrap();
+        // `file` missing beside a whole `partial`.
+        std::fs::rename(&file, &partial).unwrap();
+        let device = over_mtp(&root, serial);
+        let done = kindle(&ws, &device, || {}).unwrap();
+        assert_eq!((done.imported.sittings, done.put), (1, true));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), whole);
+        assert!(!partial.exists());
+        let on = crate::notes::On::Book {
+            key: "B1".into(),
+            extent: 100,
+        };
+        crate::notes::write(&ws, serial, &on, "written here").unwrap();
+        assert!(kindle(&ws, &device, || {}).unwrap().put);
+        let on_kindle = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(Record::from_text(&on_kindle).notes.len(), 1);
+        assert!(record::closed(&on_kindle));
+        assert!(!partial.exists());
+        assert!(!kindle(&ws, &device, || {}).unwrap().put);
     }
 
     #[test]
@@ -572,7 +710,7 @@ mod tests {
                 .exists(),
             "no partial left"
         );
-        // Once more, nothing to put.
+        // `kindle` once more: nothing to put.
         assert!(!kindle(&ws, &plugged(&root, serial), || {}).unwrap().put);
     }
 
@@ -636,6 +774,15 @@ mod tests {
         let again = backup(&ws, &zip).unwrap();
         assert!(again.again);
         assert_eq!(again.sittings, 0);
+        // `later`, a second backup naming no Kindle, stands alone once `zip`'s rows are held.
+        let mut two = one();
+        two.sittings.push(sitting("2026-09-02T09:00:00", 100, 600));
+        let later = kindle_backup("import-unnamed-later", &two, "260902:100000", None);
+        let next = backup(&ws, &later).unwrap();
+        let kept = backup::list(&ws.dir);
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert_eq!(kept[0].path, next.kept);
+        assert_eq!(ws.record().sittings.len(), 2);
     }
 
     #[test]

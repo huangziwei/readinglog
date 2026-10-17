@@ -23,8 +23,8 @@ pub const RECORD_DIR: &str = "/mnt/us/extensions/readinglog";
 /// The file inside it, holding the sittings, the books and the watermark.
 const RECORD_FILE: &str = "sessions.tsv";
 
-/// `sessions.tsv.partial`: the record uploaded whole by another app, before it
-/// is renamed over [`RECORD_FILE`].
+/// `sessions.tsv.partial`: the record another app uploads whole beside
+/// [`RECORD_FILE`] before it replaces that file, deleted once the file holds it.
 pub const PARTIAL_FILE: &str = "sessions.tsv.partial";
 
 /// The first field of the row closing the file, stating the lines above it.
@@ -63,6 +63,13 @@ pub fn closed(text: &str) -> bool {
     let (above, last) = body.rsplit_once('\n').unwrap_or(("", body));
     let stated = last.strip_prefix(END).and_then(|r| r.strip_prefix('\t'));
     stated == Some(above.lines().count().to_string().as_str())
+}
+
+/// Whether `partial`, a [`PARTIAL_FILE`]'s bytes, stands for the record: whole
+/// by [`closed`], and `held`, the record's own file, missing or a cut copy of it.
+pub fn partial_stands(held: Option<&[u8]>, partial: &[u8]) -> bool {
+    std::str::from_utf8(partial).is_ok_and(closed)
+        && held.is_none_or(|h| partial.len() > h.len() && partial.starts_with(h))
 }
 
 /// What the first line reads, `2` naming the parse below it.
@@ -293,24 +300,21 @@ impl Record {
         Self::from_text(&text)
     }
 
-    /// The record's file in `dir` as text, a whole [`PARTIAL_FILE`] renamed into
-    /// its place first where the file is missing or a cut copy of it.
+    /// The record's file in `dir` as text, a [`PARTIAL_FILE`] renamed into its
+    /// place first where it [`partial_stands`] for the record.
     fn read(dir: &Path) -> Option<String> {
         let file = Self::file(dir);
         let held = std::fs::read_to_string(&file).ok();
         let partial = dir.join(PARTIAL_FILE);
-        match std::fs::read_to_string(&partial).ok().filter(|p| closed(p)) {
-            Some(whole)
-                if held
-                    .as_deref()
-                    .is_none_or(|h| whole.len() > h.len() && whole.starts_with(h)) =>
-            {
+        let stands = |p: &String| partial_stands(held.as_deref().map(str::as_bytes), p.as_bytes());
+        match std::fs::read_to_string(&partial).ok().filter(stands) {
+            Some(whole) => {
                 if let Err(err) = std::fs::rename(&partial, &file) {
                     eprintln!("!! record: {} stays beside it: {err}", partial.display());
                 }
                 Some(whole)
             }
-            _ => held,
+            None => held,
         }
     }
 
@@ -1321,8 +1325,8 @@ impl Record {
     }
 
     /// Give each book outside `stated` the furthest its sittings reached,
-    /// where that stands past the progress it holds. `%Left` fills the gap a
-    /// deletion leaves and stops a page short of the end.
+    /// where that stands past the progress it holds. `progress` fills the gap a
+    /// library row's deletion leaves, and stands a page short of the end.
     fn note_progress(&mut self, stated: &std::collections::HashSet<usize>) {
         for i in 0..self.sittings.len() {
             let Some(progress) = self.sittings[i].progress else {
@@ -1627,8 +1631,8 @@ impl Record {
         }
         let held = self.highlights.len();
         // `keep_from` takes the sidecar fields of a highlight `other` names too, and
-        // `push` adds one it does not. Only a highlight held before this fold can
-        // take one: two of `other`'s own never fold into each other.
+        // `push` adds one it does not. `held` bounds the search: two of `other`'s
+        // own never fold into each other.
         for fresh in &other.highlights {
             match self.highlights[..held]
                 .iter_mut()
@@ -5277,9 +5281,9 @@ m	260911:115340	7200
         assert_eq!(record.highlights[0].state, State::Live);
     }
 
-    /// Highlights a sidecar alone states can share a stamp, a kind and a title.
-    /// A fold keeps each by its position, into a record holding none of them and
-    /// into one holding them all.
+    /// [`Record::merge`] keeps three highlights sharing a stamp, a kind and a
+    /// title, as a sidecar alone states them, each by its position: into a record
+    /// holding none of them and into one holding them all.
     #[test]
     fn highlights_sharing_a_stamp_all_come_back_from_a_backup() {
         let placed = |start: i64| Highlight {

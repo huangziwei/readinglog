@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use crate::device::transport::{TEntry, TPath, Transport};
+use crate::device::transport::{TEntry, TPath, Transport, partial_kept};
 
 pub struct MassStorageTransport {
     mount: PathBuf,
@@ -21,6 +21,15 @@ impl MassStorageTransport {
             out.push(seg);
         }
         out
+    }
+}
+
+/// The bytes at `at`, `None` where nothing stands there.
+fn read_if_any(at: &Path) -> Result<Option<Vec<u8>>> {
+    match std::fs::read(at) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).with_context(|| format!("read {}", at.display())),
     }
 }
 
@@ -42,6 +51,13 @@ impl Transport for MassStorageTransport {
                 .with_context(|| format!("create {}", parent.display()))?;
         }
         let tmp = with_partial_suffix(&dest);
+        // `tmp` renamed into place first where `partial_kept` answers true of it.
+        if let Some(partial) = read_if_any(&tmp)?
+            && partial_kept(read_if_any(&dest)?.as_deref(), &partial)
+        {
+            std::fs::rename(&tmp, &dest)
+                .with_context(|| format!("rename {} -> {}", tmp.display(), dest.display()))?;
+        }
         std::fs::write(&tmp, bytes).with_context(|| format!("write {}", tmp.display()))?;
         std::fs::rename(&tmp, &dest)
             .with_context(|| format!("rename {} -> {}", tmp.display(), dest.display()))?;

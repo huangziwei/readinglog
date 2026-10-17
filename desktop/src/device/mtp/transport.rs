@@ -10,7 +10,7 @@ use futures::executor::block_on;
 use mtp_rs::mtp::{MtpDevice, NewObjectInfo, Progress, Storage};
 use mtp_rs::ptp::{ObjectHandle, ObjectInfo};
 
-use crate::device::transport::{ChildFiles, TEntry, TPath, Transport};
+use crate::device::transport::{ChildFiles, TEntry, TPath, Transport, partial_kept};
 
 pub struct MtpTransport {
     /// The storage the session is bound to. It holds the session and the
@@ -20,14 +20,12 @@ pub struct MtpTransport {
     /// The firmware's version off `system/version.txt`, `None` where the
     /// Kindle does not show that file over MTP.
     firmware: Option<String>,
-    /// Whether the Kindle renames an object (`MtpDevice::supports_rename`).
-    renames: bool,
 }
 
 impl MtpTransport {
     /// Open the MTP device at `location_id` and bind its first storage.
     pub fn open(location_id: u64) -> Result<Self> {
-        let (storage, firmware, renames) = block_on(async {
+        let (storage, firmware) = block_on(async {
             let device = MtpDevice::open_by_location(location_id)
                 .await
                 .map_err(map_mtp_err)
@@ -41,12 +39,11 @@ impl MtpTransport {
                 .next()
                 .ok_or_else(|| anyhow!("Kindle reports no MTP storage — try reconnecting"))?;
             let firmware = read_firmware(&storage).await;
-            Ok::<_, anyhow::Error>((storage, firmware, device.supports_rename()))
+            Ok::<_, anyhow::Error>((storage, firmware))
         })?;
         Ok(Self {
             storage: Mutex::new(storage),
             firmware,
-            renames,
         })
     }
 }
@@ -95,44 +92,63 @@ async fn ensure_folder(storage: &Storage, path: &TPath) -> Result<Option<ObjectH
     Ok(parent)
 }
 
-/// `bytes` at `path`, uploaded whole as `<name>.partial` first and then put in
-/// place: renamed where `renames`, else uploaded again under its own name and
-/// the partial deleted. `path` never stands cut while a whole copy is missing.
-async fn replace(storage: &Storage, path: &TPath, bytes: &[u8], renames: bool) -> Result<()> {
+/// `bytes` at `path` through [`placed`]: at `<name>.partial` first where
+/// [`kept`] answers false, then at `path`, and only then the partial deleted.
+async fn replace(storage: &Storage, path: &TPath, bytes: &[u8]) -> Result<()> {
     let name = path
         .name()
         .ok_or_else(|| anyhow!("MTP upload: empty path"))?
         .to_string();
     let folder = path.parent().unwrap_or_default();
-    let partial = upload_streamed(
-        storage,
-        &folder.join(&format!("{name}.partial")),
-        bytes,
-        &|_, _| {},
-    )
-    .await?;
-    if !renames {
-        upload_streamed(storage, path, bytes, &|_, _| {}).await?;
-        return storage
-            .delete(partial)
-            .await
-            .map_err(map_mtp_err)
-            .with_context(|| format!("MTP delete {name}.partial"));
+    let partial = folder.join(&format!("{name}.partial"));
+    if !kept(storage, path, &partial).await? {
+        placed(storage, &partial, bytes).await?;
     }
-    let parent = ensure_folder(storage, &folder).await?;
-    let entries = storage.list_objects(parent).await.map_err(map_mtp_err)?;
-    if let Some(existing) = entries.into_iter().find(|o| o.filename == name) {
-        storage
-            .delete(existing.handle)
-            .await
-            .map_err(map_mtp_err)
-            .with_context(|| format!("MTP delete {name} before its partial takes its place"))?;
-    }
+    placed(storage, path, bytes).await?;
+    let Some(handle) = resolve(storage, &partial).await? else {
+        return Ok(());
+    };
     storage
-        .rename(partial, &name)
+        .delete(handle)
         .await
         .map_err(map_mtp_err)
-        .with_context(|| format!("MTP rename {name}.partial"))
+        .with_context(|| format!("MTP delete {name}.partial"))
+}
+
+/// [`partial_kept`] of the objects at `path` and `partial`; false where none
+/// stands at `partial`.
+async fn kept(storage: &Storage, path: &TPath, partial: &TPath) -> Result<bool> {
+    let Some(at) = resolve(storage, partial).await? else {
+        return Ok(false);
+    };
+    let partial = storage.download(at).await.map_err(map_mtp_err)?;
+    let held = match resolve(storage, path).await? {
+        Some(at) => Some(storage.download(at).await.map_err(map_mtp_err)?),
+        None => None,
+    };
+    Ok(partial_kept(held.as_deref(), &partial))
+}
+
+/// [`upload_streamed`], the object then found at `path` by its name and read
+/// back: `Err` where it does not hold `bytes`. Answers its handle.
+async fn placed(storage: &Storage, path: &TPath, bytes: &[u8]) -> Result<ObjectHandle> {
+    upload_streamed(storage, path, bytes, &|_, _| {}).await?;
+    let handle = resolve(storage, path)
+        .await?
+        .ok_or_else(|| anyhow!("MTP upload {path}: nothing stands there"))?;
+    let back = storage
+        .download(handle)
+        .await
+        .map_err(map_mtp_err)
+        .with_context(|| format!("MTP read back {path}"))?;
+    if back != bytes {
+        bail!(
+            "MTP upload {path}: {} bytes read back of {}",
+            back.len(),
+            bytes.len()
+        );
+    }
+    Ok(handle)
 }
 
 /// Upload `bytes` to `path` over MTP with byte-progress, an object standing at
@@ -181,7 +197,7 @@ impl Transport for MtpTransport {
 
     fn write_atomic(&self, path: &TPath, bytes: &[u8]) -> Result<()> {
         let guard = self.storage.lock().expect("storage lock poisoned");
-        block_on(replace(&guard, path, bytes, self.renames))
+        block_on(replace(&guard, path, bytes))
     }
 
     fn read_with_progress(&self, path: &TPath, on_progress: &dyn Fn(u64, u64)) -> Result<Vec<u8>> {
@@ -292,7 +308,7 @@ impl Transport for MtpTransport {
     }
 }
 
-/// Another app holds the MTP Kindle, the error `mtp-rs` stated for it inside.
+/// [`map_mtp_err`]'s error where another app holds the MTP Kindle, `mtp-rs`'s inside.
 #[derive(Debug)]
 pub struct InUse(String);
 
@@ -321,6 +337,44 @@ fn map_mtp_err(err: mtp_rs::Error) -> anyhow::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::device::TransportKind;
+    use crate::tests::{over_mtp, scratch};
+
+    #[test]
+    fn a_file_written_over_mtp_reads_back_whole_and_leaves_no_partial() {
+        let root = scratch("mtp-write");
+        let dir = root.join("extensions").join("readinglog");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (file, partial) = (dir.join("notes.txt"), dir.join("notes.txt.partial"));
+        let TransportKind::Mtp { location_id, .. } = over_mtp(&root, "G000W1").transport else {
+            unreachable!()
+        };
+        let at = TPath::parse("extensions/readinglog/notes.txt");
+        let write = |bytes: &[u8]| {
+            let kindle = MtpTransport::open(location_id).unwrap();
+            kindle.write_atomic(&at, bytes).unwrap();
+            assert_eq!(kindle.read(&at).unwrap(), bytes);
+            assert_eq!(std::fs::read(&file).unwrap(), bytes);
+            assert!(!partial.exists());
+        };
+        // `file` alone, then beside a stale `partial`.
+        std::fs::write(&file, "held\n").unwrap();
+        write(b"written\n");
+        std::fs::write(&partial, "stale").unwrap();
+        write(b"written again\n");
+        // `partial` alone, then beside a cut copy of it at `file`.
+        std::fs::remove_file(&file).unwrap();
+        std::fs::write(&partial, "kept whole\n").unwrap();
+        write(b"after the partial\n");
+        std::fs::write(&partial, "kept whole\n").unwrap();
+        std::fs::write(&file, "kept").unwrap();
+        write(b"after the partial again\n");
+        // `fresh`, in a folder `write_atomic` makes on its way.
+        let fresh = TPath::parse("extensions/readinglog/new/notes.txt");
+        let kindle = MtpTransport::open(location_id).unwrap();
+        kindle.write_atomic(&fresh, b"made\n").unwrap();
+        assert_eq!(kindle.read(&fresh).unwrap(), b"made\n");
+    }
 
     #[test]
     fn exclusive_access_error_gets_actionable_text() {

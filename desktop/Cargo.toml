@@ -30,28 +30,28 @@ tauri-plugin-opener = "2"
 readinglog-native = { path = "../native" }
 # Error propagation with context strings through an import and a build.
 anyhow = "1"
-# site.toml, books.toml, highlights.toml, sittings.toml, a post's front matter.
+# `site.toml`, and the `highlights.toml`, `notes.toml` and `posts/` front matter
+# read once into the records.
 serde = { version = "1", features = ["derive"] }
 toml = "1"
-# A post's Markdown, to HTML. `html` alone: no command line, no SIMD scanner.
+# A note's Markdown, to HTML: `html` alone, no command line, no SIMD scanner.
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 # A book's tone off its cover; the decoders `readinglog-native` builds already.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
-# Reading a Kindle that offers MTP and no mass storage (2024 and after), as
-# sidle reads one. Pinned exact as sidle pins it: a young crate whose API moves,
-# bumped only with a round trip on a real Kindle.
+# A Kindle over MTP, one with no mass storage (2024 and after), pinned exact.
 mtp-rs = "=0.15.0"
 # Drives `mtp-rs`'s async calls from the `Transport` trait's plain ones.
 futures = "0.3"
 # The chunks an MTP upload streams, at the version `mtp-rs` resolves.
 bytes = "1"
-# A mounted Kindle's serial, off its USB `iSerial` descriptor, at the version
-# `mtp-rs` resolves: one copy in the build.
+# A mounted Kindle's serial off its USB `iSerial`, at the version `mtp-rs` resolves.
 nusb = "=0.2.3"
 
 [dev-dependencies]
 # What the window sends a command, read the way Tauri reads it.
 serde_json = "1"
+# An MTP Kindle backed by a folder, which the tests sync over.
+mtp-rs = { version = "=0.15.0", features = ["virtual-device"] }
 
 [features]
 # `cargo tauri build` turns this on: the window loads `web/` from the binary.
