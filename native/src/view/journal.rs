@@ -18,7 +18,7 @@ use crate::written::Laid;
 
 use super::{Ctx, Hit, Search, Way, pager, search};
 
-/// What separates the parts of a row's own label: `Location 608 | Highlight`.
+/// What separates the parts of a row's own label: `Location 608 | Underline`.
 const BAR: &str = " | ";
 const DOT: &str = " · ";
 
@@ -793,7 +793,7 @@ struct Plan {
     more: Option<i32>,
     /// Each note's day under it, as the baseline it is set on.
     days: Vec<(i32, i64)>,
-    /// The label's baseline, and whether it states the row's place and kind.
+    /// The label's baseline, and whether it states the row's [`label`].
     label: i32,
     place: bool,
     high: i32,
@@ -1496,14 +1496,15 @@ fn heading(cx: &mut Ctx, book: usize) -> String {
     cut.first().cloned().unwrap_or_default()
 }
 
-/// What a row's label reads: where the highlight falls and what kind it is —
-/// `Location 608 | Highlight`; [`row`] sets the day at the line's other end.
+/// What a row's label reads: where the highlight falls, then [`BAR`] and its
+/// kind where it is not a [`Kind::Highlight`] — `Location 608`, `Location 608 |
+/// Underline`; [`row`] sets the day at the line's other end.
 pub fn label(highlight: &Highlight, extent: i64, s: &Strings) -> String {
-    format!(
-        "{}{BAR}{}",
-        positions(highlight, extent, s),
-        kind_name(highlight.kind, s)
-    )
+    let at = positions(highlight, extent, s);
+    match highlight.kind {
+        Kind::Highlight => at,
+        kind => format!("{at}{BAR}{}", kind_name(kind, s)),
+    }
 }
 
 /// `highlight.page`, `highlight.location` and `highlight.through(extent)`, [`DOT`]-joined in
@@ -1592,6 +1593,18 @@ mod tests {
         // `0` for the extent: nothing at all.
         held.location = -1;
         assert_eq!(positions(&held, 0, en()), DASH);
+    }
+
+    #[test]
+    fn a_label_names_every_kind_but_a_highlight() {
+        let mut held = highlight(State::Live, 330, 111);
+        held.page = "15".into();
+        assert_eq!(label(&held, 1_000, en()), "page 15 · Location 111 · 33%");
+        held.kind = Kind::Underline;
+        assert_eq!(
+            label(&held, 1_000, en()),
+            "page 15 · Location 111 · 33% | Underline"
+        );
     }
 
     #[test]
