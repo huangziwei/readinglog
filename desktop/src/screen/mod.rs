@@ -26,6 +26,7 @@ use readinglog_native::stats::Stats;
 use readinglog_native::ui::paint::Palette;
 use readinglog_native::view::{Shelf, Sort, Span, Way, Window};
 
+pub use journal::Mode;
 pub use look::Look;
 pub use words::Words;
 
@@ -70,8 +71,13 @@ pub enum Route {
         way: Way,
         query: String,
     },
-    /// `/journal`: every book's highlights and notes, under its search.
-    Journal(String),
+    /// `/journal`: every book's highlights and notes, laid out by `mode` and
+    /// running `way`, under its search.
+    Journal {
+        mode: Mode,
+        way: Way,
+        query: String,
+    },
     Settings,
 }
 
@@ -92,7 +98,8 @@ impl Route {
         };
         let parts: Vec<&str> = path.trim_matches('/').split('/').collect();
         let day = |said: &str| date::parse_day(said);
-        // `at` names a whole date, else a month or a year that `opens` completes.
+        // `at` names a whole date at length 10, and at any other a month or a
+        // year that `opens` completes.
         let within = |at: &str, opens: &str| match at.len() {
             10 => day(at),
             _ => day(&format!("{at}{opens}")),
@@ -137,7 +144,14 @@ impl Route {
                 way: way(asked("way")),
                 query: asked("q"),
             },
-            ["journal"] => Route::Journal(asked("q")),
+            ["journal"] => Route::Journal {
+                mode: match asked("mode").as_str() {
+                    "book" => Mode::Book,
+                    _ => Mode::Timeline,
+                },
+                way: way(asked("way")),
+                query: asked("q"),
+            },
             ["settings"] => Route::Settings,
             _ => Route::Today,
         }
@@ -225,7 +239,24 @@ impl Route {
                     ("q", search.clone()),
                 ])
             ),
-            Route::Journal(search) => format!("#/journal{}", query(&[("q", search.clone())])),
+            Route::Journal {
+                mode,
+                way: turned,
+                query: search,
+            } => {
+                let mode = match mode {
+                    Mode::Timeline => "",
+                    Mode::Book => "book",
+                };
+                format!(
+                    "#/journal{}",
+                    query(&[
+                        ("mode", mode.into()),
+                        ("way", way(turned)),
+                        ("q", search.clone()),
+                    ])
+                )
+            }
             Route::Settings => "#/settings".into(),
         }
     }
@@ -250,6 +281,15 @@ impl Route {
             query: String::new(),
         }
     }
+
+    /// The Journal route as a [`Mode::Timeline`], newest first.
+    fn journal() -> Route {
+        Route::Journal {
+            mode: Mode::Timeline,
+            way: Way::Down,
+            query: String::new(),
+        }
+    }
 }
 
 /// `day` as `YYYY-MM-DD`, which `date::parse_day` reads back.
@@ -266,9 +306,9 @@ fn in_year(today: i64, year: i64) -> i64 {
 /// How a page names a cover file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Covers {
-    /// A `data-cover` path, for the window to turn into an asset URL.
+    /// A `data-cover` path, which `convertFileSrc` in `app.js` turns into an asset URL.
     Window,
-    /// A `file:` URL, for a page read off the disk.
+    /// A `file:` URL, which a page read off the disk loads.
     Files,
 }
 
@@ -385,8 +425,8 @@ impl Shown {
         })
     }
 
-    /// What the Kindle the cut serial `serial` names is called: as its source
-    /// is in [`Shown::labels`], else by its model.
+    /// What the Kindle the cut serial `serial` names is called: its source's
+    /// [`Shown::labels`] entry, or `kindles::model` where `serials` lacks it.
     pub fn called(&self, serial: &str) -> String {
         self.serials
             .iter()
@@ -410,7 +450,8 @@ impl Shown {
     }
 }
 
-/// What a book's route names it by: its `cde_key`, else `e` and its extent.
+/// What a book's route names it by: its `cde_key`, or `e` and its extent where
+/// `cde_key` is empty.
 pub fn key_of(book: &readinglog_native::stats::BookStat) -> String {
     match book.cde_key.is_empty() {
         true => format!("e{}", book.extent),
@@ -498,7 +539,10 @@ pub fn render(
             let title = shown.stats.books[at].title.clone();
             (title, book::page(&cx, at, *reading, *way, query))
         }
-        Route::Journal(query) => (s.journal_tab.to_string(), journal::page(&cx, query)),
+        Route::Journal { mode, way, query } => (
+            s.journal_tab.to_string(),
+            journal::page(&cx, *mode, *way, query),
+        ),
         Route::Settings => (s.config.to_string(), settings::page(ws, Some(shown), s, w)),
     };
     main.push_str(&editor(s, w));
@@ -662,13 +706,8 @@ fn side(
         item(&mut out, &Route::Span(Span::AllTime, 0), s.rhythm, rhythm);
         let books = matches!(route, Route::Books { .. } | Route::Book { .. });
         item(&mut out, &Route::shelf(Shelf::All, None), s.books, books);
-        let journal = matches!(route, Route::Journal(_));
-        item(
-            &mut out,
-            &Route::Journal(String::new()),
-            s.journal_tab,
-            journal,
-        );
+        let journal = matches!(route, Route::Journal { .. });
+        item(&mut out, &Route::journal(), s.journal_tab, journal);
         let _ = write!(
             out,
             "</div><div class=\"nav years\"><p class=\"label\">{}</p>",
@@ -735,7 +774,8 @@ pub fn esc(text: &str) -> String {
 }
 
 /// The language `text` of a book tagged `tag` is set in: the Han convention
-/// `Script::resolve` reads off the two, as the Kindle picks a face, else `tag`.
+/// `Script::resolve` reads off the two, as the Kindle picks a face, or `tag`
+/// where it reads `Script::Unknown`.
 fn language_of(tag: &str, text: &str) -> String {
     let named = match Script::resolve(Script::of_language(tag), text) {
         Script::Japanese => "ja",
@@ -855,8 +895,12 @@ mod tests {
                 query: "a b".into(),
             },
             Route::book("B1".into()),
-            Route::Journal("a b".into()),
-            Route::Journal(String::new()),
+            Route::Journal {
+                mode: Mode::Book,
+                way: Way::Up,
+                query: "a b".into(),
+            },
+            Route::journal(),
             Route::Settings,
         ];
         for route in routes {
@@ -984,6 +1028,100 @@ mod tests {
             assert!(!page.main.contains(DASH), "{route} states a dash");
             assert!(page.vars.contains("--accent"), "{route}");
         }
+    }
+
+    #[test]
+    fn the_journal_folds_each_book_into_one_run_and_turns_either_mode_over() {
+        use readinglog_native::highlights::Highlight;
+        let ws = Workspace::create(&scratch("screen-journal-modes")).unwrap();
+        let mut record = record_of(
+            vec![
+                book(100, "B1", "A Map of Small Rivers"),
+                book(200, "B2", "川辺の記録"),
+            ],
+            vec![
+                sitting("2026-09-01T09:00:00", 100, 600),
+                sitting("2026-09-02T21:00:00", 200, 1200),
+                sitting("2026-10-01T09:00:00", 100, 1800),
+            ],
+        );
+        let said = |extent: i64, title: &str, at: &str, body: &str| Highlight {
+            body: body.into(),
+            ..highlight(extent, title, at)
+        };
+        record.highlights = vec![
+            said(
+                100,
+                "A Map of Small Rivers",
+                "2026-09-01T09:05:00",
+                "Oldest",
+            ),
+            said(200, "川辺の記録", "2026-09-02T21:05:00", "Middle"),
+            said(
+                100,
+                "A Map of Small Rivers",
+                "2026-10-01T09:05:00",
+                "Newest",
+            ),
+        ];
+        record.save(&ws.record_dir()).unwrap();
+        let shown = Shown::of(&ws, clock()).unwrap();
+        let draw = |route: &str| {
+            render(
+                Some(&shown),
+                &ws,
+                &Route::parse(route),
+                1072.0,
+                Covers::Files,
+                None,
+            )
+            .main
+        };
+        // `runs` lists each run's passages in the order the page sets them.
+        let runs = |route: &str| -> Vec<Vec<&str>> {
+            draw(route)
+                .split("<section class=\"run\">")
+                .skip(1)
+                .map(|run| {
+                    let mut set: Vec<(usize, &str)> = ["Oldest", "Middle", "Newest"]
+                        .into_iter()
+                        .filter_map(|words| run.find(&format!(">{words}<")).map(|at| (at, words)))
+                        .collect();
+                    set.sort();
+                    set.into_iter().map(|(_, words)| words).collect()
+                })
+                .collect()
+        };
+        assert_eq!(
+            runs("/journal"),
+            [vec!["Newest"], vec!["Middle"], vec!["Oldest"]]
+        );
+        assert_eq!(
+            runs("/journal?way=up"),
+            [vec!["Oldest"], vec!["Middle"], vec!["Newest"]]
+        );
+        // `B1`'s last sitting opens 2026-10-01, after `B2`'s 2026-09-02.
+        assert_eq!(
+            runs("/journal?mode=book"),
+            [vec!["Newest", "Oldest"], vec!["Middle"]]
+        );
+        assert_eq!(
+            runs("/journal?mode=book&way=up"),
+            [vec!["Middle"], vec!["Oldest", "Newest"]]
+        );
+        let searched = draw("/journal?mode=book&q=e");
+        for chip in [
+            "<a class=\"chip\" href=\"#/journal?q=e\">Timeline</a>",
+            "<a class=\"chip on\" href=\"#/journal?mode=book&q=e\">Books</a>",
+            "<a class=\"chip\" href=\"#/journal?mode=book&way=up&q=e\">▾</a>",
+        ] {
+            assert!(searched.contains(chip), "{chip}: {searched}");
+        }
+        assert!(
+            draw("/journal?q=nothing")
+                .contains("<div class=\"bar\"><p class=\"lede\">No highlights here.</p>"),
+            "a search finding nothing keeps the chips"
+        );
     }
 
     #[test]
@@ -1406,8 +1544,8 @@ mod tests {
         );
         assert!(drawn.contains("data-start=\"-1\"><blockquote"), "{drawn}");
 
-        // `import` again: the record states the words the correction was set
-        // over, beside a highlight made since.
+        // `import` again: the record states the words the correction stands
+        // over, beside `since`, a highlight made after it.
         let since = Highlight {
             start: 900,
             end: 960,

@@ -6,6 +6,9 @@ use readinglog_native::lang::Lang;
 pub struct Words {
     /// The heading over each week's reading, beside the Kindle's `by_month`.
     pub by_week: &'static str,
+    /// `mode_timeline`, `mode_book`: the chips naming the two [`super::Mode`]s.
+    pub mode_timeline: &'static str,
+    pub mode_book: &'static str,
     pub choose_backup: &'static str,
     pub drop_hint: &'static str,
     pub where_backups: &'static str,
@@ -60,6 +63,8 @@ pub struct Words {
 
 const ENGLISH: Words = Words {
     by_week: "BY WEEK",
+    mode_timeline: "Timeline",
+    mode_book: "Books",
     choose_backup: "Choose a backup…",
     drop_hint: "Drop a backup on this window, or choose one.",
     where_backups: "On the Kindle, backups are kept in extensions/readinglog/backups.",
@@ -103,6 +108,8 @@ const ENGLISH: Words = Words {
 
 const GERMAN: Words = Words {
     by_week: "NACH WOCHE",
+    mode_timeline: "Chronik",
+    mode_book: "Bücher",
     choose_backup: "Sicherung wählen…",
     drop_hint: "Ziehen Sie eine Sicherung auf dieses Fenster, oder wählen Sie eine.",
     where_backups: "Auf dem Kindle liegen Sicherungen unter extensions/readinglog/backups.",
@@ -147,6 +154,8 @@ const GERMAN: Words = Words {
 
 const JAPANESE: Words = Words {
     by_week: "週ごと",
+    mode_timeline: "時系列",
+    mode_book: "本ごと",
     choose_backup: "バックアップを選ぶ…",
     drop_hint: "バックアップをこのウィンドウにドロップするか、選んでください。",
     where_backups: "Kindle では extensions/readinglog/backups にバックアップがあります。",
@@ -189,6 +198,8 @@ const JAPANESE: Words = Words {
 
 const SIMPLIFIED: Words = Words {
     by_week: "按周",
+    mode_timeline: "时间线",
+    mode_book: "按书",
     choose_backup: "选择备份…",
     drop_hint: "把备份拖到此窗口，或选择一个。",
     where_backups: "在 Kindle 上，备份位于 extensions/readinglog/backups。",
@@ -229,6 +240,8 @@ const SIMPLIFIED: Words = Words {
 
 const TRADITIONAL: Words = Words {
     by_week: "按週",
+    mode_timeline: "時間軸",
+    mode_book: "按書",
     choose_backup: "選擇備份…",
     drop_hint: "把備份拖到此視窗，或選擇一個。",
     where_backups: "在 Kindle 上，備份位於 extensions/readinglog/backups。",

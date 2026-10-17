@@ -3,9 +3,9 @@
   --shade: rgba(0, 0, 0, 0.06);
 }
 
-/* `:lang()` gives each Han convention its own faces, and every character of a
-   run draws from one of them. `:root` holds the Simplified faces, which Han
-   that names no language takes, as a bare `zh` does. */
+/* `:lang()` gives each Han convention its own faces, every character of a run
+   drawn from one of them. `:root` holds the Simplified faces, which Han that
+   names no language takes, as a bare `zh` does. */
 :root,
 :lang(zh-Hans) {
   --sans: -apple-system, system-ui, "Helvetica Neue", "PingFang SC", sans-serif;
@@ -266,6 +266,9 @@ img:not([src]) {
   align-items: center;
   margin: 14px 0 24px;
   gap: 16px;
+}
+.bar .lede {
+  margin: 0;
 }
 .search {
   width: 240px;
@@ -614,8 +617,8 @@ svg text {
   background: var(--accent-soft);
   color: inherit;
 }
-/* `.when`: Add note, `.edit` and the day at the line's end; each `.edit`
-   stands out of its line but on the row's hover */
+/* `.when`: Add note, `.edit` and the day at the line's end; each `.edit` out of
+   its line and unseen until the row's hover */
 .highlight .when {
   display: inline-flex;
   align-items: baseline;
