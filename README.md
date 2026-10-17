@@ -65,3 +65,11 @@ A longer and more detailed explanation can be found in [the release note of v0.3
     <img src=".github/assets/rhythm/month.png" width="250" alt="month" />
     <img src=".github/assets/rhythm/week.png" width="250" alt="wekk" />
 </p>
+
+## Extras
+
+There's also [a macOS app](https://github.com/huangziwei/readinglog/releases/tag/v0.4.0) for backups, writing and editing notes and highlights. But it needs to be built from source:
+
+```sh
+./build.sh desktop
+```
