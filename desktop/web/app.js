@@ -79,17 +79,24 @@ async function show() {
   watch();
 }
 
-/** What names `row`'s passage, or its note where `note`, as `edit_highlight` takes it. */
-function named(row, note) {
-  const field = (name) => row.dataset[note ? `note${name[0].toUpperCase()}${name.slice(1)}` : name];
-  if (field("at") === undefined) return null;
+/** What names the passage or the Kindle's note `holder` stands for, as `edit_highlight` takes it. */
+function named(holder) {
+  const field = holder.dataset;
+  if (field.at === undefined) return null;
   return {
-    at: field("at"),
-    kind: field("kind"),
-    title: field("title"),
-    location: Number(field("location")),
-    start: Number(field("start")),
+    at: field.at,
+    kind: field.kind,
+    title: field.title,
+    location: Number(field.location),
+    start: Number(field.start),
   };
+}
+
+/** `words`' own text, the buttons set in it left out. */
+function textOf(words) {
+  const copy = words.cloneNode(true);
+  for (const button of copy.querySelectorAll("button")) button.remove();
+  return copy.textContent;
 }
 
 /** A text area holding `text`, as tall as its lines. */
@@ -124,44 +131,37 @@ function closeAny() {
   }
   editing.querySelector(":scope > .editor")?.remove();
   editing.classList.remove("open");
+  delete editing.dataset.open;
   editing = null;
 }
 
-/** `row` open in `#editor`: its passage, and the Kindle's note where it carries one, in text areas. */
-function open(row) {
+/** `holder` open in `#editor` on its `part`: the passage, or the Kindle's note, in a text area in its place. */
+function open(holder, part) {
   closeAny();
+  const words = holder.querySelector(part === "passage" ? ":scope > blockquote" : ":scope > .note");
+  if (!words || holder.dataset.at === undefined) return;
   const editor = template("editor");
-  const acts = editor.querySelector(".acts");
-  const passage = row.querySelector(":scope > blockquote");
-  const note = row.querySelector(":scope > .note");
-  if (passage && row.dataset.at !== undefined) {
-    editor.insertBefore(area("passage", passage.textContent, passage.lang), acts);
-  }
-  if (note && row.dataset.noteAt !== undefined) {
-    editor.insertBefore(area("note", note.textContent, note.lang), acts);
-  }
-  if (!("edited" in row.dataset)) editor.querySelector('[data-act="revert"]').remove();
-  row.classList.add("open");
-  row.append(editor);
-  for (const box of editor.querySelectorAll("textarea")) fit(box);
-  editor.querySelector("textarea")?.focus();
-  editing = row;
+  const box = area(part, textOf(words), words.lang);
+  editor.insertBefore(box, editor.querySelector(".acts"));
+  if (!("edited" in holder.dataset)) editor.querySelector('[data-act="revert"]').remove();
+  holder.classList.add("open");
+  holder.dataset.open = part;
+  words.after(editor);
+  fit(box);
+  box.focus();
+  editing = holder;
 }
 
-/** Keep `row`'s words as its text areas hold them, or the Kindle's where `revert`, and draw again. */
-async function keep(row, revert) {
-  const changes = [];
-  for (const box of row.querySelectorAll(":scope > .editor textarea")) {
-    const id = named(row, box.dataset.part === "note");
-    if (!id) continue;
-    if (revert) changes.push({ id, text: null });
-    else if (box.value !== box.dataset.was) changes.push({ id, text: box.value });
-  }
-  if (changes.length === 0) {
+/** Keep the words `holder`'s editor holds, or the Kindle's where `revert`, and draw again. */
+async function keep(holder, revert) {
+  const id = named(holder);
+  const box = holder.querySelector(":scope > .editor textarea");
+  if (!id || !box || (!revert && box.value === box.dataset.was)) {
     closeAny();
     return;
   }
-  await call("edit_highlight", { kindle: row.dataset.kindle ?? "", changes });
+  const kindle = holder.closest(".highlight").dataset.kindle ?? "";
+  await call("edit_highlight", { kindle, changes: [{ id, text: revert ? null : box.value }] });
   closeAny();
   await show();
 }
@@ -206,7 +206,7 @@ async function keepNote(editor) {
       editing = null;
       return;
     }
-    await call("write_note", { kindle, on: { passage: named(row, false) }, text });
+    await call("write_note", { kindle, on: { passage: named(row) }, text });
   } else {
     const holder = editor.closest("[data-written]");
     if (text.trim() === "") {
@@ -304,13 +304,14 @@ document.addEventListener("click", async (event) => {
       break;
     }
     case "edit":
-      open(act.closest(".highlight"));
+      if (act.dataset.part === "note") open(act.closest(".knote, .highlight"), "note");
+      else open(act.closest(".highlight"), "passage");
       break;
     case "save":
-      await keep(act.closest(".highlight"), false);
+      await keep(editing, false);
       break;
     case "revert":
-      await keep(act.closest(".highlight"), true);
+      await keep(editing, true);
       break;
     case "cancel":
       closeAny();

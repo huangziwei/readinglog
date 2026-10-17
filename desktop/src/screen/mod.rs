@@ -1176,7 +1176,7 @@ mod tests {
         );
         assert!(page.main.contains(
             "<span class=\"when\"><button class=\"edit\" data-act=\"add-note\">Add note</button>\
-             <button class=\"edit\" data-act=\"edit\">Edit</button>Sep 1, 2026</span></p>"
+             <button class=\"edit\" data-act=\"edit\" data-part=\"passage\">Edit</button>Sep 1, 2026</span></p>"
         ));
     }
 
@@ -1397,9 +1397,14 @@ mod tests {
         assert_eq!(drawn.matches(fixed).count(), 1, "{drawn}");
         assert!(!drawn.contains(typo));
         assert_eq!(drawn.matches("<div class=\"highlight\"").count(), 1);
-        assert!(drawn.contains(" data-edited"));
         assert!(drawn.contains("data-kindle=\"G003H2-0001\""));
-        assert!(drawn.contains("data-note-at=\"2026-09-01T09:05:10\""));
+        // `data-edited` on the note's holder alone, the passage standing as the Kindle set it.
+        assert!(drawn.contains("<div class=\"knote\" data-at=\"2026-09-01T09:05:10\""));
+        assert!(
+            drawn.contains("data-start=\"-1\" data-edited><p class=\"note\">"),
+            "{drawn}"
+        );
+        assert!(drawn.contains("data-start=\"-1\"><blockquote"), "{drawn}");
 
         // `import` again: the record states the words the correction was set
         // over, beside a highlight made since.
@@ -1515,12 +1520,19 @@ mod tests {
             }),
             ..Note::default()
         };
-        // `page`, with no note written here: the Kindle's note states no day.
+        // `page`, with no note written here: the Kindle's note states no day, its
+        // Edit ending its words, and the passage's Edit stands beside its day.
         let page = drawn(&ws, "/book/B1");
         assert!(
-            page.contains("<p class=\"note\">The Kindle's own</p><p class=\"where\">"),
+            page.contains(
+                "<p class=\"note\">The Kindle's own<button class=\"edit\" data-act=\"edit\" \
+                 data-part=\"note\">Edit</button></p></div><p class=\"where\">"
+            ),
             "{page}"
         );
+        assert!(page.contains(
+            "<button class=\"edit\" data-act=\"edit\" data-part=\"passage\">Edit</button>Sep 1, 2026"
+        ));
         let mut record = Record::load(&ws.record_dir());
         record.add_note(note("2026-10-01T10:00:00", "On the passage", true));
         record.add_note(note("2026-10-02T08:00:00", "On the book alone", false));
@@ -1528,7 +1540,8 @@ mod tests {
         let page = drawn(&ws, "/book/B1");
         assert!(
             page.contains(
-                "The Kindle's own</p><p class=\"stamp\">Sep 1, 2026</p>\
+                "The Kindle's own</p><p class=\"stamp\">Sep 1, 2026<button class=\"edit\" \
+                 data-act=\"edit\" data-part=\"note\">Edit</button></p></div>\
                  <div class=\"dnote\" data-written=\"2026-10-01T10:00:00\">"
             ),
             "{page}"

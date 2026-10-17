@@ -637,15 +637,30 @@ svg text {
   opacity: 1;
   pointer-events: auto;
 }
+/* An `.edit` ending a passage's or a note's words keeps its room unhovered */
+.highlight blockquote > .edit,
+.highlight .note > .edit {
+  position: static;
+  visibility: hidden;
+  margin-left: 10px;
+}
+.highlight:hover blockquote > .edit,
+.highlight:hover .note > .edit,
+.highlight blockquote > .edit:focus-visible,
+.highlight .note > .edit:focus-visible {
+  visibility: visible;
+}
 .highlight .edit:hover {
   color: var(--ink);
 }
-/* `.open`: the row's or the note's words in `.editor`'s text areas, the passage
-   set as it is drawn */
-.highlight.open > blockquote,
-.highlight.open > .note,
-.highlight.open > .stamp,
-.highlight.open > .where,
+/* `.open`: the passage, a Kindle's note or a note written here in `.editor`'s
+   text area in its place, `data-open` naming which part a row opened on, the
+   passage's text area set as the passage is */
+.highlight[data-open="passage"] > blockquote,
+.highlight[data-open="note"] > .note,
+.highlight[data-open="note"] > .where,
+.knote.open > .note,
+.knote.open > .stamp,
 .dnote.open > .note,
 .dnote.open > .stamp {
   display: none;
@@ -1055,12 +1070,14 @@ section h2 .said .search {
   color: #fff;
   box-shadow: none;
 }
-/* `.dnote`: a note written here, set as `.note` is with no rule, its day under
-   it in `.stamp` */
-.highlight .dnote {
+/* `.dnote`, a note written here, and `.knote`, the Kindle's: each set as
+   `.note` is with no rule, its day and its `.edit` under it in `.stamp` */
+.highlight .dnote,
+.highlight .knote {
   margin: var(--apart) 0 0;
 }
-.highlight .dnote .note {
+.highlight .dnote .note,
+.highlight .knote .note {
   margin: 0;
 }
 /* `:first-child` opens at the card's padding, a `blockquote` 5px under it: its

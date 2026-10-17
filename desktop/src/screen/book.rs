@@ -325,37 +325,58 @@ pub(super) fn highlight(
     let w = Words::of(cx.lang);
     let serial = cx.serial(at);
     let (kindles, mine) = ordered(cx, at, notes);
-    let edited = std::iter::once(highlight)
-        .chain(kindles.iter().copied())
-        .any(|h| {
-            cx.corrected
-                .contains(&(serial.to_string(), HighlightId::of(h)))
-        });
+    let edited = |h: &Highlight| match cx
+        .corrected
+        .contains(&(serial.to_string(), HighlightId::of(h)))
+    {
+        true => " data-edited",
+        false => "",
+    };
+    let edit = |part: &str| {
+        format!(
+            "<button class=\"edit\" data-act=\"edit\" data-part=\"{part}\">{}</button>",
+            esc(w.edit)
+        )
+    };
+    // `day` empty sets the passage's Edit at the end of its words.
+    let day = made(cx, highlight);
+    let (ends, beside) = match day.is_empty() {
+        true => (edit("passage"), String::new()),
+        false => (String::new(), edit("passage")),
+    };
     let mut out = format!(
-        "<div class=\"highlight\" data-kindle=\"{}\"{}{}{}>\
-         <blockquote style=\"border-color: {}\"{}>{}</blockquote>",
+        "<div class=\"highlight\" data-kindle=\"{}\"{}{}>\
+         <blockquote style=\"border-color: {}\"{}>{}{ends}</blockquote>",
         esc(serial),
-        named("", highlight),
-        kindles
-            .first()
-            .map(|n| named("note-", n))
-            .unwrap_or_default(),
-        if edited { " data-edited" } else { "" },
+        named(highlight),
+        edited(highlight),
         hex(paint::highlight_colour(&highlight.colour, true)),
         lang(&book.language, &highlight.body),
         washed(&highlight.body, needle)
     );
     // `lang` reads a note's language off its words, which name no book's.
     for note in &kindles {
+        // `on`, the Kindle's note's day where notes written here stand beside it,
+        // carries its Edit; else the Edit ends its words.
+        let on = match mine.is_empty() {
+            true => String::new(),
+            false => made(cx, note),
+        };
+        let (ends, stamp) = match on.is_empty() {
+            true => (edit("note"), String::new()),
+            false => (
+                String::new(),
+                format!("<p class=\"stamp\">{}{}</p>", esc(&on), edit("note")),
+            ),
+        };
         let _ = write!(
             out,
-            "<p class=\"note\"{}>{}</p>",
+            "<div class=\"knote\"{}{}><p class=\"note\"{}>{}{ends}</p>{stamp}</div>",
+            named(note),
+            edited(note),
             lang("", &note.body),
             washed(&note.body, needle)
         );
-        if !mine.is_empty() {
-            let _ = write!(out, "<p class=\"stamp\">{}</p>", esc(&made(cx, note)));
-        }
     }
     for note in &mine {
         let written = cx.laid(at, note).map_or("", |l| l.written.as_str());
@@ -372,16 +393,14 @@ pub(super) fn highlight(
     let _ = write!(
         out,
         "<p class=\"where\"><span>{}</span><span class=\"when\">\
-         <button class=\"edit\" data-act=\"add-note\">{}</button>\
-         <button class=\"edit\" data-act=\"edit\">{}</button>{}</span></p></div>",
+         <button class=\"edit\" data-act=\"add-note\">{}</button>{beside}{}</span></p></div>",
         esc(&journal_view::label(
             highlight,
             crate::kindles::origin(book.extent).1,
             cx.s
         )),
         esc(w.add_note),
-        esc(w.edit),
-        esc(&made(cx, highlight))
+        esc(&day)
     );
     out
 }
@@ -423,7 +442,7 @@ fn alone(cx: &Ctx, at: usize, note: &Highlight, needle: &str) -> String {
         None => format!(
             "<div class=\"highlight alone\" data-kindle=\"{}\"{}{}>",
             esc(serial),
-            named("note-", note),
+            named(note),
             if edited { " data-edited" } else { "" }
         ),
     };
@@ -437,9 +456,9 @@ fn alone(cx: &Ctx, at: usize, note: &Highlight, needle: &str) -> String {
         );
     }
     let (act, words) = match laid {
-        Some(_) => ("edit-note", written_note(note, needle)),
+        Some(_) => ("data-act=\"edit-note\"", written_note(note, needle)),
         None => (
-            "edit",
+            "data-act=\"edit\" data-part=\"note\"",
             format!(
                 "<p class=\"note\"{}>{}</p>",
                 lang("", &note.body),
@@ -450,7 +469,7 @@ fn alone(cx: &Ctx, at: usize, note: &Highlight, needle: &str) -> String {
     let _ = write!(
         out,
         "{words}<p class=\"where\"><span>{}</span><span class=\"when\">\
-         <button class=\"edit\" data-act=\"{act}\">{}</button>{}</span></p></div>",
+         <button class=\"edit\" {act}>{}</button>{}</span></p></div>",
         esc(&place),
         esc(w.edit),
         esc(&made(cx, note))
@@ -534,12 +553,12 @@ fn made(cx: &Ctx, highlight: &Highlight) -> String {
         .unwrap_or_default()
 }
 
-/// `highlight`'s `HighlightId` as data attributes, each name opening `prefix`.
-fn named(prefix: &str, highlight: &Highlight) -> String {
+/// `highlight`'s `HighlightId` as data attributes.
+fn named(highlight: &Highlight) -> String {
     let id = HighlightId::of(highlight);
     format!(
-        " data-{prefix}at=\"{}\" data-{prefix}kind=\"{}\" data-{prefix}title=\"{}\" \
-         data-{prefix}location=\"{}\" data-{prefix}start=\"{}\"",
+        " data-at=\"{}\" data-kind=\"{}\" data-title=\"{}\" \
+         data-location=\"{}\" data-start=\"{}\"",
         esc(&id.at),
         esc(&id.kind),
         esc(&id.title),
