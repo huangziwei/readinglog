@@ -19,10 +19,15 @@ function flash(said, wrong = false) {
   flash.timer = setTimeout(() => (at.hidden = true), wrong ? 9000 : 4000);
 }
 
-/** The command `name`'s answer; `err` is flashed and thrown on. */
+/** The commands changing the notes and corrections a Kindle plugged in takes at its next sync. */
+const WRITING = new Set(["write_note", "reword_note", "delete_note", "edit_highlight"]);
+
+/** The command `name`'s answer; `err` is flashed and thrown on. One of `WRITING` sets `resync` going. */
 async function call(name, args = {}) {
   try {
-    return await TAURI.core.invoke(name, args);
+    const answer = await TAURI.core.invoke(name, args);
+    if (WRITING.has(name)) resync();
+    return answer;
   } catch (err) {
     flash(String(err), true);
     throw err;
@@ -41,7 +46,7 @@ function settled(run, wait) {
 /** The route and width last drawn. */
 let drawn = { route: null, width: 0 };
 
-/** The highlight row open in the editor, which only `show`, its own buttons and Escape close. */
+/** The row or note open in an editor, or the note field holding words: only `show`, their own buttons and Escape close it. */
 let editing = null;
 
 /** The route the hash names, drawn at the width of the page column. */
@@ -56,6 +61,7 @@ async function show() {
   document.title = page.title;
   side.innerHTML = page.side;
   main.innerHTML = page.main;
+  drawCard();
   for (const img of document.querySelectorAll("img[data-cover]")) {
     img.src = TAURI.core.convertFileSrc(img.dataset.cover);
   }
@@ -70,6 +76,7 @@ async function show() {
   }
   if (route !== drawn.route && typing === null) window.scrollTo(0, 0);
   drawn = { route, width };
+  watch();
 }
 
 /** What names `row`'s passage, or its note where `note`, as `edit_highlight` takes it. */
@@ -101,54 +108,159 @@ function fit(box) {
   box.style.height = `${box.scrollHeight + 2}px`;
 }
 
-/** `row` open in `#editor`: its passage, and its note where it carries one, in text areas. */
+/** A copy of the template `id`'s first element. */
+function template(id) {
+  return document.getElementById(id).content.firstElementChild.cloneNode(true);
+}
+
+/** Close whatever `editing` holds open. */
+function closeAny() {
+  if (!editing) return;
+  if (editing.classList.contains("composer")) {
+    editing.querySelector("textarea").value = "";
+    editing.querySelector("textarea").blur();
+    editing = null;
+    return;
+  }
+  editing.querySelector(":scope > .editor")?.remove();
+  editing.classList.remove("open");
+  editing = null;
+}
+
+/** `row` open in `#editor`: its passage, and the Kindle's note where it carries one, in text areas. */
 function open(row) {
-  if (editing) close(editing);
-  const editor = document.getElementById("editor").content.firstElementChild.cloneNode(true);
+  closeAny();
+  const editor = template("editor");
   const acts = editor.querySelector(".acts");
-  const passage = row.querySelector("blockquote");
-  const note = row.querySelector(".note");
-  editor.insertBefore(area("passage", passage.textContent, passage.lang), acts);
-  if (note) editor.insertBefore(area("note", note.textContent, note.lang), acts);
+  const passage = row.querySelector(":scope > blockquote");
+  const note = row.querySelector(":scope > .note");
+  if (passage && row.dataset.at !== undefined) {
+    editor.insertBefore(area("passage", passage.textContent, passage.lang), acts);
+  }
+  if (note && row.dataset.noteAt !== undefined) {
+    editor.insertBefore(area("note", note.textContent, note.lang), acts);
+  }
   if (!("edited" in row.dataset)) editor.querySelector('[data-act="revert"]').remove();
   row.classList.add("open");
   row.append(editor);
   for (const box of editor.querySelectorAll("textarea")) fit(box);
-  editor.querySelector("textarea").focus();
+  editor.querySelector("textarea")?.focus();
   editing = row;
-}
-
-function close(row) {
-  row.querySelector(".editor")?.remove();
-  row.classList.remove("open");
-  if (editing === row) editing = null;
 }
 
 /** Keep `row`'s words as its text areas hold them, or the Kindle's where `revert`, and draw again. */
 async function keep(row, revert) {
   const changes = [];
-  for (const box of row.querySelectorAll(".editor textarea")) {
+  for (const box of row.querySelectorAll(":scope > .editor textarea")) {
     const id = named(row, box.dataset.part === "note");
     if (!id) continue;
     if (revert) changes.push({ id, text: null });
     else if (box.value !== box.dataset.was) changes.push({ id, text: box.value });
   }
   if (changes.length === 0) {
-    close(row);
+    closeAny();
     return;
   }
   await call("edit_highlight", { kindle: row.dataset.kindle ?? "", changes });
-  close(row);
+  closeAny();
   await show();
 }
 
+/** `#note-editor` open on the note written here that `holder` holds, its Markdown in place of the note. */
+function openWritten(holder) {
+  closeAny();
+  const editor = template("note-editor");
+  const box = editor.querySelector("textarea");
+  const note = holder.querySelector(":scope > .note");
+  box.value = note.dataset.text ?? note.textContent;
+  box.lang = note.lang;
+  box.addEventListener("input", () => fit(box));
+  holder.classList.add("open");
+  holder.append(editor);
+  fit(box);
+  box.focus();
+  editing = holder;
+}
+
+/** `#note-editor` open on `row` for a new note on its passage, above the row's label. */
+function openAdding(row) {
+  closeAny();
+  const editor = template("note-editor");
+  editor.querySelector('[data-act="delete-note"]').remove();
+  editor.dataset.adding = "";
+  const box = editor.querySelector("textarea");
+  box.addEventListener("input", () => fit(box));
+  row.insertBefore(editor, row.querySelector(":scope > .where"));
+  box.focus();
+  editing = row;
+}
+
+/** Keep what the note editor `editor` holds: a new note on its row's passage, or new words for the note it opened on. */
+async function keepNote(editor) {
+  const text = editor.querySelector("textarea").value;
+  const row = editor.closest(".highlight");
+  const kindle = row.dataset.kindle ?? "";
+  if ("adding" in editor.dataset) {
+    if (text.trim() === "") {
+      editor.remove();
+      editing = null;
+      return;
+    }
+    await call("write_note", { kindle, on: { passage: named(row, false) }, text });
+  } else {
+    const holder = editor.closest("[data-written]");
+    if (text.trim() === "") {
+      if (!(await call("delete_note", { kindle, written: holder.dataset.written }))) return;
+    } else {
+      await call("reword_note", { kindle, written: holder.dataset.written, text });
+    }
+  }
+  editing = null;
+  await show();
+}
+
+/** Write what the field `composer` holds as a note on its book alone. */
+async function keepComposed(composer) {
+  const box = composer.querySelector("textarea");
+  if (box.value.trim() === "") return;
+  await call("write_note", {
+    kindle: composer.dataset.kindle ?? "",
+    on: { book: { key: composer.dataset.key ?? "", extent: Number(composer.dataset.extent) } },
+    text: box.value,
+  });
+  box.value = "";
+  editing = null;
+  await show();
+}
+
+// Escape closes what `editing` holds open, and ⌘↩ keeps it: the note field's
+// words, a note editor's, or a row's.
 main.addEventListener("keydown", (event) => {
-  const row = event.target.closest(".highlight.open");
-  if (!row || event.target.tagName !== "TEXTAREA") return;
-  if (event.key === "Escape") close(row);
-  else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) keep(row, false).catch(console.error);
-  else return;
+  if (event.target.tagName !== "TEXTAREA" || !editing) return;
+  const editor = event.target.closest(".editor");
+  if (event.key === "Escape") closeAny();
+  else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+    if (editing.classList.contains("composer")) keepComposed(editing).catch(console.error);
+    else if (editor?.querySelector('[data-act="save-note"]')) keepNote(editor).catch(console.error);
+    else keep(editing, false).catch(console.error);
+  } else return;
   event.preventDefault();
+});
+
+main.addEventListener("focusin", (event) => {
+  const composer = event.target.closest(".composer");
+  if (composer && !editing) editing = composer;
+});
+// `mousedown` on a `.composer` button keeps the focus in its field, where its
+// `.acts` stand only under `:focus-within`.
+main.addEventListener("mousedown", (event) => {
+  if (event.target.closest(".composer button")) event.preventDefault();
+});
+main.addEventListener("focusout", (event) => {
+  const composer = event.target.closest(".composer");
+  if (composer && editing === composer && composer.querySelector("textarea").value.trim() === "") {
+    editing = null;
+  }
 });
 
 /** Import `paths`, say what the record gained, and draw the route again. */
@@ -169,8 +281,7 @@ document.addEventListener("click", async (event) => {
       break;
     }
     case "kindle":
-      flash(await call("import_kindle", { serial: act.dataset.serial }));
-      await show();
+      await sync(act.dataset.serial);
       break;
     case "reveal":
       await call("reveal", { path: act.dataset.path });
@@ -202,7 +313,42 @@ document.addEventListener("click", async (event) => {
       await keep(act.closest(".highlight"), true);
       break;
     case "cancel":
-      close(act.closest(".highlight"));
+      closeAny();
+      break;
+    case "add-note":
+      openAdding(act.closest(".highlight"));
+      break;
+    case "edit-note":
+      openWritten(act.closest("[data-written]"));
+      break;
+    case "save-note":
+      await keepNote(act.closest(".editor"));
+      break;
+    case "cancel-note": {
+      const composer = act.closest(".composer");
+      if (composer) {
+        composer.querySelector("textarea").value = "";
+        editing = null;
+      } else if (act.closest(".editor")?.dataset.adding !== undefined) {
+        act.closest(".editor").remove();
+        editing = null;
+      } else closeAny();
+      break;
+    }
+    case "delete-note": {
+      const holder = act.closest("[data-written]");
+      const row = act.closest(".highlight");
+      if (await call("delete_note", { kindle: row.dataset.kindle ?? "", written: holder.dataset.written })) {
+        editing = null;
+        await show();
+      }
+      break;
+    }
+    case "write-note":
+      await keepComposed(act.closest(".composer"));
+      break;
+    case "jump":
+      document.getElementById(act.dataset.to)?.scrollIntoView({ behavior: "smooth", block: "start" });
       break;
   }
 });
@@ -241,6 +387,36 @@ main.addEventListener("compositionend", (event) => {
   if (box) search(box);
 });
 
+/** The observers keeping a book page's bar in step with the scroll. */
+let watching = [];
+
+// `watch` shows a book page's `.slim` bar once its head scrolls away, the
+// chip of the part in view lit.
+function watch() {
+  for (const observer of watching) observer.disconnect();
+  watching = [];
+  const slim = main.querySelector(".slim");
+  const hero = main.querySelector(".hero");
+  if (!slim || !hero) return;
+  const away = new IntersectionObserver(([entry]) => (slim.hidden = entry.isIntersecting));
+  away.observe(hero);
+  const lit = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries.filter((e) => e.isIntersecting)) {
+        for (const chip of slim.querySelectorAll("[data-to]")) {
+          chip.classList.toggle("on", chip.dataset.to === entry.target.id);
+        }
+      }
+    },
+    { rootMargin: "-30% 0px -60% 0px" },
+  );
+  for (const id of ["kindles", "journal"]) {
+    const part = document.getElementById(id);
+    if (part) lit.observe(part);
+  }
+  watching = [away, lit];
+}
+
 main.addEventListener("mousemove", (event) => {
   const at = event.target.closest("[data-tip]");
   if (!at) {
@@ -278,12 +454,69 @@ window.addEventListener("hashchange", () => show().catch(console.error));
 window.addEventListener(
   "resize",
   settled(() => {
-    if (!composing && !editing && Math.abs(main.clientWidth - drawn.width) > 8) show().catch(console.error);
+    if (!composing && !editing && Math.abs(main.clientWidth - drawn.width) > 8) {
+      show().catch(console.error);
+    }
   }, 150),
 );
 
+/** The Kindle `sync` last ran for, while it stays plugged in. */
+let synced = null;
+
+/** The Kindle card's line for the cut serial `serial`: `busy` while a sync runs, `wrong` once one stopped. */
+let card = { serial: null, line: "", busy: false, wrong: false };
+
+/** Set `card` on the Kindle card drawn for its serial; answers whether one is drawn. */
+function drawCard() {
+  const at = [...document.querySelectorAll(".kindle[data-serial]")].find((k) =>
+    k.dataset.serial === card.serial
+  );
+  if (!at) return false;
+  const state = at.querySelector(".state");
+  state.textContent = card.line;
+  state.classList.toggle("busy", card.busy);
+  state.classList.toggle("wrong", card.wrong);
+  at.querySelector("button[data-act=kindle]").hidden = !card.wrong;
+  return true;
+}
+
+/** `line` on the card of the Kindle `serial` names, `how` being "busy" or "wrong"; flashed where it is wrong and no card is drawn. */
+function tell(serial, line, how = "") {
+  card = { serial, line, busy: how === "busy", wrong: how === "wrong" };
+  if (!drawCard() && card.wrong) flash(line, true);
+}
+
+/** Sync the Kindle `serial` names, as `sync_kindle` does, its card told each half; flash what came in and draw again where it says anything, `quiet` saying nothing where nothing came in. */
+async function sync(serial, quiet = false) {
+  synced = serial;
+  let running = true;
+  const phase = new TAURI.core.Channel();
+  phase.onmessage = (line) => running && tell(serial, line, "busy");
+  let said;
+  try {
+    said = await TAURI.core.invoke("sync_kindle", { serial, quiet, phase });
+  } catch (err) {
+    tell(serial, String(err), "wrong");
+    return;
+  } finally {
+    running = false;
+  }
+  tell(serial, said.card);
+  if (!said.flash) return;
+  flash(said.flash);
+  await show();
+}
+
+/** A quiet `sync` of the Kindle plugged in, once the window rests after a change to the notes or corrections. */
+const resync = settled(() => {
+  if (!kindle) return;
+  if (composing || editing) return resync();
+  sync(kindle, true).catch(console.error);
+}, 3000);
+
 // `poll` draws the page again where `kindle` changes, a Kindle plugged in or
-// out, or `today` does, and asks nothing while `composing` or `editing`.
+// out, or `today` does, then syncs a Kindle arriving; it asks nothing while
+// `composing` or `editing`.
 let kindle;
 let today;
 async function poll() {
@@ -293,9 +526,14 @@ async function poll() {
     TAURI.core.invoke("today").catch(() => null),
   ]);
   const moved = (kindle !== undefined && plugged !== kindle) || (today !== undefined && day !== today);
-  if (moved) show().catch(console.error);
   kindle = plugged;
   today = day;
+  const arriving = plugged && plugged !== synced;
+  if (!plugged) synced = null;
+  if (arriving) synced = plugged;
+  if (arriving || !plugged) card = { serial: plugged, line: "", busy: false, wrong: false };
+  if (moved) await show().catch(console.error);
+  if (arriving) sync(plugged).catch(console.error);
 }
 setInterval(poll, 3000);
 poll();

@@ -1,11 +1,13 @@
 //! The window: [`page`] draws the route its hash names through
-//! [`screen::render`]; the other commands import, set a setting or a highlight's
-//! words, delete a backup, every backup or everything, and open the dialogs.
+//! [`screen::render`]; the other commands import, set a setting, correct a
+//! highlight, write a note, delete a backup or everything, and ask.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
+use serde::Serialize;
+use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_opener::OpenerExt;
@@ -17,9 +19,11 @@ use readinglog_native::lang::counted;
 use readinglog_native::record::Record;
 use readinglog_native::view::config;
 
+use crate::device::mtp::transport::InUse;
 use crate::device::{self, DeviceInfo};
-use crate::edits::{self, HIGHLIGHTS_FILE, HighlightId};
+use crate::edits::{self, HighlightId};
 use crate::import::{self, Imported};
+use crate::notes;
 use crate::screen::{self, Covers, Page, Route, Shown};
 use crate::workspace::{CONFIG_FILE, Workspace};
 
@@ -32,13 +36,12 @@ struct Open {
     served: Mutex<Vec<PathBuf>>,
 }
 
-/// When each record, `CONFIG_FILE` and `HIGHLIGHTS_FILE` were last written,
-/// each record's and `HIGHLIGHTS_FILE`'s size, and the clock's day.
+/// When each record and `CONFIG_FILE` were last written, with the records'
+/// sizes, and the clock's day.
 type Stamp = (
     PathBuf,
     Vec<(Option<SystemTime>, Option<u64>)>,
     Option<SystemTime>,
-    (Option<SystemTime>, Option<u64>),
     i64,
 );
 
@@ -61,13 +64,13 @@ fn stamp(ws: &Workspace, today: i64) -> Stamp {
         ws.dir.clone(),
         records,
         written(&ws.dir.join(CONFIG_FILE)).0,
-        written(&ws.dir.join(HIGHLIGHTS_FILE)),
         today,
     )
 }
 
-/// The Kindle plugged in that Import can read: a mounted one holding the app's
-/// record, or one over MTP, which shows nothing without a session.
+/// [`DeviceInfo`] of the Kindle plugged in that `import::kindle` reads: one
+/// mounted with a record under `extensions/readinglog`, or one over MTP, which
+/// shows nothing without a session.
 fn plugged() -> Option<DeviceInfo> {
     let found = device::detect::detect()?;
     match found.mass_storage_mount() {
@@ -177,7 +180,7 @@ async fn page(app: AppHandle, open: State<'_, Open>, route: String, width: f64) 
     ))
 }
 
-/// The cut serial of the Kindle plugged in that Import can read.
+/// The cut serial of the Kindle [`plugged`] answers.
 #[tauri::command]
 async fn kindle() -> Option<String> {
     plugged().map(|d| cut_serial(&d.serial))
@@ -211,22 +214,62 @@ async fn import(app: AppHandle, open: State<'_, Open>, paths: Vec<String>) -> An
     Ok(gained(&ws, &done))
 }
 
-/// Import the Kindle plugged in that the cut serial `serial` names, off the
-/// window's thread. Answers what the record gained, in the window's words.
+/// What a sync says: `flash`, what the record gained in the window's words,
+/// empty where it says nothing, and `card`, the Kindle card's line.
+#[derive(Serialize)]
+struct Synced {
+    flash: String,
+    card: String,
+}
+
+/// Sync the Kindle `serial` names off the window's thread, as `import::kindle`
+/// does, `phase` told the card's line as each half starts; `quiet` flashes nothing
+/// where nothing came in. Fails with the card's line naming what stopped it.
 #[tauri::command]
-async fn import_kindle(app: AppHandle, open: State<'_, Open>, serial: String) -> Answer<String> {
+async fn sync_kindle(
+    app: AppHandle,
+    open: State<'_, Open>,
+    serial: String,
+    quiet: bool,
+    phase: Channel<String>,
+) -> Answer<Synced> {
     let dir = folder(&app, &open)?;
     let ws = Workspace::create(&dir).map_err(said)?;
     remember(&app, &dir)?;
+    let w = screen::Words::of(ws.config.lang());
+    let stopped = |why: &str| w.not_synced.replace("{why}", why);
     let device = plugged()
         .filter(|d| cut_serial(&d.serial) == serial)
-        .ok_or_else(|| "the Kindle is no longer plugged in".to_string())?;
+        .ok_or_else(|| stopped(w.unplugged))?;
+    let _ = phase.send(w.syncing_in.to_string());
     let at = ws.clone();
-    let done = tauri::async_runtime::spawn_blocking(move || import::kindle(&at, &device))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(said)?;
-    Ok(gained(&ws, &[done]))
+    let done = tauri::async_runtime::spawn_blocking(move || {
+        import::kindle(&at, &device, || {
+            let _ = phase.send(w.syncing_out.to_string());
+        })
+    })
+    .await
+    .map_err(|e| stopped(&e.to_string()))?
+    .map_err(|err| stopped(&stopped_by(&err, w)))?;
+    let (_, secs) = date::now();
+    let card = w.synced.replace(
+        "{t}",
+        &format!("{:02}:{:02}", secs / 3600, secs % 3600 / 60),
+    );
+    let came = &done.imported;
+    let flash = match quiet && came.sittings + came.books + came.highlights == 0 {
+        true => String::new(),
+        false => gained(&ws, &[done.imported]),
+    };
+    Ok(Synced { flash, card })
+}
+
+/// What stopped a sync, `err`: `w.in_use` where another app holds the Kindle.
+fn stopped_by(err: &anyhow::Error, w: &screen::Words) -> String {
+    match err.chain().any(|e| e.downcast_ref::<InUse>().is_some()) {
+        true => w.in_use.to_string(),
+        false => format!("{err:#}"),
+    }
 }
 
 /// What `done` added to the record, in `ws`'s language.
@@ -315,6 +358,58 @@ fn edit_highlight(
     let changes: Vec<(HighlightId, Option<String>)> =
         changes.into_iter().map(|c| (c.id, c.text)).collect();
     edits::correct_words(&ws, &kindle, &changes).map_err(said)
+}
+
+/// Write `text` as a new note of the Kindle whose cut serial is `kindle`, on
+/// `on`. Answers the moment that names it.
+#[tauri::command]
+fn write_note(
+    app: AppHandle,
+    open: State<'_, Open>,
+    kindle: String,
+    on: notes::On,
+    text: String,
+) -> Answer<String> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    notes::write(&ws, &kindle, &on, &text).map_err(said)
+}
+
+/// Set the words of the note `written` names in the Kindle `kindle`'s notes.
+#[tauri::command]
+fn reword_note(
+    app: AppHandle,
+    open: State<'_, Open>,
+    kindle: String,
+    written: String,
+    text: String,
+) -> Answer<()> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    notes::reword(&ws, &kindle, &written, &text).map_err(said)
+}
+
+/// Delete the note `written` names in the Kindle `kindle`'s notes, once a
+/// dialog is answered yes. Answers whether it went.
+#[tauri::command]
+async fn delete_note(
+    app: AppHandle,
+    open: State<'_, Open>,
+    kindle: String,
+    written: String,
+) -> Answer<bool> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    let lang = ws.config.lang();
+    let (s, w) = (lang.strings(), screen::Words::of(lang));
+    if !ask(
+        &app,
+        w.delete_note_ask,
+        w.delete_note_said.to_string(),
+        s.delete_do,
+        s.cancel,
+    ) {
+        return Ok(false);
+    }
+    notes::remove(&ws, &kindle, &written).map_err(said)?;
+    Ok(true)
 }
 
 /// Show `path` in its folder.
@@ -439,9 +534,12 @@ pub fn run() {
             kindle,
             today,
             import,
-            import_kindle,
+            sync_kindle,
             set_setting,
             edit_highlight,
+            write_note,
+            reword_note,
+            delete_note,
             choose_folder,
             pick_backup,
             reveal,
@@ -467,6 +565,15 @@ mod tests {
         assert_eq!(saved[0].id.at, "2026-10-07T09:46:44");
         assert_eq!((saved[0].id.location, saved[0].id.start), (42, -1));
         assert_eq!(saved[0].text.as_deref(), Some("letting everyone down?"));
+        let note: notes::On =
+            serde_json::from_str(r#"{"book":{"key":"B00KEY","extent":7}}"#).unwrap();
+        assert_eq!(
+            note,
+            notes::On::Book {
+                key: "B00KEY".into(),
+                extent: 7
+            }
+        );
         let given_back: Vec<Correction> = serde_json::from_str(
             r#"[{"id":{"at":"2026-10-07T09:46:51","kind":"highlight","title":"A Therapeutic Journey","location":42,"start":-1},"text":null}]"#,
         )

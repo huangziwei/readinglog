@@ -1,5 +1,5 @@
 //! The two highlight sources joined: the `.sdr` rare sidecar is the roster of
-//! the highlights a book carries, `My Clippings.txt` the journal of every write ever.
+//! the highlights a book carries, `My Clippings.txt` a clipping for every write ever.
 //! Neither is a superset, and their union holds deleted highlights.
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -10,6 +10,7 @@ use crate::date;
 use crate::identify::normalise;
 use crate::record::{self, Record};
 use crate::sidecar::{Roster, Sidecars, Survey};
+use crate::written::HighlightId;
 
 /// Characters kept of a passage's words; a note's are kept whole.
 pub const EXCERPT: usize = 600;
@@ -157,24 +158,35 @@ impl Highlight {
     }
 }
 
-/// One row of a book's highlights: a passage and the note written on it. A
-/// note carries no link to its passage: an overlap of their ranges is the
-/// only link there is, and a note with no position stands alone.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// One row of a book's highlights: a passage and the notes written on it. A
+/// Kindle's note carries no link to its passage, an overlap of their ranges the
+/// only link there is; a `w` row names its own. A note with neither stands alone.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Paired<'a> {
     pub highlight: &'a Highlight,
-    pub note: Option<&'a Highlight>,
+    /// Every note whose range the passage covers, in the order given.
+    pub notes: Vec<&'a Highlight>,
 }
 
-/// `highlights` as the screens list them, in the order given: every note whose
-/// range a passage covers folded into that passage's own row.
-pub fn paired<'a>(highlights: &[&'a Highlight]) -> Vec<Paired<'a>> {
+/// `highlights` as the screens list them, in the order given: every note folded
+/// into its passage's own row, the passage `own` names for it where that
+/// passage is listed, else the one whose range covers it.
+pub fn paired<'a>(
+    highlights: &[&'a Highlight],
+    own: impl Fn(&Highlight) -> Option<HighlightId>,
+) -> Vec<Paired<'a>> {
     // Which passage each note belongs under, and `None` for one that belongs
     // under nothing.
     let under: Vec<Option<usize>> = highlights
         .iter()
         .map(|note| match note.kind == Kind::Note {
-            true => covering(highlights, note),
+            true => own(note)
+                .and_then(|id| {
+                    highlights
+                        .iter()
+                        .position(|m| m.kind != Kind::Note && id.names(m))
+                })
+                .or_else(|| covering(highlights, note)),
             false => None,
         })
         .collect();
@@ -184,10 +196,12 @@ pub fn paired<'a>(highlights: &[&'a Highlight]) -> Vec<Paired<'a>> {
         .filter(|(at, _)| under[*at].is_none())
         .map(|(at, highlight)| Paired {
             highlight,
-            note: under
+            notes: under
                 .iter()
-                .position(|held| *held == Some(at))
-                .map(|i| highlights[i]),
+                .zip(highlights)
+                .filter(|(held, _)| **held == Some(at))
+                .map(|(_, note)| *note)
+                .collect(),
         })
         .collect()
 }
@@ -659,8 +673,8 @@ fn one(
                 highlight.extent = book.extent;
             }
         }
-        // Absence means deletion only where a sidecar is in a position to
-        // say so. A book with none, or an unparsed one, says nothing.
+        // `None`: retired where the book's `roster` is trusted; `state` stands for
+        // a book with no sidecar or an unparsed one.
         None => {
             let roster = held
                 .iter()
@@ -1672,13 +1686,25 @@ mod tests {
         note.body = "我不是很确定但觉得这是在骂人。".into();
         note.at = "2026-09-04T00:53:52".into();
         let held = [&passage, &note];
-        let rows = paired(&held);
+        let rows = paired(&held, |_| None);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].highlight.kind, Kind::Highlight);
-        assert_eq!(
-            rows[0].note.map(|n| n.body.as_str()),
-            Some(note.body.as_str())
-        );
+        assert_eq!(rows[0].notes, [&note]);
+    }
+
+    #[test]
+    fn a_passage_holds_every_note_its_range_covers() {
+        let passage = highlight(State::Live, 325, 374);
+        let mut first = highlight(State::Live, 325, 374);
+        first.kind = Kind::Note;
+        first.at = "2026-09-04T00:53:52".into();
+        let mut second = highlight(State::Live, 374, 374);
+        second.kind = Kind::Note;
+        second.at = "2026-09-04T00:54:38".into();
+        let held = [&second, &passage, &first];
+        let rows = paired(&held, |_| None);
+        assert_eq!(rows.len(), 1, "{rows:#?}");
+        assert_eq!(rows[0].notes, [&second, &first], "in the order given");
     }
 
     #[test]
@@ -1687,16 +1713,16 @@ mod tests {
         let mut note = highlight(State::Live, 900, 905);
         note.kind = Kind::Note;
         let held = [&passage, &note];
-        let rows = paired(&held);
+        let rows = paired(&held, |_| None);
         assert_eq!(rows.len(), 2, "{rows:#?}");
-        assert!(rows.iter().all(|r| r.note.is_none()));
+        assert!(rows.iter().all(|r| r.notes.is_empty()));
 
         // And a note the sidecar never placed is not guessed onto a
         // neighbour: nothing states where it is.
         let mut adrift = highlight(State::Unconfirmed, -1, -1);
         adrift.kind = Kind::Note;
         let held = [&passage, &adrift];
-        assert_eq!(paired(&held).len(), 2);
+        assert_eq!(paired(&held, |_| None).len(), 2);
     }
 
     #[test]
@@ -1707,11 +1733,11 @@ mod tests {
         let mut note = highlight(State::Live, 350, 355);
         note.kind = Kind::Note;
         let held = [&wide, &close, &note];
-        let rows = paired(&held);
+        let rows = paired(&held, |_| None);
         assert_eq!(rows.len(), 2);
         let noted = rows
             .iter()
-            .find(|r| r.note.is_some())
+            .find(|r| !r.notes.is_empty())
             .expect("a paired row");
         assert_eq!((noted.highlight.start, noted.highlight.end), (300, 400));
     }

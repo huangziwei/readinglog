@@ -145,25 +145,27 @@ fn row(cx: &Ctx, day: i64, at: usize, secs: i64) -> String {
     )
 }
 
-/// The highlights made on `day`, newest first, each book's run as
-/// `highlights::run` sets it over `day`.
+/// The highlights whose passage or a note on it was made on `day`, newest first,
+/// each book's run as `journal::run` sets it over `day`, the count beside the
+/// heading's name.
 fn highlights(cx: &Ctx, day: i64) -> String {
+    let made = |at: &str| date::parse_day(date::day_of(at)) == Some(day);
     let rows: Vec<_> = cx
         .stats
         .highlights_across()
         .into_iter()
-        .filter(|row| date::parse_day(date::day_of(&row.highlight.at)) == Some(day))
+        .filter(|row| made(&row.highlight.at) || row.notes.iter().any(|n| made(&n.at)))
         .collect();
     if rows.is_empty() {
         return String::new();
     }
     let mut out = format!(
-        "<section><h2>{}<span class=\"said\">{}</span></h2>",
-        esc(cx.s.highlights_tab),
+        "<section><h2><span>{}<span class=\"count\">{}</span></span></h2>",
+        esc(cx.s.journal_tab),
         rows.len()
     );
     for held in rows.chunk_by(|a, b| a.book == b.book) {
-        out.push_str(&super::highlights::run(cx, held, "", Some(day..=day)));
+        out.push_str(&super::journal::run(cx, held, "", Some(day..=day)));
     }
     out.push_str("</section>");
     out

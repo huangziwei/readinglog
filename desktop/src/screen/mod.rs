@@ -6,14 +6,14 @@ mod book;
 mod books;
 mod chart;
 mod day;
-mod highlights;
+mod journal;
 mod look;
 mod rhythm;
 mod settings;
 mod tile;
 mod words;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
@@ -29,7 +29,8 @@ use readinglog_native::view::{Shelf, Sort, Span, Way, Window};
 pub use look::Look;
 pub use words::Words;
 
-use crate::edits::{Edits, HighlightId};
+use crate::edits::HighlightId;
+use crate::notes::Laid;
 use crate::workspace::Workspace;
 
 /// One screen as the window sets it.
@@ -45,8 +46,8 @@ pub struct Page {
 }
 
 /// Where a page is asked for, as the window's hash states it: `/`, `/day/`,
-/// `/week/`, `/month/` and `/year/` with a date (`<yyyy-mm>` and `<yyyy>` read
-/// as the first day), `/all`, `/books`, `/book/<key>`, `/highlights`, `/settings`.
+/// `/week/`, `/month/` and `/year/` with a date (`<yyyy-mm>` and `<yyyy>` the
+/// first day), `/all`, `/books`, `/book/<key>`, `/journal`, `/settings`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
     /// The clock's day, as the Kindle's Today states it.
@@ -65,11 +66,12 @@ pub enum Route {
         key: String,
         /// Which reading the graphs draw, from the first; `None` the standing one.
         reading: Option<usize>,
-        /// Which end the highlights open at.
+        /// Which end the journal opens at.
         way: Way,
         query: String,
     },
-    Highlights(String),
+    /// `/journal`: every book's highlights and notes, under its search.
+    Journal(String),
     Settings,
 }
 
@@ -135,7 +137,7 @@ impl Route {
                 way: way(asked("way")),
                 query: asked("q"),
             },
-            ["highlights"] => Route::Highlights(asked("q")),
+            ["journal"] => Route::Journal(asked("q")),
             ["settings"] => Route::Settings,
             _ => Route::Today,
         }
@@ -223,7 +225,7 @@ impl Route {
                     ("q", search.clone()),
                 ])
             ),
-            Route::Highlights(search) => format!("#/highlights{}", query(&[("q", search.clone())])),
+            Route::Journal(search) => format!("#/journal{}", query(&[("q", search.clone())])),
             Route::Settings => "#/settings".into(),
         }
     }
@@ -286,32 +288,37 @@ pub struct Shown {
     pub kindles: Vec<Option<String>>,
     /// Each source's Kindle by its cut serial, empty for the backups naming none.
     pub serials: Vec<String>,
-    /// The highlights in words `highlights.toml` sets, by their Kindle's serial.
+    /// What `kindles::labels` calls each source.
+    pub labels: Vec<String>,
+    /// The highlights in words a correction sets, by their Kindle's serial.
     pub corrected: HashSet<(String, HighlightId)>,
+    /// The notes laid into the record, by their Kindle's serial and the
+    /// identity each takes there.
+    pub written: HashMap<(String, HighlightId), Laid>,
 }
 
 impl Shown {
     /// The record `ws` holds as of `today`, the day `date::now` answers, each
-    /// highlight in the words `highlights.toml` sets; `None` where the record
-    /// holds no sitting.
+    /// source as `Record::drawn` draws it; `None` where the record holds no
+    /// sitting.
     pub fn of(ws: &Workspace, today: i64) -> Option<Shown> {
         let mut sources = ws.sources();
-        let edits = Edits::load(&ws.dir).unwrap_or_else(|err| {
-            eprintln!("!! {err:#}");
-            Edits::default()
-        });
         let serials: Vec<String> = sources
             .iter()
             .map(|s| s.serial.clone().unwrap_or_default())
             .collect();
         let mut corrected = HashSet::new();
+        let mut written = HashMap::new();
         for (source, serial) in sources.iter_mut().zip(&serials) {
-            corrected.extend(
-                edits
-                    .correct(&mut source.record, serial)
+            let drawn = source.record.drawn();
+            corrected.extend(drawn.corrected.into_iter().map(|id| (serial.clone(), id)));
+            written.extend(
+                drawn
+                    .written
                     .into_iter()
-                    .map(|id| (serial.clone(), id)),
+                    .map(|(id, laid)| ((serial.clone(), id), laid)),
             );
+            source.record = drawn.record;
         }
         let mut record = crate::kindles::together(&sources);
         if record.sittings.is_empty() {
@@ -324,13 +331,17 @@ impl Shown {
             .map(|b| crate::kindles::on_this_computer(b, &dirs))
             .collect();
         let (settings, _) = ws.config.settings();
-        let stats = Stats::build(
+        let mut stats = Stats::build(
             &record,
             today,
             settings.show_unidentified,
             settings.stats_from,
             settings.sitting_floor,
         );
+        stats.written = written
+            .iter()
+            .map(|((_, id), laid)| (id.clone(), laid.clone()))
+            .collect();
         // `thumbnail`: the copy `on_this_computer` names, where `has_cover`.
         let covers: Vec<Option<PathBuf>> = stats
             .books
@@ -368,8 +379,20 @@ impl Shown {
             tones,
             kindles,
             serials,
+            labels,
             corrected,
+            written,
         })
+    }
+
+    /// What the Kindle the cut serial `serial` names is called: as its source
+    /// is in [`Shown::labels`], else by its model.
+    pub fn called(&self, serial: &str) -> String {
+        self.serials
+            .iter()
+            .position(|held| held == serial)
+            .and_then(|n| self.labels.get(n).cloned())
+            .unwrap_or_else(|| crate::kindles::model(serial).to_string())
     }
 
     /// The years holding a sitting, newest first.
@@ -396,7 +419,7 @@ pub fn key_of(book: &readinglog_native::stats::BookStat) -> String {
 }
 
 /// `route` drawn `width` wide off `shown`, the sidebar beside it. `kindle` is
-/// the cut serial of a Kindle plugged in that Import can read.
+/// the cut serial of the Kindle plugged in, drawn as [`kindle_card`].
 pub fn render(
     shown: Option<&Shown>,
     ws: &Workspace,
@@ -438,6 +461,7 @@ pub fn render(
         kindles: &shown.kindles,
         serials: &shown.serials,
         corrected: &shown.corrected,
+        written: &shown.written,
         links,
         uncovered: shown.settings.show_uncovered,
         width: (width - 120.0).max(320.0),
@@ -474,7 +498,7 @@ pub fn render(
             let title = shown.stats.books[at].title.clone();
             (title, book::page(&cx, at, *reading, *way, query))
         }
-        Route::Highlights(query) => (s.highlights_tab.to_string(), highlights::page(&cx, query)),
+        Route::Journal(query) => (s.journal_tab.to_string(), journal::page(&cx, query)),
         Route::Settings => (s.config.to_string(), settings::page(ws, Some(shown), s, w)),
     };
     main.push_str(&editor(s, w));
@@ -487,16 +511,24 @@ pub fn render(
     }
 }
 
-/// The editor `app.js` opens a highlight in: the text areas go above these
-/// buttons, and `revert` stays only on a highlight in words set here.
+/// The editors `app.js` opens: a highlight's, its text areas above these
+/// buttons and `revert` only on one in words set here; and a desktop note's,
+/// `delete-note` taken away where it opens on no note.
 fn editor(s: &Strings, w: &Words) -> String {
     format!(
         "<template id=\"editor\"><div class=\"editor\"><p class=\"acts\">\
          <button data-act=\"revert\" data-tip=\"{}\">{}</button>\
          <button data-act=\"cancel\">{}</button>\
-         <button class=\"save\" data-act=\"save\">{}</button></p></div></template>",
+         <button class=\"save\" data-act=\"save\">{}</button></p></div></template>\
+         <template id=\"note-editor\"><div class=\"editor\"><textarea data-part=\"note\"></textarea>\
+         <p class=\"acts\"><button data-act=\"delete-note\">{}</button>\
+         <button data-act=\"cancel-note\">{}</button>\
+         <button class=\"save\" data-act=\"save-note\">{}</button></p></div></template>",
         esc(w.revert_tip),
         esc(w.revert),
+        esc(s.cancel),
+        esc(w.save),
+        esc(w.delete),
         esc(s.cancel),
         esc(w.save)
     )
@@ -517,9 +549,10 @@ struct Ctx<'a> {
     tones: &'a [[u8; 3]],
     covers: &'a [Option<PathBuf>],
     kindles: &'a [Option<String>],
-    /// [`Shown::serials`] and [`Shown::corrected`].
+    /// [`Shown::serials`], [`Shown::corrected`] and [`Shown::written`].
     serials: &'a [String],
     corrected: &'a HashSet<(String, HighlightId)>,
+    written: &'a HashMap<(String, HighlightId), Laid>,
     links: Covers,
     /// `Settings::show_uncovered`, which `view::books::listed` takes.
     uncovered: bool,
@@ -550,6 +583,17 @@ impl Ctx<'_> {
     /// The Kindle the book at `at` is from, where `kindles` names one.
     fn kindle(&self, at: usize) -> Option<&str> {
         self.kindles.get(at).and_then(|k| k.as_deref())
+    }
+
+    /// The note written here that `Record::drawn` laid as `highlight`, in the
+    /// book at `at`.
+    fn laid(
+        &self,
+        at: usize,
+        highlight: &readinglog_native::highlights::Highlight,
+    ) -> Option<&Laid> {
+        self.written
+            .get(&(self.serial(at).to_string(), HighlightId::of(highlight)))
     }
 
     /// The cover of the book at `at`, or one made of its title on its tone.
@@ -618,12 +662,12 @@ fn side(
         item(&mut out, &Route::Span(Span::AllTime, 0), s.rhythm, rhythm);
         let books = matches!(route, Route::Books { .. } | Route::Book { .. });
         item(&mut out, &Route::shelf(Shelf::All, None), s.books, books);
-        let marks = matches!(route, Route::Highlights(_));
+        let journal = matches!(route, Route::Journal(_));
         item(
             &mut out,
-            &Route::Highlights(String::new()),
-            s.highlights_tab,
-            marks,
+            &Route::Journal(String::new()),
+            s.journal_tab,
+            journal,
         );
         let _ = write!(
             out,
@@ -640,14 +684,8 @@ fn side(
         out.push_str("</div>");
     }
     out.push_str("<div class=\"foot\">");
-    if let (Some(_), Some(serial)) = (shown, kindle) {
-        let _ = write!(
-            out,
-            "<div class=\"kindle\"><b>Kindle</b>{}<button type=\"button\" class=\"button\" data-act=\"kindle\" data-serial=\"{}\">{}</button></div>",
-            esc(w.connected),
-            esc(serial),
-            esc(w.import)
-        );
+    if let (Some(shown), Some(serial)) = (shown, kindle) {
+        out.push_str(&kindle_card(w, &shown.called(serial), serial, ""));
     }
     if shown.is_some() {
         let _ = write!(
@@ -663,6 +701,19 @@ fn side(
         esc(s.config)
     );
     out
+}
+
+/// The card of the Kindle plugged in under the cut serial `serial`, `name`
+/// over the line `app.js` sets as a sync goes, and `try_again`, hidden until a
+/// sync stops; `class` is added to `kindle`.
+pub(super) fn kindle_card(w: &Words, name: &str, serial: &str, class: &str) -> String {
+    format!(
+        "<div class=\"kindle{class}\" data-serial=\"{serial}\"><b>{name}</b><p class=\"state\"></p>\
+         <button type=\"button\" class=\"button\" data-act=\"kindle\" data-serial=\"{serial}\" hidden>{again}</button></div>",
+        serial = esc(serial),
+        name = esc(name),
+        again = esc(w.try_again),
+    )
 }
 
 /// A link drawn as a chip, lit where it is the route standing.
@@ -804,8 +855,8 @@ mod tests {
                 query: "a b".into(),
             },
             Route::book("B1".into()),
-            Route::Highlights("a b".into()),
-            Route::Highlights(String::new()),
+            Route::Journal("a b".into()),
+            Route::Journal(String::new()),
             Route::Settings,
         ];
         for route in routes {
@@ -911,11 +962,11 @@ mod tests {
         assert!(one.main.contains("Some words"), "its highlight");
         assert!(draw("/all").main.contains("<svg"));
         assert!(
-            draw("/highlights?q=words")
+            draw("/journal?q=words")
                 .main
                 .contains("Some <mark>words</mark>")
         );
-        assert!(!draw("/highlights?q=nothing").main.contains("Some words"));
+        assert!(!draw("/journal?q=nothing").main.contains("Some words"));
         assert!(draw("/settings").main.contains("data-set=\"show_unnamed\""));
         for route in [
             "/",
@@ -927,7 +978,7 @@ mod tests {
             "/books",
             "/book/B1",
             "/book/B2",
-            "/highlights",
+            "/journal",
         ] {
             let page = draw(route);
             assert!(!page.main.contains(DASH), "{route} states a dash");
@@ -1076,7 +1127,7 @@ mod tests {
         let page = render(
             Some(&shown),
             &ws,
-            &Route::parse("/highlights?q=WORDS"),
+            &Route::parse("/journal?q=WORDS"),
             1072.0,
             Covers::Files,
             None,
@@ -1090,7 +1141,8 @@ mod tests {
             page.main
         );
         assert!(page.main.contains(
-            "<span class=\"when\"><button class=\"edit\" data-act=\"edit\">Edit</button>Sep 1, 2026</span></p>"
+            "<span class=\"when\"><button class=\"edit\" data-act=\"add-note\">Add note</button>\
+             <button class=\"edit\" data-act=\"edit\">Edit</button>Sep 1, 2026</span></p>"
         ));
     }
 
@@ -1112,10 +1164,10 @@ mod tests {
         let opens = "<a class=\"tile\" href=\"#/book/B1\"><div class=\"cover\">";
         let named = "<p class=\"title\" lang=\"en\">A Map of Small Rivers</p>\
                      <p class=\"author\" lang=\"en\">Someone</p>";
-        // `/books` and `/highlights` state the whole record, `/week/` and `/day/` their own days.
+        // `/books` and `/journal` state the whole record, `/week/` and `/day/` their own days.
         for (route, stands) in [
             ("/books", "40m · 40%"),
-            ("/highlights", "40m · 40%"),
+            ("/journal", "40m · 40%"),
             ("/week/2026-09-01", "10m"),
             ("/day/2026-09-01", "10m"),
         ] {
@@ -1129,9 +1181,9 @@ mod tests {
                 "{route}: {main}"
             );
         }
-        let highlights = draw("/highlights");
-        assert!(highlights.contains("<section class=\"run\"><aside><a class=\"tile\""));
-        assert!(highlights.contains("<p class=\"meta\">Last read Oct 1, 2026</p></aside>"));
+        let journal = draw("/journal");
+        assert!(journal.contains("<section class=\"run\"><aside><a class=\"tile\""));
+        assert!(journal.contains("<p class=\"meta\">Last read Oct 1, 2026</p></aside>"));
     }
 
     #[test]
@@ -1315,7 +1367,7 @@ mod tests {
         assert!(drawn.contains("data-kindle=\"G003H2-0001\""));
         assert!(drawn.contains("data-note-at=\"2026-09-01T09:05:10\""));
 
-        // The next import: the Kindle states the words the correction was set
+        // `import` again: the record states the words the correction was set
         // over, beside a highlight made since.
         let since = Highlight {
             start: 900,
@@ -1332,7 +1384,7 @@ mod tests {
         assert!(!drawn.contains(typo));
         assert_eq!(drawn.matches("<div class=\"highlight\"").count(), 2);
 
-        // The Kindle corrected it too: its words stand over the older ones set here.
+        // `import` with the note reworded on the Kindle: its words stand over the correction.
         import("261017-200600", vec![passage, note("down, at last"), since]);
         let drawn = page();
         assert!(drawn.contains("down, at last"), "{drawn}");
@@ -1357,5 +1409,149 @@ mod tests {
         );
         let files = render(Some(&shown), &ws, &route, 1072.0, Covers::Files, None);
         assert!(files.main.contains(&format!("src=\"file://{path}\"")));
+    }
+
+    #[test]
+    fn a_kindle_plugged_in_is_carded_by_its_model_with_try_again_hidden() {
+        let ws = read("screen-card");
+        let shown = Shown::of(&ws, clock()).unwrap();
+        let serial = Some("G003H2-7890");
+        let page = render(
+            Some(&shown),
+            &ws,
+            &Route::Today,
+            1072.0,
+            Covers::Window,
+            serial,
+        );
+        let w = Words::of(Lang::English);
+        assert!(
+            page.side
+                .contains("<b>Kindle Colorsoft</b><p class=\"state\"></p>"),
+            "{}",
+            page.side
+        );
+        let again = format!(
+            "data-serial=\"G003H2-7890\" hidden>{}</button>",
+            w.try_again
+        );
+        assert!(page.side.contains(&again), "{}", page.side);
+    }
+
+    /// [`read`] with the Kindle's own note on its one passage.
+    fn noted(name: &str) -> Workspace {
+        let ws = read(name);
+        let mut record = Record::load(&ws.record_dir());
+        let mut note = highlight(100, "A Map of Small Rivers", "2026-09-01T09:06:00");
+        note.kind = readinglog_native::clippings::Kind::Note;
+        note.body = "The Kindle's own".into();
+        record.highlights.push(note);
+        record.save(&ws.record_dir()).unwrap();
+        ws
+    }
+
+    fn drawn(ws: &Workspace, route: &str) -> String {
+        let shown = Shown::of(ws, clock()).unwrap();
+        render(
+            Some(&shown),
+            ws,
+            &Route::parse(route),
+            1072.0,
+            Covers::Files,
+            None,
+        )
+        .main
+    }
+
+    #[test]
+    fn a_note_written_here_stands_under_its_passage_or_alone_with_its_day() {
+        use readinglog_native::written::{Note, Passage};
+        let ws = noted("screen-notes");
+        let passage = highlight(100, "A Map of Small Rivers", "2026-09-01T09:05:00");
+        let note = |written: &str, text: &str, on: bool| Note {
+            written: written.into(),
+            key: "B1".into(),
+            extent: 100,
+            text: text.into(),
+            on: on.then(|| Passage {
+                id: HighlightId::of(&passage),
+                from: 0,
+                to: 0,
+                words: "Some words".into(),
+            }),
+            ..Note::default()
+        };
+        // Before any note is written here, the Kindle's note states no day.
+        let page = drawn(&ws, "/book/B1");
+        assert!(
+            page.contains("<p class=\"note\">The Kindle's own</p><p class=\"where\">"),
+            "{page}"
+        );
+        let mut record = Record::load(&ws.record_dir());
+        record.add_note(note("2026-10-01T10:00:00", "On the passage", true));
+        record.add_note(note("2026-10-02T08:00:00", "On the book alone", false));
+        record.save(&ws.record_dir()).unwrap();
+        let page = drawn(&ws, "/book/B1");
+        assert!(
+            page.contains(
+                "The Kindle's own</p><p class=\"stamp\">Sep 1, 2026</p>\
+                 <div class=\"dnote\" data-written=\"2026-10-01T10:00:00\">"
+            ),
+            "{page}"
+        );
+        assert!(
+            page.contains("<p>On the passage</p>\n</div><p class=\"stamp\">Oct 1, 2026<button")
+        );
+        assert!(page.contains(
+            "<div class=\"highlight alone\" data-kindle=\"\" data-written=\"2026-10-02T08:00:00\">"
+        ));
+        assert!(!page.contains("class=\"edited\""), "no row is marked");
+        // A day lists a passage made before it when a note on it was written then.
+        let day = drawn(&ws, "/day/2026-10-01");
+        assert!(day.contains("On the passage"), "{day}");
+        assert!(day.contains("<span>Journal<span class=\"count\">1</span></span>"));
+    }
+
+    #[test]
+    fn a_note_written_here_is_drawn_as_its_markdown_and_names_no_place() {
+        use readinglog_native::written::Note;
+        let ws = noted("screen-markdown");
+        let mut record = Record::load(&ws.record_dir());
+        record.add_note(Note {
+            written: "2026-10-16T20:00:00".into(),
+            key: "B1".into(),
+            extent: 100,
+            text: "# I don’t like this book\n\nvery incoherent, a bundle of *scripts*.\n\n\
+                   > Some words\\\n> — Location 120\n\n<b>bold</b>"
+                .into(),
+            ..Note::default()
+        });
+        record.save(&ws.record_dir()).unwrap();
+        let page = drawn(&ws, "/book/B1");
+        assert!(
+            page.contains(
+                "<h1>I don’t like this book</h1>\n<p>very incoherent, a bundle of <em>scripts</em>.</p>"
+            ),
+            "{page}"
+        );
+        assert!(page.contains("data-text=\"# I don’t like this book\n\nvery incoherent"));
+        assert!(page.contains("<span class=\"place\">— Location 120</span>"));
+        assert!(
+            page.contains("&lt;b&gt;bold&lt;/b&gt;"),
+            "HTML in a note is its text"
+        );
+        assert!(
+            page.contains("<p class=\"where\"><span></span>"),
+            "no place on the book alone"
+        );
+        assert!(
+            !page.contains("id=\"posts\"") && !page.contains("#/post"),
+            "{page}"
+        );
+        // `q` washes the words and leaves every tag as it stands.
+        let found = drawn(&ws, "/book/B1?q=incoherent");
+        assert!(found.contains("very <mark>incoherent</mark>, a"), "{found}");
+        let p = drawn(&ws, "/book/B1?q=p");
+        assert!(p.contains("<p>") && !p.contains("<<mark>"), "{p}");
     }
 }

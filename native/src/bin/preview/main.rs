@@ -99,7 +99,7 @@ const SCREENS: &[(&str, Tab)] = &[
     ("books", Tab::Books),
     ("book", Tab::Books),
     ("search", Tab::Books),
-    ("highlights", Tab::Books),
+    ("journal", Tab::Books),
 ];
 
 /// One picture to draw: a screen or a sketch, and what it is showing.
@@ -160,6 +160,8 @@ struct Opts {
     stats_from: StatsFrom,
     /// Whether a list holds the books no cover can be drawn for.
     uncovered: bool,
+    /// Whether every shot draws `fixture::written`, notes written on the desktop.
+    written: bool,
 }
 
 impl Default for Opts {
@@ -184,6 +186,7 @@ impl Default for Opts {
             floor: SittingFloor::default(),
             stats_from: StatsFrom::default(),
             uncovered: true,
+            written: false,
         }
     }
 }
@@ -216,7 +219,7 @@ fn run() -> Result<()> {
         for lang in opts.langs.iter().copied() {
             for size in opts.sizes.iter().copied() {
                 for shot in &opts.shots {
-                    let record = thinned_for(shot, &opts, &opts.covers);
+                    let record = thinned_for(shot, &opts, &opts.covers, lang);
                     let record = record.as_ref().unwrap_or(&library);
                     let mut fb = Framebuffer::offscreen(w, h);
                     let mut app = open(record, &opts, w, h, lang, size)?;
@@ -328,9 +331,15 @@ fn open(record: &Record, opts: &Opts, w: u32, h: u32, lang: Lang, size: TextSize
     Ok(app)
 }
 
-/// The record a shot wants, where it wants one of its own.
-fn thinned_for(shot: &Shot, opts: &Opts, covers: &Path) -> Option<Record> {
+/// The record a shot wants, where it wants one of its own, drawn in `lang`.
+fn thinned_for(shot: &Shot, opts: &Opts, covers: &Path, lang: Lang) -> Option<Record> {
     let keep = match (shot.name.as_str(), shot.of.as_deref()) {
+        // Notes written on the desktop, in the language the shot is drawn in.
+        (name, of)
+            if opts.written || (name == "book" && of.is_some_and(|of| of.contains(":written"))) =>
+        {
+            return Some(fixture::written(opts.day, covers, lang == Lang::Japanese));
+        }
         ("today", Some("quiet")) => 1,
         ("today", Some("empty")) => 0,
         ("today", Some("busy")) => return Some(fixture::crowded(opts.day, covers)),
@@ -410,16 +419,24 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
     let Some((_, tab)) = SCREENS.iter().find(|(name, _)| *name == shot.name) else {
         return Err(anyhow!("no screen or sketch called {}", shot.name));
     };
-    // `book:<index>`, `book:<index>:graphs` and `book:<index>:highlights` for the
+    // `book:<index>`, `book:<index>:graphs` and `book:<index>:journal` for the
     // book's other pages, and `book:<index>:<question>` with one up over it.
     let (book, asking, page, from, find) = match shot.name.as_str() {
         "book" => {
             let of = shot.of.as_deref().unwrap_or("0");
             let (at, asking, page, from, find) = match of.split_once(':') {
                 Some((at, "cleared")) => (at, None, BookTab::Statistics, 0, None),
-                // `highlights` opens the list at its head, `highlights:<n>` `n` rows
-                // down, and `highlights:earliest` the list turned over.
-                Some((at, "highlights")) => (at, None, BookTab::Highlights, 0, None),
+                // `journal` opens the list at its head, `journal:<n>` `n` rows
+                // down, and `journal:earliest` the list turned over; `written`
+                // and `written:<n>` the same over `fixture::written`.
+                Some((at, "journal" | "written")) => (at, None, BookTab::Journal, 0, None),
+                Some((at, page)) if page.starts_with("written:") => (
+                    at,
+                    None,
+                    BookTab::Journal,
+                    page["written:".len()..].parse().unwrap_or(0),
+                    None,
+                ),
                 // `graphs` draws the standing reading, `graphs:<n>` the one
                 // standing `n` from the first.
                 Some((at, page)) if page == "graphs" || page.starts_with("graphs:") => {
@@ -430,15 +447,15 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
                 Some((at, page)) if page == "find" || page.starts_with("find:") => (
                     at,
                     None,
-                    BookTab::Highlights,
+                    BookTab::Journal,
                     0,
                     Some(searching(page.strip_prefix("find:"))),
                 ),
-                Some((at, page)) if page.starts_with("highlights:") => (
+                Some((at, page)) if page.starts_with("journal:") => (
                     at,
                     None,
-                    BookTab::Highlights,
-                    page["highlights:".len()..].parse().unwrap_or(0),
+                    BookTab::Journal,
+                    page["journal:".len()..].parse().unwrap_or(0),
                     None,
                 ),
                 Some((at, name)) => (at, Some(question(name)?), BookTab::Statistics, 0, None),
@@ -454,8 +471,8 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
         of.rsplit_once("graphs:")
             .and_then(|(_, at)| at.parse::<usize>().ok())
     }));
-    app.set_highlights_way(match shot.of.as_deref() {
-        Some(of) if of.ends_with(":highlights:earliest") => Way::Up,
+    app.set_journal_way(match shot.of.as_deref() {
+        Some(of) if of.ends_with(":journal:earliest") => Way::Up,
         _ => Way::Down,
     });
     app.set_book_search(find);
@@ -477,10 +494,10 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
             Some(other) => bail!("no config shot called {other}"),
         });
     }
-    if shot.name == "search" || shot.name == "highlights" {
+    if shot.name == "search" || shot.name == "journal" {
         app.set_search(Some(searching(shot.of.as_deref())));
         app.set_scope(match shot.name.as_str() {
-            "highlights" => Scope::Highlights,
+            "journal" => Scope::Journal,
             _ => Scope::Books,
         });
     }
@@ -738,12 +755,12 @@ fn list() {
             }
             "today" => "  (:quiet :empty :busy)",
             "book" => {
-                "  (:<index> :<index>:graphs :<index>:graphs:<n> :<index>:highlights\n   :<index>:highlights:<n> :<index>:highlights:earliest :<index>:find\n   :<index>:find:<query> :<index>:restart :<index>:mark :<index>:unmark\n   :<index>:clear :<index>:cleared)"
+                "  (:<index> :<index>:graphs :<index>:graphs:<n> :<index>:journal\n   :<index>:journal:<n> :<index>:journal:earliest :<index>:find\n   :<index>:find:<query> :<index>:restart :<index>:mark :<index>:unmark\n   :<index>:clear :<index>:cleared :<index>:written :<index>:written:<n>)"
             }
             "config" => {
                 "  (:reset :nobackup :restore :gone :rebuild :many :many2 :backups\n   :backups2)"
             }
-            "search" | "highlights" => "  (:<query> :empty :none :down :preedit)",
+            "search" | "journal" => "  (:<query> :empty :none :down :preedit)",
             "books" => {
                 "  (:finished :unfinished :unfinished-progress :time :progress :up\n   :mid :last :window :windowweek :windowprogress :windowempty)"
             }
@@ -794,6 +811,7 @@ fn read_args(args: impl Iterator<Item = String>) -> Result<Opts> {
             "--stats-from" => opts.stats_from = stats_from(&value()?)?,
             "--hide-uncovered" => opts.uncovered = false,
             "--hits" => opts.hits = true,
+            "--written" => opts.written = true,
             "--out" => opts.out = PathBuf::from(value()?),
             "--covers" => opts.covers = PathBuf::from(value()?),
             "--record" => opts.record = Some(PathBuf::from(value()?)),
@@ -859,12 +877,12 @@ fn everything() -> Vec<Shot> {
         "book:1:graphs",
         "book:2:graphs",
         "book:5:graphs",
-        "book:5:highlights",
-        "book:8:highlights",
-        "book:8:highlights:5",
-        "book:13:highlights",
-        "book:12:highlights",
-        "book:0:highlights",
+        "book:5:journal",
+        "book:8:journal",
+        "book:8:journal:5",
+        "book:13:journal",
+        "book:12:journal",
+        "book:0:journal",
         "config",
         "update:downloading",
         "update:done",

@@ -6,6 +6,7 @@
 #![allow(rustdoc::private_intra_doc_links)]
 
 pub mod app;
+pub mod applog;
 pub mod backup;
 pub mod clippings;
 pub mod clock;
@@ -16,13 +17,13 @@ pub mod font;
 pub mod hanfold;
 pub mod highlights;
 pub mod identify;
-pub mod journal;
 pub mod keyboard;
 pub mod lang;
 pub mod library;
 pub mod lipc;
 pub mod log;
 pub mod mark;
+pub mod markdown;
 pub mod net;
 pub mod open;
 pub mod orientation;
@@ -36,4 +37,5 @@ pub mod update;
 pub mod view;
 pub mod vocab;
 pub mod wrap;
+pub mod written;
 pub mod zone;

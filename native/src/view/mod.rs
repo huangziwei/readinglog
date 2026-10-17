@@ -10,8 +10,8 @@ pub mod book_graphs;
 pub mod books;
 pub mod config;
 pub mod daybooks;
-pub mod highlights;
 pub mod home;
+pub mod journal;
 pub mod pager;
 pub mod rhythm;
 pub mod search;
@@ -37,10 +37,10 @@ pub enum Hit {
     Book(usize),
     /// One of the open book's own three tabs.
     BookTab(BookTab),
-    /// Where the open book's list of highlights opens, as an index into it.
-    HighlightsPage(usize),
+    /// Where the open book's journal opens, as an index into it.
+    JournalPage(usize),
     /// A passage the search found: the book it was highlighted in, and the row's
-    /// place in that book's own list of highlights.
+    /// place in that book's own journal.
     Highlight(usize, usize),
     /// Open a book through `open::uri`, by its index in [`Stats::books`].
     /// Leaves the app, as [`Hit::Exit`] does.
@@ -198,12 +198,12 @@ pub enum BookTab {
     Statistics,
     /// The reading drawn: the progress, the journey and the clock.
     Graphs,
-    /// The book's highlights, most recent first.
-    Highlights,
+    /// The book's journal: its highlights and notes, most recent first.
+    Journal,
 }
 
 impl BookTab {
-    pub const ALL: [BookTab; 3] = [BookTab::Statistics, BookTab::Graphs, BookTab::Highlights];
+    pub const ALL: [BookTab; 3] = [BookTab::Statistics, BookTab::Graphs, BookTab::Journal];
 
     /// What this page is called, in the interface's own language.
     pub fn label(self, lang: Lang) -> &'static str {
@@ -211,7 +211,7 @@ impl BookTab {
         match self {
             BookTab::Statistics => s.statistics,
             BookTab::Graphs => s.graphs_tab,
-            BookTab::Highlights => s.highlights_tab,
+            BookTab::Journal => s.journal_tab,
         }
     }
 }
@@ -547,10 +547,10 @@ pub struct State {
     pub list_from: usize,
     /// Which of the open book's two pages is showing.
     pub book_tab: BookTab,
-    /// How far down that book's list of highlights has been paged.
-    pub highlights_from: usize,
+    /// How far down that book's journal has been paged.
+    pub journal_from: usize,
     /// Which end that list opens at, which opening another book keeps.
-    pub highlights_way: Way,
+    pub journal_way: Way,
     /// Which of the open book's readings the Graphs tab draws, counted from
     /// the first. `None` takes the standing one.
     pub reading: Option<usize>,
@@ -580,8 +580,8 @@ impl State {
             alltime_page: 0,
             list_from: 0,
             book_tab: BookTab::default(),
-            highlights_from: 0,
-            highlights_way: Way::default(),
+            journal_from: 0,
+            journal_way: Way::default(),
             reading: None,
         }
     }
@@ -591,7 +591,7 @@ impl State {
     pub fn open_book(&mut self, book: usize) {
         self.book = Some(book);
         self.book_tab = BookTab::default();
-        self.highlights_from = 0;
+        self.journal_from = 0;
         self.reading = None;
         self.book_search = None;
         if let Some(search) = self.search.as_mut() {
@@ -626,8 +626,8 @@ impl State {
     /// may differ, and `at` is read through it.
     pub fn open_highlight(&mut self, book: usize, at: usize, of: usize) {
         self.open_book(book);
-        self.book_tab = BookTab::Highlights;
-        self.highlights_from = self.highlights_way.place(at, of);
+        self.book_tab = BookTab::Journal;
+        self.journal_from = self.journal_way.place(at, of);
     }
 
     /// Show `tab` of the open book. Answers whether that moved anywhere.
@@ -636,15 +636,15 @@ impl State {
             return false;
         }
         self.book_tab = tab;
-        self.highlights_from = 0;
+        self.journal_from = 0;
         true
     }
 
-    /// Turn the open book's list of highlights over, which opens it at the head
+    /// Turn the open book's journal over, which opens it at the head
     /// again.
-    pub fn flip_highlights(&mut self) {
-        self.highlights_way = self.highlights_way.flipped();
-        self.highlights_from = 0;
+    pub fn flip_journal(&mut self) {
+        self.journal_way = self.journal_way.flipped();
+        self.journal_from = 0;
     }
 
     /// Go to `tab`, closing any book, day or shelf open over it. Answers
@@ -675,7 +675,7 @@ impl State {
         self.alltime_page = 0;
         self.list_from = 0;
         self.book_tab = BookTab::default();
-        self.highlights_from = 0;
+        self.journal_from = 0;
         self.reading = None;
         true
     }
@@ -891,41 +891,41 @@ mod tests {
     }
 
     #[test]
-    fn a_book_opens_on_its_statistics_and_steps_onto_its_highlights() {
+    fn a_book_opens_on_its_statistics_and_steps_onto_its_journal() {
         // The book screen is one track: the statistics page, then each page of
-        // its highlights. Stepping is what walks it, and stepping off either end
+        // its journal. Stepping is what walks it, and stepping off either end
         // does nothing — the screen is left by a tab.
         let mut s = State::new(third());
         s.open_book(3);
         assert_eq!(s.book_tab, BookTab::Statistics);
-        assert_eq!(s.highlights_from, 0);
+        assert_eq!(s.journal_from, 0);
 
-        assert!(s.go_in_book(BookTab::Highlights));
-        assert!(!s.go_in_book(BookTab::Highlights), "already there");
-        s.highlights_from = 5;
+        assert!(s.go_in_book(BookTab::Journal));
+        assert!(!s.go_in_book(BookTab::Journal), "already there");
+        s.journal_from = 5;
         // Coming back to the statistics opens the highlights at their head again.
         assert!(s.go_in_book(BookTab::Statistics));
-        assert_eq!(s.highlights_from, 0);
+        assert_eq!(s.journal_from, 0);
 
         // And another book opens on its own statistics, whatever the last one
         // was left showing.
-        s.go_in_book(BookTab::Highlights);
-        s.highlights_from = 5;
+        s.go_in_book(BookTab::Journal);
+        s.journal_from = 5;
         s.open_book(4);
         assert_eq!(s.book_tab, BookTab::Statistics);
-        assert_eq!(s.highlights_from, 0);
+        assert_eq!(s.journal_from, 0);
     }
 
     #[test]
     fn a_tab_change_keeps_the_order_and_the_scope_and_takes_the_search_off() {
         let mut s = State::new(third());
         s.sort = Sort::Time;
-        s.scope = Scope::Highlights;
+        s.scope = Scope::Journal;
         s.search = Some(Search::default());
         assert!(s.go(Tab::Rhythm));
         assert!(s.search.is_none(), "the search is over the Books tab");
         assert_eq!(s.sort, Sort::Time, "the order is the reader's own answer");
-        assert_eq!(s.scope, Scope::Highlights, "and so is the scope");
+        assert_eq!(s.scope, Scope::Journal, "and so is the scope");
     }
 
     #[test]
@@ -938,38 +938,35 @@ mod tests {
         });
         s.open_highlight(4, 7, 12);
         assert_eq!(s.book, Some(4));
-        assert_eq!(s.book_tab, BookTab::Highlights);
-        assert_eq!(s.highlights_from, 7, "the book opens on the passage tapped");
+        assert_eq!(s.book_tab, BookTab::Journal);
+        assert_eq!(s.journal_from, 7, "the book opens on the passage tapped");
         // The keyboard comes down under the book, as it does for any book
         // opened out of the results.
         assert_eq!(s.search.as_ref().map(|search| search.keyboard), Some(false));
         // The same passage, counted from the other end, where the book's own
         // list is turned over.
-        s.highlights_way = Way::Up;
+        s.journal_way = Way::Up;
         s.open_highlight(4, 7, 12);
-        assert_eq!(
-            s.highlights_from, 4,
-            "the passage is the fifth from the front"
-        );
+        assert_eq!(s.journal_from, 4, "the passage is the fifth from the front");
     }
 
     #[test]
-    fn turning_the_highlights_over_opens_the_list_at_its_head() {
+    fn turning_the_journal_over_opens_the_list_at_its_head() {
         let mut s = State::new(third());
         s.open_book(3);
-        s.go_in_book(BookTab::Highlights);
-        s.highlights_from = 6;
-        assert_eq!(s.highlights_way, Way::Down, "newest first to start");
-        s.flip_highlights();
-        assert_eq!(s.highlights_way, Way::Up);
-        assert_eq!(s.highlights_from, 0, "a turned list opens at its own head");
+        s.go_in_book(BookTab::Journal);
+        s.journal_from = 6;
+        assert_eq!(s.journal_way, Way::Down, "newest first to start");
+        s.flip_journal();
+        assert_eq!(s.journal_way, Way::Up);
+        assert_eq!(s.journal_from, 0, "a turned list opens at its own head");
         // And back, which is the only other place the caret leads.
-        s.flip_highlights();
-        assert_eq!(s.highlights_way, Way::Down);
-        // The order is the reader's: opening another book keeps it.
-        s.flip_highlights();
+        s.flip_journal();
+        assert_eq!(s.journal_way, Way::Down);
+        // `journal_way` stands: opening another book keeps it.
+        s.flip_journal();
         s.open_book(5);
-        assert_eq!(s.highlights_way, Way::Up);
+        assert_eq!(s.journal_way, Way::Up);
     }
 
     #[test]

@@ -2,6 +2,7 @@
 //! carries the query, [`listed`] and [`listed_highlights`] name what it found, and
 //! [`results_box`] holds the rows the Books list draws.
 
+use crate::font::Script;
 use crate::hanfold;
 use crate::settings::Scope;
 use crate::stats::{Across, BookStat, Stats};
@@ -10,7 +11,7 @@ use crate::ui::paint::{self, INK, Rect};
 use crate::ui::text::TextRenderer;
 use crate::ui::theme::Theme;
 
-use super::{Ctx, Hit, Search, books, highlights, pager};
+use super::{Ctx, Hit, Search, books, journal, pager};
 
 /// Half the width of [`field`]'s cross, as a share of its height.
 const CROSS: f32 = 0.19;
@@ -68,7 +69,7 @@ impl Needle {
 }
 
 /// The highlights `query` names, across every book, most recently made first:
-/// those whose `highlight.body` or `note.body` [`Needle::holds`]. An empty `query`
+/// those whose `highlight.body` or a note's `body` [`Needle::holds`]. An empty `query`
 /// names every highlight, and `uncovered` is the filter [`listed`] takes.
 pub fn listed_highlights<'a>(stats: &'a Stats, query: &str, uncovered: bool) -> Vec<Across<'a>> {
     let needle = Needle::of(query);
@@ -83,30 +84,32 @@ pub fn listed_highlights<'a>(stats: &'a Stats, query: &str, uncovered: bool) -> 
                 Some(folded) => needle.holds_folded(folded),
                 None => needle.holds(&row.highlight.body),
             };
-            body || row.note.is_some_and(|n| needle.holds(&n.body))
+            body || row.notes.iter().any(|n| needle.holds(&n.body))
         })
         .collect()
 }
 
 /// What [`listed_highlights`] found, as the rows a list of highlights is drawn from.
-fn highlight_rows(stats: &Stats, query: &str, uncovered: bool) -> Vec<highlights::Row> {
+fn highlight_rows(stats: &Stats, query: &str, uncovered: bool) -> Vec<journal::Row> {
     listed_highlights(stats, query, uncovered)
         .into_iter()
         .filter_map(|found| {
             let record = stats.books.get(found.book)?;
-            Some(highlights::Row::new(
+            Some(journal::Row::new(
                 found.book,
                 found.at,
                 record,
                 found.highlight,
-                found.note,
+                &found.notes,
+                stats,
             ))
         })
         .collect()
 }
 
 /// Where each page of the highlights `search` named opens, which is the step a page
-/// button takes. Every row is measured, each being as tall as its own words.
+/// button takes. Every row is measured, each being as tall as its own words, a
+/// desktop note's in `ui`, the window's own script.
 pub fn highlight_pages(
     text: &mut TextRenderer,
     theme: &Theme,
@@ -114,11 +117,12 @@ pub fn highlight_pages(
     area: Rect,
     search: &Search,
     uncovered: bool,
+    ui: Script,
 ) -> Vec<usize> {
     let held = highlight_rows(stats, &search.query, uncovered);
     let inner = rows_box(theme, area, search.keyboard);
-    let at = highlights::Layout::of(text, theme, inner, true).found(theme, inner.h, &search.query);
-    highlights::openings(text, theme, &held, &at, inner.h)
+    let at = journal::Layout::of(text, theme, inner, true, ui).found(theme, inner.h, &search.query);
+    journal::openings(text, theme, &held, &at, inner.h)
 }
 
 /// The box the rows are drawn into: the page under [`field`], floored at the
@@ -165,7 +169,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, search: &Search, scope: Scope) {
     let taken = scope_chips(cx, head, scope);
     let hint = match scope {
         Scope::Books => cx.s().search_hint,
-        Scope::Highlights => cx.s().search_hint_highlights,
+        Scope::Journal => cx.s().search_hint_journal,
     };
     field(
         cx,
@@ -176,7 +180,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, search: &Search, scope: Scope) {
     );
     match scope {
         Scope::Books => shelf(cx, area, search),
-        Scope::Highlights => highlighted(cx, area, search),
+        Scope::Journal => highlighted(cx, area, search),
     }
 }
 
@@ -188,7 +192,7 @@ fn scope_chips(cx: &mut Ctx, area: Rect, on: Scope) -> i32 {
     let script = cx.ui_script();
     let s = cx.s();
     let options: Vec<(&str, crate::font::Script)> =
-        vec![(s.books, script), (s.highlights_tab, script)];
+        vec![(s.books, script), (s.journal_tab, script)];
     let placed = chrome::chip_layout(cx.text, theme, &options, None, area.w);
     let wide = placed.iter().map(Rect::right).max().unwrap_or(0);
     let at = Rect::new(area.right() - wide, area.y, wide, area.h);
@@ -245,9 +249,12 @@ fn highlighted(cx: &mut Ctx, area: Rect, search: &Search) {
         return;
     }
     let inner = rows_box(theme, area, search.keyboard);
-    let at =
-        highlights::Layout::of(cx.text, theme, inner, true).found(theme, inner.h, &search.query);
-    let opens = highlights::openings(cx.text, theme, &held, &at, inner.h);
+    let at = journal::Layout::of(cx.text, theme, inner, true, cx.ui_script()).found(
+        theme,
+        inner.h,
+        &search.query,
+    );
+    let opens = journal::openings(cx.text, theme, &held, &at, inner.h);
     // The page showing opens at the last opening at or before `search.from`.
     let page = opens.iter().rposition(|o| *o <= search.from).unwrap_or(0);
     let from = opens.get(page).copied().unwrap_or(0);
@@ -256,9 +263,9 @@ fn highlighted(cx: &mut Ctx, area: Rect, search: &Search) {
     let shown = &held[from..to];
     let mut y = inner.y;
     for (n, row) in shown.iter().enumerate() {
-        let high = highlights::height(cx.text, theme, &at, row);
+        let high = journal::height(cx.text, theme, &at, row);
         let box_of = Rect::new(inner.x, y, inner.w, high);
-        highlights::row(cx, box_of, row, &at);
+        journal::row(cx, box_of, row, &at);
         cx.hit(Hit::Highlight(row.book, row.at), box_of);
         // A rule between rows, and none under the last.
         if n + 1 < shown.len() {

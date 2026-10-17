@@ -14,7 +14,7 @@ use readinglog_native::orientation::Orientation;
 use readinglog_native::record::Record;
 use readinglog_native::stats::Stats;
 use readinglog_native::{
-    app, backup, clippings, date, font, highlights, identify, journal, lang, library, record,
+    app, applog, backup, clippings, date, font, highlights, identify, lang, library, record,
     settings, sidecar, ui, vocab, zone,
 };
 
@@ -30,10 +30,10 @@ fn main() {
             readinglog_native::update::BUILD
         );
     }
-    // Before anything is written: `journal::trim` bounds the log.
+    // Before anything is written: `applog::trim` bounds the log.
     // `--dump` and `--version` write nothing and leave it alone.
     if matches!(mode.as_str(), "--collect" | "")
-        && let Some(cut) = journal::trim(Path::new(journal::LOG_PATH), journal::CEILING)
+        && let Some(cut) = applog::trim(Path::new(applog::LOG_PATH), applog::CEILING)
     {
         eprintln!(
             "log: trimmed {} B to {} B, {} blocks",
@@ -70,20 +70,23 @@ fn version() -> Result<()> {
 /// `record`.
 fn collect() -> Result<Record> {
     let dir = Path::new(record::RECORD_DIR);
+    let mut seen = record::Seen::of(dir);
     let mut record = Record::open(dir);
-    let said = collect_into(&mut record, dir, &mut |_, _| {});
-    said.state(&journal::stamp_now(), journal::Mode::Collect);
+    let said = collect_into(&mut record, dir, &mut seen, &mut |_, _| {});
+    said.state(&applog::stamp_now(), applog::Mode::Collect);
     Ok(record)
 }
 
 /// [`collect`] over a loaded `record`, reporting log files opened and log files
-/// to open. [`backup::drop_nested`] runs ahead of the pass.
+/// to open. [`backup::drop_nested`] runs ahead of the pass, and `seen` is the
+/// record's file as last read or written.
 fn collect_into(
     record: &mut Record,
     dir: &Path,
+    seen: &mut Option<record::Seen>,
     on: &mut dyn FnMut(usize, usize),
-) -> journal::Launch {
-    let mut said = journal::Launch::default();
+) -> applog::Launch {
+    let mut said = applog::Launch::default();
     match backup::drop_nested(dir, record) {
         Ok(Some((went, at))) => eprintln!(
             "record: {went} nested sittings dropped, backed up first to {}",
@@ -187,8 +190,8 @@ fn collect_into(
     if pass.added + pass.extended + refreshed == 0 && !merge.read && !gated {
         return said;
     }
-    // A failed `save` leaves `record` drawable and unsaved.
-    if let Err(err) = record.save(dir) {
+    // A failed `keep` leaves `record` drawable and unsaved.
+    if let Err(err) = record.keep(dir, seen) {
         eprintln!("!! collect: the record was not written: {err}");
     }
     said
@@ -293,12 +296,13 @@ fn show() -> Result<()> {
 
     // `splash::show` paints before the first gunzip.
     let dir = Path::new(record::RECORD_DIR);
+    let mut seen = record::Seen::of(dir);
     let mut record = Record::open(dir);
     let theme = ui::theme::Theme::for_screen(fb.var.xres, fb.var.yres);
     let mut text = ui::text::TextRenderer::load(theme.body_px)?;
     // The facts that only change when the build, the panel or the clock does.
     // A block identical to the one standing is not written again.
-    journal::Header {
+    applog::Header {
         version: readinglog_native::update::VERSION,
         build: readinglog_native::update::BUILD,
         arch: std::env::consts::ARCH,
@@ -319,7 +323,7 @@ fn show() -> Result<()> {
         record: record.said(),
         zone: zone::describe(date::epoch_now()),
     }
-    .state(Path::new(journal::LOG_PATH));
+    .state(Path::new(applog::LOG_PATH));
     // `splash` draws before `App` and detects for itself.
     let splash_lang = lang::Lang::detect();
     let note = ui::splash::note(&record.watermark, splash_lang.strings());
@@ -333,7 +337,7 @@ fn show() -> Result<()> {
     )?;
 
     let mut painted = 0;
-    let mut said = collect_into(&mut record, dir, &mut |done, total| {
+    let mut said = collect_into(&mut record, dir, &mut seen, &mut |done, total| {
         if done == painted {
             return;
         }
@@ -344,7 +348,8 @@ fn show() -> Result<()> {
     });
 
     let mut app = app::App::new(record, theme, text);
+    app.set_seen(seen);
     said.drawn = Some(app.drawn());
-    said.state(&journal::stamp_now(), journal::Mode::Opened);
+    said.state(&applog::stamp_now(), applog::Mode::Opened);
     app.run(&mut fb, &mut input)
 }

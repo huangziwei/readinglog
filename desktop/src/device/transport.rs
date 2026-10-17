@@ -116,6 +116,10 @@ pub trait Transport: Send + Sync {
         Ok(out)
     }
 
+    /// Write `bytes` at `path`: the old file or the new one on a mounted volume;
+    /// over MTP a whole `<name>.partial` stands beside `path` until it is in place.
+    fn write_atomic(&self, path: &TPath, bytes: &[u8]) -> Result<()>;
+
     fn exists(&self, path: &TPath) -> Result<bool>;
 
     /// What `dir` holds, one level down. Empty where `dir` is absent.

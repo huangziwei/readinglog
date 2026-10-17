@@ -23,8 +23,8 @@ const SPACE: i64 = 1 << 40;
 const KEY_MARK: char = '@';
 
 /// `sources` as one record, each through `Record::drop_nested`: one as it is, two
-/// or more each in a space of its own — every extent, end position and key moved —
-/// and the newest watermark standing.
+/// or more each in a space of its own — every extent, end position and key moved,
+/// each highlight whole, line breaks and all — and the newest watermark standing.
 pub fn together(sources: &[Source]) -> Record {
     let loaded = |record: &Record| {
         let mut out = record.clone();
@@ -35,12 +35,18 @@ pub fn together(sources: &[Source]) -> Record {
         [] => Record::default(),
         [one] => loaded(&one.record),
         many => {
-            let text: String = many
+            let parts: Vec<Record> = many
                 .iter()
                 .enumerate()
-                .map(|(n, source)| apart(&loaded(&source.record), n).text())
+                .map(|(n, source)| apart(&loaded(&source.record), n))
                 .collect();
+            let text: String = parts.iter().map(Record::text).collect();
             let mut out = Record::from_text(&text);
+            out.highlights = parts
+                .iter()
+                .flat_map(|part| part.highlights.iter().cloned())
+                .collect();
+            out.sort_highlights();
             out.watermark = many
                 .iter()
                 .map(|s| s.record.watermark.as_str())
@@ -92,6 +98,10 @@ fn apart(record: &Record, n: usize) -> Record {
         cleared.extent = into(cleared.extent);
         cleared.key = mark(&cleared.key);
     }
+    for note in &mut out.notes {
+        note.extent = into(note.extent);
+        note.key = mark(&note.key);
+    }
     out
 }
 
@@ -141,16 +151,17 @@ pub fn on_this_computer(book: &record::Book, dirs: &[PathBuf]) -> record::Book {
     }
 }
 
-/// What each of `sources` is called: its Kindle's model, with the serial's
+/// The model `serial` names, `Kindle` where no table holds its code.
+pub fn model(serial: &str) -> &'static str {
+    crate::device::model::of(serial).unwrap_or("Kindle")
+}
+
+/// What each of `sources` is called: its Kindle's [`model`], with the serial's
 /// last four where two share one; `unnamed` for the backups naming no Kindle.
 pub fn labels(sources: &[Source], unnamed: &str) -> Vec<String> {
     let models: Vec<Option<&str>> = sources
         .iter()
-        .map(|s| {
-            s.serial
-                .as_deref()
-                .map(|serial| crate::device::model::of(serial).unwrap_or("Kindle"))
-        })
+        .map(|s| s.serial.as_deref().map(model))
         .collect();
     sources
         .iter()
@@ -238,6 +249,29 @@ mod tests {
             let (from, key) = key_origin(&b.cde_key);
             assert_eq!((from, key), (origin(b.extent).0, "B1"));
         }
+    }
+
+    #[test]
+    fn a_note_keeps_its_line_breaks_where_two_kindles_meet() {
+        use readinglog_native::clippings::Kind;
+        use readinglog_native::highlights::Highlight;
+        let mut first = reading(10.0, 600);
+        first.highlights.push(Highlight {
+            extent: 100,
+            title: "One".into(),
+            kind: Kind::Note,
+            at: "2026-09-01T09:05:00".into(),
+            body: "# A title\n\nIts words".into(),
+            ..Highlight::default()
+        });
+        let sources = [
+            source(first, Some("G003H2-7890")),
+            source(reading(60.0, 900), Some("G0027J-ABCD")),
+        ];
+        let one = together(&sources);
+        assert_eq!(one.highlights.len(), 1);
+        assert_eq!(one.highlights[0].body, "# A title\n\nIts words");
+        assert_eq!(origin(one.highlights[0].extent), (Some(0), 100));
     }
 
     #[test]

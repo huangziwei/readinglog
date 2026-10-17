@@ -9,6 +9,7 @@ use readinglog_native::date;
 use readinglog_native::highlights::{Highlight, State};
 use readinglog_native::log::sitting::{Measure, Sitting, Stretch};
 use readinglog_native::record::{self, FINISHED_PERCENT, IdentifiedBy, Record};
+use readinglog_native::written::{HighlightId, Note, Passage};
 
 /// Days of reading laid down behind the day being drawn.
 pub const DAYS: i64 = 1150;
@@ -837,6 +838,126 @@ pub fn crowded(last: i64, covers: &Path) -> Record {
     // The second binge lands past [`library`]'s own call, and each of its
     // sittings takes its progress here.
     climb(&mut record);
+    record
+}
+
+/// [`library`] with notes written on the desktop on slot 9's book: one opening
+/// on a `# ` heading and one with none on the book alone, two under one passage,
+/// and one under another beside the Kindle's own note; in Japanese where `ja`.
+pub fn written(last: i64, covers: &Path, ja: bool) -> Record {
+    let mut record = library(last, covers);
+    let Some(book) = record.books.get(9).cloned() else {
+        return record;
+    };
+    let say = |en: &str, jp: &str| match ja {
+        true => jp.to_string(),
+        false => en.to_string(),
+    };
+    let passage = |record: &Record, words: &str| {
+        record
+            .highlights
+            .iter()
+            .find(|h| h.body == words && h.kind == Kind::Highlight)
+            .cloned()
+    };
+    let street = passage(&record, "Let one street be described twice.");
+    if let Some(street) = &street {
+        record.highlights.push(Highlight {
+            kind: Kind::Note,
+            start: street.start + 1,
+            end: street.start + 9,
+            colour: String::new(),
+            body: "The second time at night.".into(),
+            ..street.clone()
+        });
+        record.sort_highlights();
+    }
+    let end = passage(&record, "End before the running does.");
+    let notes = [
+        (
+            219,
+            None,
+            say(
+                "# On chases that end early\n\nThe book keeps telling you to stop sooner than feels right. Every chapter I put it to got better, and none of them got shorter in the way I feared.",
+                "# 早めに終わる追跡について\n\nこの本は、気持ちより早く止めろと言い続ける。試した章はどれも良くなり、恐れていたほど短くもならなかった。",
+            ),
+        ),
+        (
+            220,
+            end.as_ref(),
+            say("The rule I keep breaking.", "何度も破ってしまう規則。"),
+        ),
+        (
+            216,
+            end.as_ref(),
+            say(
+                "Tried it on chapter three: it works.",
+                "三章で試した。うまくいく。",
+            ),
+        ),
+        (
+            234,
+            None,
+            say(
+                "Halfway, and the chase has not started yet. That is the point.",
+                "半分まで来て、追跡はまだ始まっていない。それが狙いだ。",
+            ),
+        ),
+        (
+            238,
+            street.as_ref(),
+            say(
+                "Same street, other weather, in my draft.",
+                "下書きでも同じ通りを、別の天気で。",
+            ),
+        ),
+    ];
+    for (back, on, text) in notes {
+        let written = date::stamp(last - back, 20 * 3600);
+        record.add_note(Note {
+            written: written.clone(),
+            edited: written,
+            key: book.cde_key.clone(),
+            extent: book.extent,
+            on: on.map(|h| Passage {
+                id: HighlightId::of(h),
+                from: h.start,
+                to: h.end,
+                words: h.body.clone(),
+            }),
+            text,
+            deleted: false,
+        });
+    }
+    // A review longer than any page holds, on slot 0's book, every kind of block in it.
+    if let Some(first) = record.books.first().cloned() {
+        let written = date::stamp(last - 2, 21 * 3600);
+        let paragraph = "The roads in this book are kept the way a ledger is kept, every crossing entered and none forgiven, and the people on them learn to travel light because the road remembers what they carried.";
+        record.add_note(Note {
+            written: written.clone(),
+            edited: written,
+            key: first.cde_key.clone(),
+            extent: first.extent,
+            on: None,
+            text: format!(
+                "# A long way round\n\n{paragraph}\n\n{paragraph}\n\n- salt, twice\n- wells, counted\n  - and the birthdays\n1. the first part\n2. the second\n\n> Nobody crosses the same desert twice.\n\n```\nkept as written\n  and indented\n```\n\n{paragraph}\n\n{paragraph}\n\n{paragraph}"
+            ),
+            deleted: false,
+        });
+    }
+    // Forty paragraphs of a line each on slot 1's book, more air than any page holds.
+    if let Some(second) = record.books.get(1).cloned() {
+        let written = date::stamp(last - 3, 21 * 3600);
+        record.add_note(Note {
+            written: written.clone(),
+            edited: written,
+            key: second.cde_key.clone(),
+            extent: second.extent,
+            on: None,
+            text: vec!["A line of its own."; 40].join("\n\n"),
+            deleted: false,
+        });
+    }
     record
 }
 

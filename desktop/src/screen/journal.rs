@@ -1,5 +1,5 @@
-//! Highlights: every one the record holds, newest first, each run of one book's
-//! beside its tile, narrowed by the Kindle's own search.
+//! Journal: every highlight and note the record holds, newest first, each run of
+//! one book's beside its tile, narrowed by the Kindle's own search.
 
 use std::fmt::Write as _;
 use std::ops::RangeInclusive;
@@ -17,9 +17,9 @@ pub(super) fn page(cx: &Ctx, query: &str) -> String {
     let mut out = format!(
         "<header class=\"head\"><h1>{}</h1><input class=\"search\" type=\"search\" data-search=\"highlights\" \
          value=\"{}\" placeholder=\"{}\"></header>",
-        esc(s.highlights_tab),
+        esc(s.journal_tab),
         esc(query),
-        esc(s.search_hint_highlights)
+        esc(s.search_hint_journal)
     );
     if rows.is_empty() {
         let _ = write!(out, "<p class=\"lede\">{}</p>", esc(s.no_highlights_here));
@@ -67,7 +67,7 @@ pub(super) fn run(
             cx,
             row.book,
             row.highlight,
-            row.note,
+            &row.notes,
             needle,
         ));
     }

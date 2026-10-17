@@ -59,6 +59,10 @@ crc32fast = "1"
 # sha2: the `.sha256` sidecar the release workflow publishes beside the zip.
 # Already in the graph through rustls-rustcrypto.
 sha2 = "0.11"
+# pulldown-cmark: a desktop note's Markdown, read into the blocks the Journal
+# row sets. Pure Rust, its build script empty without `gen-tests`; no default
+# features, so no HTML writer.
+pulldown-cmark = { version = "0.13", default-features = false }
 
 # Draws every screen to a PNG on the host. Off the device build: build.sh names
 # the binary it cross-compiles.

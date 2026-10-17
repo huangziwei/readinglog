@@ -56,14 +56,22 @@ pub struct App {
     /// The lipc service the keyboard sets its IME properties on, opened by
     /// [`App::reconcile_keyboard`] with the first keyboard.
     lipc: Option<crate::lipc::Service>,
+    /// The record's file as this app last read or wrote it.
+    seen: Option<crate::record::Seen>,
+    /// When [`App::follow_record`] last looked at the file.
+    followed: Option<Instant>,
 }
+
+/// The least time between two of [`App::follow_record`]'s looks at the
+/// record's file.
+const FOLLOW_EVERY: Duration = Duration::from_secs(1);
 
 impl App {
     pub fn new(record: crate::record::Record, theme: Theme, text: TextRenderer) -> Self {
         let (today, now) = date::now();
         let settings = Settings::load(Lang::detect());
         let settings_scope = settings.scope;
-        let stats = Stats::build(
+        let stats = Stats::drawn(
             &record,
             today,
             settings.show_unidentified,
@@ -93,6 +101,39 @@ impl App {
             hits: Vec::new(),
             keyboard: false,
             lipc: None,
+            seen: None,
+            followed: None,
+        }
+    }
+
+    /// Take `seen` as the record's file when it was read.
+    pub fn set_seen(&mut self, seen: Option<crate::record::Seen>) {
+        self.seen = seen;
+    }
+
+    /// Take the notes and corrections written into the record's file since this
+    /// app last read or wrote it, once each [`FOLLOW_EVERY`]; answers whether
+    /// anything moved.
+    fn follow_record(&mut self) -> bool {
+        if self.followed.is_some_and(|at| at.elapsed() < FOLLOW_EVERY) {
+            return false;
+        }
+        self.followed = Some(Instant::now());
+        if !self.record.follow(&self.dir, &mut self.seen) {
+            return false;
+        }
+        self.build_stats();
+        true
+    }
+
+    /// Write the record again where its file moved since this app last read or
+    /// wrote it, keeping what each holds.
+    fn leave(&mut self) {
+        if crate::record::Seen::of(&self.dir) == self.seen {
+            return;
+        }
+        if let Err(err) = self.record.keep(&self.dir, &mut self.seen) {
+            eprintln!("!! leave: the record was not written: {err:#}");
         }
     }
 
@@ -114,9 +155,14 @@ impl App {
         out
     }
 
-    /// Total the record again, at the day and the settings held.
+    /// The script the window's own words are set in, as `view::Ctx::ui_script` answers it.
+    fn ui_script(&self) -> crate::font::Script {
+        crate::font::Script::of_language(self.lang.language_tag())
+    }
+
+    /// Total the record again as it is drawn, at the day and the settings held.
     fn build_stats(&mut self) {
-        self.stats = Stats::build(
+        self.stats = Stats::drawn(
             &self.record,
             self.today,
             self.settings.show_unidentified,
@@ -221,16 +267,16 @@ impl App {
         self.state.backups = from;
     }
 
-    /// Draw the open book at `tab`, whatever it was left on, with its highlights
+    /// Draw the open book at `tab`, whatever it was left on, with its journal
     /// opened `from` rows down.
     pub fn set_book_tab(&mut self, tab: view::BookTab, from: usize) {
         self.state.book_tab = tab;
-        self.state.highlights_from = from;
+        self.state.journal_from = from;
     }
 
-    /// Draw the open book's highlights from `order`'s own end.
-    pub fn set_highlights_way(&mut self, order: view::Way) {
-        self.state.highlights_way = order;
+    /// Draw the open book's journal from `order`'s own end.
+    pub fn set_journal_way(&mut self, order: view::Way) {
+        self.state.journal_way = order;
     }
 
     /// Draw the open book's Graphs tab on `reading`, counted from the first,
@@ -656,7 +702,10 @@ impl App {
                     };
                     match acted {
                         Action::Redraw => self.draw(fb)?,
-                        Action::Quit => return Ok(()),
+                        Action::Quit => {
+                            self.leave();
+                            return Ok(());
+                        }
                         // Blocking: the banner is the screen until it ends.
                         Action::Update => {
                             self.update(fb, input)?;
@@ -698,6 +747,7 @@ impl App {
                     }
                     input.retake();
                     let typed = self.typed(&pump.typed) | self.committed();
+                    let followed = self.follow_record();
                     if input.follow_orientation() {
                         down = None;
                     }
@@ -712,7 +762,7 @@ impl App {
                         Some(true) => {}
                         // Uncovered: drawn without an `Expose`.
                         Some(false) => self.draw(fb)?,
-                        None if pump.repaint || typed => self.draw(fb)?,
+                        None if pump.repaint || typed || followed => self.draw(fb)?,
                         None => {}
                     }
                 }
@@ -753,10 +803,7 @@ impl App {
         }
         self.hand_over_mark(extent, &key, &cde_type, on);
         self.build_stats();
-        if let Err(err) = self
-            .record
-            .save(std::path::Path::new(crate::record::RECORD_DIR))
-        {
+        if let Err(err) = self.record.keep(&self.dir, &mut self.seen) {
             eprintln!("!! finished: the mark did not reach the record: {err:#}");
         }
         Action::Redraw
@@ -803,10 +850,7 @@ impl App {
             if self.record.restart(extent, &key, self.today) {
                 self.hand_over_mark(extent, &key, &cde_type, false);
                 self.build_stats();
-                if let Err(err) = self
-                    .record
-                    .save(std::path::Path::new(crate::record::RECORD_DIR))
-                {
+                if let Err(err) = self.record.keep(&self.dir, &mut self.seen) {
                     eprintln!("!! restart: the record was not written: {err:#}");
                 }
             }
@@ -923,21 +967,21 @@ impl App {
                 self.settings.save();
             }
             Hit::Book(index) => self.state.open_book(index),
-            // A tap on the tab showing is no navigation; on the Highlights tab it
+            // A tap on the tab showing is no navigation; on the Journal tab it
             // turns the list over.
             Hit::BookTab(tab) => {
                 if !self.state.go_in_book(tab) {
                     match tab {
-                        view::BookTab::Highlights => self.state.flip_highlights(),
+                        view::BookTab::Journal => self.state.flip_journal(),
                         _ => return Action::Nothing,
                     }
                 }
             }
-            Hit::HighlightsPage(from) => {
-                if self.state.highlights_from == from {
+            Hit::JournalPage(from) => {
+                if self.state.journal_from == from {
                     return Action::Nothing;
                 }
-                self.state.highlights_from = from;
+                self.state.journal_from = from;
             }
             // A passage the search found opens the book it was highlighted in, at
             // its own place in that book's list.
@@ -1122,8 +1166,8 @@ impl App {
     }
 
     /// Write the record, printing `what` and the error on a failed write.
-    fn save_record(&self, what: &str) {
-        if let Err(err) = self.record.save(self.dir()) {
+    fn save_record(&mut self, what: &str) {
+        if let Err(err) = self.record.keep(&self.dir, &mut self.seen) {
             eprintln!("!! {what}: the record was not written: {err:#}");
         }
     }
@@ -1420,7 +1464,7 @@ impl App {
     }
 
     /// One step across the open book: `BookTab::Statistics`, `BookTab::Graphs`,
-    /// then each page of `view::highlights::pages` in turn. A step off either end
+    /// then each page of `view::journal::pages` in turn. A step off either end
     /// answers `Action::Nothing`.
     fn through_book(&mut self, book: usize, by: i64) -> Action {
         let area = chrome::content_box(&self.theme);
@@ -1429,14 +1473,16 @@ impl App {
         if let Some(open) = self.state.book_search.clone() {
             return self.through_found(book, rest, &open, by);
         }
-        let opens = view::highlights::pages(
+        let ui = self.ui_script();
+        let opens = view::journal::pages(
             &mut self.text,
             &self.theme,
             &self.stats,
             book,
             rest,
-            self.state.highlights_way,
+            self.state.journal_way,
             None,
+            ui,
         );
         let forward = by > 0;
         match self.state.book_tab {
@@ -1447,15 +1493,15 @@ impl App {
             view::BookTab::Statistics => Action::Nothing,
             view::BookTab::Graphs => {
                 self.state.go_in_book(match forward {
-                    true => view::BookTab::Highlights,
+                    true => view::BookTab::Journal,
                     false => view::BookTab::Statistics,
                 });
                 Action::Redraw
             }
-            view::BookTab::Highlights => {
+            view::BookTab::Journal => {
                 let page = opens
                     .iter()
-                    .rposition(|o| *o <= self.state.highlights_from)
+                    .rposition(|o| *o <= self.state.journal_from)
                     .unwrap_or(0);
                 let next = match forward {
                     true => page + 1,
@@ -1470,7 +1516,7 @@ impl App {
                 };
                 match opens.get(next) {
                     Some(opens) => {
-                        self.state.highlights_from = *opens;
+                        self.state.journal_from = *opens;
                         Action::Redraw
                     }
                     None => Action::Nothing,
@@ -1488,14 +1534,16 @@ impl App {
         open: &view::Search,
         by: i64,
     ) -> Action {
-        let opens = view::highlights::pages(
+        let ui = self.ui_script();
+        let opens = view::journal::pages(
             &mut self.text,
             &self.theme,
             &self.stats,
             book,
             rest,
-            self.state.highlights_way,
+            self.state.journal_way,
             Some(open),
+            ui,
         );
         let page = opens.iter().rposition(|o| *o <= open.from).unwrap_or(0) as i64;
         let last = opens.len().saturating_sub(1) as i64;
@@ -1554,7 +1602,8 @@ impl App {
                     }
                     // A page steps to the next entry of `opens`, every row
                     // being as tall as its own words.
-                    Scope::Highlights => {
+                    Scope::Journal => {
+                        let ui = self.ui_script();
                         let opens = view::search::highlight_pages(
                             &mut self.text,
                             &self.theme,
@@ -1562,6 +1611,7 @@ impl App {
                             area,
                             &search,
                             self.settings.show_uncovered,
+                            ui,
                         );
                         let page =
                             opens.iter().rposition(|o| *o <= search.from).unwrap_or(0) as i64;

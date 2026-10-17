@@ -43,8 +43,10 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 mtp-rs = "=0.15.0"
 # Drives `mtp-rs`'s async calls from the `Transport` trait's plain ones.
 futures = "0.3"
-# A mounted Kindle's serial, off its USB `iSerial` descriptor. The version
-# `mtp-rs` resolves, so one copy is built.
+# The chunks an MTP upload streams, at the version `mtp-rs` resolves.
+bytes = "1"
+# A mounted Kindle's serial, off its USB `iSerial` descriptor, at the version
+# `mtp-rs` resolves: one copy in the build.
 nusb = "=0.2.3"
 
 [dev-dependencies]

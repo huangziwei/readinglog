@@ -1,19 +1,22 @@
 //! A workspace: every Kindle's imports and record under its cut serial, the
-//! backups no Kindle was named for and the record they fold into, the
-//! corrections, the posts and `site.toml`.
+//! backups no Kindle was named for and the record they fold into, and
+//! `site.toml`.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 use readinglog_native::backup;
+use readinglog_native::date;
 use readinglog_native::lang::Lang;
 use readinglog_native::record::Record;
 use readinglog_native::settings::{ColorScheme, Settings, SittingFloor, StatsFrom, WeekStart};
 
 use crate::edits::HIGHLIGHTS_FILE;
 use crate::kindles::Source;
+use crate::notes::NOTES_FILE;
 
 /// `site.toml`: the window's language and the Kindle settings its figures are
 /// stated under.
@@ -32,27 +35,37 @@ pub const BACKUPS: &str = "backups";
 /// The folder of a record, `sessions.tsv` and its cover copies, beside `BACKUPS`.
 pub const RECORD: &str = "record";
 
-/// One Markdown file per post.
-pub const POSTS: &str = "posts";
+/// `posts/`: Markdown files, each read into a note once by
+/// [`crate::notes::take_markdown`].
+pub const MARKDOWN: &str = "posts";
 
 /// A folder per Kindle, named for its cut serial, each holding that Kindle's
 /// `BACKUPS` and `RECORD` as the workspace holds those no Kindle was named for.
 pub const KINDLES: &str = "kindles";
 
 /// Every entry a workspace keeps in its folder, by its name there.
-const KEPT: [&str; 8] = [
+const KEPT: [&str; 9] = [
     KINDLES,
     BACKUPS,
     RECORD,
-    POSTS,
+    MARKDOWN,
     CONFIG_FILE,
     BOOKS_FILE,
     HIGHLIGHTS_FILE,
+    NOTES_FILE,
     SITTINGS_FILE,
 ];
 
 /// The file the macOS Finder writes into a folder it has shown.
 const FINDER_FILE: &str = ".DS_Store";
+
+/// Held across each read, merge and write of a record's file, one at a time.
+static WRITING: Mutex<()> = Mutex::new(());
+
+/// [`WRITING`], held until the guard drops.
+pub(crate) fn writing() -> MutexGuard<'static, ()> {
+    WRITING.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// `site.toml`: the window's Config.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -270,7 +283,7 @@ impl Workspace {
     /// The workspace at `dir`, its folders made and a `site.toml` written
     /// where none stands. A `site.toml` standing is read, never rewritten.
     pub fn create(dir: &Path) -> Result<Self> {
-        for sub in [BACKUPS, RECORD, POSTS] {
+        for sub in [BACKUPS, RECORD] {
             let at = dir.join(sub);
             std::fs::create_dir_all(&at).with_context(|| format!("making {}", at.display()))?;
         }
@@ -281,7 +294,9 @@ impl Workspace {
         Self::open(dir)
     }
 
-    /// The workspace at `dir`. A missing `site.toml` reads as the default.
+    /// The workspace at `dir`, `highlights.toml`, `notes.toml` and `posts/` read
+    /// into its records where they stand. A missing `site.toml` reads as the
+    /// default.
     pub fn open(dir: &Path) -> Result<Self> {
         let file = dir.join(CONFIG_FILE);
         let config = match std::fs::read_to_string(&file) {
@@ -291,10 +306,29 @@ impl Workspace {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => ConfigToml::default(),
             Err(err) => return Err(err).with_context(|| format!("reading {}", file.display())),
         };
-        Ok(Self {
+        let ws = Self {
             dir: dir.to_path_buf(),
             config,
-        })
+        };
+        for taken in [
+            crate::edits::take_file(&ws),
+            crate::notes::take_file(&ws),
+            crate::notes::take_markdown(&ws),
+        ] {
+            if let Err(err) = taken {
+                eprintln!("!! {err:#}");
+            }
+        }
+        Ok(ws)
+    }
+
+    /// The record of the Kindle whose cut serial is `kindle`, empty for the
+    /// backups naming none.
+    pub fn source(&self, kindle: &str) -> Result<Source> {
+        self.sources()
+            .into_iter()
+            .find(|s| s.serial.as_deref().unwrap_or_default() == kindle)
+            .ok_or_else(|| anyhow!("no record of {kindle} in {}", self.dir.display()))
     }
 
     /// Write [`Self::config`] back to `site.toml`.
@@ -360,10 +394,6 @@ impl Workspace {
             .collect()
     }
 
-    pub fn posts(&self) -> PathBuf {
-        self.dir.join(POSTS)
-    }
-
     /// Every record the workspace holds as one, through
     /// [`crate::kindles::together`]; empty where nothing has been imported.
     pub fn record(&self) -> Record {
@@ -400,6 +430,7 @@ impl Workspace {
     /// Remove each of [`Self::kept`], then the folder itself where nothing but
     /// a `FINDER_FILE` is left in it. Every other entry stays where it is.
     pub fn reset(&self) -> Result<()> {
+        let _held = writing();
         for at in self.kept() {
             match at.symlink_metadata().is_ok_and(|m| m.is_dir()) {
                 true => std::fs::remove_dir_all(&at),
@@ -449,6 +480,28 @@ fn folder_name(serial: &str) -> String {
         true => "kindle".into(),
         false => name,
     }
+}
+
+/// Write `source`'s notes and corrections into its record's file under
+/// [`writing`], merged with the ones the file holds by `Record::take_written`;
+/// every other line stands as the file holds it.
+pub fn keep_written(source: &Source) -> Result<()> {
+    let _held = writing();
+    let file = Record::file(&source.dir);
+    let held = std::fs::read_to_string(&file).unwrap_or_else(|_| source.record.text());
+    let mut written = Record::from_text(&held);
+    written.take_written(&source.record);
+    let text = readinglog_native::written::splice(&held, &written);
+    match text == held {
+        true => Ok(()),
+        false => write_file(&file, text.as_bytes()),
+    }
+}
+
+/// The clock's moment, as `YYYY-MM-DDTHH:MM:SS`.
+pub fn now() -> String {
+    let (day, secs) = date::now();
+    date::stamp(day, secs)
 }
 
 /// `value` as TOML at `path`, through [`write_file`].
@@ -549,7 +602,7 @@ mod tests {
         }
         std::fs::write(ws.backups().join("readinglog-260910-200851.zip"), b"zip").unwrap();
         std::fs::write(dir.join(BOOKS_FILE), b"").unwrap();
-        assert_eq!(ws.kept().len(), 6, "{:?}", ws.kept());
+        assert_eq!(ws.kept().len(), 5, "{:?}", ws.kept());
         assert!(ws.kept_bytes() >= 13, "{}", ws.kept_bytes());
         let mine = dir.join("notes.txt");
         std::fs::write(&mine, b"mine").unwrap();
@@ -574,7 +627,7 @@ mod tests {
         let dir = scratch("workspace");
         let made = Workspace::create(&dir).unwrap();
         assert_eq!(made.config, ConfigToml::default());
-        assert!(made.backups().is_dir() && made.record_dir().is_dir() && made.posts().is_dir());
+        assert!(made.backups().is_dir() && made.record_dir().is_dir());
 
         // A key no field reads is written back as it was read.
         let file = dir.join(CONFIG_FILE);

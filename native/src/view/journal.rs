@@ -6,13 +6,15 @@ use crate::clippings::Kind;
 use crate::font::Script;
 use crate::highlights::Highlight;
 use crate::lang::Strings;
+use crate::markdown::{self, Block};
 use crate::stats::BookStat;
 use crate::stats::Stats;
 use crate::ui::chrome;
-use crate::ui::paint::{self, PALE, Rect};
+use crate::ui::paint::{self, DARK, INK, LIGHT, PALE, Rect};
 use crate::ui::text::TextRenderer;
 use crate::ui::theme::Theme;
 use crate::wrap::{MORE, mark_more};
+use crate::written::Laid;
 
 use super::{Ctx, Hit, Search, Way, pager, search};
 
@@ -29,17 +31,22 @@ const WINDOW_LINES: usize = 4;
 /// The most lines a row's `title` takes, wrapped to the row's own width.
 const NAME_LINES: usize = 3;
 
-/// One row of a list of highlights: `highlight`, the `note` written on it, and the
-/// `title`, `language` and `extent` of the book it was made in.
+/// One row of a list of highlights: `highlight`, the `notes` written on it, and
+/// the `title`, `language` and `extent` of the book it was made in.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Row {
     /// The book, by its index in `Stats::books`.
     pub book: usize,
     /// The row's place in the book's `Stats::book_highlights` list, where its
-    /// Highlights tab opens.
+    /// Journal tab opens.
     pub at: usize,
     pub highlight: Highlight,
-    pub note: Option<Highlight>,
+    /// Notes on the passage `Stats::written` does not hold; [`row`] draws the first.
+    pub notes: Vec<Highlight>,
+    /// Notes on the passage `Stats::written` holds, in the order they were written.
+    pub written: Vec<Highlight>,
+    /// What `Record::drawn` laid `highlight` as, where `Stats::written` holds it.
+    pub laid: Option<Laid>,
     /// The book's title, standing over the row in a list running across books.
     pub title: String,
     /// The book's library language, which picks the face the words are set in.
@@ -49,18 +56,28 @@ pub struct Row {
 }
 
 impl Row {
+    /// `highlight` and `notes` as `stats` holds them, each note in
+    /// `Stats::written` among [`Row::written`].
     pub(super) fn new(
         book: usize,
         at: usize,
         record: &BookStat,
         highlight: &Highlight,
-        note: Option<&Highlight>,
+        notes: &[&Highlight],
+        stats: &Stats,
     ) -> Self {
+        let (mut written, notes): (Vec<Highlight>, Vec<Highlight>) = notes
+            .iter()
+            .map(|note| (*note).clone())
+            .partition(|note| stats.laid(note).is_some());
+        written.sort_by(|a, b| a.at.cmp(&b.at));
         Self {
             book,
             at,
             highlight: highlight.clone(),
-            note: note.cloned(),
+            notes,
+            written,
+            laid: stats.laid(highlight).cloned(),
             title: record.title.clone(),
             language: record.language.clone(),
             extent: record.extent,
@@ -69,6 +86,11 @@ impl Row {
 
     fn script(&self) -> Script {
         Script::of_language(&self.language)
+    }
+
+    /// `true` where [`Row::written`] or [`Row::laid`] holds anything, the rows [`plan`] sets.
+    fn writes(&self) -> bool {
+        !self.written.is_empty() || self.laid.is_some()
     }
 }
 
@@ -182,9 +204,10 @@ fn lines_in(m: Metrics, theme: &Theme, h: i32) -> usize {
     lines
 }
 
-/// Where each page of `book`'s highlights opens in `area`, ascending from 0, and
-/// empty for a book carrying none. [`draw`] and the page step read this one
-/// list; `search` names the passages it holds.
+/// `book`'s page openings in `area`, ascending from 0, and empty for a book
+/// carrying none: the list [`draw`] and the page step read, `search` naming its
+/// passages and `ui` the script desktop notes are set in.
+#[allow(clippy::too_many_arguments)]
 pub fn pages(
     text: &mut TextRenderer,
     theme: &Theme,
@@ -193,6 +216,7 @@ pub fn pages(
     area: Rect,
     order: Way,
     search: Option<&Search>,
+    ui: Script,
 ) -> Vec<usize> {
     let Some(record) = stats.books.get(book) else {
         return Vec::new();
@@ -204,7 +228,7 @@ pub fn pages(
     }
     let page = page_box(theme, area, search.is_some_and(|search| search.keyboard));
     let inner = list_box(text, theme, page);
-    let at = layout(text, theme, inner, query);
+    let at = layout(text, theme, inner, query, ui);
     openings(text, theme, &held, &at, inner.h)
 }
 
@@ -214,12 +238,12 @@ fn rows(stats: &Stats, book: usize, record: &BookStat) -> Vec<Row> {
         .book_highlights(book)
         .iter()
         .enumerate()
-        .map(|(at, m)| Row::new(book, at, record, m.highlight, m.note))
+        .map(|(at, m)| Row::new(book, at, record, m.highlight, &m.notes, stats))
         .collect()
 }
 
 /// The rows a list holds, in `order`: every one of `book`'s, or those a `query`
-/// names by the words of the passage or of the note on it. `Way::Up` leaves
+/// names by the words of the passage or of a note on it. `Way::Up` leaves
 /// every `Row::at` alone.
 pub fn listing(
     stats: &Stats,
@@ -233,9 +257,15 @@ pub fn listing(
         held.retain(|row| {
             needle.holds(&row.highlight.body)
                 || row
-                    .note
+                    .notes
+                    .iter()
+                    .chain(&row.written)
+                    .any(|note| needle.holds(&note.body))
+                || row
+                    .laid
                     .as_ref()
-                    .is_some_and(|note| needle.holds(&note.body))
+                    .and_then(|laid| laid.gone.as_deref())
+                    .is_some_and(|words| needle.holds(words))
         });
     }
     if order == Way::Up {
@@ -251,8 +281,9 @@ fn layout<'a>(
     theme: &Theme,
     inner: Rect,
     query: Option<&'a str>,
+    ui: Script,
 ) -> Layout<'a> {
-    let at = Layout::of(text, theme, inner, false);
+    let at = Layout::of(text, theme, inner, false, ui);
     match query {
         Some(query) => at.found(theme, inner.h, query),
         None => at,
@@ -332,7 +363,7 @@ pub fn draw(
         return;
     }
 
-    let at = layout(cx.text, theme, inner, query);
+    let at = layout(cx.text, theme, inner, query, cx.ui_script());
     // `page_at`: the last opening at or before `from`.
     let from = search.map_or(from, |search| search.from);
     let opens = openings(cx.text, theme, &held, &at, inner.h);
@@ -345,7 +376,7 @@ pub fn draw(
         let last = opens.last().copied().unwrap_or(0);
         let steps = match search {
             Some(_) => [Hit::SearchPage(0), Hit::SearchPage(last)],
-            None => [Hit::HighlightsPage(0), Hit::HighlightsPage(last)],
+            None => [Hit::JournalPage(0), Hit::JournalPage(last)],
         };
         pager::draw(
             cx,
@@ -389,23 +420,35 @@ pub(super) struct Layout<'a> {
     lines: usize,
     /// The width a row draws into.
     width: i32,
-    /// Whether a row states the book it was made in, over its own words.
+    /// The height of the box the rows are drawn into.
+    high: i32,
+    /// `true` where each row states the book it was made in, over its own words.
     named: bool,
     /// The query a list is drawn against, where one names its rows.
     needle: Option<&'a str>,
+    /// [`Ctx::ui_script`]'s script, the one the notes of `Stats::written` are set in.
+    ui: Script,
 }
 
 impl<'a> Layout<'a> {
-    /// What a list drawn into `box_` is measured against. `named` states
-    /// whether a row carries the book it was made in.
-    pub(super) fn of(text: &mut TextRenderer, theme: &Theme, box_: Rect, named: bool) -> Self {
+    /// What a list drawn into `box_` is measured against: `named`, whether each
+    /// row states its book, and `ui`, [`Ctx::ui_script`]'s script.
+    pub(super) fn of(
+        text: &mut TextRenderer,
+        theme: &Theme,
+        box_: Rect,
+        named: bool,
+        ui: Script,
+    ) -> Self {
         let m = Metrics::of(text, theme);
         Self {
             m,
             lines: lines_in(m, theme, box_.h),
             width: box_.w,
+            high: box_.h,
             named,
             needle: None,
+            ui,
         }
     }
 
@@ -451,30 +494,10 @@ struct Wrapped {
 /// How the words of one row fall against `at`.
 fn wrapped(text: &mut TextRenderer, theme: &Theme, at: &Layout, held: &Row) -> Wrapped {
     let script = held.script();
-    let name = match at.named {
-        false => Vec::new(),
-        true => {
-            text.set_px(theme.small_px);
-            text.wrap_and_clamp_in(script, &held.title, at.width.max(1) as u32, NAME_LINES)
-        }
-    };
-    let room = (at.width - indent(theme)).max(1) as u32;
-    text.set_px(theme.body_px);
-    // `at.needle` `None` wraps the passage as far as the row shows; `Some`
-    // wraps it whole for [`opens_at`].
-    let (said, opens) = match at.needle {
-        None => (
-            text.wrap_and_clamp_in(script, &held.highlight.body, room, at.lines),
-            0,
-        ),
-        Some(needle) => {
-            let every = text.wrap_and_clamp_in(script, &held.highlight.body, room, usize::MAX);
-            let opens = opens_at(&every, needle);
-            (window(text, script, every, opens, at.lines, room), opens)
-        }
-    };
+    let name = name_lines(text, theme, at, held);
+    let (said, opens) = passage_lines(text, theme, at, script, &held.highlight.body);
     // `note` is set beside the rule, not past it, and takes `at.width` whole.
-    let noted = match &held.note {
+    let noted = match held.notes.first() {
         Some(note) => text.wrap_and_clamp_in(script, &note.body, at.width.max(1) as u32, at.lines),
         None => Vec::new(),
     };
@@ -483,6 +506,346 @@ fn wrapped(text: &mut TextRenderer, theme: &Theme, at: &Layout, held: &Row) -> W
         said,
         noted,
         opens,
+    }
+}
+
+/// The book's name on its own lines, empty where `at` does not state it.
+fn name_lines(text: &mut TextRenderer, theme: &Theme, at: &Layout, held: &Row) -> Vec<String> {
+    match at.named {
+        false => Vec::new(),
+        true => {
+            text.set_px(theme.small_px);
+            text.wrap_and_clamp_in(
+                held.script(),
+                &held.title,
+                at.width.max(1) as u32,
+                NAME_LINES,
+            )
+        }
+    }
+}
+
+/// `body`'s lines behind the rule, as far as `at` shows them, and the line of
+/// the whole passage they open on.
+fn passage_lines(
+    text: &mut TextRenderer,
+    theme: &Theme,
+    at: &Layout,
+    script: Script,
+    body: &str,
+) -> (Vec<String>, usize) {
+    let room = (at.width - indent(theme)).max(1) as u32;
+    text.set_px(theme.body_px);
+    // `at.needle` `None` wraps the passage as far as the row shows; `Some`
+    // wraps it whole for [`opens_at`].
+    match at.needle {
+        None => (text.wrap_and_clamp_in(script, body, room, at.lines), 0),
+        Some(needle) => {
+            let every = text.wrap_and_clamp_in(script, body, room, usize::MAX);
+            let opens = opens_at(&every, needle);
+            (window(text, script, every, opens, at.lines, room), opens)
+        }
+    }
+}
+
+/// One line [`plan`] sets: from `x` past the row's left edge, on `baseline`
+/// under its top, at `px` in `script` and `ink`; `washed` where a search's runs
+/// are washed in it.
+#[derive(Clone, Debug, PartialEq)]
+struct Set {
+    x: i32,
+    baseline: i32,
+    px: f32,
+    script: Script,
+    ink: u8,
+    washed: bool,
+    words: String,
+}
+
+/// What [`planned`] draws of a row, from its top.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Plan {
+    sets: Vec<Set>,
+    /// The rule beside the passage, its top and height.
+    rule: Option<(i32, i32)>,
+    /// The rule beside each quotation inside a note, its top and height.
+    quotes: Vec<(i32, i32)>,
+    /// Where [`MORE`] stands over a passage opening past its head.
+    more: Option<i32>,
+    /// Each note's day under it, as the baseline it is set on.
+    days: Vec<(i32, i64)>,
+    /// The label's baseline, and whether it states the row's place and kind.
+    label: i32,
+    place: bool,
+    high: i32,
+}
+
+/// [`plan_in`] with the most lines of notes `at.high` holds, `at.lines` at the most.
+fn plan(text: &mut TextRenderer, theme: &Theme, at: &Layout, held: &Row) -> Plan {
+    let mut budget = at.lines;
+    loop {
+        let out = plan_in(text, theme, at, held, budget);
+        if out.high <= at.high || budget <= 1 {
+            return out;
+        }
+        budget -= 1;
+    }
+}
+
+/// `held` as it is set top down: its passage behind a rule (a gone one's words
+/// for a note written on it), its notes each over its day and sharing `budget`
+/// lines; a note on the book alone with no rule and no place.
+fn plan_in(
+    text: &mut TextRenderer,
+    theme: &Theme,
+    at: &Layout,
+    held: &Row,
+    mut budget: usize,
+) -> Plan {
+    let m = at.m;
+    let gap = theme.gap;
+    let script = held.script();
+    let mut out = Plan::default();
+    let mut baseline = m.cap;
+    for line in name_lines(text, theme, at, held) {
+        out.sets.push(Set {
+            x: 0,
+            baseline,
+            px: theme.small_px,
+            script,
+            ink: INK,
+            washed: false,
+            words: line,
+        });
+        baseline += m.small;
+    }
+    let top = baseline - m.cap;
+    let passage = match &held.laid {
+        Some(laid) => laid.gone.as_deref(),
+        None => Some(held.highlight.body.as_str()),
+    };
+    let Some(words) = passage else {
+        let (last, _) = note(
+            &mut out,
+            text,
+            theme,
+            at,
+            &held.highlight.body,
+            top + gap * 2,
+            &mut budget,
+        );
+        out.label = last + gap * 2 + m.cap;
+        out.high = out.label - m.cap + m.small + gap * 3;
+        return out;
+    };
+    let (said, opens) = passage_lines(text, theme, at, script, words);
+    let quoted = m.quoted(theme, said.len());
+    let (from, deep) = m.ruled(theme, said.len());
+    out.rule = Some((top + from, deep));
+    let mut baseline = top + m.baseline(theme);
+    for line in said {
+        out.sets.push(Set {
+            x: indent(theme),
+            baseline,
+            px: theme.body_px,
+            script,
+            ink: INK,
+            washed: true,
+            words: line,
+        });
+        baseline += m.line;
+    }
+    if opens > 0 {
+        out.more = Some(top + gap);
+    }
+    out.place = true;
+    let mut y = top + quoted + gap;
+    if held.laid.is_some() {
+        let (last, under) = note(
+            &mut out,
+            text,
+            theme,
+            at,
+            &held.highlight.body,
+            y,
+            &mut budget,
+        );
+        out.label = last + under + gap * 2 + m.cap;
+        out.high = out.label - m.cap + m.small + gap * 3;
+        return out;
+    }
+    if let Some(kindle) = held.notes.first() {
+        text.set_px(theme.body_px);
+        let lines = text.wrap_and_clamp_in(script, &kindle.body, at.width.max(1) as u32, budget);
+        budget = budget.saturating_sub(lines.len());
+        let mut last = y + m.body_cap - m.line;
+        for line in lines {
+            last += m.line;
+            out.sets.push(Set {
+                x: 0,
+                baseline: last,
+                px: theme.body_px,
+                script,
+                ink: INK,
+                washed: true,
+                words: line,
+            });
+        }
+        y = dated(&mut out, theme, m, last, kindle);
+    }
+    for written in &held.written {
+        if budget == 0 {
+            ran_on(&mut out, text, at);
+            break;
+        }
+        let (last, _) = note(
+            &mut out,
+            text,
+            theme,
+            at,
+            &written.body,
+            y + gap,
+            &mut budget,
+        );
+        y = dated(&mut out, theme, m, last, written);
+    }
+    out.label = y + gap * 2 + m.cap;
+    out.high = out.label - m.cap + m.small + gap * 3;
+    out
+}
+
+/// `note`'s day under the line set on `last`; answers where the next note opens.
+fn dated(out: &mut Plan, theme: &Theme, m: Metrics, last: i32, note: &Highlight) -> i32 {
+    let day = last + theme.gap + m.cap;
+    if let Some(on) = note.day() {
+        out.days.push((day, on));
+    }
+    day + theme.gap / 2
+}
+
+/// `words`, a desktop note's Markdown, set from `y` in `at.ui` as
+/// `markdown::blocks` reads it, `budget` lines at most and [`MORE`] where it runs
+/// on; answers the last baseline and the room its line keeps under it.
+fn note(
+    out: &mut Plan,
+    text: &mut TextRenderer,
+    theme: &Theme,
+    at: &Layout,
+    words: &str,
+    y: i32,
+    budget: &mut usize,
+) -> (i32, i32) {
+    let m = at.m;
+    let gap = theme.gap;
+    let blocks = markdown::blocks(words);
+    // The block set before, as its last baseline, its line's advance, its cap
+    // and whether it was a list item.
+    let mut before: Option<(i32, i32, i32, bool)> = None;
+    let mut cut = false;
+    for block in &blocks {
+        if *budget == 0 {
+            cut = before.is_some();
+            break;
+        }
+        let head = block.kind == markdown::Kind::Heading;
+        let px = match head {
+            true => theme.head_px,
+            false => theme.body_px,
+        };
+        text.set_px(px);
+        let (cap, advance) = match head {
+            true => (text.cap_height() as i32, text.line_height() as i32),
+            false => (m.body_cap, m.line),
+        };
+        let (lead, x) = placed(text, theme, at.ui, block);
+        text.set_px(px);
+        let room = (at.width - x).max(1) as u32;
+        let lines = text.wrap_and_clamp_in(at.ui, &block.words, room, *budget);
+        *budget = budget.saturating_sub(lines.len());
+        let item = block.kind == markdown::Kind::Item;
+        let first = match before {
+            None => y + cap,
+            Some((last, step, was_cap, was_item)) => {
+                let air = match item && was_item {
+                    true => 0,
+                    false => gap,
+                };
+                last + step + air + (cap - was_cap).max(0)
+            }
+        };
+        let mut baseline = first - advance;
+        for line in lines {
+            baseline += advance;
+            out.sets.push(Set {
+                x,
+                baseline,
+                px,
+                script: at.ui,
+                ink: INK,
+                washed: true,
+                words: line,
+            });
+        }
+        if let Some((lead, at_x)) = lead {
+            out.sets.push(Set {
+                x: at_x,
+                baseline: first,
+                px,
+                script: at.ui,
+                ink: INK,
+                washed: false,
+                words: lead,
+            });
+        }
+        if block.kind == markdown::Kind::Quote {
+            out.quotes
+                .push((first - cap - gap / 2, baseline - first + cap + gap));
+        }
+        before = Some((baseline, advance, cap, item));
+    }
+    if cut {
+        ran_on(out, text, at);
+    }
+    match before {
+        Some((last, step, cap, _)) => (last, step - cap),
+        None => (y, m.line - m.body_cap),
+    }
+}
+
+/// [`MORE`] at the end of the last line of words `out` sets, where it carries none.
+fn ran_on(out: &mut Plan, text: &mut TextRenderer, at: &Layout) {
+    if let Some(last) = out.sets.iter_mut().rev().find(|set| set.washed)
+        && !last.words.ends_with(MORE)
+    {
+        text.set_px(last.px);
+        let (room, script) = ((at.width - last.x).max(1) as u32, last.script);
+        mark_more(&mut last.words, room, |s| text.measure_width_in(script, s));
+    }
+}
+
+/// Where `block` sets from: a quotation past [`indent`], a list item past its
+/// bullet or number, each list deeper a further [`indent`]; answers the lead
+/// and where it stands, where the block carries one.
+fn placed(
+    text: &mut TextRenderer,
+    theme: &Theme,
+    script: Script,
+    block: &Block,
+) -> (Option<(String, i32)>, i32) {
+    match block.kind {
+        markdown::Kind::Quote => (None, indent(theme)),
+        markdown::Kind::Item => {
+            let from = block.depth.saturating_sub(1) as i32 * indent(theme);
+            text.set_px(theme.body_px);
+            let lead = match block.lead.is_empty() {
+                true => "•",
+                false => block.lead.as_str(),
+            };
+            let x = from + text.measure_width_in(script, lead) as i32 + theme.gap;
+            let lead = (!block.lead.is_empty()).then(|| (block.lead.clone(), from));
+            (lead, x)
+        }
+        _ => (None, 0),
     }
 }
 
@@ -543,7 +906,7 @@ pub fn runs_in(line: &str, needle: &str) -> Vec<(usize, usize)> {
 }
 
 /// `Palette::wash` behind every run of `needle` in `line`, which is set from
-/// `x` on `baseline` at [`Theme::body_px`].
+/// `x` on `baseline` at the size `cx.text` stands at.
 fn wash(cx: &mut Ctx, script: Script, x: i32, baseline: i32, line: &str, needle: &str) {
     let cap = cx.text.cap_height() as i32;
     // `drop` and `over` clear the ascenders and take in the descenders.
@@ -577,14 +940,82 @@ fn opens_at(every: &[String], needle: &str) -> usize {
 /// The height one row takes, the words wrapped to see how many lines they
 /// actually run to.
 pub(super) fn height(text: &mut TextRenderer, theme: &Theme, at: &Layout, held: &Row) -> i32 {
+    if held.writes() {
+        return plan(text, theme, at, held).high;
+    }
     let w = wrapped(text, theme, at, held);
     at.m.row(theme, w.name.len(), w.said.len(), w.noted.len())
+}
+
+/// `held` as [`plan`] sets it into `area`, its label and right-hand day as
+/// [`row`] sets them.
+fn planned(cx: &mut Ctx, area: Rect, held: &Row, at: &Layout) {
+    let theme: &Theme = cx.theme;
+    let s = cx.s();
+    let plan = plan(cx.text, theme, at, held);
+    if let Some((top, deep)) = plan.rule {
+        let coloured = paint::is_coloured(&cx.palette);
+        let colour = match held.laid.is_some() {
+            true => "",
+            false => held.highlight.colour.as_str(),
+        };
+        let ink = paint::highlight_colour(colour, coloured);
+        let rule = Rect::new(area.x, area.y + top, rule_width(theme), deep);
+        paint::fill_rgb(cx.fb, rule, ink);
+    }
+    for (top, deep) in &plan.quotes {
+        let rule = Rect::new(area.x, area.y + top, rule_width(theme), *deep);
+        paint::fill(cx.fb, rule, LIGHT);
+    }
+    for set in &plan.sets {
+        cx.text.set_px(set.px);
+        let (x, baseline) = (area.x + set.x, area.y + set.baseline);
+        if set.washed
+            && let Some(needle) = at.needle
+        {
+            wash(cx, set.script, x, baseline, &set.words, needle);
+        }
+        cx.text
+            .draw_inked(set.script, cx.fb, x, baseline, &set.words, set.ink);
+    }
+    if let Some(y) = plan.more {
+        cx.text.set_px(theme.body_px);
+        cx.text.draw_in(
+            held.script(),
+            cx.fb,
+            area.x + indent(theme),
+            area.y + y,
+            MORE,
+            false,
+        );
+    }
+    cx.text.set_px(theme.small_px);
+    let ui = cx.ui_script();
+    for (baseline, day) in &plan.days {
+        let when = crate::date::year_day(*day, s);
+        cx.text
+            .draw_inked(ui, cx.fb, area.x, area.y + baseline, &when, DARK);
+    }
+    let baseline = area.y + plan.label;
+    if plan.place {
+        let said = label(&held.highlight, held.extent, s);
+        cx.text.draw_in(ui, cx.fb, area.x, baseline, &said, false);
+    }
+    if let Some(day) = held.highlight.day() {
+        let when = crate::date::year_day(day, s);
+        let w = cx.text.measure_width_in(ui, &when) as i32;
+        cx.text
+            .draw_in(ui, cx.fb, area.right() - w, baseline, &when, false);
+    }
 }
 
 /// One highlight: `title` where `at.named`, `highlight.body` behind a rule in
 /// `highlight.colour`, the `note` under that, and [`label`] with `Highlight::day` below
 /// both. The rule stands on `area`'s left margin and the words end at its right.
 pub(super) fn row(cx: &mut Ctx, area: Rect, held: &Row, at: &Layout) {
+    if held.writes() {
+        return planned(cx, area, held, at);
+    }
     let theme: &Theme = cx.theme;
     let s = cx.s();
     let m = at.m;
@@ -860,6 +1291,47 @@ mod tests {
         // `(book, at)` names where its own book's list opens.
         let held = listing(&stats, 0, &record, recent, Some("sky"));
         assert_eq!((held[0].book, held[0].at), (0, 0));
+    }
+
+    #[test]
+    fn a_note_written_on_the_desktop_stands_apart_from_the_kindles_and_is_found() {
+        use crate::written::{HighlightId, Laid};
+        let mut stats = crate::stats::tests::highlighted_books();
+        let laid = |at: &str, on: Option<HighlightId>| Laid {
+            written: at.into(),
+            on,
+            gone: None,
+        };
+        // `under`, the book's note, laid as one written on the desktop on
+        // `passage`; `alone`, one on the book alone.
+        let passage = HighlightId::of(&stats.highlights[0]);
+        let under = HighlightId::of(&stats.highlights[1]);
+        stats
+            .written
+            .insert(under, laid("2026-01-02T10:05:00", Some(passage)));
+        let alone = Highlight {
+            extent: 1000,
+            kind: Kind::Note,
+            at: "2026-01-05T08:00:00".into(),
+            body: "# A heading\n\nIts words".into(),
+            ..Highlight::default()
+        };
+        stats
+            .written
+            .insert(HighlightId::of(&alone), laid("2026-01-05T08:00:00", None));
+        stats.highlights.push(alone);
+        stats.books[0].highlights.push(4);
+        let record = stats.books[0].clone();
+        let held = listing(&stats, 0, &record, Way::Down, None);
+        assert_eq!(held.len(), 2);
+        let (alone, passage) = (&held[0], &held[1]);
+        assert!(alone.writes() && alone.laid.is_some() && alone.written.is_empty());
+        assert!(passage.notes.is_empty(), "no Kindle note under it");
+        assert_eq!(passage.written.len(), 1);
+        assert!(passage.writes() && passage.laid.is_none());
+        let found = listing(&stats, 0, &record, Way::Down, Some("borrowed"));
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].highlight.body, "the sky above the port");
     }
 
     #[test]

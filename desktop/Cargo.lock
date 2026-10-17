@@ -3349,6 +3349,7 @@ name = "readinglog-desktop"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "futures",
  "image",
  "mtp-rs",
@@ -3366,7 +3367,7 @@ dependencies = [
 
 [[package]]
 name = "readinglog-native"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "ab_glyph",
  "anyhow",
@@ -3374,6 +3375,7 @@ dependencies = [
  "flate2",
  "image",
  "libc",
+ "pulldown-cmark",
  "rustls",
  "rustls-rustcrypto",
  "serde",

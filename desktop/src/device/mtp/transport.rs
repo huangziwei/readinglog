@@ -1,11 +1,13 @@
 //! [`Transport`] over MTP through `mtp-rs`, whose calls are async and are run
 //! here with `block_on`.
 
+use std::ops::ControlFlow;
 use std::sync::Mutex;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
+use bytes::Bytes;
 use futures::executor::block_on;
-use mtp_rs::mtp::{MtpDevice, Storage};
+use mtp_rs::mtp::{MtpDevice, NewObjectInfo, Progress, Storage};
 use mtp_rs::ptp::{ObjectHandle, ObjectInfo};
 
 use crate::device::transport::{ChildFiles, TEntry, TPath, Transport};
@@ -18,12 +20,14 @@ pub struct MtpTransport {
     /// The firmware's version off `system/version.txt`, `None` where the
     /// Kindle does not show that file over MTP.
     firmware: Option<String>,
+    /// Whether the Kindle renames an object (`MtpDevice::supports_rename`).
+    renames: bool,
 }
 
 impl MtpTransport {
     /// Open the MTP device at `location_id` and bind its first storage.
     pub fn open(location_id: u64) -> Result<Self> {
-        let (storage, firmware) = block_on(async {
+        let (storage, firmware, renames) = block_on(async {
             let device = MtpDevice::open_by_location(location_id)
                 .await
                 .map_err(map_mtp_err)
@@ -37,11 +41,12 @@ impl MtpTransport {
                 .next()
                 .ok_or_else(|| anyhow!("Kindle reports no MTP storage — try reconnecting"))?;
             let firmware = read_firmware(&storage).await;
-            Ok::<_, anyhow::Error>((storage, firmware))
+            Ok::<_, anyhow::Error>((storage, firmware, device.supports_rename()))
         })?;
         Ok(Self {
             storage: Mutex::new(storage),
             firmware,
+            renames,
         })
     }
 }
@@ -69,9 +74,114 @@ async fn resolve(storage: &Storage, path: &TPath) -> Result<Option<ObjectHandle>
     Ok(parent)
 }
 
+/// The handle of the folder `path` names, each segment made where it is missing.
+async fn ensure_folder(storage: &Storage, path: &TPath) -> Result<Option<ObjectHandle>> {
+    let mut parent: Option<ObjectHandle> = None;
+    for segment in path.segments() {
+        let entries = storage.list_objects(parent).await.map_err(map_mtp_err)?;
+        let matched = entries.into_iter().find(|o| &o.filename == segment);
+        parent = match matched {
+            Some(obj) if obj.is_folder() => Some(obj.handle),
+            Some(_) => bail!("MTP path component `{segment}` exists but isn't a folder"),
+            None => Some(
+                storage
+                    .create_folder(parent, segment)
+                    .await
+                    .map_err(map_mtp_err)
+                    .with_context(|| format!("create folder {segment}"))?,
+            ),
+        };
+    }
+    Ok(parent)
+}
+
+/// `bytes` at `path`, uploaded whole as `<name>.partial` first and then put in
+/// place: renamed where `renames`, else uploaded again under its own name and
+/// the partial deleted. `path` never stands cut while a whole copy is missing.
+async fn replace(storage: &Storage, path: &TPath, bytes: &[u8], renames: bool) -> Result<()> {
+    let name = path
+        .name()
+        .ok_or_else(|| anyhow!("MTP upload: empty path"))?
+        .to_string();
+    let folder = path.parent().unwrap_or_default();
+    let partial = upload_streamed(
+        storage,
+        &folder.join(&format!("{name}.partial")),
+        bytes,
+        &|_, _| {},
+    )
+    .await?;
+    if !renames {
+        upload_streamed(storage, path, bytes, &|_, _| {}).await?;
+        return storage
+            .delete(partial)
+            .await
+            .map_err(map_mtp_err)
+            .with_context(|| format!("MTP delete {name}.partial"));
+    }
+    let parent = ensure_folder(storage, &folder).await?;
+    let entries = storage.list_objects(parent).await.map_err(map_mtp_err)?;
+    if let Some(existing) = entries.into_iter().find(|o| o.filename == name) {
+        storage
+            .delete(existing.handle)
+            .await
+            .map_err(map_mtp_err)
+            .with_context(|| format!("MTP delete {name} before its partial takes its place"))?;
+    }
+    storage
+        .rename(partial, &name)
+        .await
+        .map_err(map_mtp_err)
+        .with_context(|| format!("MTP rename {name}.partial"))
+}
+
+/// Upload `bytes` to `path` over MTP with byte-progress, an object standing at
+/// `path` deleted first; answers the object's handle.
+async fn upload_streamed(
+    storage: &Storage,
+    path: &TPath,
+    bytes: &[u8],
+    on_progress: &(dyn Fn(u64, u64) + Send + Sync),
+) -> Result<ObjectHandle> {
+    let parent_path = path.parent().unwrap_or_default();
+    let name = path
+        .name()
+        .ok_or_else(|| anyhow!("MTP upload: empty path"))?;
+    let parent = ensure_folder(storage, &parent_path).await?;
+    let entries = storage.list_objects(parent).await.map_err(map_mtp_err)?;
+    if let Some(existing) = entries.into_iter().find(|o| o.filename == name) {
+        storage
+            .delete(existing.handle)
+            .await
+            .map_err(map_mtp_err)
+            .with_context(|| format!("MTP delete {name} before overwrite"))?;
+    }
+    let total = bytes.len() as u64;
+    let info = NewObjectInfo::file(name, total);
+    let chunks: Vec<std::result::Result<Bytes, std::io::Error>> = bytes
+        .chunks(256 * 1024)
+        .map(|c| Ok(Bytes::copy_from_slice(c)))
+        .collect();
+    let stream = futures::stream::iter(chunks);
+    on_progress(0, total);
+    storage
+        .upload_with_progress(parent, info, stream, |p: Progress| {
+            on_progress(p.bytes_transferred, p.total_bytes.unwrap_or(total));
+            ControlFlow::Continue(())
+        })
+        .await
+        .map_err(map_mtp_err)
+        .with_context(|| format!("MTP upload {name}"))
+}
+
 impl Transport for MtpTransport {
     fn read(&self, path: &TPath) -> Result<Vec<u8>> {
         self.read_with_progress(path, &|_, _| {})
+    }
+
+    fn write_atomic(&self, path: &TPath, bytes: &[u8]) -> Result<()> {
+        let guard = self.storage.lock().expect("storage lock poisoned");
+        block_on(replace(&guard, path, bytes, self.renames))
     }
 
     fn read_with_progress(&self, path: &TPath, on_progress: &dyn Fn(u64, u64)) -> Result<Vec<u8>> {
@@ -182,13 +292,27 @@ impl Transport for MtpTransport {
     }
 }
 
-/// `err`, naming the apps that hold an MTP Kindle where another holds this one.
+/// Another app holds the MTP Kindle, the error `mtp-rs` stated for it inside.
+#[derive(Debug)]
+pub struct InUse(String);
+
+impl std::fmt::Display for InUse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Kindle is in use by another app. Quit Image Capture, OpenMTP, \
+             Android File Transfer, or Calibre and try again. (underlying: {})",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for InUse {}
+
+/// `err`, as [`InUse`] where another app holds this Kindle.
 fn map_mtp_err(err: mtp_rs::Error) -> anyhow::Error {
     if err.is_exclusive_access() {
-        anyhow!(
-            "Kindle is in use by another app. Quit Image Capture, OpenMTP, \
-             Android File Transfer, or Calibre and try again. (underlying: {err})"
-        )
+        anyhow::Error::new(InUse(err.to_string()))
     } else {
         anyhow!(err)
     }
@@ -208,6 +332,7 @@ mod tests {
             msg.contains("Quit Image Capture"),
             "user-actionable hint missing from busy error: {msg}"
         );
+        assert!(mapped.downcast_ref::<InUse>().is_some());
     }
 
     #[test]

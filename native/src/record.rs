@@ -23,6 +23,48 @@ pub const RECORD_DIR: &str = "/mnt/us/extensions/readinglog";
 /// The file inside it, holding the sittings, the books and the watermark.
 const RECORD_FILE: &str = "sessions.tsv";
 
+/// `sessions.tsv.partial`: the record uploaded whole by another app, before it
+/// is renamed over [`RECORD_FILE`].
+pub const PARTIAL_FILE: &str = "sessions.tsv.partial";
+
+/// The first field of the row closing the file, stating the lines above it.
+pub(crate) const END: &str = "end";
+
+/// A record's file by its length and modification time, what
+/// [`Record::follow`] compares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Seen {
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+impl Seen {
+    /// The record's file in `dir`, `None` where there is none.
+    pub fn of(dir: &Path) -> Option<Self> {
+        let meta = std::fs::metadata(Record::file(dir)).ok()?;
+        Some(Self {
+            len: meta.len(),
+            modified: meta.modified().ok(),
+        })
+    }
+}
+
+/// Append the closing row: [`END`] and the count of lines above it.
+pub(crate) fn close(out: &mut String) {
+    let lines = out.lines().count();
+    row(out, format_args!("{END}\t{lines}"));
+}
+
+/// Whether `text` ends in the row [`close`] writes.
+pub fn closed(text: &str) -> bool {
+    let Some(body) = text.strip_suffix('\n') else {
+        return false;
+    };
+    let (above, last) = body.rsplit_once('\n').unwrap_or(("", body));
+    let stated = last.strip_prefix(END).and_then(|r| r.strip_prefix('\t'));
+    stated == Some(above.lines().count().to_string().as_str())
+}
+
 /// What the first line reads, `2` naming the parse below it.
 pub(crate) const HEADER: &str = "#readinglog\t2";
 
@@ -209,6 +251,10 @@ pub struct Record {
     pub gate: Option<Gate>,
     /// What the last pass over the identifying sources stood at, `None` where none has.
     pub sources: Option<Sources>,
+    /// `w` rows, ascending by when they were written.
+    pub notes: Vec<crate::written::Note>,
+    /// `r` rows, ascending by identity.
+    pub corrections: Vec<crate::written::Correction>,
 }
 
 /// What one pass did.
@@ -233,7 +279,7 @@ impl Record {
     /// Read the record: empty where there is none or it will not parse, whole
     /// under any other `HEADER`.
     pub fn load(dir: &Path) -> Self {
-        let Ok(text) = std::fs::read_to_string(Self::file(dir)) else {
+        let Some(text) = Self::read(dir) else {
             return Self::default();
         };
         Self::from_text(&text)
@@ -241,10 +287,31 @@ impl Record {
 
     /// [`Self::load`] over the file in `dir`, surrendering no row it holds.
     pub fn open(dir: &Path) -> Self {
-        let Ok(text) = std::fs::read_to_string(Self::file(dir)) else {
+        let Some(text) = Self::read(dir) else {
             return Self::default();
         };
         Self::from_text(&text)
+    }
+
+    /// The record's file in `dir` as text, a whole [`PARTIAL_FILE`] renamed into
+    /// its place first where the file is missing or a cut copy of it.
+    fn read(dir: &Path) -> Option<String> {
+        let file = Self::file(dir);
+        let held = std::fs::read_to_string(&file).ok();
+        let partial = dir.join(PARTIAL_FILE);
+        match std::fs::read_to_string(&partial).ok().filter(|p| closed(p)) {
+            Some(whole)
+                if held
+                    .as_deref()
+                    .is_none_or(|h| whole.len() > h.len() && whole.starts_with(h)) =>
+            {
+                if let Err(err) = std::fs::rename(&partial, &file) {
+                    eprintln!("!! record: {} stays beside it: {err}", partial.display());
+                }
+                Some(whole)
+            }
+            _ => held,
+        }
     }
 
     /// Every row `text` holds, whatever stamp it carries.
@@ -316,6 +383,10 @@ impl Record {
                 Some("a") => out.highlights.extend(read_highlight(&mut f)),
                 Some("n") => out.gate = read_gate(&mut f),
                 Some("g") => out.sources = read_sources(&mut f),
+                Some("w") => out.notes.extend(crate::written::read_note(&mut f)),
+                Some("r") => out
+                    .corrections
+                    .extend(crate::written::read_correction(&mut f)),
                 _ => {}
             }
         }
@@ -353,6 +424,31 @@ impl Record {
             out.sync_all()?;
         }
         std::fs::rename(&partial, &target)
+    }
+
+    /// [`Self::save`] after taking the notes and corrections the file in `dir`
+    /// holds, `seen` set to the file as written.
+    pub fn keep(&mut self, dir: &Path, seen: &mut Option<Seen>) -> std::io::Result<()> {
+        if let Some(text) = Self::read(dir) {
+            self.take_written(&Self::from_text(&text));
+        }
+        self.save(dir)?;
+        *seen = Seen::of(dir);
+        Ok(())
+    }
+
+    /// Take the notes and corrections of the file in `dir` where it moved since
+    /// `seen`, then set `seen` to it; answers whether this record moved.
+    pub fn follow(&mut self, dir: &Path, seen: &mut Option<Seen>) -> bool {
+        let now = Seen::of(dir);
+        if now == *seen {
+            return false;
+        }
+        *seen = now;
+        match Self::read(dir) {
+            Some(text) => self.take_written(&Self::from_text(&text)),
+            None => false,
+        }
     }
 
     /// The record as the file holds it, which is what a backup carries and
@@ -426,6 +522,13 @@ impl Record {
                 ),
             );
         }
+        for n in &self.notes {
+            crate::written::write_note(&mut out, n);
+        }
+        for c in &self.corrections {
+            crate::written::write_correction(&mut out, c);
+        }
+        close(&mut out);
         out
     }
 
@@ -1541,6 +1644,7 @@ impl Record {
         if self.highlights.len() != held {
             self.gate = None;
         }
+        self.take_written(other);
         self.sort();
         self.sittings.len() - before
     }
@@ -1635,6 +1739,21 @@ impl Record {
             cleared: Vec::new(),
             gate: None,
             sources: None,
+            notes: self
+                .notes
+                .iter()
+                .filter(|n| n.names(&self.books[slot]))
+                .cloned()
+                .collect(),
+            corrections: self
+                .corrections
+                .iter()
+                .filter(|c| {
+                    self.highlights_of(self.books[slot].extent)
+                        .any(|h| c.id.names(h))
+                })
+                .cloned()
+                .collect(),
         }
     }
 
@@ -1730,6 +1849,7 @@ impl Record {
         self.sort_books();
         self.sort_cleared();
         self.sort_highlights();
+        self.sort_written();
     }
 
     /// How many sittings close on the second another sitting of their book closes
@@ -1771,7 +1891,7 @@ impl Record {
     }
 
     /// Orders `highlights` by when they were made, then by the book and the position.
-    fn sort_highlights(&mut self) {
+    pub fn sort_highlights(&mut self) {
         self.highlights.sort_by(|a, b| {
             (&a.at, a.extent, &a.title, a.kind, a.start, a.location)
                 .cmp(&(&b.at, b.extent, &b.title, b.kind, b.start, b.location))
@@ -3168,6 +3288,8 @@ mod tests {
             highlights: Vec::new(),
             gate: None,
             sources: None,
+            notes: Vec::new(),
+            corrections: Vec::new(),
             cleared: vec![Cleared {
                 extent: 304_517,
                 key: "B00OKPCRLG".into(),
@@ -3222,6 +3344,8 @@ mod tests {
             highlights: Vec::new(),
             gate: None,
             sources: None,
+            notes: Vec::new(),
+            corrections: Vec::new(),
             cleared: vec![Cleared {
                 extent: 148_207,
                 key: "B00OKPCRLG".into(),
@@ -3623,6 +3747,8 @@ mod tests {
             highlights: Vec::new(),
             gate: None,
             sources: None,
+            notes: Vec::new(),
+            corrections: Vec::new(),
             clock: Clock::default(),
         };
         record.sittings[0].progress = progress;
@@ -3765,6 +3891,8 @@ mod tests {
             highlights: Vec::new(),
             gate: None,
             sources: None,
+            notes: Vec::new(),
+            corrections: Vec::new(),
             clock: Clock::default(),
         }
     }
@@ -4363,6 +4491,7 @@ m	260911:115340	7200
                 "m\t260810:120000",
                 "f\t260810:120000",
                 "c\t555\tB00GONE\t260809:090000",
+                "end\t4",
             ]
         );
         let _ = std::fs::remove_dir_all(&dir);

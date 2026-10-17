@@ -1,18 +1,20 @@
-//! An import into the workspace: a Kindle read over [`crate::device`] or a backup, kept
-//! byte for byte under the `backups/` of the Kindle its cut serial names, whose record is
-//! its latest backup whole; a backup naming no Kindle folds by `backup::restore`.
+//! [`kindle`] and [`backup`] keep what they read byte for byte under the `backups/` of the
+//! Kindle its cut serial names, the record the latest backup whole but the `w` and `r`
+//! rows of both; a [`folder`] or [`backup`] naming no Kindle folds by `backup::restore`.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 use anyhow::{Context, Result, anyhow};
 
 use readinglog_native::backup::{self, About, Kind};
 use readinglog_native::record::Record;
 use readinglog_native::update::archive::{self, Archive, Source};
+use readinglog_native::written;
 
 use crate::device::mass_storage::transport::MassStorageTransport;
 use crate::device::{DeviceInfo, TPath, Transport};
-use crate::workspace::{BACKUPS, RECORD, Workspace};
+use crate::workspace::{BACKUPS, RECORD, Workspace, write_file, writing};
 
 /// The record's name inside a backup, and in the Kindle's own folder.
 const RECORD_NAME: &str = "sessions.tsv";
@@ -41,6 +43,14 @@ pub struct Imported {
     pub pictures: usize,
     /// What the backup states about itself.
     pub about: About,
+}
+
+/// What one sync of a Kindle did: its import, and whether its own record
+/// took the notes and corrections written here.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Synced {
+    pub imported: Imported,
+    pub put: bool,
 }
 
 /// Import the backup at `from`, a `readinglog-*.zip` or `book-*.zip`: under
@@ -77,15 +87,49 @@ pub fn backup(ws: &Workspace, from: &Path) -> Result<Imported> {
     settle(ws, &group, kept, again, fold)
 }
 
-/// Import the Kindle `device` names: its record and covers, read over its
-/// transport, kept and folded under its cut serial.
-pub fn kindle(ws: &Workspace, device: &DeviceInfo) -> Result<Imported> {
+/// One sync of a Kindle at a time.
+static SYNCING: Mutex<()> = Mutex::new(());
+
+/// Sync the Kindle `device` names over one session, after any sync running:
+/// import its record and covers under its cut serial, call `putting`, then
+/// [`put_back`] the notes and corrections the workspace's copy holds.
+pub fn kindle(ws: &Workspace, device: &DeviceInfo, putting: impl FnOnce()) -> Result<Synced> {
+    let _one = SYNCING.lock().unwrap_or_else(PoisonError::into_inner);
     let transport = device.open_transport()?;
-    take(
-        ws,
-        Some(&backup::cut_serial(&device.serial)),
-        transport.as_ref(),
-    )
+    let serial = backup::cut_serial(&device.serial);
+    let imported = take(ws, Some(&serial), transport.as_ref())?;
+    putting();
+    let put = put_back(ws, &serial, transport.as_ref())?;
+    Ok(Synced { imported, put })
+}
+
+/// Write the workspace copy's `w` and `r` rows for `serial` into the Kindle's
+/// own `sessions.tsv`, read again and merged first, every other line as the
+/// Kindle holds it. Answers whether the Kindle's rows moved.
+fn put_back(ws: &Workspace, serial: &str, transport: &dyn Transport) -> Result<bool> {
+    let at = app_folder(transport)?.join(RECORD_NAME);
+    let held = String::from_utf8_lossy(&transport.read(&at)?).into_owned();
+    let mut merged = Record::from_text(&held);
+    if !merged.take_written(&Record::load(&ws.kindle_dir(serial).join(RECORD))) {
+        return Ok(false);
+    }
+    let text = written::splice(&held, &merged);
+    transport.write_atomic(&at, text.as_bytes())?;
+    Ok(true)
+}
+
+/// The folder on `transport` holding the app's record: its own, or the root of
+/// a folder dropped as one.
+fn app_folder(transport: &dyn Transport) -> Result<TPath> {
+    [TPath::parse(APP_DIR), TPath::new()]
+        .into_iter()
+        .find(|at| transport.exists(&at.join(RECORD_NAME)).unwrap_or(false))
+        .ok_or_else(|| {
+            anyhow!(
+                "{} holds no Reading Log record",
+                transport.display_path(&TPath::parse(APP_DIR))
+            )
+        })
 }
 
 /// Import the folder `dir` dropped on the window: a Kindle's volume, or the
@@ -106,15 +150,7 @@ pub fn folder(ws: &Workspace, dir: &Path, plugged: Option<&DeviceInfo>) -> Resul
 /// Kindle lays its own and folded: under `serial`'s Kindle, its `about.tsv`
 /// naming it, or where no Kindle is named.
 fn take(ws: &Workspace, serial: Option<&str>, transport: &dyn Transport) -> Result<Imported> {
-    let app = [TPath::parse(APP_DIR), TPath::new()]
-        .into_iter()
-        .find(|at| transport.exists(&at.join(RECORD_NAME)).unwrap_or(false))
-        .ok_or_else(|| {
-            anyhow!(
-                "{} holds no Reading Log record",
-                transport.display_path(&TPath::parse(APP_DIR))
-            )
-        })?;
+    let app = app_folder(transport)?;
     let bytes = transport.read(&app.join(RECORD_NAME))?;
     let (group, fold) = match serial {
         Some(serial) => (ws.kindle_dir(serial), Fold::Latest),
@@ -163,12 +199,14 @@ enum Fold {
     /// `backup::restore`, the Kindle's own Restore: for backups naming no
     /// Kindle, which may come from several.
     Restore,
-    /// [`latest`]: for one Kindle's backups.
+    /// [`latest`], the `w` and `r` rows of both taken by `Record::take_written`:
+    /// for one Kindle's backups.
     Latest,
 }
 
-/// Fold the backup kept at `kept` into the record under `group`, saving it only
-/// where it moved, and count what the record the screens draw gained.
+/// Fold the backup kept at `kept` into the record under `group`, read and saved
+/// under [`writing`] and saved only where it moved, and count what the record
+/// the screens draw gained.
 fn settle(
     ws: &Workspace,
     group: &Path,
@@ -179,22 +217,31 @@ fn settle(
     let dir = group.join(RECORD);
     let before = ws.record();
     let pictures = pictures_in(&dir);
-    let mut record = Record::load(&dir);
-    let was = record.text();
     match fold {
         Fold::Restore => {
+            let _held = writing();
+            let mut record = Record::load(&dir);
+            let was = record.text();
             backup::restore(&dir, &kept, &mut record, &mut |_, _| {})
                 .with_context(|| format!("folding in {}", kept.display()))?;
+            if record.text() != was {
+                record
+                    .save(&dir)
+                    .with_context(|| format!("saving the record in {}", dir.display()))?;
+            }
         }
         Fold::Latest => {
-            record =
+            let (text, mut fresh) =
                 latest(group, &kept).with_context(|| format!("folding in {}", kept.display()))?;
+            let _held = writing();
+            fresh.take_written(&Record::load(&dir));
+            let merged = written::splice(&text, &fresh);
+            let file = Record::file(&dir);
+            if std::fs::read_to_string(&file).ok().as_deref() != Some(merged.as_str()) {
+                write_file(&file, merged.as_bytes())
+                    .with_context(|| format!("saving the record in {}", dir.display()))?;
+            }
         }
-    }
-    if record.text() != was {
-        record
-            .save(&dir)
-            .with_context(|| format!("saving the record in {}", dir.display()))?;
     }
     let after = ws.record();
     Ok(Imported {
@@ -212,9 +259,9 @@ fn settle(
 }
 
 /// The record of the newest whole-record backup under `group` by its name's stamp, `at`
-/// among those sharing it; each cover `at` carries goes to the record's folder where it
-/// holds none.
-fn latest(group: &Path, at: &Path) -> Result<Record> {
+/// among those sharing it, as its file reads and as parsed; each cover `at` carries goes
+/// to the record's folder where it holds none.
+fn latest(group: &Path, at: &Path) -> Result<(String, Record)> {
     take_pictures(&group.join(RECORD), at)?;
     let records: Vec<backup::Backup> = backup::list(group)
         .into_iter()
@@ -226,7 +273,12 @@ fn latest(group: &Path, at: &Path) -> Result<Record> {
         .find(|b| b.path == at && Some(&b.stamp) == top.as_ref())
         .or(records.first())
         .map_or_else(|| at.to_path_buf(), |b| b.path.clone());
-    backup::peek(&pick).map_err(|err| anyhow!("reading {}: {err}", pick.display()))
+    backup::peek(&pick).map_err(|err| anyhow!("reading {}: {err}", pick.display()))?;
+    let text = inside(&pick)
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        .ok_or_else(|| anyhow!("{} holds no record", pick.display()))?;
+    let record = Record::from_text(&text);
+    Ok((text, record))
 }
 
 /// Write each cover the backup at `at` carries that `dir` does not hold, by its
@@ -366,7 +418,9 @@ mod tests {
     fn a_kindle_is_kept_whole_under_its_cut_serial_and_twice_adds_nothing() {
         let ws = Workspace::create(&scratch("import-kindle")).unwrap();
         let root = kindle_dir("import-kindle-volume", &one());
-        let first = kindle(&ws, &plugged(&root, "G003H21234567890")).unwrap();
+        let first = kindle(&ws, &plugged(&root, "G003H21234567890"), || {})
+            .unwrap()
+            .imported;
         assert!(!first.again);
         assert_eq!((first.sittings, first.books, first.pictures), (1, 1, 1));
         let kept = ws.kindle_dir("G003H2-7890").join(BACKUPS);
@@ -384,7 +438,9 @@ mod tests {
         assert_eq!(ws.record().sittings.len(), 1);
         assert_eq!(std::fs::read_dir(ws.backups()).unwrap().count(), 0);
 
-        let second = kindle(&ws, &plugged(&root, "G003H21234567890")).unwrap();
+        let second = kindle(&ws, &plugged(&root, "G003H21234567890"), || {})
+            .unwrap()
+            .imported;
         assert!(second.again);
         assert_eq!(second.kept, first.kept);
         assert_eq!((second.sittings, second.books, second.pictures), (0, 0, 0));
@@ -402,7 +458,7 @@ mod tests {
         read.timer_covered = 1.0;
         let mut on = record_of(vec![read], vec![sitting("2026-09-01T09:00:00", 100, 600)]);
         let root = kindle_dir("import-again-volume", &on);
-        kindle(&ws, &plugged(&root, "G000K1")).unwrap();
+        kindle(&ws, &plugged(&root, "G000K1"), || {}).unwrap();
 
         // `on` as the Kindle holds it since: restarted and read past the
         // restart, off the Kindle, its timer moved on.
@@ -417,7 +473,7 @@ mod tests {
         on.sittings.push(sitting("2026-09-05T09:00:00", 100, 60));
         on.save(&root.join("extensions").join("readinglog"))
             .unwrap();
-        kindle(&ws, &plugged(&root, "G000K1")).unwrap();
+        kindle(&ws, &plugged(&root, "G000K1"), || {}).unwrap();
 
         let held = ws.record();
         let book = &held.books[0];
@@ -460,6 +516,7 @@ mod tests {
         kindle(
             &ws,
             &plugged(&kindle_dir("import-latest-volume", &one()), "G000K1"),
+            || {},
         )
         .unwrap();
         assert_eq!(ws.record().sittings.len(), 1, "the latest backup stands");
@@ -468,6 +525,100 @@ mod tests {
         let again = backup(&ws, &dropped).unwrap();
         assert!(again.again);
         assert_eq!(ws.record().sittings.len(), 1);
+    }
+
+    #[test]
+    fn a_sync_puts_the_notes_written_here_into_the_kindles_own_record_and_nothing_else() {
+        let ws = Workspace::create(&scratch("import-put")).unwrap();
+        let serial = "G000K1";
+        let root = kindle_dir("import-put-volume", &one());
+        let file = Record::file(&root.join(APP_DIR));
+        // `later` stands for a row a later build of Reading Log writes.
+        let later = "q\tfrom a later build";
+        let held = format!("{}{later}\n", std::fs::read_to_string(&file).unwrap());
+        std::fs::write(&file, &held).unwrap();
+        let first = kindle(&ws, &plugged(&root, serial), || {}).unwrap();
+        assert!(!first.put, "nothing is written here yet");
+        let on = crate::notes::On::Book {
+            key: "B1".into(),
+            extent: 100,
+        };
+        crate::notes::write(&ws, serial, &on, "written here").unwrap();
+        // `since`: the Kindle's own record moved on before the sync reads it again.
+        let since = held.replace(later, &format!("{later}\nq\tsince"));
+        std::fs::write(&file, &since).unwrap();
+        assert!(put_back(&ws, serial, &MassStorageTransport::new(root.clone())).unwrap());
+        let on_kindle = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(Record::from_text(&on_kindle).notes.len(), 1);
+        assert!(
+            on_kindle.contains("q\tsince\n"),
+            "the Kindle's own lines stand"
+        );
+        let other = |text: &str| -> Vec<String> {
+            text.lines()
+                .filter(|l| !matches!(l.split('\t').next(), Some("w" | "r" | "end")))
+                .map(String::from)
+                .collect()
+        };
+        assert_eq!(
+            other(&on_kindle),
+            other(&since),
+            "byte for byte but the written rows"
+        );
+        assert!(
+            !root
+                .join(APP_DIR)
+                .join(readinglog_native::record::PARTIAL_FILE)
+                .exists(),
+            "no partial left"
+        );
+        // Once more, nothing to put.
+        assert!(!kindle(&ws, &plugged(&root, serial), || {}).unwrap().put);
+    }
+
+    #[test]
+    fn a_note_written_here_outlasts_the_next_import_and_takes_a_later_edit_from_it() {
+        let ws = Workspace::create(&scratch("import-written")).unwrap();
+        let serial = "G000K1";
+        kindle(
+            &ws,
+            &plugged(&kindle_dir("import-written-volume", &one()), serial),
+            || {},
+        )
+        .unwrap();
+        let on = crate::notes::On::Book {
+            key: "B1".into(),
+            extent: 100,
+        };
+        let written = crate::notes::write(&ws, serial, &on, "written here").unwrap();
+        // `since`, the Kindle's record a sitting on, holding none of the rows written here.
+        let mut since = one();
+        since
+            .sittings
+            .push(sitting("2026-09-02T09:00:00", 100, 600));
+        kindle(
+            &ws,
+            &plugged(&kindle_dir("import-written-since", &since), serial),
+            || {},
+        )
+        .unwrap();
+        let held = Record::load(&ws.kindle_dir(serial).join(RECORD));
+        assert_eq!(held.sittings.len(), 2, "the latest backup stands");
+        assert_eq!(held.notes.len(), 1, "and the note with it");
+        // `carried` holds a later edit of the note: the later stands.
+        let mut carried = since.clone();
+        carried.take_written(&held);
+        carried
+            .reword_note(&written, "reworded", "2099-01-01T00:00:00")
+            .unwrap();
+        kindle(
+            &ws,
+            &plugged(&kindle_dir("import-written-carried", &carried), serial),
+            || {},
+        )
+        .unwrap();
+        let held = Record::load(&ws.kindle_dir(serial).join(RECORD));
+        assert_eq!(held.notes[0].text, "reworded");
     }
 
     #[test]
@@ -497,8 +648,19 @@ mod tests {
             vec![sitting("2026-09-02T09:00:00", 100, 900)],
         );
         far.books[0].percent = 60.0;
-        kindle(&ws, &plugged(&kindle_dir("import-two-a", &near), "G000K1")).unwrap();
-        let added = kindle(&ws, &plugged(&kindle_dir("import-two-b", &far), "G000K2")).unwrap();
+        kindle(
+            &ws,
+            &plugged(&kindle_dir("import-two-a", &near), "G000K1"),
+            || {},
+        )
+        .unwrap();
+        let added = kindle(
+            &ws,
+            &plugged(&kindle_dir("import-two-b", &far), "G000K2"),
+            || {},
+        )
+        .unwrap()
+        .imported;
         assert_eq!((added.sittings, added.books), (1, 1), "a book of its own");
         assert_eq!(ws.kindles().len(), 2);
         let held = ws.record();
@@ -514,6 +676,7 @@ mod tests {
         kindle(
             &ws,
             &plugged(&kindle_dir("import-zip-volume", &one()), "G000K1"),
+            || {},
         )
         .unwrap();
 
@@ -530,8 +693,10 @@ mod tests {
         let zip = kindle(
             &other,
             &plugged(&kindle_dir("import-zip-second", &more), "G000K2"),
+            || {},
         )
         .unwrap()
+        .imported
         .kept;
         let added = backup(&ws, &zip).unwrap();
         assert!(!added.again);

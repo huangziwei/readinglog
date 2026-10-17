@@ -1,6 +1,6 @@
 //! [`Transport`] over a mounted Kindle's volume.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
@@ -24,7 +24,30 @@ impl MassStorageTransport {
     }
 }
 
+/// `dest` with `.partial` after its name, beside it.
+fn with_partial_suffix(dest: &Path) -> PathBuf {
+    let parent = dest.parent().unwrap_or_else(|| Path::new("."));
+    let name = dest
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    parent.join(format!("{name}.partial"))
+}
+
 impl Transport for MassStorageTransport {
+    fn write_atomic(&self, path: &TPath, bytes: &[u8]) -> Result<()> {
+        let dest = self.resolve(path);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create {}", parent.display()))?;
+        }
+        let tmp = with_partial_suffix(&dest);
+        std::fs::write(&tmp, bytes).with_context(|| format!("write {}", tmp.display()))?;
+        std::fs::rename(&tmp, &dest)
+            .with_context(|| format!("rename {} -> {}", tmp.display(), dest.display()))?;
+        Ok(())
+    }
+
     fn read(&self, path: &TPath) -> Result<Vec<u8>> {
         let p = self.resolve(path);
         std::fs::read(&p).with_context(|| format!("read {}", p.display()))

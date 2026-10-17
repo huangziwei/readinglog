@@ -10,6 +10,7 @@ use crate::highlights::Highlight;
 use crate::log::sitting::{self, Measure, Stretch};
 use crate::record::{self, FINISHED_PERCENT, Record};
 use crate::settings::{SittingFloor, StatsFrom, WeekStart};
+use crate::written::{HighlightId, Laid};
 
 /// The day a book with no reading stands on, absent from `days`.
 pub const NO_DAY: i64 = i64::MIN;
@@ -285,10 +286,13 @@ pub struct Stats {
     pub highlights: Vec<Highlight>,
     /// Each highlight's `body` lowercased and Han-folded, `None` where no book holds it.
     pub folded: Vec<Option<String>>,
+    /// The `w` rows `Record::drawn` laid into `highlights`, by the identity each
+    /// takes there; empty where the stats were built off a record as it stands.
+    pub written: HashMap<HighlightId, Laid>,
 }
 
 /// One row of [`Stats::book_highlights`] and where in the record it came from.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Across<'a> {
     /// The book, by its index in [`Stats::books`].
     pub book: usize,
@@ -297,11 +301,30 @@ pub struct Across<'a> {
     /// Where the highlight sits in [`Stats::highlights`], and in [`Stats::folded`].
     pub held: usize,
     pub highlight: &'a Highlight,
-    /// The note written on it, as [`crate::highlights::Paired`] pairs them.
-    pub note: Option<&'a Highlight>,
+    /// The notes written on it, as [`crate::highlights::Paired`] pairs them.
+    pub notes: Vec<&'a Highlight>,
 }
 
 impl Stats {
+    /// [`Self::build`] over `record` as `Record::drawn` draws it, corrections in
+    /// place and every `w` row laid in, [`Self::written`] naming them; over
+    /// `record` itself where it holds neither.
+    pub fn drawn(
+        record: &Record,
+        today: i64,
+        unidentified: bool,
+        from: StatsFrom,
+        floor: SittingFloor,
+    ) -> Self {
+        if record.notes.is_empty() && record.corrections.is_empty() {
+            return Self::build(record, today, unidentified, from, floor);
+        }
+        let drawn = record.drawn();
+        let mut out = Self::build(&drawn.record, today, unidentified, from, floor);
+        out.written = drawn.written;
+        out
+    }
+
     /// Everything the record holds, totalled, with no library read. `today`
     /// places the current streak, `unidentified` and `floor` settle which
     /// sittings count, and `from` picks the seconds, per [`sitting_seconds`].
@@ -474,16 +497,26 @@ impl Stats {
         })
     }
 
-    /// One book's highlights: `Kind::spans_a_passage`, most recently made first,
-    /// each with the note `highlights::paired` folds under it. `Kind::Bookmark`
-    /// and `Kind::Pin` carry no words and are not here.
+    /// `book`'s highlights, `Kind::spans_a_passage` alone, most recently made
+    /// first, each with the notes `highlights::paired` folds under it, one in
+    /// [`Self::written`] under the passage it names.
     pub fn book_highlights(&self, book: usize) -> Vec<crate::highlights::Paired<'_>> {
         let mut held: Vec<&Highlight> = self
             .highlights_of(book)
             .filter(|m| m.kind.spans_a_passage())
             .collect();
         held.reverse();
-        crate::highlights::paired(&held)
+        crate::highlights::paired(&held, |note| {
+            self.laid(note).and_then(|laid| laid.on.clone())
+        })
+    }
+
+    /// Where `note` is one [`Self::written`] holds, what `Record::drawn` laid it as.
+    pub fn laid(&self, note: &Highlight) -> Option<&Laid> {
+        match self.written.is_empty() {
+            true => None,
+            false => self.written.get(&HighlightId::of(note)),
+        }
     }
 
     /// Every book's [`Self::book_highlights`] rows as one list, `Highlight::at`
@@ -510,7 +543,7 @@ impl Stats {
                     at,
                     held,
                     highlight: row.highlight,
-                    note: row.note,
+                    notes: row.notes,
                 });
             }
         }
@@ -547,17 +580,18 @@ impl Stats {
         let held = self.book_highlights(book);
         let mine: Vec<&crate::highlights::Paired<'_>> = held
             .iter()
-            .filter(|m| made(m.highlight) || m.note.is_some_and(made))
+            .filter(|m| made(m.highlight) || m.notes.iter().any(|n| made(n)))
             .collect();
         Self::counted(&mine)
     }
 
-    /// The two figures [`Self::highlights_counted`] states, over `rows`.
+    /// The two figures [`Self::highlights_counted`] states, over `rows`: every
+    /// note a row holds, and a note standing as a row of its own.
     fn counted(rows: &[&crate::highlights::Paired<'_>]) -> (usize, usize) {
         let notes = rows
             .iter()
-            .filter(|m| m.note.is_some() || m.highlight.kind == Kind::Note)
-            .count();
+            .map(|m| m.notes.len() + usize::from(m.highlight.kind == Kind::Note))
+            .sum();
         let book_highlights = rows
             .iter()
             .filter(|m| m.highlight.kind != Kind::Note)
@@ -842,6 +876,20 @@ impl Stats {
         }
         self.book_sittings(book)
             .filter(|s| days.contains(&s.day))
+            .filter_map(|s| Some(((s.day, s.to_secs), s.progress?)))
+            .max_by_key(|(at, _)| *at)
+            .map(|(_, p)| whole_per_cent((p * 100.0).clamp(0.0, 100.0)))
+    }
+
+    /// The progress `book` stood at as its last sitting to end by `secs` into
+    /// `day` ended, by the rule [`Self::percent_over`] states one by.
+    pub fn percent_at(&self, book: usize, day: i64, secs: i64) -> Option<i64> {
+        let stat = self.books.get(book)?;
+        if stat.is_finished() && stat.has_percent() && day >= stat.last_day {
+            return Some(stat.percent_shown());
+        }
+        self.book_sittings(book)
+            .filter(|s| (s.day, s.to_secs) <= (day, secs))
             .filter_map(|s| Some(((s.day, s.to_secs), s.progress?)))
             .max_by_key(|(at, _)| *at)
             .map(|(_, p)| whole_per_cent((p * 100.0).clamp(0.0, 100.0)))
@@ -1579,6 +1627,11 @@ pub(crate) mod tests {
             SittingFloor::All,
         );
         assert_eq!(stats.percent_over(0, last..=last), Some(44));
+
+        // A moment states the sitting that ended by it, and none before the first.
+        assert_eq!(stats.percent_at(0, last, 12 * 3600), Some(44));
+        assert_eq!(stats.percent_at(0, first, 8 * 3600), None);
+        assert_eq!(stats.percent_at(0, first, 22 * 3600), Some(31));
     }
 
     #[test]
@@ -2223,6 +2276,8 @@ pub(crate) mod tests {
             highlights: Vec::new(),
             gate: None,
             sources: None,
+            notes: Vec::new(),
+            corrections: Vec::new(),
             clock: Clock::default(),
         }
     }
@@ -3281,14 +3336,12 @@ pub(crate) mod tests {
         // row and the bookmark, spanning no passage, left out.
         assert_eq!(across.len(), 2);
         assert_eq!((across[0].book, across[0].at), (1, 0));
-        assert!(across[0].note.is_none());
+        assert!(across[0].notes.is_empty());
         assert_eq!((across[1].book, across[1].at), (0, 0));
-        assert_eq!(
-            across[1].note.map(|n| n.body.as_str()),
-            Some("a borrowed line")
-        );
+        let said: Vec<&str> = across[1].notes.iter().map(|n| n.body.as_str()).collect();
+        assert_eq!(said, ["a borrowed line"]);
         // `row.at` names the place its own book's list holds it, where the
-        // Highlights tab opens.
+        // Journal tab opens.
         for row in &across {
             assert_eq!(
                 stats.book_highlights(row.book)[row.at].highlight,

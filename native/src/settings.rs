@@ -224,16 +224,16 @@ pub enum Scope {
     Books,
     /// Passages and the notes written on them, through
     /// `view::search::listed_highlights`.
-    Highlights,
+    Journal,
 }
 
 impl Scope {
-    pub const ALL: [Scope; 2] = [Scope::Books, Scope::Highlights];
+    pub const ALL: [Scope; 2] = [Scope::Books, Scope::Journal];
 
     fn token(self) -> &'static str {
         match self {
             Scope::Books => "books",
-            Scope::Highlights => "marks",
+            Scope::Journal => "marks",
         }
     }
 
@@ -535,7 +535,7 @@ mod tests {
         let old = Settings::parse("language=e\nshow_uncovered=no\n", Lang::English);
         assert_eq!(old.scope, Scope::Books);
         let highlights = Settings::parse("scope=marks\n", Lang::English);
-        assert_eq!(highlights.scope, Scope::Highlights);
+        assert_eq!(highlights.scope, Scope::Journal);
         // `scope=highlights` keeps the default: `Scope::of_token` answers `None`.
         let odd = Settings::parse("scope=highlights\n", Lang::English);
         assert_eq!(odd.scope, Scope::Books);

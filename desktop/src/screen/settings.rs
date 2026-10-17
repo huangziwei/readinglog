@@ -179,7 +179,7 @@ fn stated(at: &Path) -> backup::About {
 }
 
 /// The page a record holding no sitting opens on: a backup to drop or pick, the
-/// Kindle plugged in by its serial, and where a Kindle keeps its backups.
+/// card of the Kindle plugged in, and where a Kindle keeps its backups.
 pub(super) fn welcome(w: &Words, kindle: Option<&str>) -> String {
     let mut out = format!(
         "<div class=\"welcome\"><h1>Reading Log</h1><p class=\"lede\">{}</p>\
@@ -188,14 +188,12 @@ pub(super) fn welcome(w: &Words, kindle: Option<&str>) -> String {
         esc(w.choose_backup)
     );
     if let Some(serial) = kindle {
-        let _ = write!(
-            out,
-            "<div class=\"kindle wide\"><b>Kindle</b> {} \
-             <button type=\"button\" class=\"button\" data-act=\"kindle\" data-serial=\"{}\">{}</button></div>",
-            esc(w.connected),
-            esc(serial),
-            esc(w.import)
-        );
+        out.push_str(&super::kindle_card(
+            w,
+            crate::kindles::model(serial),
+            serial,
+            " wide",
+        ));
     }
     let _ = write!(out, "<p class=\"hint\">{}</p></div>", esc(w.where_backups));
     out

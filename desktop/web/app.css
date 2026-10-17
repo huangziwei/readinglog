@@ -143,6 +143,29 @@ img:not([src]) {
 .side .kindle .button {
   margin-top: 8px;
   display: block;
+  width: 100%;
+}
+.kindle .button[hidden] {
+  display: none;
+}
+.kindle .state {
+  margin: 0;
+}
+.side .kindle .state {
+  margin-top: 2px;
+}
+.kindle .state.busy::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: 1px;
+}
+.kindle .state.wrong {
+  color: var(--mark);
 }
 .quiet {
   display: block;
@@ -416,7 +439,7 @@ svg text {
 }
 .board {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: 14px 10px;
   padding: 16px 20px;
 }
@@ -588,16 +611,12 @@ svg text {
   background: var(--accent-soft);
   color: inherit;
 }
-/* `.when`: `.edited` where the words were set here, `.edit`, and the day at
-   the line's end; `.edit` stands out of the line but on the row's hover */
+/* `.when`: Add note, `.edit` and the day at the line's end; each `.edit`
+   stands out of its line but on the row's hover */
 .highlight .when {
   display: inline-flex;
   align-items: baseline;
   gap: 10px;
-}
-.highlight .edited {
-  font-style: normal;
-  color: var(--accent);
 }
 .highlight .edit {
   position: absolute;
@@ -618,10 +637,14 @@ svg text {
 .highlight .edit:hover {
   color: var(--ink);
 }
-/* `.open`: the row's words in `.editor`'s text areas, the passage set as it is drawn */
-.highlight.open blockquote,
-.highlight.open .note,
-.highlight.open .where {
+/* `.open`: the row's or the note's words in `.editor`'s text areas, the passage
+   set as it is drawn */
+.highlight.open > blockquote,
+.highlight.open > .note,
+.highlight.open > .stamp,
+.highlight.open > .where,
+.dnote.open > .note,
+.dnote.open > .stamp {
   display: none;
 }
 .editor textarea {
@@ -652,7 +675,8 @@ svg text {
 .editor .acts button {
   margin-left: 0;
 }
-.editor [data-act="revert"] {
+.editor [data-act="revert"],
+.editor [data-act="delete-note"] {
   margin-right: auto;
 }
 .editor .acts .save {
@@ -869,7 +893,7 @@ h2 + .run {
   color: var(--ink);
 }
 
-/* `.board a`, `.search.wide` and `.said .chip`: a board figure opening its page, a book's own search, a chip in a heading */
+/* `.board a` and `.said .chip`: a board figure opening its page, a chip in a heading */
 .board a {
   display: flex;
   flex-direction: column;
@@ -879,11 +903,218 @@ h2 + .run {
   border-bottom: 1px solid var(--rule);
   align-self: flex-start;
 }
-.search.wide {
-  width: 100%;
-  margin: 0 0 14px;
-}
 section h2 .said .chip {
-  margin-left: 8px;
   padding: 1px 8px;
+  color: var(--ink);
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+
+/* `.part`: a book page's two parts, the Kindle's and the one written here;
+   `.measure` holds text to a reading width */
+.part + .part {
+  margin-top: 48px;
+  border-top: 1px solid var(--rule);
+}
+.part > section:first-child {
+  margin-top: 26px;
+}
+.measure {
+  max-width: 720px;
+}
+#kindles,
+#journal {
+  scroll-margin-top: 64px;
+}
+/* `.sub`: a second chart's heading inside the first one's card */
+.card .sub {
+  display: flex;
+  justify-content: space-between;
+  margin: 16px 0 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--soft);
+}
+/* `section h2`: its name and `.count` on one baseline, `.said` at the other end */
+section h2 > span:first-child {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+section h2 .count {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  color: var(--faint);
+}
+section h2 .said {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+section h2 .said .search {
+  width: 220px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* `.slim`: the bar holding a book's title and the jumps to its parts once its
+   head scrolls away */
+.slim {
+  position: fixed;
+  top: 0;
+  left: 208px;
+  right: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 40px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--rule);
+  box-shadow: 0 2px 6px var(--shade);
+}
+.slim[hidden] {
+  display: none;
+}
+.slim b {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--serif);
+  font-size: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.slim .chip {
+  font: inherit;
+  font-size: 12px;
+}
+
+/* `.composer`: the field a note on the book alone is written in, its buttons
+   on its focus */
+.composer {
+  margin: 0 0 12px;
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+.composer:focus-within {
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft);
+}
+.composer textarea {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 12px 16px;
+  border: none;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  resize: none;
+  outline: none;
+}
+.composer textarea::placeholder {
+  color: var(--faint);
+}
+.composer .acts {
+  display: none;
+  justify-content: flex-end;
+  gap: 6px;
+  margin: 0;
+  padding: 0 12px 12px;
+}
+.composer:focus-within .acts {
+  display: flex;
+}
+.composer .acts button {
+  margin-left: 0;
+}
+.composer .acts .save {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: none;
+}
+/* `.dnote`: a note written here, set as `.note` is with no rule, its day under
+   it in `.stamp` */
+.highlight .dnote {
+  margin: 10px 0 0;
+}
+.highlight .dnote .note {
+  margin: 0;
+}
+.highlight .stamp {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+/* `.note.md`: a note written here, drawn from its Markdown: a heading in the
+   serif at its own size, paragraphs and lists apart, a quotation ruled as a
+   passage is and its `.place` under it */
+.note.md > :first-child {
+  margin-top: 0;
+}
+.note.md > :last-child {
+  margin-bottom: 0;
+}
+.note.md p,
+.note.md ul,
+.note.md ol {
+  margin: 0 0 8px;
+}
+.note.md ul,
+.note.md ol {
+  padding-left: 22px;
+}
+.note.md h1,
+.note.md h2,
+.note.md h3 {
+  margin: 14px 0 6px;
+  font-family: var(--serif);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--ink);
+}
+.note.md h1 {
+  font-size: 21px;
+}
+.note.md h2 {
+  font-size: 18px;
+}
+.note.md h3 {
+  font-size: 16px;
+}
+.note.md blockquote {
+  margin: 0 0 8px;
+  padding: 2px 0 2px 14px;
+  border-left: 3px solid;
+}
+.note.md blockquote p {
+  margin: 0;
+}
+.note.md .place {
+  display: block;
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--faint);
+}
+.note.md code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.92em;
+}
+.note.md a {
+  color: var(--accent);
 }

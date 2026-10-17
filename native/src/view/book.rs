@@ -13,7 +13,7 @@ use crate::ui::text::TextRenderer;
 use crate::ui::theme::Theme;
 
 use super::{
-    Ask, BookTab, Ctx, Hit, Search, State, Way, band, book_graphs, books, highlights, search,
+    Ask, BookTab, Ctx, Hit, Search, State, Way, band, book_graphs, books, journal, search,
 };
 
 /// Lines a title takes before the rest of it is ellipsized.
@@ -187,12 +187,12 @@ fn search_button(cx: &mut Ctx, area: Rect) -> Rect {
     pages_box(theme, area)
 }
 
-/// What one tab reads. An `order` puts the caret on `BookTab::Highlights`.
+/// What one tab reads. An `order` puts the caret on `BookTab::Journal`.
 fn tab_label(tab: BookTab, lang: Lang, highlights: usize, order: Option<Way>) -> String {
     let name = tab.label(lang);
     match (tab, order) {
-        (BookTab::Highlights, Some(order)) => format!("{name} ({highlights}) {}", order.caret()),
-        (BookTab::Highlights, None) => format!("{name} ({highlights})"),
+        (BookTab::Journal, Some(order)) => format!("{name} ({highlights}) {}", order.caret()),
+        (BookTab::Journal, None) => format!("{name} ({highlights})"),
         _ => name.to_string(),
     }
 }
@@ -263,7 +263,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
     // A field takes the whole head row, and the two pages stand down.
     if let Some(open) = state.book_search.as_ref() {
         field(cx, head, open);
-        highlights::draw(cx, area, index, open.from, state.highlights_way, Some(open));
+        journal::draw(cx, area, index, open.from, state.journal_way, Some(open));
         return;
     }
     let cells = search_button(cx, head);
@@ -272,21 +272,14 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
         cells,
         tab,
         cx.stats.highlights_held(index),
-        state.highlights_way,
+        state.journal_way,
     );
-    // `BookTab::Highlights` and `BookTab::Graphs` take the whole box under the head
+    // `BookTab::Journal` and `BookTab::Graphs` take the whole box under the head
     // row. The cover, the headline figures, the bar and the controls are
     // `BookTab::Statistics`'s.
     match tab {
-        BookTab::Highlights => {
-            return highlights::draw(
-                cx,
-                area,
-                index,
-                state.highlights_from,
-                state.highlights_way,
-                None,
-            );
+        BookTab::Journal => {
+            return journal::draw(cx, area, index, state.journal_from, state.journal_way, None);
         }
         BookTab::Graphs => {
             return book_graphs::draw(cx, area, index, state.reading);
@@ -319,7 +312,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
 /// The query over one book's passages, across the whole head row. The
 /// magnifier keeps the square `search_button` drew it in.
 fn field(cx: &mut Ctx, head: Rect, open: &Search) {
-    let hint = cx.s().search_hint_highlights;
+    let hint = cx.s().search_hint_journal;
     search::field(cx, head, &open.query, &open.preedit, hint);
 }
 
@@ -595,10 +588,10 @@ mod tests {
     #[test]
     fn only_the_tab_showing_carries_the_caret() {
         let lang = Lang::English;
-        let on = tab_label(BookTab::Highlights, lang, 8, Some(Way::Down));
-        let off = tab_label(BookTab::Highlights, lang, 8, None);
+        let on = tab_label(BookTab::Journal, lang, 8, Some(Way::Down));
+        let off = tab_label(BookTab::Journal, lang, 8, None);
         assert!(on.ends_with(Way::Down.caret()), "{on}");
-        assert_eq!(off, "Highlights (8)");
+        assert_eq!(off, "Journal (8)");
         assert!(on.contains("(8)") && off.contains("(8)"));
         for tab in [BookTab::Statistics, BookTab::Graphs] {
             let said = tab_label(tab, lang, 8, Some(Way::Down));
