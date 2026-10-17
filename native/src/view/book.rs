@@ -19,8 +19,8 @@ use super::{
 /// Lines a title takes before the rest of it is ellipsized.
 const TITLE_LINES: usize = 2;
 
-/// The [`Strings`] pair a book's count and rate are stated in: Han and kana
-/// are counted a character at a time, every other script a word at a time.
+/// The [`Strings`] pair a book's count and rate are stated in: by the character
+/// for Han and kana, by the word for every other script.
 pub fn unit(book: &BookStat, s: &Strings) -> (&'static str, &'static str) {
     match Script::resolve(Script::of_language(&book.language), &book.title) {
         Script::Japanese | Script::SimplifiedChinese | Script::TraditionalChinese => {
@@ -38,8 +38,8 @@ fn cover_height(theme: &Theme) -> i32 {
     theme.row_h * 4
 }
 
-/// The labels of the two controls that hand the book over. Both stand under
-/// [`BookStat::can_open`], and the first shortens where the second joins it.
+/// The labels of the two controls that hand the book over, both under
+/// [`BookStat::can_open`], the first shorter where the second joins it.
 fn control_labels(book: &BookStat, s: &Strings) -> [Option<&'static str>; 2] {
     let open = book.can_open();
     let again = open && book.can_restart();
@@ -70,9 +70,8 @@ fn controls_split(
     split_from(theme, width, &read)
 }
 
-/// [`controls_split`]'s arithmetic, over measured widths. The boxes run from
-/// the left edge in the order given; a row that cannot hold what is left opens
-/// another.
+/// [`controls_split`]'s arithmetic over measured widths: each box from the left
+/// edge in the order given, on a new row where the last cannot hold it.
 fn split_from(theme: &Theme, width: i32, read: &[i32]) -> Vec<Rect> {
     let h = chrome::chip_height(theme);
     let step = h + theme.gap;
@@ -97,8 +96,7 @@ fn controls_bottom(read: &[Rect]) -> i32 {
 }
 
 /// The band the controls take, the gap above them included, and 0 where this
-/// book offers none. The reset control alone opens the band: a book off the
-/// Kindle carries that one and no reading control.
+/// book offers none; the reset control alone opens it.
 fn open_height(
     text: &mut TextRenderer,
     theme: &Theme,
@@ -137,9 +135,9 @@ fn open_box(theme: &Theme, band: Rect) -> Rect {
     band.split_bottom((band.h - theme.gap * 2).max(1)).0
 }
 
-/// The box the cover is drawn in and the column of words beside it. `cover_box`
-/// takes `placed`'s width at `top`'s left edge and height; the words run from
-/// `cover_box`'s right edge to `top`'s, over `top`'s own depth.
+/// The box the cover is drawn in and the column of words beside it: `cover_box`
+/// `placed`'s width at `top`'s left edge and height, the words' box from two
+/// gaps past it to `top`'s right edge, over `top`'s own depth.
 fn cover_and_words(theme: &Theme, top: Rect, placed: Rect) -> (Rect, Rect) {
     let cover_box = Rect::new(top.x, top.y, placed.w, top.h);
     let x = cover_box.right() + theme.gap * 2;
@@ -164,13 +162,13 @@ fn heading_height(
         + open_height(text, theme, script, book, s)
 }
 
-/// The height of the strip the two pages are picked off, its air included.
+/// The height of the strip the book's pages are picked off, its air included.
 pub fn picker_height(theme: &Theme) -> i32 {
     chrome::chip_height(theme) + theme.gap * 2
 }
 
-/// The box the two pages take: the head row less the search's own square and
-/// the air after it.
+/// The box the book's pages take: the head row less the search's own square
+/// and the air after it.
 fn pages_box(theme: &Theme, head: Rect) -> Rect {
     let opens = books::search_box(theme, head).right() + chrome::chip_gap(theme);
     Rect::new(opens, head.y, (head.right() - opens).max(1), head.h)
@@ -198,14 +196,13 @@ fn tab_label(tab: BookTab, lang: Lang, highlights: usize, order: Option<Way>) ->
 }
 
 /// The book's three pages as a segmented control, each its own hit box and an
-/// equal cell, in the shape `rhythm::picker` gives the spans. Every label sets
-/// at the one size that fits its cell.
+/// equal cell, in the shape `rhythm::picker` gives the spans, every label at
+/// the one size that fits its cell.
 fn picker(cx: &mut Ctx, area: Rect, on: BookTab, highlights: usize, order: Way) {
     let theme: &Theme = cx.theme;
     let cells = area.columns(BookTab::ALL.len() as i32, 0);
     let script = cx.ui_script();
-    // The caret is drawn on the tab showing alone and measured on every tab:
-    // the strip keeps one type size across a tap.
+    // `labels` measures the caret on every tab; only the tab showing draws it.
     let labels: Vec<String> = BookTab::ALL
         .iter()
         .map(|tab| tab_label(*tab, cx.lang, highlights, (*tab == on).then_some(order)))
@@ -229,8 +226,7 @@ fn picker(cx: &mut Ctx, area: Rect, on: BookTab, highlights: usize, order: Way) 
             true => paint::fill(cx.fb, cell, INK),
             false => paint::stroke(cx.fb, cell, LIGHT, 1),
         }
-        // A label wider than its cell at the floor size is cut there, never
-        // over its neighbour.
+        // `wrap_and_clamp_in` cuts a label wider than its cell at the floor size.
         let label = cx.text.wrap_and_clamp_in(script, label, room as u32, 1);
         let label = label.first().map(String::as_str).unwrap_or_default();
         let w = cx.text.measure_width_in(script, label) as i32;
@@ -254,16 +250,24 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
     let book = book.clone();
 
     let s = cx.s();
-    // Each band takes what it draws into.
+    // `air` stands between the bands.
     let air = theme.gap * 2;
     let ui = cx.ui_script();
     let tab = state.book_tab;
     let (bar, area) = area.split_top(picker_height(theme));
     let head = Rect::new(bar.x, bar.y, bar.w, chrome::chip_height(theme));
-    // A field takes the whole head row, and the two pages stand down.
+    // `book_search`'s field takes the whole head row, over the pages' tabs.
     if let Some(open) = state.book_search.as_ref() {
         field(cx, head, open);
-        journal::draw(cx, area, index, open.from, state.journal_way, Some(open));
+        journal::draw(
+            cx,
+            area,
+            index,
+            open.from,
+            None,
+            state.journal_way,
+            Some(open),
+        );
         return;
     }
     let cells = search_button(cx, head);
@@ -275,11 +279,18 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
         state.journal_way,
     );
     // `BookTab::Journal` and `BookTab::Graphs` take the whole box under the head
-    // row. The cover, the headline figures, the bar and the controls are
-    // `BookTab::Statistics`'s.
+    // row, `BookTab::Statistics` the cover, figures, bar and controls.
     match tab {
         BookTab::Journal => {
-            return journal::draw(cx, area, index, state.journal_from, state.journal_way, None);
+            return journal::draw(
+                cx,
+                area,
+                index,
+                state.journal_from,
+                state.journal_entry,
+                state.journal_way,
+                None,
+            );
         }
         BookTab::Graphs => {
             return book_graphs::draw(cx, area, index, state.reading);
@@ -298,10 +309,9 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
 
     // [`figures`] states the other three.
     let mut lines = reading_rows(&book, cx.stats_from, s);
-    // The file, not the reading: the last row whatever stands above it.
+    // `s.on_the_kindle`, the file's row, last whatever stands above it.
     lines.push((s.on_the_kindle, where_note(&book, s)));
-    // A row stands `theme.row_h` tall, as `config`'s do, and the rows share
-    // what the section leaves them where it leaves them less than that.
+    // `deep`: `theme.row_h` a row, as `config`'s, or what the section leaves.
     let deep = (theme.row_h * lines.len() as i32).min(inner.h);
     let rows = Rect::new(inner.x, inner.y, inner.w, deep).rows(lines.len() as i32, 0);
     for ((key, value), row) in lines.iter().zip(&rows) {
@@ -309,15 +319,15 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
     }
 }
 
-/// The query over one book's passages, across the whole head row. The
-/// magnifier keeps the square `search_button` drew it in.
+/// The query over one book's passages, across the whole head row, the
+/// magnifier in the square `search_button` drew it in.
 fn field(cx: &mut Ctx, head: Rect, open: &Search) {
     let hint = cx.s().search_hint_journal;
     search::field(cx, head, &open.query, &open.preedit, hint);
 }
 
 /// The cover, the title beside it, the progress bar under both, and the
-/// controls under that. The bar's own band carries [`Hit::Finished`].
+/// controls under that, [`Hit::Finished`] on the bar's own band.
 fn heading(cx: &mut Ctx, area: Rect, book: &BookStat, index: usize) {
     let theme: &Theme = cx.theme;
     let script = Script::of_language(&book.language);
@@ -506,7 +516,7 @@ pub fn reading_rows(book: &BookStat, from: StatsFrom, s: &Strings) -> Vec<(&'sta
         (s.last_read, day_note(book.last_day, book, s)),
         (s.finished_on, finished_note(book, s)),
     ];
-    // A restart empties `finished_on`: this row is where that reading shows.
+    // `restarted_on` stands where a restart emptied `finished_on`.
     if !book.restarted_on.is_empty() {
         let said = crate::lang::counted(s.n_times, book.times_finished());
         lines.push((s.read_through_row, said));
@@ -544,8 +554,8 @@ pub fn where_note(book: &BookStat, s: &Strings) -> String {
     }
 }
 
-/// The day a book read through was last put down. A book short of the end,
-/// or one with no reading, states none.
+/// The day a book read through was last put down, empty for one short of the
+/// end or with no reading.
 pub fn finished_note(book: &BookStat, s: &Strings) -> String {
     match book.is_finished() {
         true => day_note(book.last_day, book, s),
@@ -599,9 +609,8 @@ mod tests {
         }
     }
 
-    /// The head row's three labels never reach the floor `chrome` shrinks to,
-    /// in any language, on any panel, at any text size. `wrap_and_clamp_in`
-    /// cuts a label that does, taking its own words off.
+    /// `tab_label` never reaches the floor `chrome` shrinks to, in any language,
+    /// on any panel, at any text size; `wrap_and_clamp_in` cuts one that does.
     #[test]
     fn the_three_tabs_fit_their_cells_in_every_language() {
         for (w, h) in PANELS {
@@ -694,11 +703,11 @@ mod tests {
         );
         // A romanised title under the tag its library row states.
         assert_eq!(unit(&set_in("ja", "Kokoro"), ja), ("文字数", "文字/分"));
-        // No tag: the title is all the book says.
+        // No tag: `unit` reads the title.
         assert_eq!(unit(&set_in("", "毛澤東選集"), ja), ("文字数", "文字/分"));
         assert_eq!(unit(&set_in("", "Neuromancer"), ja), ("語数", "語/分"));
         assert_eq!(unit(&set_in("en", "Post Office"), en()), ("Words", "wpm"));
-        // Hangul spaces its words.
+        // `unit` counts Hangul by the word.
         assert_eq!(unit(&set_in("ko", "채식주의자"), en()), ("Words", "wpm"));
     }
 
@@ -724,8 +733,8 @@ mod tests {
         assert_eq!(control_labels(&book(600, 0, 0), en()), [None, None]);
         assert_eq!(control_labels(&held(""), en()), [None, None]);
 
-        // Progress to give up puts the restarting control beside the other, and
-        // shortens the first.
+        // `part`, with progress to give up, takes the restarting control beside
+        // the other, the first shortened.
         let part = BookStat {
             percent: 46.0,
             ..on_kindle
@@ -734,7 +743,7 @@ mod tests {
             control_labels(&part, en()),
             [Some("Continue"), Some("Restart")]
         );
-        // The same book with no `location` offers neither control.
+        // `gone`, the same book with no `location`, offers neither control.
         let gone = BookStat {
             percent: 46.0,
             ..book(600, 0, 0)
@@ -747,7 +756,7 @@ mod tests {
         assert_eq!(question(Ask::Mark(true), en()).2, "Mark Finished");
         assert_eq!(question(Ask::Mark(false), en()).2, "Mark Unfinished");
         assert_eq!(question(Ask::Restart, en()).2, "Restart");
-        // Each question states its own outcome.
+        // `question` states each ask's own outcome.
         for ask in [Ask::Mark(true), Ask::Mark(false), Ask::Restart] {
             let (heading, note, _) = question(ask, en());
             assert!(heading.ends_with('?'), "{ask:?} puts no question");
@@ -786,8 +795,7 @@ mod tests {
         for (w, h) in PANELS {
             let theme = Theme::for_screen(w, h);
             let area = chrome::content_box(&theme);
-            // The Books list splits its head off the content box, and the
-            // book screen splits `picker_height` off the same box.
+            // `shelf` and `head` split off the same content box.
             let shelf = area
                 .split_top(chrome::chip_height(&theme) + theme.gap * 2)
                 .0;
@@ -796,8 +804,7 @@ mod tests {
             let square = books::search_box(&theme, head);
             assert_eq!(square.x, area.x, "{w}x{h}");
             assert_eq!(square.w, chrome::chip_height(&theme), "{w}x{h}");
-            // The two pages open after the square, and the row ends where a
-            // field standing over the whole of it ends.
+            // `pages` opens after the square and ends where `head` ends.
             let pages = pages_box(&theme, head);
             assert!(pages.x > square.right(), "{w}x{h}");
             assert_eq!(pages.right(), head.right(), "{w}x{h}");
@@ -854,8 +861,8 @@ mod tests {
         for (w, h) in PANELS {
             let theme = Theme::for_screen(w, h);
             let cover_w = cover::width_for(cover_height(&theme));
-            // The cover reaches 250 design pixels, and the words keep over half
-            // the box beside it.
+            // `cover_w` reaches 250 design pixels, the words over half the box
+            // beside it.
             assert!(
                 cover_w >= theme.px(250),
                 "{w}x{h}: a {cover_w} px cover is a stamp"
@@ -875,9 +882,8 @@ mod tests {
             let box_ = chrome::content_box(&theme);
             let top = Rect::new(box_.x, box_.y, box_.w, cover_height(&theme));
             let slot = top.split_left(cover::width_for(top.h)).0;
-            // A cover a third narrower than its slot and short of its height:
-            // the shape `Covers::box_in` centres, having no leave to sample a
-            // small cover up.
+            // `placed`, a cover a third narrower than its slot and short of its
+            // height, as `Covers::box_in` centres one it does not sample up.
             let narrow = slot.w * 2 / 3;
             let placed = Rect::new(
                 slot.x + (slot.w - narrow) / 2,
@@ -894,9 +900,9 @@ mod tests {
             );
             assert_eq!(words.x, cover_box.right() + theme.gap * 2);
             assert_eq!(words.right(), top.right(), "{w}x{h}: the words fall short");
-            // The words keep the block's own depth, whatever the cover's is.
+            // `words` keeps the block's own depth, whatever the cover's.
             assert_eq!((words.y, words.h), (top.y, top.h), "{w}x{h}");
-            // Every pixel the cover is narrower than its slot by is the words'.
+            // `words` takes every pixel the cover is narrower than its slot.
             assert_eq!(words.w, top.w - narrow - theme.gap * 2);
         }
     }
@@ -925,8 +931,7 @@ mod tests {
         };
         assert_eq!(finished_note(&read, en()), "—");
         assert_eq!(where_note(&read, en()), "no");
-        // The mark dates the row, and the day is the one the book was last
-        // put down on.
+        // `finished_note` dates the row by the day the book was last put down.
         let done = BookStat {
             finished: true,
             on_kindle: true,

@@ -31,9 +31,9 @@ use readinglog_native::view::{Act, Ask, BookTab, Search, Shelf, Sort, Span, Way,
 const DAY: (i64, i64, i64) = (2026, 9, 16);
 const NOW: i64 = 20 * 3600 + 15 * 60;
 
-/// The panels, by the name `--panel` takes. The first is what a run draws
-/// when it names none, and the tag `panel_tag` leaves off a filename. The
-/// density each carries is `ui::scale`'s; `--panel WxH` draws any other size.
+/// The panels, by the name `--panel` takes: the first drawn where a run names
+/// none and untagged by `panel_tag`, each at `ui::scale`'s density; `--panel
+/// WxH` draws any other size.
 const PANELS: &[(&str, u32, u32)] = &[
     // Colorsoft, Oasis 2-3.
     ("pw", 1264, 1680),
@@ -300,8 +300,7 @@ const FONTS: &str = "no font — point READINGLOG_FONTS at the Kindle's font dir
 
 /// An [`App`] over `record`, at the panel and the settings the run names.
 fn open(record: &Record, opts: &Opts, w: u32, h: u32, lang: Lang, size: TextSize) -> Result<App> {
-    // Only of the fixture: a real record given by `--record` can be empty, and
-    // an emptied one is a screen worth drawing.
+    // The fixture identifies a book; `opts.record` may name an empty record.
     if opts.record.is_none()
         && Stats::build(
             record,
@@ -352,8 +351,8 @@ fn thinned_for(shot: &Shot, opts: &Opts, covers: &Path, lang: Lang) -> Option<Re
             record.reset_at = "260810:120000".into();
             return Some(record);
         }
-        // The book listed last, cleared and kept. It sorts last either
-        // way; every other index stands.
+        // The book listed last, cleared and kept, sorting last either way and
+        // leaving every other index where it stands.
         ("book" | "books", Some(of)) if of.ends_with("cleared") => {
             let mut record = fixture::library(opts.day, covers);
             let last = Stats::build(
@@ -424,11 +423,12 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
     let (book, asking, page, from, find) = match shot.name.as_str() {
         "book" => {
             let of = shot.of.as_deref().unwrap_or("0");
+            // `<shot>:open:<n>` opens the row `n` down on its own page, `:open:<n>:<k>` at page `k`.
+            let of = of.split_once(":open:").map_or(of, |(of, _)| of);
             let (at, asking, page, from, find) = match of.split_once(':') {
                 Some((at, "cleared")) => (at, None, BookTab::Statistics, 0, None),
-                // `journal` opens the list at its head, `journal:<n>` `n` rows
-                // down, and `journal:earliest` the list turned over; `written`
-                // and `written:<n>` the same over `fixture::written`.
+                // `journal` opens the list at its head, `journal:<n>` `n` rows down,
+                // and `written`, `written:<n>` the same over `fixture::written`.
                 Some((at, "journal" | "written")) => (at, None, BookTab::Journal, 0, None),
                 Some((at, page)) if page.starts_with("written:") => (
                     at,
@@ -467,6 +467,11 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
     };
     app.show(*tab, book);
     app.set_book_tab(page, from);
+    if let Some((_, open)) = shot.of.as_deref().and_then(|of| of.split_once(":open:")) {
+        let mut at = open.split(':').map(|n| n.parse().unwrap_or(0));
+        let row = at.next().unwrap_or(0);
+        app.set_entry(row, at.next().unwrap_or(0));
+    }
     app.set_reading(shot.of.as_deref().and_then(|of| {
         of.rsplit_once("graphs:")
             .and_then(|(_, at)| at.parse::<usize>().ok())
@@ -655,9 +660,8 @@ fn set_span(app: &mut App, shot: &Shot, week: WeekStart) -> Result<()> {
         // A page with a list either side of it, where both jump marks stand.
         "mid" => app.open_books(5),
         "week" => app.set_span(Span::Week),
-        // A span stepped off the one holding today, where the way back to it
-        // is drawn. The week is the tightest of them: its name is the longest
-        // and the chip stands beside it.
+        // A span stepped off the one holding today, where the way back to it is
+        // drawn; `weekback` the week, its name the longest, the chip beside it.
         "back" | "weekback" => {
             let span = match of {
                 "weekback" => Span::Week,
@@ -690,9 +694,8 @@ fn set_span(app: &mut App, shot: &Shot, week: WeekStart) -> Result<()> {
             app.set_span(Span::Week);
             busy(app, 0);
         }
-        // A day with nothing on it picked off the week: its columns take a tap
-        // where a year's cells do not, and the record ends part way through
-        // the week showing.
+        // A day with nothing on it picked off the week's tappable columns, in
+        // the week the record ends part way through.
         "weekempty" => {
             app.set_span(Span::Week);
             let day = app.state().day;
@@ -755,7 +758,7 @@ fn list() {
             }
             "today" => "  (:quiet :empty :busy)",
             "book" => {
-                "  (:<index> :<index>:graphs :<index>:graphs:<n> :<index>:journal\n   :<index>:journal:<n> :<index>:journal:earliest :<index>:find\n   :<index>:find:<query> :<index>:restart :<index>:mark :<index>:unmark\n   :<index>:clear :<index>:cleared :<index>:written :<index>:written:<n>)"
+                "  (:<index> :<index>:graphs :<index>:graphs:<n> :<index>:journal\n   :<index>:journal:<n> :<index>:journal:earliest :<index>:find\n   :<index>:find:<query> :<index>:restart :<index>:mark :<index>:unmark\n   :<index>:clear :<index>:cleared :<index>:written :<index>:written:<n>\n   :<index>:journal:open:<n> :<index>:written:open:<n>:<page>)"
             }
             "config" => {
                 "  (:reset :nobackup :restore :gone :rebuild :many :many2 :backups\n   :backups2)"
@@ -768,7 +771,7 @@ fn list() {
         };
         println!("  {name}{of}");
     }
-    // Each of these two states its own list of qualifiers.
+    // `banners` and `acts` state their own lists of qualifiers.
     let banners: Vec<&str> = BANNERS.iter().map(|(name, _)| *name).collect();
     println!("  update  (:{})", banners.join(" :"));
     let acts: Vec<&str> = ACTS.iter().map(|(name, _)| *name).collect();

@@ -1,6 +1,6 @@
-//! The screens. Each takes the box left above the tab strip and draws into it,
-//! recording a hit box for anything touchable. [`State`] holds the day, the
-//! span and the open book; a redraw after a tap is the same call.
+//! The screens: each `draw` takes the box left above the tab strip, draws into
+//! it and records a [`Hit`] box for anything touchable. [`State`] holds the
+//! day, the span and the open book.
 
 pub mod alltime;
 pub mod backups;
@@ -39,24 +39,23 @@ pub enum Hit {
     BookTab(BookTab),
     /// Where the open book's journal opens, as an index into it.
     JournalPage(usize),
-    /// A passage the search found: the book it was highlighted in, and the row's
-    /// place in that book's own journal.
+    /// Open a row of the open book's journal on a page of its own, by its place in the list.
+    Entry(usize),
+    /// Take that page down, back onto the journal's page under it.
+    EntryClose,
+    /// A passage the search found: its book, and its place in that book's journal.
     Highlight(usize, usize),
-    /// Open a book through `open::uri`, by its index in [`Stats::books`].
-    /// Leaves the app, as [`Hit::Exit`] does.
+    /// Open a book through `open::uri`, by its index in [`Stats::books`], leaving the app.
     Open(usize),
-    /// Ask to set `Book::finished` on a book, by its index in
-    /// [`Stats::books`] and the value a tap sets. [`Hit::Answer`] answers it.
+    /// Ask to set `Book::finished`, by book index and value; [`Hit::Answer`] answers it.
     Finished(usize, bool),
-    /// Ask to read a book again, by its index in [`Stats::books`].
-    /// [`Hit::Answer`] answers it.
+    /// Ask to read a book again, by its index; [`Hit::Answer`] answers it.
     Restart(usize),
-    /// Carry out the question [`State::asked`] holds. A restart leaves the app,
-    /// as [`Hit::Open`] does.
+    /// Carry out the question [`State::asked`] holds; a restart leaves the app.
     Answer,
     /// Take the question down, leaving the book as it stands.
     Dismiss,
-    /// Leave the app. The only way out: a book is closed by tapping a tab.
+    /// Leave the app, the only way out of it.
     Exit,
     /// A chip on the config page.
     Language(Lang),
@@ -82,8 +81,7 @@ pub enum Hit {
     Now,
     /// The day picked off the grid, opened as its own page.
     OpenDay,
-    /// Where a book list opens, as an index into it. The screen drawing the
-    /// list holds the index inside the list: a step past either end is no step.
+    /// Where a book list opens, as an index the drawing screen holds inside the list.
     ListPage(usize),
     /// The books tab, narrowed to one shelf and one span of days.
     Shelved(Shelf, Option<Window>),
@@ -103,20 +101,17 @@ pub enum Hit {
     Search,
     /// A tap on the search field, which raises the keyboard.
     SearchField,
-    /// The cross in the field's right end: it takes the query off, and closes
-    /// the search where there is none to take.
+    /// The field's cross: it takes the query off, or closes the search with none.
     SearchClear,
     /// Where the results open, as an index into them.
     SearchPage(usize),
-    /// Ask what should become of one book's reading, by its index in
-    /// [`Stats::books`]. Answered by [`Hit::ClearBook`] or [`Hit::ForgetBook`].
+    /// Ask what becomes of a book's reading; [`Hit::ClearBook`] or [`Hit::ForgetBook`] answers.
     Clear(usize),
     /// Take one book's reading, keeping the book.
     ClearBook(usize),
     /// Take one book's reading, and forget the book too.
     ForgetBook(usize),
-    /// Ask to reset the whole record. The flag is whether a backup is
-    /// written first.
+    /// Ask to reset the whole record, the flag whether a backup is written first.
     Reset(bool),
     /// Reset it, as [`Hit::Reset`] asked.
     ResetDone(bool),
@@ -140,7 +135,7 @@ pub enum Hit {
 }
 
 /// A question standing over the config page, with the figures it states
-/// gathered when it went up: nothing is walked while the dialog is drawn.
+/// gathered when it went up.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Confirm {
     pub about: Act,
@@ -165,8 +160,8 @@ pub enum Act {
 }
 
 impl Act {
-    /// The headline and the note a banner over this act draws. The headline
-    /// names the act: `reset_row`, `restore_do`, `rebuild_head`.
+    /// The headline and the note a banner over this act draws, the headline
+    /// `reset_row`, `restore_do` or `rebuild_head`.
     pub fn doing(self, s: &Strings) -> (String, Vec<String>) {
         let (headline, said) = match self {
             Act::Reset(_) => (s.reset_row, s.reset_doing),
@@ -185,8 +180,7 @@ pub enum Ask {
     Restart,
     /// Set `Book::finished` to the value carried.
     Mark(bool),
-    /// Put this book's reading back to zero, keeping the book or not. Its
-    /// two answers are their own hits, being two different acts.
+    /// Put this book's reading back to zero, keeping the book or not.
     Clear,
 }
 
@@ -220,8 +214,7 @@ impl BookTab {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Search {
     pub query: String,
-    /// What an IME is composing, drawn after `query` and matched on by
-    /// nothing.
+    /// What an IME is composing, drawn after `query` and matched on by nothing.
     pub preedit: String,
     pub from: usize,
     /// Whether the on-screen keyboard stands over the foot of the screen.
@@ -423,7 +416,7 @@ impl Span {
     /// `day` moved `by` spans.
     pub fn step(self, day: i64, by: i64) -> i64 {
         match self {
-            // The whole record has nothing on either side of it.
+            // `Span::AllTime` has nothing on either side of it.
             Span::AllTime => day,
             Span::Week => day + by * 7,
             Span::Month => date::shift_months(day, by),
@@ -444,8 +437,7 @@ impl Span {
                     date::short_day(*days.end(), s),
                 );
                 let numbered = format!("{}{no}{}", s.week_no, s.week_no_after);
-                // Two dates alone name no year, and a week in a record of
-                // several is read by its number as often as by its dates.
+                // `from` – `to` and `of`, the week's year, then `numbered`.
                 match s.date_ymd {
                     true => format!("{of}年 {from} – {to} · {numbered}"),
                     false => format!("{from} – {to}, {of} · {numbered}"),
@@ -460,9 +452,8 @@ impl Span {
     }
 }
 
-/// The window a book list is narrowed to: a span, and a day inside it. A book
-/// belongs to the window where the day it was last put down falls in
-/// [`Self::days`], which is the rule `Stats::finished_over` counts by.
+/// The window a book list is narrowed to: a span, and a day inside it, holding
+/// each book last put down in [`Self::days`], as `Stats::finished_over` counts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Window {
     pub span: Span,
@@ -489,8 +480,7 @@ impl Window {
                 true => format!("{year}年{}", s.months_short[at]),
                 false => format!("{} {year}", s.months_short[at]),
             },
-            // A week is named by its number, not by the two dates it runs
-            // between: those are long, name no year, and read alike.
+            // `Span::Week` is named by `of`, its year, and `numbered`.
             Span::Week => {
                 let (of, no) = date::week_of_year(self.day, week);
                 let numbered = format!("{}{no}{}", s.week_no, s.week_no_after);
@@ -507,7 +497,7 @@ impl Window {
 #[derive(Debug, Clone, PartialEq)]
 pub struct State {
     pub tab: Tab,
-    /// The day Rhythm looks at. `span` holds it, and the grid draws that span.
+    /// The day Rhythm looks at, which `span` holds.
     pub day: i64,
     pub span: Span,
     /// Whether `day` is picked off the grid, which a month and the board open whole.
@@ -536,8 +526,7 @@ pub struct State {
     pub sort: Sort,
     /// Which way that order runs.
     pub sort_way: Way,
-    /// Which list the search names, which a tab change keeps as well.
-    /// `Settings::scope` holds it between launches.
+    /// Which list the search names, kept over a tab change and, in `Settings::scope`, launches.
     pub scope: Scope,
     /// Whether the day picked off the grid opens as its own page.
     pub opened_day: bool,
@@ -545,14 +534,15 @@ pub struct State {
     pub alltime_page: usize,
     /// How far down Rhythm's own book list has been paged.
     pub list_from: usize,
-    /// Which of the open book's two pages is showing.
+    /// Which of the open book's pages is showing.
     pub book_tab: BookTab,
     /// How far down that book's journal has been paged.
     pub journal_from: usize,
+    /// The row of that journal open on a page of its own, and which of its pages shows.
+    pub journal_entry: Option<journal::Entry>,
     /// Which end that list opens at, which opening another book keeps.
     pub journal_way: Way,
-    /// Which of the open book's readings the Graphs tab draws, counted from
-    /// the first. `None` takes the standing one.
+    /// The reading the Graphs tab draws, counted from the first; `None` the standing one.
     pub reading: Option<usize>,
 }
 
@@ -581,6 +571,7 @@ impl State {
             list_from: 0,
             book_tab: BookTab::default(),
             journal_from: 0,
+            journal_entry: None,
             journal_way: Way::default(),
             reading: None,
         }
@@ -591,7 +582,7 @@ impl State {
     pub fn open_book(&mut self, book: usize) {
         self.book = Some(book);
         self.book_tab = BookTab::default();
-        self.journal_from = 0;
+        self.journal_head();
         self.reading = None;
         self.book_search = None;
         if let Some(search) = self.search.as_mut() {
@@ -621,9 +612,8 @@ impl State {
         self.searching_slot().as_mut()
     }
 
-    /// Open `book` at the passage standing `at` in `Stats::highlights`'s order, of
-    /// `of` highlights, which is where a search result leads. The tab's own order
-    /// may differ, and `at` is read through it.
+    /// Open `book` at the passage standing `at` of `of` in `Stats::highlights`'s
+    /// order, read through `journal_way`.
     pub fn open_highlight(&mut self, book: usize, at: usize, of: usize) {
         self.open_book(book);
         self.book_tab = BookTab::Journal;
@@ -636,7 +626,7 @@ impl State {
             return false;
         }
         self.book_tab = tab;
-        self.journal_from = 0;
+        self.journal_head();
         true
     }
 
@@ -644,12 +634,28 @@ impl State {
     /// again.
     pub fn flip_journal(&mut self) {
         self.journal_way = self.journal_way.flipped();
-        self.journal_from = 0;
+        self.journal_head();
     }
 
-    /// Go to `tab`, closing any book, day or shelf open over it. Answers
-    /// whether that moved anywhere: a tap on the tab showing, with nothing
-    /// open over it, is no navigation and costs no redraw.
+    /// Open the row `row` places down the open book's journal on a page of its
+    /// own, at its head.
+    pub fn open_entry(&mut self, row: usize) {
+        self.journal_entry = Some(journal::Entry { row, page: 0 });
+    }
+
+    /// Take the open entry down, back onto the journal's page under it.
+    pub fn close_entry(&mut self) {
+        self.journal_entry = None;
+    }
+
+    /// Open the book's journal at its head, no entry open.
+    fn journal_head(&mut self) {
+        self.journal_from = 0;
+        self.journal_entry = None;
+    }
+
+    /// Go to `tab`, closing any book, day or shelf open over it; answers `false`
+    /// where `tab` shows with nothing open over it.
     pub fn go(&mut self, tab: Tab) -> bool {
         if self.tab == tab
             && self.book.is_none()
@@ -675,14 +681,13 @@ impl State {
         self.alltime_page = 0;
         self.list_from = 0;
         self.book_tab = BookTab::default();
-        self.journal_from = 0;
+        self.journal_head();
         self.reading = None;
         true
     }
 
-    /// Step Rhythm on: a day at a time where one is open, a page of All Time
-    /// where that is the span, else a whole span, answering whether anything
-    /// moved. All Time has no span either side; its pages are what step.
+    /// Step Rhythm on: a day where one is picked, a page where `span` is
+    /// `Span::AllTime`, else a whole span; answers whether anything moved.
     pub fn shift(&mut self, by: i64) -> bool {
         if self.picked {
             self.day += by;
@@ -701,9 +706,7 @@ impl State {
     }
 }
 
-/// `read` with every book no cover can be drawn for left out, where the
-/// config page hides them. Nothing is taken off a total: the reading stands,
-/// and only the row naming it goes.
+/// `read` less every book no cover can be drawn for, where `uncovered` is `false`.
 pub fn covered(stats: &Stats, uncovered: bool, read: &mut Vec<(usize, i64)>) {
     if !uncovered {
         read.retain(|(book, _)| stats.books[*book].has_cover());
@@ -759,8 +762,8 @@ pub(crate) fn over_keyboard(theme: &Theme, area: Rect) -> Rect {
     Rect::new(area.x, area.y, area.w, (over - theme.gap - area.y).max(0))
 }
 
-/// The index the last page of `count` rows opens at, `deep` rows to a page.
-/// The pages tile the list, and the last one is the short one.
+/// The index the last page of `count` rows opens at, `deep` rows to a page,
+/// the last page the short one.
 pub fn last_page_at(count: usize, deep: usize) -> usize {
     let deep = deep.max(1);
     count.saturating_sub(1) / deep * deep
@@ -784,8 +787,7 @@ pub struct Ctx<'a> {
     /// The local day, and the second of it.
     pub today: i64,
     pub now: i64,
-    /// Whether the record was reset. The one thing a screen asks it:
-    /// an empty list is a first launch or a reset, and the two read differently.
+    /// Whether the record was reset, which tells an empty list's reset from a first launch.
     pub was_reset: bool,
     pub hits: Vec<(Hit, Rect)>,
 }
@@ -800,8 +802,7 @@ impl Ctx<'_> {
         self.lang.strings()
     }
 
-    /// The convention this screen's own labels are set in — a book's title
-    /// keeps the convention its library entry names, whatever this is.
+    /// The script this screen's own labels are set in, off `self.lang`.
     pub fn ui_script(&self) -> crate::font::Script {
         crate::font::Script::of_language(self.lang.language_tag())
     }
@@ -823,7 +824,7 @@ mod tests {
         let week = Span::Week.days(day, WeekStart::Monday);
         assert_eq!(date::civil_from_days(*week.start()), (2026, 8, 31));
         assert_eq!(date::civil_from_days(*week.end()), (2026, 9, 6));
-        // A Sunday-first week holds the same day, a column over.
+        // `sunday`, the Sunday-first week, holds the same day a column over.
         let sunday = Span::Week.days(day, WeekStart::Sunday);
         assert_eq!(date::civil_from_days(*sunday.start()), (2026, 8, 30));
         assert!(sunday.contains(&day));
@@ -866,8 +867,8 @@ mod tests {
 
     #[test]
     fn a_step_leaves_the_day_inside_the_span_it_names() {
-        // Every step lands on a day whose own span holds it, month ends
-        // included: 31 March steps back to 28 February, not into March.
+        // `span.step` lands on a day the span holds, month ends included: 31
+        // March steps back to 28 February.
         for span in Span::ALL {
             let mut day = date::days_from_civil(2026, 3, 31);
             for _ in 0..30 {
@@ -892,9 +893,8 @@ mod tests {
 
     #[test]
     fn a_book_opens_on_its_statistics_and_steps_onto_its_journal() {
-        // The book screen is one track: the statistics page, then each page of
-        // its journal. Stepping is what walks it, and stepping off either end
-        // does nothing — the screen is left by a tab.
+        // `open_book` opens on the statistics, `go_in_book` steps onto the
+        // journal and back, each step opening the journal at its head.
         let mut s = State::new(third());
         s.open_book(3);
         assert_eq!(s.book_tab, BookTab::Statistics);
@@ -903,12 +903,11 @@ mod tests {
         assert!(s.go_in_book(BookTab::Journal));
         assert!(!s.go_in_book(BookTab::Journal), "already there");
         s.journal_from = 5;
-        // Coming back to the statistics opens the highlights at their head again.
+        // `go_in_book` back to the statistics opens the journal at its head again.
         assert!(s.go_in_book(BookTab::Statistics));
         assert_eq!(s.journal_from, 0);
 
-        // And another book opens on its own statistics, whatever the last one
-        // was left showing.
+        // `open_book` opens another book on its statistics, whatever the last showed.
         s.go_in_book(BookTab::Journal);
         s.journal_from = 5;
         s.open_book(4);
@@ -940,8 +939,7 @@ mod tests {
         assert_eq!(s.book, Some(4));
         assert_eq!(s.book_tab, BookTab::Journal);
         assert_eq!(s.journal_from, 7, "the book opens on the passage tapped");
-        // The keyboard comes down under the book, as it does for any book
-        // opened out of the results.
+        // `open_highlight` takes the keyboard down, as `open_book` does.
         assert_eq!(s.search.as_ref().map(|search| search.keyboard), Some(false));
         // The same passage, counted from the other end, where the book's own
         // list is turned over.
@@ -956,17 +954,36 @@ mod tests {
         s.open_book(3);
         s.go_in_book(BookTab::Journal);
         s.journal_from = 6;
+        s.open_entry(6);
         assert_eq!(s.journal_way, Way::Down, "newest first to start");
         s.flip_journal();
         assert_eq!(s.journal_way, Way::Up);
         assert_eq!(s.journal_from, 0, "a turned list opens at its own head");
-        // And back, which is the only other place the caret leads.
+        assert_eq!(s.journal_entry, None, "no entry open");
+        // `flip_journal` turns it back: the caret's only two ways.
         s.flip_journal();
         assert_eq!(s.journal_way, Way::Down);
-        // `journal_way` stands: opening another book keeps it.
+        // `journal_way` stands over `open_book`.
         s.flip_journal();
         s.open_book(5);
         assert_eq!(s.journal_way, Way::Up);
+    }
+
+    #[test]
+    fn an_entry_opens_over_the_journal_and_closes_back_onto_its_page() {
+        let mut s = State::new(third());
+        s.open_book(3);
+        s.go_in_book(BookTab::Journal);
+        s.journal_from = 4;
+        s.open_entry(6);
+        assert_eq!(s.journal_entry, Some(journal::Entry { row: 6, page: 0 }));
+        s.close_entry();
+        assert_eq!(s.journal_entry, None);
+        assert_eq!(s.journal_from, 4, "the list's page under it stands");
+        // `go_in_book` takes it down.
+        s.open_entry(5);
+        s.go_in_book(BookTab::Graphs);
+        assert_eq!(s.journal_entry, None);
     }
 
     #[test]
@@ -979,14 +996,13 @@ mod tests {
                 assert_eq!(Way::Up.place(drawn, of), at, "{at} of {of}");
             }
         }
-        // A book with no highlights names no row either way.
+        // `place(0, 0)`, a book with no highlights, is 0 either way.
         assert_eq!(Way::Up.place(0, 0), 0);
     }
 
     #[test]
     fn a_tab_tap_closes_the_book_open_over_it() {
-        // The only way out of a book. Tapping the tab it was opened from
-        // returns to that tab's screen and stays there.
+        // `go` closes the book open over its own tab and stays on that tab.
         let mut s = State::new(third());
         s.go(Tab::Books);
         s.book = Some(3);
@@ -994,7 +1010,7 @@ mod tests {
         assert_eq!(s.tab, Tab::Books);
         assert!(s.book.is_none());
 
-        // A book opened from Today is closed by any tab, landing on that one.
+        // `go` closes a book open over another tab too, landing on `tab`.
         s.book = Some(3);
         assert!(s.go(Tab::Rhythm));
         assert_eq!(s.tab, Tab::Rhythm);
@@ -1103,14 +1119,14 @@ mod tests {
         assert_eq!(named(Span::Year, ja), "2026年");
         assert_eq!(named(Span::Month, ja), "2026年9月");
         assert_eq!(named(Span::Week, ja), "2026年第36週");
-        // A week is numbered off the year holding most of it: the last days
-        // of December are named by the year they run into.
+        // `turn` numbers its week off the year holding most of it: 30 December
+        // 2025 falls in 2026's first week.
         let turn = Window {
             span: Span::Week,
             day: date::days_from_civil(2025, 12, 30),
         };
         assert_eq!(turn.name(week, en), "2026 W1");
-        // The days a window covers are the span's own.
+        // `Window::days` covers the span's own days.
         for span in Span::CALENDAR {
             let window = Window { span, day };
             assert_eq!(window.days(week), span.days(day, week));
@@ -1173,7 +1189,7 @@ mod tests {
         assert!(search.preedit.is_empty());
     }
 
-    /// A delete counts characters, never bytes.
+    /// `keyboardDelete` counts characters, never bytes.
     #[test]
     fn a_delete_counts_characters() {
         let mut search = Search::default();
@@ -1182,7 +1198,7 @@ mod tests {
         assert_eq!(search.query, "夢");
     }
 
-    /// A replace deletes and inserts in one, and its text may hold colons.
+    /// `keyboardReplace` deletes and inserts in one, its text holding colons.
     #[test]
     fn a_replace_deletes_then_inserts() {
         let mut search = Search::default();
@@ -1191,8 +1207,8 @@ mod tests {
         assert_eq!(search.query, "aXY:Z");
     }
 
-    /// Every set opens the results at their head, and a property this screen
-    /// does not answer moves nothing.
+    /// `Search::set` opens the results at their head, and moves nothing on a
+    /// property it does not answer.
     #[test]
     fn a_property_this_screen_does_not_answer_moves_nothing() {
         let mut search = Search {

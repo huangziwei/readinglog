@@ -1,6 +1,6 @@
 //! One book's highlights and notes, at whichever end [`super::Way`]
-//! opens the list. `Highlight::body` comes from the clippings file and `Highlight::start`
-//! from the `.sdr` sidecar; [`positions`] states each on its own axis.
+//! opens the list. `Highlight::body` comes from `crate::clippings` and `Highlight::start`
+//! from `crate::sidecar`; [`positions`] states each on its own axis.
 
 use crate::clippings::Kind;
 use crate::font::Script;
@@ -25,7 +25,10 @@ const DOT: &str = " · ";
 /// What a highlight with no position states for its position.
 const DASH: &str = "—";
 
-/// The most passage lines one row of a [`Layout::found`] list shows.
+/// What follows `Strings::more` on a cut row a tap opens.
+const OPENS: &str = "›";
+
+/// The most lines of its passage, and of its notes, a collapsed row shows.
 const WINDOW_LINES: usize = 4;
 
 /// The most lines a row's `title` takes, wrapped to the row's own width.
@@ -37,8 +40,7 @@ const NAME_LINES: usize = 3;
 pub struct Row {
     /// The book, by its index in `Stats::books`.
     pub book: usize,
-    /// The row's place in the book's `Stats::book_highlights` list, where its
-    /// Journal tab opens.
+    /// The row's place in `Stats::book_highlights`, where its Journal tab opens.
     pub at: usize,
     pub highlight: Highlight,
     /// Notes on the passage `Stats::written` does not hold; [`row`] draws the first.
@@ -88,10 +90,19 @@ impl Row {
         Script::of_language(&self.language)
     }
 
-    /// `true` where [`Row::written`] or [`Row::laid`] holds anything, the rows [`plan`] sets.
+    /// `true` where [`Row::written`] or [`Row::laid`] holds anything: the rows
+    /// whose Kindle note states its own day.
     fn writes(&self) -> bool {
         !self.written.is_empty() || self.laid.is_some()
     }
+}
+
+/// A row of one book's journal open on a page of its own: `row`, by its place
+/// in the list, and `page`, which of the pages it runs over shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Entry {
+    pub row: usize,
+    pub page: usize,
 }
 
 /// How wide the rule beside a passage is.
@@ -101,6 +112,22 @@ fn rule_width(theme: &Theme) -> i32 {
 
 fn indent(theme: &Theme) -> i32 {
     theme.gap * 3
+}
+
+/// How far a row is set: the most lines of its passage, and of its notes
+/// together.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Depth {
+    lines: usize,
+    notes: usize,
+}
+
+impl Depth {
+    /// Every line the row holds.
+    const WHOLE: Self = Self {
+        lines: usize::MAX,
+        notes: usize::MAX,
+    };
 }
 
 /// The heights a row is set in.
@@ -234,7 +261,7 @@ fn lines_in(m: Metrics, theme: &Theme, h: i32) -> usize {
 
 /// `book`'s page openings in `area`, ascending from 0, and empty for a book
 /// carrying none: the list [`draw`] and the page step read, `search` naming its
-/// passages and `ui` the script desktop notes are set in.
+/// rows and `ui` the script notes are set in.
 #[allow(clippy::too_many_arguments)]
 pub fn pages(
     text: &mut TextRenderer,
@@ -257,7 +284,36 @@ pub fn pages(
     let page = page_box(theme, area, search.is_some_and(|search| search.keyboard));
     let inner = list_box(text, theme, page);
     let at = layout(text, theme, inner, query, ui);
-    openings(text, theme, &held, &at, inner.h)
+    paged(text, theme, &held, &at)
+        .iter()
+        .map(Page::opening)
+        .collect()
+}
+
+/// How many pages `book`'s row `row` runs over open on its own in `area`, the
+/// list in `order`; 0 where it holds no such row.
+#[allow(clippy::too_many_arguments)]
+pub fn entry_pages(
+    text: &mut TextRenderer,
+    theme: &Theme,
+    stats: &Stats,
+    book: usize,
+    area: Rect,
+    order: Way,
+    row: usize,
+    ui: Script,
+) -> usize {
+    let Some(record) = stats.books.get(book) else {
+        return 0;
+    };
+    let held = listing(stats, book, record, order, None);
+    let Some(one) = held.get(row) else {
+        return 0;
+    };
+    let inner = list_box(text, theme, area);
+    let at = layout(text, theme, inner, None, ui);
+    let whole = plan_in(text, theme, &at, one, Depth::WHOLE);
+    parts(text, theme, &whole, inner.h).len()
 }
 
 /// One book's own rows, most recently made first, as its list holds them.
@@ -302,8 +358,8 @@ pub fn listing(
     held
 }
 
-/// What the rows are measured against: [`Layout::found`] under a query,
-/// windowing each passage, else every line its box holds.
+/// What the rows are measured against: [`Layout::found`], each row collapsed
+/// and, under a query, its passage opening where the query stands.
 fn layout<'a>(
     text: &mut TextRenderer,
     theme: &Theme,
@@ -311,11 +367,7 @@ fn layout<'a>(
     query: Option<&'a str>,
     ui: Script,
 ) -> Layout<'a> {
-    let at = Layout::of(text, theme, inner, false, ui);
-    match query {
-        Some(query) => at.found(theme, inner.h, query),
-        None => at,
-    }
+    Layout::of(text, theme, inner, false, ui).found(theme, inner.h, query.unwrap_or(""))
 }
 
 /// Where each page of `held` opens, ascending and starting at 0.
@@ -335,6 +387,107 @@ pub(super) fn openings(
     out
 }
 
+/// One row as a page sets it: `row`, by its place in the list, its `depth`,
+/// and `opens`, `true` where it stands cut and a tap opens it on its own page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Piece {
+    row: usize,
+    depth: Depth,
+    opens: bool,
+}
+
+/// What one page of a list holds, top down; never nothing.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Page {
+    pieces: Vec<Piece>,
+}
+
+impl Page {
+    fn opening(&self) -> usize {
+        self.pieces.first().map_or(0, |piece| piece.row)
+    }
+}
+
+/// Every page of `held` in a box `at.high` tall, each row collapsed, the one a
+/// page cannot hold cut to the room left where `at.needle` is `None`.
+fn paged(text: &mut TextRenderer, theme: &Theme, held: &[Row], at: &Layout) -> Vec<Page> {
+    let mut out = Vec::new();
+    let mut page = Page::default();
+    let mut used = 0;
+    for (row, one) in held.iter().enumerate() {
+        let collapsed = plan(text, theme, at, one);
+        if used == 0 || used + collapsed.high <= at.high {
+            page.pieces.push(Piece {
+                row,
+                depth: collapsed.depth,
+                opens: collapsed.cut,
+            });
+            used += collapsed.high;
+            continue;
+        }
+        let cut = match at.needle {
+            None => squeezed(text, theme, at, one, &collapsed, at.high - used),
+            Some(_) => None,
+        };
+        if let Some(depth) = cut {
+            page.pieces.push(Piece {
+                row,
+                depth,
+                opens: true,
+            });
+        }
+        out.push(std::mem::take(&mut page));
+        used = 0;
+        if cut.is_none() {
+            page.pieces.push(Piece {
+                row,
+                depth: collapsed.depth,
+                opens: collapsed.cut,
+            });
+            used = collapsed.high;
+        }
+    }
+    if !page.pieces.is_empty() {
+        out.push(page);
+    }
+    out
+}
+
+/// How far `held` is set cut to the most of its lines that stand in `room`,
+/// its passage's kept before its notes', `collapsed` being how it stands
+/// collapsed; `None` where not one line does.
+fn squeezed(
+    text: &mut TextRenderer,
+    theme: &Theme,
+    at: &Layout,
+    held: &Row,
+    collapsed: &Plan,
+    room: i32,
+) -> Option<Depth> {
+    let said = collapsed.said;
+    let depth = |lines: usize| Depth {
+        lines: lines.min(said),
+        notes: lines - lines.min(said),
+    };
+    let most = said + collapsed.depth.notes;
+    let fits = |text: &mut TextRenderer, lines: usize| {
+        plan_in(text, theme, at, held, depth(lines)).high <= room
+    };
+    if most < 2 || !fits(text, 1) {
+        return None;
+    }
+    // The most lines that fit, of fewer than `most`, which does not.
+    let (mut fit, mut over) = (1, most);
+    while over - fit > 1 {
+        let mid = (fit + over) / 2;
+        match fits(text, mid) {
+            true => fit = mid,
+            false => over = mid,
+        }
+    }
+    Some(depth(fit))
+}
+
 /// The page the list and its pager share: `area`, floored at the keyboard's
 /// top edge where the keyboard stands.
 fn page_box(theme: &Theme, area: Rect, keyboard: bool) -> Rect {
@@ -350,19 +503,19 @@ fn list_box(text: &mut TextRenderer, theme: &Theme, area: Rect) -> Rect {
     // `split_bottom` answers the strip first and what is left above it second.
     let (_, rest) = area.split_bottom(pager::height(theme));
     let under = rest.split_top(chrome::section_height(text, theme)).1;
-    // `chrome::section` sets its rule a gap over `under`; the first row's head
-    // stands `rule_over` under that rule, as under a rule between rows.
+    // `chrome::section`'s rule stands a gap over `under`, the first row `rule_over` under it.
     under.split_top(rule_over(theme) - theme.gap).1
 }
 
-/// One book's highlights under their own heading, in `order` and opened at `from`,
-/// which is held inside the list. `search` names the passages listed, opens
-/// the list at its own `from`, and floors the box while the keyboard stands.
+/// One book's highlights under their heading, in `order` and opened at `from`,
+/// or `entry` on a page of its own; `search` names the rows listed, opens the
+/// list at its own `from`, and floors the box while the keyboard stands.
 pub fn draw(
     cx: &mut Ctx,
     area: Rect,
     book: usize,
     from: usize,
+    entry: Option<Entry>,
     order: Way,
     search: Option<&Search>,
 ) {
@@ -395,59 +548,99 @@ pub fn draw(
     }
 
     let at = layout(cx.text, theme, inner, query, cx.ui_script());
-    // `page_at`: the last opening at or before `from`.
+    if let (None, Some(entry)) = (search, entry) {
+        return entry_page(cx, page, inner, &held, &at, entry);
+    }
     let from = search.map_or(from, |search| search.from);
-    let opens = openings(cx.text, theme, &held, &at, inner.h);
-    let page_at = opens.iter().rposition(|o| *o <= from).unwrap_or(0);
-    let from = opens[page_at];
-    let to = opens.get(page_at + 1).copied().unwrap_or(held.len());
-    if opens.len() > 1 {
-        // The strip along the foot, which every screen paged whole carries.
-        let label = format!("{}–{to} {} {}", from + 1, s.of, held.len());
-        let last = opens.last().copied().unwrap_or(0);
+    let pages = paged(cx.text, theme, &held, &at);
+    // `page_at`: the last page opening at or before `from`.
+    let page_at = pages
+        .iter()
+        .rposition(|page| page.opening() <= from)
+        .unwrap_or(0);
+    let Some(shown) = pages.get(page_at) else {
+        return;
+    };
+    let first = shown.pieces.first().map_or(0, |piece| piece.row);
+    let last = shown.pieces.last().map_or(0, |piece| piece.row);
+    if pages.len() > 1 {
+        // `pager::draw` sets the strip along the foot.
+        let label = format!("{}–{} {} {}", first + 1, last + 1, s.of, held.len());
+        let end = pages.last().map_or(0, Page::opening);
         let steps = match search {
-            Some(_) => [Hit::SearchPage(0), Hit::SearchPage(last)],
-            None => [Hit::JournalPage(0), Hit::JournalPage(last)],
+            Some(_) => [Hit::SearchPage(0), Hit::SearchPage(end)],
+            None => [Hit::JournalPage(0), Hit::JournalPage(end)],
         };
         pager::draw(
             cx,
             pager::foot(theme, page),
             &label,
-            [page_at > 0, page_at + 1 < opens.len()],
+            [page_at > 0, page_at + 1 < pages.len()],
             steps,
         );
     }
 
-    let shown = &held[from..to];
     let mut y = inner.y;
-    for (n, held) in shown.iter().enumerate() {
-        let high = height(cx.text, theme, &at, held);
-        let box_of = Rect::new(inner.x, y, inner.w, high);
-        row(cx, box_of, held, &at);
-        // `Hit::Highlight` opens the book's own list at a passage a search found.
-        if search.is_some() {
-            cx.hit(Hit::Highlight(held.book, held.at), box_of);
+    for (n, piece) in shown.pieces.iter().enumerate() {
+        let held = &held[piece.row];
+        let drawn = plan_in(cx.text, theme, &at, held, piece.depth);
+        let box_of = Rect::new(inner.x, y, inner.w, drawn.high);
+        let opens = search.is_none() && piece.opens;
+        planned(cx, box_of, held, &at, &drawn, Part::whole(&drawn), opens);
+        match search {
+            // `Hit::Highlight` opens the book's own list at a passage a search found.
+            Some(_) => cx.hit(Hit::Highlight(held.book, held.at), box_of),
+            None if opens => cx.hit(Hit::Entry(piece.row), box_of),
+            None => {}
         }
         // A rule between rows, and none under the last.
-        if n + 1 < shown.len() {
+        if n + 1 < shown.pieces.len() {
             paint::hline(
                 cx.fb,
                 inner.x,
-                y + high - rule_over(theme),
+                y + drawn.high - rule_over(theme),
                 inner.w,
                 PALE,
                 1,
             );
         }
-        y += high;
+        y += drawn.high;
     }
+}
+
+/// `entry`'s row of `held` whole on a page of its own, at its page
+/// `entry.page` in `inner`, and along `page`'s foot `‹ Journal` back to the
+/// list beside the row's own pager.
+fn entry_page(cx: &mut Ctx, page: Rect, inner: Rect, held: &[Row], at: &Layout, entry: Entry) {
+    let theme: &Theme = cx.theme;
+    let s = cx.s();
+    let Some(row) = held.get(entry.row) else {
+        return;
+    };
+    let whole = plan_in(cx.text, theme, at, row, Depth::WHOLE);
+    let parts = parts(cx.text, theme, &whole, inner.h);
+    let shown = entry.page.min(parts.len().saturating_sub(1));
+    let part = parts.get(shown).copied().unwrap_or(Part::whole(&whole));
+    let box_of = Rect::new(inner.x, inner.y, inner.w, part.high);
+    planned(cx, box_of, row, at, &whole, part, false);
+    let label = match parts.len() {
+        0 | 1 => String::new(),
+        n => format!("{} {} {n}", shown + 1, s.of),
+    };
+    pager::draw_back(
+        cx,
+        pager::foot(theme, page),
+        (s.journal_tab, Hit::EntryClose),
+        &label,
+        [shown > 0, shown + 1 < parts.len()],
+    );
 }
 
 /// What every row of one list is measured and drawn against.
 #[derive(Clone, Copy)]
 pub(super) struct Layout<'a> {
     m: Metrics,
-    /// The most passage lines a row may take, which is what the box holds.
+    /// The most lines of its passage, and of its notes, a collapsed row shows.
     lines: usize,
     /// The width a row draws into.
     width: i32,
@@ -483,9 +676,9 @@ impl<'a> Layout<'a> {
         }
     }
 
-    /// The same list in a box `high` tall, over rows a search found: each
-    /// shows [`window_lines`] of its passage at the most, opening on the line
-    /// holding `query`. An empty `query` opens every row at its head.
+    /// The same list in a box `high` tall, each row collapsed to [`window_lines`]
+    /// of its passage and of its notes, its passage opening on the line holding
+    /// `query`; an empty `query` opens each at its head.
     pub(super) fn found(self, theme: &Theme, high: i32, query: &'a str) -> Self {
         Self {
             lines: self.lines.min(window_lines(self.m, theme, high)),
@@ -510,36 +703,6 @@ fn fits(text: &mut TextRenderer, theme: &Theme, held: &[Row], at: &Layout, high:
     deep.max(1)
 }
 
-/// What one row's three parts wrap to, and where its passage opens.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct Wrapped {
-    /// The book's name on its own lines, empty where the list does not state it.
-    name: Vec<String>,
-    /// The lines of the passage the row shows, from [`Wrapped::opens`].
-    said: Vec<String>,
-    noted: Vec<String>,
-    /// The line of the whole passage the row opens on, 0 at its head.
-    opens: usize,
-}
-
-/// How the words of one row fall against `at`.
-fn wrapped(text: &mut TextRenderer, theme: &Theme, at: &Layout, held: &Row) -> Wrapped {
-    let script = held.script();
-    let name = name_lines(text, theme, at, held);
-    let (said, opens) = passage_lines(text, theme, at, script, &held.highlight.body);
-    // `note` is set beside the rule, not past it, and takes `at.width` whole.
-    let noted = match held.notes.first() {
-        Some(note) => text.wrap_and_clamp_in(script, &note.body, at.width.max(1) as u32, at.lines),
-        None => Vec::new(),
-    };
-    Wrapped {
-        name,
-        said,
-        noted,
-        opens,
-    }
-}
-
 /// The book's name on its own lines, empty where `at` does not state it.
 fn name_lines(text: &mut TextRenderer, theme: &Theme, at: &Layout, held: &Row) -> Vec<String> {
     match at.named {
@@ -556,27 +719,52 @@ fn name_lines(text: &mut TextRenderer, theme: &Theme, at: &Layout, held: &Row) -
     }
 }
 
-/// `body`'s lines behind the rule, as far as `at` shows them, and the line of
-/// the whole passage they open on.
+/// `body`'s lines behind the rule, `lines` of them at the most, the line of the
+/// whole passage they open on, and whether more of it follows them.
 fn passage_lines(
     text: &mut TextRenderer,
     theme: &Theme,
     at: &Layout,
     script: Script,
     body: &str,
-) -> (Vec<String>, usize) {
+    lines: usize,
+) -> (Vec<String>, usize, bool) {
     let room = (at.width - indent(theme)).max(1) as u32;
     text.set_px(theme.body_px);
     // `at.needle` `None` wraps the passage as far as the row shows; `Some`
     // wraps it whole for [`opens_at`].
     match at.needle {
-        None => (text.wrap_and_clamp_in(script, body, room, at.lines), 0),
+        None => {
+            let (said, cut) = clamped(text, script, body, room, lines);
+            (said, 0, cut)
+        }
         Some(needle) => {
             let every = text.wrap_and_clamp_in(script, body, room, usize::MAX);
             let opens = opens_at(&every, needle);
-            (window(text, script, every, opens, at.lines, room), opens)
+            let cut = opens.saturating_add(lines) < every.len();
+            (window(text, script, every, opens, lines, room), opens, cut)
         }
     }
+}
+
+/// `words` wrapped to `room` in `script`, `lines` of them at the most, the
+/// last marked [`MORE`] where they run on past it; answers whether they do.
+fn clamped(
+    text: &mut TextRenderer,
+    script: Script,
+    words: &str,
+    room: u32,
+    lines: usize,
+) -> (Vec<String>, bool) {
+    let mut out = crate::wrap::wrap_to_width(words, room, |s| text.measure_width_in(script, s));
+    let cut = out.len() > lines;
+    if cut {
+        out.truncate(lines);
+        if let Some(last) = out.last_mut() {
+            mark_more(last, room, |s| text.measure_width_in(script, s));
+        }
+    }
+    (out, cut)
 }
 
 /// One line [`plan`] sets: from `x` past the row's left edge, on `baseline`
@@ -609,34 +797,175 @@ struct Plan {
     label: i32,
     place: bool,
     high: i32,
+    /// How far the row is set.
+    depth: Depth,
+    /// How many lines of its passage it sets.
+    said: usize,
+    /// `true` where it leaves out a line the row holds.
+    cut: bool,
+    /// The place in `sets` of the line the last cut closes on with [`MORE`].
+    marked: Option<usize>,
 }
 
-/// [`plan_in`] with the most lines of notes `at.high` holds, `at.lines` at the most.
-fn plan(text: &mut TextRenderer, theme: &Theme, at: &Layout, held: &Row) -> Plan {
-    let mut budget = at.lines;
-    loop {
-        let out = plan_in(text, theme, at, held, budget);
-        if out.high <= at.high || budget <= 1 {
-            return out;
+/// One line a [`Plan`] sets, as [`parts`] reads it: its cap's top, its
+/// baseline, and whether it is a heading's or one that closes the part over it,
+/// a note's day or the label.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Line {
+    top: i32,
+    baseline: i32,
+    heading: bool,
+    closes: bool,
+}
+
+impl Plan {
+    /// Every line the plan sets, top down, what shares a baseline as one line.
+    fn lines(&self, text: &mut TextRenderer, theme: &Theme) -> Vec<Line> {
+        let mut out = Vec::with_capacity(self.sets.len() + self.days.len() + 2);
+        for set in &self.sets {
+            text.set_px(set.px);
+            out.push(Line {
+                top: set.baseline - text.cap_height() as i32,
+                baseline: set.baseline,
+                heading: set.px == theme.head_px,
+                closes: false,
+            });
         }
-        budget -= 1;
+        if let Some(over) = self.more {
+            text.set_px(theme.body_px);
+            out.push(Line {
+                top: over - text.cap_height() as i32,
+                baseline: over,
+                heading: false,
+                closes: false,
+            });
+        }
+        text.set_px(theme.small_px);
+        let cap = text.cap_height() as i32;
+        let closing = self.days.iter().map(|(day, _)| *day).chain([self.label]);
+        out.extend(closing.map(|baseline| Line {
+            top: baseline - cap,
+            baseline,
+            heading: false,
+            closes: true,
+        }));
+        out.sort_by_key(|line| line.baseline);
+        // `dedup_by` hands over the later of two lines first.
+        out.dedup_by(|line, over| {
+            let one = line.baseline == over.baseline;
+            if one {
+                over.top = over.top.min(line.top);
+                over.heading |= line.heading;
+                over.closes &= line.closes;
+            }
+            one
+        });
+        out
     }
 }
 
-/// `held` as it is set top down: its passage behind a rule (a gone one's words
-/// for a note written on it), its notes each over its day and sharing `budget`
-/// lines; a note on the book alone with no rule and no place.
-fn plan_in(
-    text: &mut TextRenderer,
-    theme: &Theme,
-    at: &Layout,
-    held: &Row,
-    mut budget: usize,
-) -> Plan {
+/// The stretch of a [`Plan`] one page shows: the lines whose baselines fall
+/// past `after` and at `last` or over, standing `from` higher than the plan
+/// sets them, and the height it takes on the page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Part {
+    from: i32,
+    after: i32,
+    last: i32,
+    high: i32,
+}
+
+impl Part {
+    /// All of `plan`, on one page.
+    fn whole(plan: &Plan) -> Self {
+        Self {
+            from: 0,
+            after: i32::MIN,
+            last: i32::MAX,
+            high: plan.high,
+        }
+    }
+
+    fn shows(self, baseline: i32) -> bool {
+        self.after < baseline && baseline <= self.last
+    }
+}
+
+/// `plan` cut into the pages a box `high` tall holds it on: each page's last
+/// baseline [`pad`] and [`rule_over`] over its foot, the next page opening
+/// [`head`] over its first cap, never on a `closes` line or under a heading.
+fn parts(text: &mut TextRenderer, theme: &Theme, plan: &Plan, high: i32) -> Vec<Part> {
+    if plan.high <= high {
+        return vec![Part::whole(plan)];
+    }
+    let room = high - pad(theme) - rule_over(theme);
+    let lines = plan.lines(text, theme);
+    let mut out = Vec::new();
+    let mut part = Part {
+        high,
+        ..Part::whole(plan)
+    };
+    // The place in `lines` of the first line `part` holds, and of the line in hand.
+    let (mut first, mut at) = (0, 0);
+    while at < lines.len() {
+        if at == first || lines[at].baseline - part.from <= room {
+            at += 1;
+            continue;
+        }
+        // `cut`, the line the next page opens on, steps back over every line
+        // that keeps with the one over it, the part keeping its first.
+        let mut cut = at;
+        while cut - 1 > first && (lines[cut].closes || lines[cut - 1].heading) {
+            cut -= 1;
+        }
+        let after = lines[cut - 1].baseline;
+        out.push(Part {
+            last: after,
+            ..part
+        });
+        part = Part {
+            from: lines[cut].top - head(theme),
+            after,
+            last: i32::MAX,
+            high,
+        };
+        (first, at) = (cut, cut);
+    }
+    out.push(Part {
+        high: plan.high - part.from,
+        ..part
+    });
+    out
+}
+
+/// [`plan_in`] collapsed: `at.lines` of its passage and of its notes, fewer of
+/// its notes where it stands taller than `at.high`.
+fn plan(text: &mut TextRenderer, theme: &Theme, at: &Layout, held: &Row) -> Plan {
+    let mut depth = Depth {
+        lines: at.lines,
+        notes: at.lines,
+    };
+    loop {
+        let out = plan_in(text, theme, at, held, depth);
+        if out.high <= at.high || depth.notes <= 1 {
+            return out;
+        }
+        depth.notes -= 1;
+    }
+}
+
+/// `held` set top down to `depth`: its passage behind a rule (a gone one's
+/// words for a note written on it), its notes each over its day and sharing
+/// `depth.notes` lines; a note alone with no rule and no place.
+fn plan_in(text: &mut TextRenderer, theme: &Theme, at: &Layout, held: &Row, depth: Depth) -> Plan {
     let m = at.m;
     let gap = theme.gap;
     let script = held.script();
-    let mut out = Plan::default();
+    let mut budget = depth.notes;
+    let mut out = Plan {
+        depth,
+        ..Plan::default()
+    };
     let names = name_lines(text, theme, at, held);
     let top = opened(m, theme, names.len());
     let mut baseline = head(theme) + m.cap;
@@ -669,7 +998,9 @@ fn plan_in(
         footed(&mut out, theme, last + gap * 2 + m.cap);
         return out;
     };
-    let (said, opens) = passage_lines(text, theme, at, script, words);
+    let (said, opens, cut) = passage_lines(text, theme, at, script, words, depth.lines);
+    out.said = said.len();
+    out.cut = cut || opens > 0;
     out.rule = Some((top, m.ruled(theme, said.len())));
     let first = top + m.last(theme, said.len()) + m.apart(theme);
     let mut baseline = top + air(theme) + m.body_cap;
@@ -684,6 +1015,9 @@ fn plan_in(
             words: line,
         });
         baseline += m.line;
+    }
+    if cut {
+        out.marked = out.sets.len().checked_sub(1);
     }
     if opens > 0 {
         out.more = Some(top);
@@ -705,27 +1039,42 @@ fn plan_in(
     // `ends`: the baseline the note set before ends on, its day's where it states one.
     let mut ends = None;
     if let Some(kindle) = held.notes.first() {
-        text.set_px(theme.body_px);
-        let lines = text.wrap_and_clamp_in(script, &kindle.body, at.width.max(1) as u32, budget);
-        budget = budget.saturating_sub(lines.len());
-        let mut last = first + m.body_cap - m.line;
-        for line in lines {
-            last += m.line;
-            out.sets.push(Set {
-                x: 0,
-                baseline: last,
-                px: theme.body_px,
-                script,
-                ink: INK,
-                washed: true,
-                words: line,
+        if budget == 0 {
+            ran_on(&mut out, text, at);
+            out.cut = true;
+        } else {
+            text.set_px(theme.body_px);
+            let room = at.width.max(1) as u32;
+            let (lines, cut) = clamped(text, script, &kindle.body, room, budget);
+            out.cut |= cut;
+            budget = budget.saturating_sub(lines.len());
+            let mut last = first + m.body_cap - m.line;
+            for line in lines {
+                last += m.line;
+                out.sets.push(Set {
+                    x: 0,
+                    baseline: last,
+                    px: theme.body_px,
+                    script,
+                    ink: INK,
+                    washed: true,
+                    words: line,
+                });
+            }
+            if cut {
+                out.marked = out.sets.len().checked_sub(1);
+            }
+            // `kindle` states its day only where `held.writes()`.
+            ends = Some(match held.writes() {
+                true => dated(&mut out, theme, m, last, kindle),
+                false => last,
             });
         }
-        ends = Some(dated(&mut out, theme, m, last, kindle));
     }
     for written in &held.written {
         if budget == 0 {
             ran_on(&mut out, text, at);
+            out.cut = true;
             break;
         }
         let y = ends.map_or(first, |end| end + m.apart(theme));
@@ -773,13 +1122,12 @@ fn note(
     let m = at.m;
     let gap = theme.gap;
     let blocks = markdown::blocks(words);
-    // The block set before, as its last baseline, its line's advance, its cap
-    // and whether it was a list item.
+    // The block set before: its last baseline, advance, cap, and whether an item.
     let mut before: Option<(i32, i32, i32, bool)> = None;
-    let mut cut = false;
     for block in &blocks {
         if *budget == 0 {
-            cut = before.is_some();
+            ran_on(out, text, at);
+            out.cut = true;
             break;
         }
         let head = block.kind == markdown::Kind::Heading;
@@ -795,7 +1143,8 @@ fn note(
         let (lead, x) = placed(text, theme, at.ui, block);
         text.set_px(px);
         let room = (at.width - x).max(1) as u32;
-        let lines = text.wrap_and_clamp_in(at.ui, &block.words, room, *budget);
+        let (lines, cut) = clamped(text, at.ui, &block.words, room, *budget);
+        out.cut |= cut;
         *budget = budget.saturating_sub(lines.len());
         let item = block.kind == markdown::Kind::Item;
         let first = match before {
@@ -821,6 +1170,9 @@ fn note(
                 words: line,
             });
         }
+        if cut {
+            out.marked = out.sets.len().checked_sub(1);
+        }
         if let Some((lead, at_x)) = lead {
             out.sets.push(Set {
                 x: at_x,
@@ -838,20 +1190,21 @@ fn note(
         }
         before = Some((baseline, advance, cap, item));
     }
-    if cut {
-        ran_on(out, text, at);
-    }
     match before {
         Some((last, step, cap, _)) => (last, step - cap),
         None => (y, m.line - m.body_cap),
     }
 }
 
-/// [`MORE`] at the end of the last line of words `out` sets, where it carries none.
+/// [`MORE`] at the end of the last line of words `out` sets, where it carries
+/// none, and that line `out.marked`.
 fn ran_on(out: &mut Plan, text: &mut TextRenderer, at: &Layout) {
-    if let Some(last) = out.sets.iter_mut().rev().find(|set| set.washed)
-        && !last.words.ends_with(MORE)
-    {
+    let Some(at_set) = out.sets.iter().rposition(|set| set.washed) else {
+        return;
+    };
+    out.marked = Some(at_set);
+    let last = &mut out.sets[at_set];
+    if !last.words.ends_with(MORE) {
         text.set_px(last.px);
         let (room, script) = ((at.width - last.x).max(1) as u32, last.script);
         mark_more(&mut last.words, room, |s| text.measure_width_in(script, s));
@@ -894,7 +1247,7 @@ fn window(
     lines: usize,
     room: u32,
 ) -> Vec<String> {
-    let more = opens + lines < every.len();
+    let more = opens.saturating_add(lines) < every.len();
     let mut said: Vec<String> = every.into_iter().skip(opens).take(lines).collect();
     if more && let Some(last) = said.last_mut() {
         mark_more(last, room, |s| text.measure_width_in(script, s));
@@ -972,38 +1325,69 @@ fn opens_at(every: &[String], needle: &str) -> usize {
         .saturating_sub(1)
 }
 
-/// The height one row takes, its words wrapped to the lines they run to.
+/// The height one row takes collapsed, its words wrapped to the lines they run to.
 pub(super) fn height(text: &mut TextRenderer, theme: &Theme, at: &Layout, held: &Row) -> i32 {
-    if held.writes() {
-        return plan(text, theme, at, held).high;
-    }
-    let w = wrapped(text, theme, at, held);
-    at.m.row(theme, w.name.len(), w.said.len(), w.noted.len())
+    plan(text, theme, at, held).high
 }
 
-/// `held` as [`plan`] sets it into `area`, its label and right-hand day as
-/// [`row`] sets them.
-fn planned(cx: &mut Ctx, area: Rect, held: &Row, at: &Layout) {
+/// The stretch `part` shows of `held` as `plan` sets it, into `area`: its rules
+/// kept to the lines `part` shows, its words, each note's day, its label with
+/// `Highlight::day` at the far end, and the cut line [`closed`] where `opens`.
+fn planned(
+    cx: &mut Ctx,
+    area: Rect,
+    held: &Row,
+    at: &Layout,
+    plan: &Plan,
+    part: Part,
+    opens: bool,
+) {
     let theme: &Theme = cx.theme;
     let s = cx.s();
-    let plan = plan(cx.text, theme, at, held);
-    if let Some((top, deep)) = plan.rule {
+    let y = |baseline: i32| area.y + baseline - part.from;
+    // The first cap and the last baseline `part` shows, where it leaves lines out.
+    let shown = match part == Part::whole(plan) {
+        true => None,
+        false => {
+            let lines = plan.lines(cx.text, theme);
+            let shown = || lines.iter().filter(|line| part.shows(line.baseline));
+            let first = shown().map(|line| line.top).min();
+            first.zip(shown().map(|line| line.baseline).max())
+        }
+    };
+    let kept = |(top, deep): (i32, i32), air: i32| match shown {
+        None => Some((top, deep)),
+        Some((first, last)) => {
+            let (from, to) = (top.max(first - air), (top + deep).min(last + air));
+            (to > from).then_some((from, to - from))
+        }
+    };
+    if let Some((top, deep)) = plan.rule.and_then(|rule| kept(rule, air(theme))) {
         let coloured = paint::is_coloured(&cx.palette);
         let colour = match held.laid.is_some() {
             true => "",
             false => held.highlight.colour.as_str(),
         };
         let ink = paint::highlight_colour(colour, coloured);
-        let rule = Rect::new(area.x, area.y + top, rule_width(theme), deep);
+        let rule = Rect::new(area.x, y(top), rule_width(theme), deep);
         paint::fill_rgb(cx.fb, rule, ink);
     }
-    for (top, deep) in &plan.quotes {
-        let rule = Rect::new(area.x, area.y + top, rule_width(theme), *deep);
-        paint::fill(cx.fb, rule, LIGHT);
+    for quote in &plan.quotes {
+        if let Some((top, deep)) = kept(*quote, theme.gap / 2) {
+            let rule = Rect::new(area.x, y(top), rule_width(theme), deep);
+            paint::fill(cx.fb, rule, LIGHT);
+        }
     }
-    for set in &plan.sets {
+    for (n, set) in plan.sets.iter().enumerate() {
+        if !part.shows(set.baseline) {
+            continue;
+        }
         cx.text.set_px(set.px);
-        let (x, baseline) = (area.x + set.x, area.y + set.baseline);
+        let (x, baseline) = (area.x + set.x, y(set.baseline));
+        if opens && plan.marked == Some(n) {
+            closed(cx, set, x, baseline, area.right());
+            continue;
+        }
         if set.washed
             && let Some(needle) = at.needle
         {
@@ -1012,25 +1396,28 @@ fn planned(cx: &mut Ctx, area: Rect, held: &Row, at: &Layout) {
         cx.text
             .draw_inked(set.script, cx.fb, x, baseline, &set.words, set.ink);
     }
-    if let Some(y) = plan.more {
+    if let Some(over) = plan.more.filter(|over| part.shows(*over)) {
         cx.text.set_px(theme.body_px);
         cx.text.draw_in(
             held.script(),
             cx.fb,
             area.x + indent(theme),
-            area.y + y,
+            y(over),
             MORE,
             false,
         );
     }
     cx.text.set_px(theme.small_px);
     let ui = cx.ui_script();
-    for (baseline, day) in &plan.days {
+    for (baseline, day) in plan.days.iter().filter(|(day, _)| part.shows(*day)) {
         let when = crate::date::year_day(*day, s);
         cx.text
-            .draw_inked(ui, cx.fb, area.x, area.y + baseline, &when, DARK);
+            .draw_inked(ui, cx.fb, area.x, y(*baseline), &when, DARK);
     }
-    let baseline = area.y + plan.label;
+    if !part.shows(plan.label) {
+        return;
+    }
+    let baseline = y(plan.label);
     if plan.place {
         let said = label(&held.highlight, held.extent, s);
         cx.text.draw_in(ui, cx.fb, area.x, baseline, &said, false);
@@ -1043,75 +1430,55 @@ fn planned(cx: &mut Ctx, area: Rect, held: &Row, at: &Layout) {
     }
 }
 
-/// One highlight: `title` where `at.named`, `highlight.body` behind a rule in
-/// `highlight.colour`, the `note` under that, and [`label`] with `Highlight::day` below
-/// both, the rule on `area`'s left margin and the words ending at its right.
-pub(super) fn row(cx: &mut Ctx, area: Rect, held: &Row, at: &Layout) {
-    if held.writes() {
-        return planned(cx, area, held, at);
-    }
-    let theme: &Theme = cx.theme;
-    let s = cx.s();
-    let m = at.m;
-    let script = held.script();
-    let w = wrapped(cx.text, theme, at, held);
-    let x = area.x + indent(theme);
-
-    // `title`, over the words and the whole width of `area`.
-    cx.text.set_px(theme.small_px);
-    let top = area.y + opened(m, theme, w.name.len());
-    let mut baseline = area.y + head(theme) + m.cap;
-    for line in &w.name {
-        cx.text
-            .draw_in(script, cx.fb, area.x, baseline, line, false);
-        baseline += m.small;
-    }
-
-    // An empty `highlight.colour` takes `paint::highlight_colour`'s yellow.
-    let coloured = paint::is_coloured(&cx.palette);
-    let ink = paint::highlight_colour(&held.highlight.colour, coloured);
-    let deep = m.ruled(theme, w.said.len());
-    paint::fill_rgb(cx.fb, Rect::new(area.x, top, rule_width(theme), deep), ink);
-
-    // The passage, set in the book's own script.
-    cx.text.set_px(theme.body_px);
-    let mut y = top + air(theme) + m.body_cap;
-    for line in &w.said {
-        if let Some(needle) = at.needle {
-            wash(cx, script, x, y, line, needle);
-        }
-        cx.text.draw_in(script, cx.fb, x, y, line, false);
-        y += m.line;
-    }
-    // [`MORE`] stands over a passage opening past `w.opens` 0.
-    if w.opens > 0 {
-        cx.text.draw_in(script, cx.fb, x, top, MORE, false);
-    }
-
-    // `note` stands at `area.x`, past the rule and clear of [`indent`].
-    let mut baseline = top + m.last(theme, w.said.len()) + m.apart(theme) + m.body_cap;
-    for line in &w.noted {
-        if let Some(needle) = at.needle {
-            wash(cx, script, area.x, baseline, line, needle);
-        }
-        cx.text
-            .draw_in(script, cx.fb, area.x, baseline, line, false);
-        baseline += m.line;
-    }
-
-    // The label last, under the words and the note.
-    cx.text.set_px(theme.small_px);
+/// `set`, a cut line, from `x` on `baseline`: its words cut whole to the room
+/// [`MORE`] and `Strings::more` with [`OPENS`] take after them by `right`,
+/// [`MORE`] in their ink and the rest in `DARK`.
+fn closed(cx: &mut Ctx, set: &Set, x: i32, baseline: i32, right: i32) {
     let ui = cx.ui_script();
-    let baseline = area.y + m.label(theme, w.name.len(), w.said.len(), w.noted.len());
-    let said = label(&held.highlight, held.extent, s);
-    cx.text.draw_in(ui, cx.fb, area.x, baseline, &said, false);
-    // The day it was made, against the right edge.
-    if let Some(day) = held.highlight.day() {
-        let when = crate::date::year_day(day, s);
-        let w = cx.text.measure_width_in(ui, &when) as i32;
-        cx.text
-            .draw_in(ui, cx.fb, area.right() - w, baseline, &when, false);
+    let sign = format!("{} {OPENS}", cx.s().more);
+    let gap = cx.text.measure_width_in(ui, " ") as i32;
+    let reach = gap
+        + cx.text.measure_width_in(set.script, MORE) as i32
+        + gap
+        + cx.text.measure_width_in(ui, &sign) as i32;
+    let room = right - x - reach;
+    let full = set.words.strip_suffix(MORE).unwrap_or(&set.words);
+    let mut words = full.to_string();
+    while !words.is_empty() && cx.text.measure_width_in(set.script, &words) as i32 > room {
+        words.pop();
     }
+    // `words` gives up a word the cut breaks, where the line breaks at spaces.
+    if words.len() < full.len()
+        && !full[words.len()..].starts_with(' ')
+        && let Some(space) = words.rfind(' ')
+    {
+        words.truncate(space);
+    }
+    let words = words.trim_end();
+    cx.text
+        .draw_inked(set.script, cx.fb, x, baseline, words, set.ink);
+    let mut pen = x + cx.text.measure_width_in(set.script, words) as i32;
+    if words.chars().last().is_some_and(spaced) {
+        pen += gap;
+    }
+    cx.text
+        .draw_inked(set.script, cx.fb, pen, baseline, MORE, set.ink);
+    pen += cx.text.measure_width_in(set.script, MORE) as i32 + gap;
+    cx.text.draw_inked(ui, cx.fb, pen, baseline, &sign, DARK);
+}
+
+/// Whether a word space stands after `c`: in every script short of the CJK
+/// blocks [`crate::wrap::classify`] sets solid.
+fn spaced(c: char) -> bool {
+    (c as u32) < 0x2E80
+}
+
+/// One highlight collapsed: `title` where `at.named`, `highlight.body` behind a
+/// rule in `highlight.colour`, its notes under that and [`label`] with
+/// `Highlight::day` below, the rule on `area`'s left and the words to its right.
+pub(super) fn row(cx: &mut Ctx, area: Rect, held: &Row, at: &Layout) {
+    let plan = plan(cx.text, cx.theme, at, held);
+    planned(cx, area, held, at, &plan, Part::whole(&plan), false);
 }
 
 /// What stands over the list: the book it belongs to, its title cut to two
@@ -1162,8 +1529,7 @@ fn positions(highlight: &Highlight, extent: i64, s: &Strings) -> String {
     }
 }
 
-/// What `kind` is called. The five kinds a `.sdr` alone carries take
-/// `s.kind_other` between them.
+/// What `kind` is called, `s.kind_other` where no arm names it.
 pub fn kind_name(kind: Kind, s: &Strings) -> &'static str {
     match kind {
         Kind::Bookmark => s.kind_bookmark,
@@ -1404,7 +1770,7 @@ mod tests {
                 let first = air(&theme);
                 let last = m.last(&theme, lines);
                 assert_eq!(first, deep - last, "{w}x{h}, {lines}");
-                // The note under the passage opens past the rule's foot.
+                // `last + m.apart(&theme)`, the note's cap, stands past the rule's foot.
                 assert!(last + m.apart(&theme) > deep, "{w}x{h}");
             }
         }
@@ -1514,6 +1880,111 @@ mod tests {
             let deep = lines_in(m, &theme, m.row(&theme, 0, 7, 0));
             assert_eq!(deep, 7, "{w}x{h}");
             assert!(m.row(&theme, 0, deep + 1, 0) > m.row(&theme, 0, 7, 0));
+        }
+    }
+
+    /// A passage `words` words long, its book's in English.
+    fn passage(words: usize) -> Row {
+        Row {
+            highlight: Highlight {
+                body: vec!["word"; words].join(" "),
+                ..highlight(State::Live, 100, 10)
+            },
+            language: "en".into(),
+            extent: 1_000,
+            ..Row::default()
+        }
+    }
+
+    #[test]
+    fn a_page_closes_on_the_row_it_cannot_hold_cut_to_the_room_left() {
+        for (w, h) in PANELS {
+            let theme = Theme::for_screen(w, h);
+            let Ok(mut text) = TextRenderer::load(theme.body_px) else {
+                return;
+            };
+            let area = Rect::new(0, 0, w as i32, h as i32 / 2);
+            let at = Layout::of(&mut text, &theme, area, false, Script::of_language("en"))
+                .found(&theme, area.h, "");
+            let held: Vec<Row> = [3, 40, 12, 80, 5, 25, 60, 8, 30, 2, 90, 14]
+                .into_iter()
+                .map(passage)
+                .collect();
+            let pages = paged(&mut text, &theme, &held, &at);
+            let rows: Vec<usize> = pages
+                .iter()
+                .flat_map(|page| page.pieces.iter().map(|piece| piece.row))
+                .collect();
+            assert_eq!(rows, (0..held.len()).collect::<Vec<_>>(), "{w}x{h}");
+            for (n, page) in pages.iter().enumerate() {
+                let high: i32 = page
+                    .pieces
+                    .iter()
+                    .map(|piece| {
+                        plan_in(&mut text, &theme, &at, &held[piece.row], piece.depth).high
+                    })
+                    .sum();
+                assert!(high <= at.high, "{w}x{h}: page {n} stands {high}");
+                // What a page leaves holds not one line of the row opening the next.
+                let Some(next) = pages.get(n + 1).map(|page| page.pieces[0].row) else {
+                    continue;
+                };
+                let collapsed = plan(&mut text, &theme, &at, &held[next]);
+                let room = at.high - high;
+                let cut = squeezed(&mut text, &theme, &at, &held[next], &collapsed, room);
+                assert_eq!(cut, None, "{w}x{h}: page {n} leaves {room}");
+            }
+            // `long`, a passage past the fold, stands cut, and `opens` its own page.
+            let long = &pages[0].pieces[1];
+            assert!(long.opens && long.depth.lines < Depth::WHOLE.lines);
+        }
+    }
+
+    #[test]
+    fn an_entry_runs_over_pages_showing_each_line_once() {
+        for (w, h) in PANELS {
+            let theme = Theme::for_screen(w, h);
+            let Ok(mut text) = TextRenderer::load(theme.body_px) else {
+                return;
+            };
+            let area = Rect::new(0, 0, w as i32, h as i32 / 2);
+            let at = Layout::of(&mut text, &theme, area, false, Script::of_language("en"))
+                .found(&theme, area.h, "");
+            let note = |at: &str| Highlight {
+                extent: 1_000,
+                kind: Kind::Note,
+                at: at.into(),
+                body: "# A heading\n\nA paragraph of its own.\n\n".repeat(12),
+                ..Highlight::default()
+            };
+            let mut long = passage(300);
+            long.written = vec![note("2026-02-08T10:00:00"), note("2026-02-12T10:00:00")];
+            let whole = plan_in(&mut text, &theme, &at, &long, Depth::WHOLE);
+            let parts = parts(&mut text, &theme, &whole, at.high);
+            assert!(parts.len() > 2, "{w}x{h}");
+            let lines = whole.lines(&mut text, &theme);
+            for line in &lines {
+                let shown = parts
+                    .iter()
+                    .filter(|part| part.shows(line.baseline))
+                    .count();
+                assert_eq!(shown, 1, "{w}x{h}: the line on {}", line.baseline);
+            }
+            for (k, part) in parts.iter().enumerate() {
+                let shown: Vec<&Line> = lines
+                    .iter()
+                    .filter(|line| part.shows(line.baseline))
+                    .collect();
+                let (first, last) = (shown[0], shown[shown.len() - 1]);
+                assert!(
+                    last.baseline - part.from <= at.high - pad(&theme) - rule_over(&theme),
+                    "{w}x{h}: part {k}"
+                );
+                if k > 0 {
+                    assert_eq!(first.top - part.from, head(&theme), "{w}x{h}: part {k}");
+                    assert!(!first.closes, "{w}x{h}: part {k} opens on a day");
+                }
+            }
         }
     }
 }

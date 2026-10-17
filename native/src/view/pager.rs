@@ -1,6 +1,5 @@
 //! The pager along a page's foot: which page is showing, and the marks that
-//! step or jump. Every screen paged from its foot stands on this: the foot
-//! reads the same wherever it is met.
+//! step or jump, the same on every screen paged from its foot.
 
 use crate::ui::chrome;
 use crate::ui::paint::Rect;
@@ -50,8 +49,7 @@ fn on_centre(cx: &mut Ctx, foot: Rect, said: &str) -> i32 {
 }
 
 /// A mark [`mark_reach`] wide, centred in the run between `from` and `to`,
-/// and never over either end of it. A run too narrow to hold the mark opens
-/// it at `from`.
+/// never over either end of it, and at `from` where the run is too narrow.
 fn between(from: i32, to: i32, reach: i32) -> i32 {
     (from + (to - from - reach) / 2).clamp(from, (to - reach).max(from))
 }
@@ -65,7 +63,7 @@ pub fn draw(cx: &mut Ctx, foot: Rect, label: &str, open: [bool; 2], ends: [Hit; 
     cx.text.set_px(theme.small_px);
     let width = cx.text.measure_width(label) as i32;
     let middle = foot.x + (foot.w - width) / 2;
-    // The steps hold the white either side of `label`, clear of the jumps.
+    // `back` and `on` hold the white either side of `label`, clear of the jumps.
     let back = between(foot.x + reach, middle, reach);
     let on = between(middle + width, foot.right() - reach, reach);
     let highlights = [
@@ -84,8 +82,38 @@ pub fn draw(cx: &mut Ctx, foot: Rect, label: &str, open: [bool; 2], ends: [Hit; 
         .draw_in(script, cx.fb, middle, baseline, label, false);
 }
 
+/// The pager across `foot` with `back`'s word after [`STEP_BACK`] at its left
+/// end, a tap on it taking `back`'s hit, and `label` and the two steps as
+/// [`draw`] sets them where `label` is not empty.
+pub fn draw_back(cx: &mut Ctx, foot: Rect, back: (&str, Hit), label: &str, open: [bool; 2]) {
+    let theme: &Theme = cx.theme;
+    let reach = mark_reach(cx);
+    cx.text.set_px(theme.small_px);
+    let script = cx.ui_script();
+    let said = format!("{STEP_BACK} {}", back.0);
+    let w = cx.text.measure_width_in(script, &said) as i32;
+    let way_back = Rect::new(foot.x, foot.y, w + theme.gap * 4, foot.h);
+    let baseline = on_centre(cx, foot, &said);
+    cx.text
+        .draw_in(script, cx.fb, foot.x, baseline, &said, false);
+    cx.hit(back.1, way_back);
+    if label.is_empty() {
+        return;
+    }
+    let width = cx.text.measure_width(label) as i32;
+    let middle = foot.x + (foot.w - width) / 2;
+    let step_back = between(way_back.right(), middle, reach);
+    let on = between(middle + width, foot.right() - reach, reach);
+    mark(cx, foot, step_back, STEP_BACK, open[0].then_some(Hit::Prev));
+    mark(cx, foot, on, STEP_ON, open[1].then_some(Hit::Next));
+    cx.text.set_px(theme.small_px);
+    let baseline = on_centre(cx, foot, label);
+    cx.text
+        .draw_in(script, cx.fb, middle, baseline, label, false);
+}
+
 /// One mark of the pager, [`mark_reach`] wide at `x`, taking a tap onto
-/// `hit`. A `hit` of `None` draws nothing: the page stands at that end.
+/// `hit`; a `hit` of `None` draws nothing.
 fn mark(cx: &mut Ctx, foot: Rect, x: i32, said: &str, hit: Option<Hit>) {
     let Some(hit) = hit else { return };
     let reach = mark_reach(cx);
@@ -119,7 +147,7 @@ mod tests {
 
     #[test]
     fn a_step_holds_the_middle_of_the_white_it_stands_in() {
-        // A run of 100 holding a mark of 20 opens it 40 in.
+        // `between(0, 100, 20)` opens a mark of 20 at 40 into a run of 100.
         assert_eq!(between(0, 100, 20), 40);
         assert_eq!(between(300, 400, 20), 340);
         // Never over either end, whatever the run.
@@ -147,7 +175,7 @@ mod tests {
                 area.bottom() - height(&theme),
                 "{w}x{h}: the strip does not open where the page ends"
             );
-            // The air under the page is read against, never drawn in.
+            // `strip.bottom()` reaches into the air under the page.
             assert!(
                 strip.bottom() > area.bottom(),
                 "{w}x{h}: the strip stops inside the page"

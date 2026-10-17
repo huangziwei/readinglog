@@ -29,7 +29,7 @@ use crate::view::{self, Ctx, Hit, State};
 /// The shortest time between two repaints of the update banner.
 const BANNER_REDRAW: Duration = Duration::from_millis(700);
 
-/// How long an update's last word stays up. A tap ends it sooner.
+/// How long an update's last word stays up, a tap ending it sooner.
 const OUTCOME_LINGER: Duration = Duration::from_secs(12);
 
 pub struct App {
@@ -50,11 +50,9 @@ pub struct App {
     dir: std::path::PathBuf,
     /// Where every touchable thing was on the last frame.
     hits: Vec<(Hit, crate::ui::paint::Rect)>,
-    /// Whether the on-screen keyboard stands. Set by
-    /// [`App::reconcile_keyboard`].
+    /// Whether the on-screen keyboard stands, as [`App::reconcile_keyboard`] sets it.
     keyboard: bool,
-    /// The lipc service the keyboard sets its IME properties on, opened by
-    /// [`App::reconcile_keyboard`] with the first keyboard.
+    /// The lipc service the keyboard sets IME properties on, opened with the first keyboard.
     lipc: Option<crate::lipc::Service>,
     /// The record's file as this app last read or wrote it.
     seen: Option<crate::record::Seen>,
@@ -62,8 +60,7 @@ pub struct App {
     followed: Option<Instant>,
 }
 
-/// The least time between two of [`App::follow_record`]'s looks at the
-/// record's file.
+/// The least time between two of [`App::follow_record`]'s looks at the record's file.
 const FOLLOW_EVERY: Duration = Duration::from_secs(1);
 
 impl App {
@@ -78,7 +75,7 @@ impl App {
             settings.stats_from,
             settings.sitting_floor,
         );
-        // `colour` gates the schemes; the header block states it too.
+        // `colour` gates the schemes.
         let colour = crate::eink::fb::has_cfa();
         Self {
             theme,
@@ -91,8 +88,7 @@ impl App {
             colour,
             dir: std::path::PathBuf::from(crate::record::RECORD_DIR),
             state: State {
-                // The search opens on the list it last showed, which outlives
-                // the launch in `Settings::scope`.
+                // `settings_scope`, the list the last launch's search showed.
                 scope: settings_scope,
                 ..State::new(today)
             },
@@ -274,6 +270,12 @@ impl App {
         self.state.journal_from = from;
     }
 
+    /// Draw the open book's journal with the row `row` places down open on a
+    /// page of its own, at its page `page`.
+    pub fn set_entry(&mut self, row: usize, page: usize) {
+        self.state.journal_entry = Some(view::journal::Entry { row, page });
+    }
+
     /// Draw the open book's journal from `order`'s own end.
     pub fn set_journal_way(&mut self, order: view::Way) {
         self.state.journal_way = order;
@@ -378,8 +380,7 @@ impl App {
                     eprintln!("lipc: {} is open", service.name());
                     self.lipc = Some(service);
                 }
-                // Every key the candidate engine does not eat arrives over X,
-                // which needs none of this.
+                // `Err`: keys reach the app over X alone.
                 Err(err) => eprintln!("?? lipc: {err:#} — Latin typing only"),
             }
         }
@@ -557,9 +558,9 @@ impl App {
         Ok(())
     }
 
-    /// Go looking for a newer release, over the whole screen. The transfer
-    /// blocks a worker thread while this drains `input`, repaints the banner as
-    /// steps arrive, and sets the flag the download reads between chunks.
+    /// Go looking for a newer release, over the whole screen: `worker` downloads
+    /// while this drains `input`, repaints the banner as steps arrive, and sets
+    /// the flag `worker` reads between chunks.
     fn update(&mut self, fb: &mut Framebuffer, input: &mut Input) -> Result<()> {
         let cancel = Arc::new(AtomicBool::new(false));
         let (tx, rx) = mpsc::channel::<Doing>();
@@ -587,8 +588,7 @@ impl App {
                 painted = Instant::now();
                 stale = false;
             }
-            // Every step sent is drained above before this is read: no step
-            // the worker sent is lost by leaving here.
+            // `worker.is_finished()` is read once every step sent is drained above.
             if worker.is_finished() {
                 break;
             }
@@ -598,7 +598,7 @@ impl App {
                 true => painted + BANNER_REDRAW,
                 false => Instant::now() + BANNER_REDRAW,
             };
-            // A tap anywhere stops it: the banner is the whole screen.
+            // `TouchEvent::Up` anywhere stops it, the banner being the whole screen.
             if let InputEvent::Touch(TouchEvent::Up { .. }) = input.next_deadline(Some(due))?
                 && doing.stoppable()
                 && !cancel.swap(true, Ordering::Relaxed)
@@ -644,8 +644,8 @@ impl App {
         crate::ui::splash::show(fb, &mut self.text, &self.theme, &said, first)
     }
 
-    /// [`App::banner`] at one step of a running update. The way out is
-    /// offered only while [`Doing::stoppable`] says there is one.
+    /// [`App::banner`] at one step of a running update, offering the way out
+    /// where [`Doing::stoppable`].
     fn doing(&mut self, fb: &mut Framebuffer, doing: Doing, first: bool) -> Result<()> {
         let (headline, note) = doing.banner(self.lang.strings());
         let step = match doing.stoppable() {
@@ -675,8 +675,7 @@ impl App {
         loop {
             // `EVIOCGRAB` is exclusive against the X server.
             input.set_keyboard(self.keyboard);
-            // A `KeyPress` arrives on the X connection and a commit on the
-            // lipc socket, neither of them an input device.
+            // `fb.raw_fd()` carries X's `KeyPress`, the lipc socket each commit.
             input.watch([fb.raw_fd(), self.lipc.as_ref().map(|s| s.raw_fd())]);
             match input.event()? {
                 // `follow_orientation_now` maps the `Up` this stroke ends on. A
@@ -706,7 +705,7 @@ impl App {
                             self.leave();
                             return Ok(());
                         }
-                        // Blocking: the banner is the screen until it ends.
+                        // `App::update` blocks, its banner the screen until it ends.
                         Action::Update => {
                             self.update(fb, input)?;
                             self.draw(fb)?;
@@ -730,8 +729,7 @@ impl App {
                         Err(err) => eprintln!("!! screenshot: {err:#}"),
                     }
                 }
-                // `page` carries the orientation standing before this read; a
-                // change drops it.
+                // `page` carries the orientation standing before this read, dropped on a change.
                 InputEvent::Page(page) => {
                     if !input.follow_orientation_now()
                         && let Action::Redraw = self.pressed(page)
@@ -758,9 +756,9 @@ impl App {
                         continue;
                     }
                     match pump.covered {
-                        // Covered: nothing is drawn.
+                        // `Some(true)`: covered, drawing nothing.
                         Some(true) => {}
-                        // Uncovered: drawn without an `Expose`.
+                        // `Some(false)`: uncovered, drawn without an `Expose`.
                         Some(false) => self.draw(fb)?,
                         None if pump.repaint || typed || followed => self.draw(fb)?,
                         None => {}
@@ -770,9 +768,8 @@ impl App {
         }
     }
 
-    /// Write down a request for a book to be opened, and leave.
-    /// `bin/readinglog.sh` makes the call once this process is gone, and a book
-    /// `BookStat::can_open` refuses is never asked for.
+    /// Write down a request for a book `BookStat::can_open` takes, and leave;
+    /// `bin/readinglog.sh` makes the call once this process is gone.
     fn open(&mut self, index: usize, at: crate::open::At) -> Action {
         let Some(book) = self.stats.books.get(index).filter(|b| b.can_open()) else {
             return Action::Nothing;
@@ -809,8 +806,8 @@ impl App {
         Action::Redraw
     }
 
-    /// Hand `read` to `mark::set`, and write down the `p_readState` a taken
-    /// call leaves. A refused call leaves the record's own value standing.
+    /// Hand `read` to `mark::set`, writing down the `p_readState` a taken call
+    /// leaves and keeping the record's own where `mark::set` refuses.
     fn hand_over_mark(&mut self, extent: i64, key: &str, cde_type: &str, read: bool) {
         if crate::mark::set(key, cde_type, read) {
             self.record
@@ -818,8 +815,8 @@ impl App {
         }
     }
 
-    /// Put `ask` up over the book at `index`. A question standing there is
-    /// left as it stands.
+    /// Put `ask` up over the book at `index`, answering `Action::Nothing` where
+    /// it stands there.
     fn put(&mut self, index: usize, ask: view::Ask) -> Action {
         if self.state.asked == Some((index, ask)) {
             return Action::Nothing;
@@ -836,7 +833,7 @@ impl App {
         match ask {
             view::Ask::Restart => self.restart(index),
             view::Ask::Mark(on) => self.set_finished(index, on),
-            // Two answers of its own, each its own hit.
+            // `Hit::ClearBook` and `Hit::ForgetBook` answer `Ask::Clear`.
             view::Ask::Clear => Action::Redraw,
         }
     }
@@ -912,7 +909,7 @@ impl App {
                     return Action::Nothing;
                 }
                 self.settings.text_size = pick;
-                // Every size on screen comes off `theme`.
+                // `theme` sizes everything on screen.
                 self.theme =
                     Theme::sized(self.theme.screen.w as u32, self.theme.screen.h as u32, pick);
                 self.settings.save();
@@ -929,7 +926,7 @@ impl App {
                     return Action::Nothing;
                 }
                 self.settings.stats_from = pick;
-                // Every total on every screen comes off `stats`.
+                // `stats` holds every total on every screen.
                 self.build_stats();
                 self.settings.save();
             }
@@ -938,7 +935,7 @@ impl App {
                     return Action::Nothing;
                 }
                 self.settings.sitting_floor = pick;
-                // Every total on every screen comes off `stats`.
+                // `stats` holds every total on every screen.
                 self.build_stats();
                 self.state.books_from = 0;
                 self.state.list_from = 0;
@@ -949,7 +946,7 @@ impl App {
                     return Action::Nothing;
                 }
                 self.settings.show_unidentified = pick;
-                // Every total on every screen comes off `stats`.
+                // `stats` holds every total on every screen.
                 self.build_stats();
                 self.state.books_from = 0;
                 self.state.list_from = 0;
@@ -960,18 +957,20 @@ impl App {
                     return Action::Nothing;
                 }
                 self.settings.show_uncovered = pick;
-                // `show_uncovered` makes both lists shorter or longer, and a
-                // page held part way down one of them names other books.
+                // `show_uncovered` lengthens or shortens both lists: each opens at its head.
                 self.state.books_from = 0;
                 self.state.list_from = 0;
                 self.settings.save();
             }
             Hit::Book(index) => self.state.open_book(index),
-            // A tap on the tab showing is no navigation; on the Journal tab it
-            // turns the list over.
+            // `go_in_book` answers `false` on the tab showing, `flip_journal`
+            // turning the Journal over.
             Hit::BookTab(tab) => {
                 if !self.state.go_in_book(tab) {
                     match tab {
+                        view::BookTab::Journal if self.state.journal_entry.is_some() => {
+                            self.state.close_entry()
+                        }
                         view::BookTab::Journal => self.state.flip_journal(),
                         _ => return Action::Nothing,
                     }
@@ -983,13 +982,14 @@ impl App {
                 }
                 self.state.journal_from = from;
             }
-            // A passage the search found opens the book it was highlighted in, at
-            // its own place in that book's list.
+            Hit::Entry(row) => self.state.open_entry(row),
+            Hit::EntryClose => self.state.close_entry(),
+            // `open_highlight` opens the found passage's book at it.
             Hit::Highlight(book, at) => {
                 self.state
                     .open_highlight(book, at, self.stats.highlights_held(book))
             }
-            // A second tap on the day picked drops it again.
+            // `Hit::Day` on the day picked drops it.
             Hit::Day(day) => {
                 self.state.picked = !(self.state.picked && self.state.day == day);
                 self.state.day = day;
@@ -1028,17 +1028,15 @@ impl App {
                     return Action::Nothing;
                 }
                 self.state.scope = pick;
-                // The next launch opens the search on the list this one was
-                // last looking at.
+                // `settings.scope` opens the next launch's search on `pick`.
                 self.settings.scope = pick;
                 self.settings.save();
-                // The other scope is another list, and a page held part way
-                // down this one names nothing in it.
+                // `search.from` goes back to the head of `pick`'s own list.
                 if let Some(search) = self.state.search.as_mut() {
                     search.from = 0;
                 }
             }
-            // A shelf is reached from a figure, and lands on the Books tab.
+            // `Hit::Shelved` lands on the Books tab.
             Hit::Shelved(shelf, window) => {
                 let on = self.state.shelf == shelf && self.state.window == window;
                 if self.state.tab == Tab::Books && on {
@@ -1081,9 +1079,10 @@ impl App {
                 }
                 self.state.books_from = at;
             }
-            // The open book's own search, or the Books tab's: one field
-            // stands at a time, and `State::searching_slot` names which.
+            // The open book's own search, or the Books tab's, as
+            // `State::searching_slot` names the one field standing.
             Hit::Search => {
+                self.state.close_entry();
                 *self.state.searching_slot() = Some(view::Search {
                     keyboard: true,
                     ..view::Search::default()
@@ -1173,7 +1172,7 @@ impl App {
     }
 
     /// Put one of the config page's questions up, with the figures it states
-    /// gathered here: the dialog itself walks nothing.
+    /// gathered here.
     fn ask_question(&mut self, about: view::Act) -> Action {
         let (covers, backups) = crate::backup::sizes(self.dir());
         // `Record::sittings` is what `Act::Reset` acts on.
@@ -1200,8 +1199,7 @@ impl App {
                 let Some(backup) = held.get(at) else {
                     return Action::Nothing;
                 };
-                // `peek` once: the figures the question states. `inside` is
-                // totalled whole.
+                // `peek` once for the figures the question states, `inside` totalled whole.
                 let inside = crate::backup::peek(&backup.path).unwrap_or_default();
                 let held = crate::stats::Stats::build(
                     &inside,
@@ -1259,8 +1257,7 @@ impl App {
         let books = crate::library::read();
         let dir = self.dir.clone();
         let stated = self.record.remember(&books);
-        // Neither gate holds this pass back: both are dropped and written
-        // again from what it reads.
+        // `sources` and `gate` are dropped, and set again from what this pass reads.
         let clips = std::path::Path::new(crate::clippings::CLIPPINGS_FILE);
         let documents = std::path::Path::new(crate::sidecar::DOCUMENTS_DIR);
         self.record.sources = None;
@@ -1335,7 +1332,7 @@ impl App {
             Ok(()) => eprintln!("backup: {} is gone", backup.path.display()),
             Err(err) => eprintln!("!! backup: {} stands — {err}", backup.path.display()),
         }
-        // The last backup gone takes the list down.
+        // `held.len() <= 1`: the last backup gone, the list comes down.
         if held.len() <= 1 {
             self.state.backups = None;
         }
@@ -1384,18 +1381,15 @@ impl App {
             Ok(merged) => {
                 eprintln!("restore: {} sittings from {}", merged.added, path.display());
                 self.save_record("restore");
-                // `Merged::whole`: `record` holds every row the backup carried.
-                // The file stands either way, and `backup::remove` is the way
-                // out.
+                // `merged.whole`: `record` holds every row the backup carried.
                 eprintln!("restore: {} whole {}", path.display(), merged.whole);
             }
             Err(err) => eprintln!("!! restore: {} would not open — {err}", path.display()),
         }
     }
 
-    /// One pass over the logs, counting the files it opens onto the
-    /// banner. The pass holds `self.record` and `App::banner` holds `self`, and
-    /// the record stands out of both for the length of it.
+    /// One `pass` over the logs, counting the files it opens onto the banner,
+    /// with `self.record` taken out of `self` for the length of it.
     fn over_the_logs(
         &mut self,
         fb: &mut Framebuffer,
@@ -1426,8 +1420,8 @@ impl App {
     }
 
     /// Put one book's reading back to zero, taking the book with it under
-    /// `forget`. A backup of that book goes down first, and a book whose
-    /// backup will not write is left alone.
+    /// `forget`, once `backup::keep_book` has written it; a failed write clears
+    /// nothing.
     fn clear_book(&mut self, index: usize, forget: bool) -> Action {
         self.state.asked = None;
         let Some(book) = self.stats.books.get(index) else {
@@ -1464,14 +1458,19 @@ impl App {
     }
 
     /// One step across the open book: `BookTab::Statistics`, `BookTab::Graphs`,
-    /// then each page of `view::journal::pages` in turn. A step off either end
-    /// answers `Action::Nothing`.
+    /// then each page of `view::journal::pages` in turn; `Action::Nothing` past
+    /// either end.
     fn through_book(&mut self, book: usize, by: i64) -> Action {
         let area = chrome::content_box(&self.theme);
         let (_, rest) = area.split_top(view::book::picker_height(&self.theme));
-        // A field standing over the book pages what it found.
+        // `book_search` pages what it found, and an open entry its own pages.
         if let Some(open) = self.state.book_search.clone() {
             return self.through_found(book, rest, &open, by);
+        }
+        if self.state.book_tab == view::BookTab::Journal
+            && let Some(entry) = self.state.journal_entry
+        {
+            return self.through_entry(book, rest, entry, by);
         }
         let ui = self.ui_script();
         let opens = view::journal::pages(
@@ -1506,7 +1505,7 @@ impl App {
                 let next = match forward {
                     true => page + 1,
                     false => match page {
-                        // The head of the list steps back onto the graphs.
+                        // Page 0 steps back onto `BookTab::Graphs`.
                         0 => {
                             self.state.go_in_book(view::BookTab::Graphs);
                             return Action::Redraw;
@@ -1525,8 +1524,39 @@ impl App {
         }
     }
 
+    /// One step through the pages `entry` runs over, drawn into `rest`;
+    /// `Action::Nothing` past either end.
+    fn through_entry(
+        &mut self,
+        book: usize,
+        rest: crate::ui::paint::Rect,
+        entry: view::journal::Entry,
+        by: i64,
+    ) -> Action {
+        let ui = self.ui_script();
+        let pages = view::journal::entry_pages(
+            &mut self.text,
+            &self.theme,
+            &self.stats,
+            book,
+            rest,
+            self.state.journal_way,
+            entry.row,
+            ui,
+        );
+        let page = entry.page as i64 + by;
+        if page < 0 || page >= pages as i64 {
+            return Action::Nothing;
+        }
+        self.state.journal_entry = Some(view::journal::Entry {
+            page: page as usize,
+            ..entry
+        });
+        Action::Redraw
+    }
+
     /// One step through the passages a search found in `book`, drawn into
-    /// `rest`. A step off either end answers `Action::Nothing`.
+    /// `rest`; `Action::Nothing` past either end.
     fn through_found(
         &mut self,
         book: usize,
@@ -1571,7 +1601,7 @@ impl App {
                 self.state.config_page = (at + by).max(0) as usize;
                 Action::Redraw
             }
-            // Nothing to page through.
+            // `Tab::Home` has nothing to page through.
             Tab::Home => Action::Nothing,
             Tab::Rhythm => {
                 if !self.state.shift(by) {
@@ -1600,8 +1630,7 @@ impl App {
                         let from = search.from as i64 + by * step;
                         from.clamp(0, last as i64) as usize
                     }
-                    // A page steps to the next entry of `opens`, every row
-                    // being as tall as its own words.
+                    // `opens` steps a page at a time, each row as tall as its own words.
                     Scope::Journal => {
                         let ui = self.ui_script();
                         let opens = view::search::highlight_pages(
@@ -1667,8 +1696,7 @@ enum Action {
     Quit,
     /// Go looking for a newer release, over the whole screen.
     Update,
-    /// Carry out one of the config page's acts on the record, over the whole
-    /// screen.
+    /// Carry out one of the config page's acts on the record, over the whole screen.
     Acting(view::Act),
     /// Write a backup of the record, over the whole screen.
     BackingUp,

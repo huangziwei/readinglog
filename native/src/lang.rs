@@ -286,6 +286,8 @@ pub struct Strings {
     pub statistics: &'static str,
     pub graphs_tab: &'static str,
     pub journal_tab: &'static str,
+    /// What closes a cut row's words after their `…`, where a tap opens the row.
+    pub more: &'static str,
     /// What stands over the highlights for a book carrying none.
     pub no_highlights_in_book: &'static str,
     /// What a book's row in a list says it carries, joined by `·` where it
@@ -296,8 +298,8 @@ pub struct Strings {
     pub at_location: &'static str,
     /// Before the publisher's page label, where the book carries one.
     pub at_page: &'static str,
-    /// The seven kinds a highlight can be, as a row's own label states them. The
-    /// five a `.sdr` alone carries share [`Strings::kind_other`].
+    /// The seven kinds a highlight can be, as a row's own label states them;
+    /// [`Strings::kind_other`] names the rest.
     pub kind_bookmark: &'static str,
     pub kind_highlight: &'static str,
     pub kind_note: &'static str,
@@ -331,8 +333,8 @@ pub struct Strings {
     /// The row `SittingFloor::label` fills the values of.
     pub sitting_floor_row: &'static str,
     pub unidentified_row: &'static str,
-    /// Show and Hide, the two answers a row that hides something takes: the
-    /// unidentified row and the covers row below it are both set with them.
+    /// Show and Hide, the two answers a row that hides something takes, the
+    /// unidentified row's and the covers row's.
     pub chip_show: &'static str,
     pub chip_hide: &'static str,
     /// The row hiding every book no cover can be drawn for.
@@ -400,7 +402,7 @@ pub struct Strings {
     pub clear_note: &'static str,
     /// Added to that note where the longest streak moves: `{a}` to `{b}` days.
     pub streak_note: &'static str,
-    /// Its two answers: the book stays, or it goes as well.
+    /// Its two answers, keeping the book or forgetting it too.
     pub clear_keep: &'static str,
     pub clear_forget: &'static str,
     /// What the Books list says with nothing to list: before any reading, and
@@ -410,8 +412,7 @@ pub struct Strings {
     pub unidentified_only: &'static str,
     /// `{n} unidentified · {duration}`, closing a list of books.
     pub unidentified: &'static str,
-    /// What a cover box says where no cover can be drawn in it and the title
-    /// stands beside it.
+    /// What a cover box with no cover drawn in it says, its title beside it.
     pub no_cover: &'static str,
     pub text_size: &'static str,
     /// The colours the charts draw in.
@@ -561,6 +562,7 @@ const ENGLISH: Strings = Strings {
     statistics: "Statistics",
     graphs_tab: "Graphs",
     journal_tab: "Journal",
+    more: "more",
     no_highlights_in_book: "No highlights in this book yet.",
     n_highlights: "{d} highlight[s]",
     n_notes: "{d} note[s]",
@@ -817,6 +819,7 @@ const GERMAN: Strings = Strings {
     statistics: "Statistik",
     graphs_tab: "Grafiken",
     journal_tab: "Journal",
+    more: "mehr",
     no_highlights_in_book: "In diesem Buch gibt es noch keine Markierungen.",
     n_highlights: "{d} Markierung[en]",
     n_notes: "{d} Notiz[en]",
@@ -1070,6 +1073,7 @@ const JAPANESE: Strings = Strings {
     statistics: "統計",
     graphs_tab: "グラフ",
     journal_tab: "札記",
+    more: "続き",
     no_highlights_in_book: "この本にはまだハイライトがありません。",
     n_highlights: "ハイライト{d}",
     n_notes: "メモ{d}",
@@ -1304,6 +1308,7 @@ const SIMPLIFIED: Strings = Strings {
     statistics: "统计",
     graphs_tab: "图表",
     journal_tab: "札记",
+    more: "全文",
     no_highlights_in_book: "这本书还没有任何标注。",
     n_highlights: "标注{d}",
     n_notes: "笔记{d}",
@@ -1545,6 +1550,7 @@ const TRADITIONAL: Strings = Strings {
     statistics: "統計",
     graphs_tab: "圖表",
     journal_tab: "札記",
+    more: "全文",
     no_highlights_in_book: "這本書還沒有任何標註。",
     n_highlights: "標註{d}",
     n_notes: "筆記{d}",
@@ -1742,8 +1748,7 @@ mod tests {
 
     #[test]
     fn the_codeset_does_not_hide_the_region() {
-        // `zh_CN.utf8` splits to ["zh", "CN.utf8"]; every subtag is cut at
-        // its first `.`.
+        // `zh_CN.utf8` splits to `zh` and `CN.utf8`, each cut at its first `.`.
         assert_eq!(of_posix("zh_CN.utf8"), Some(Lang::SimplifiedChinese));
         assert_eq!(of_posix("zh_TW.utf8"), Some(Lang::TraditionalChinese));
         assert_eq!(of_posix("zh-Hant-TW"), Some(Lang::TraditionalChinese));
@@ -1849,14 +1854,13 @@ mod tests {
 
     #[test]
     fn every_dialog_states_its_whole_case_in_every_language() {
-        // `ui::dialog` boxes the note in `area.w - gap * 6`, less `gap * 3` of
-        // padding on each side.
+        // `inner`: `ui::dialog`'s note box, `area.w - gap * 6` less `gap * 3` a side.
         let theme = crate::ui::theme::Theme::sized(1264, 1680, crate::settings::TextSize::Large);
         let inner = crate::ui::chrome::content_box(&theme).w - theme.gap * 12;
 
         for lang in Lang::ALL {
             let s = lang.strings();
-            // Every field at its widest: the budget holds for any record.
+            // `filled`: every field at its widest.
             let filled = |note: &str| {
                 note.replace(
                     "{what}",
@@ -1882,7 +1886,7 @@ mod tests {
                 (
                     "clear",
                     s.clear_ask,
-                    // The note and the streak sentence stand together.
+                    // `clear_note` and `streak_note` stand together.
                     &format!("{} {}", s.clear_note, s.streak_note),
                 ),
             ] {
@@ -1891,9 +1895,8 @@ mod tests {
                 let body = lines_of(&filled(note), inner as u32, theme.body_px);
                 assert!(body <= 8, "{lang:?} {name} note takes {body} lines");
 
-                // And the box those lines make stands inside the screen: a
-                // panel taller than the page is clamped, and the answers along
-                // its foot are what falls off.
+                // `high`, the box those lines make, stands inside the screen's
+                // content box, the answers along its foot included.
                 let line = |px: f32| (px * 1.4) as i32;
                 let high = theme.gap * 6
                     + head as i32 * line(theme.head_px)
