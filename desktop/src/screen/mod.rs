@@ -1069,6 +1069,40 @@ mod tests {
     }
 
     #[test]
+    fn a_wide_book_page_sets_its_journal_beside_the_kindles_part_and_a_narrow_one_under_it() {
+        let ws = read("screen-beside");
+        let shown = Shown::of(&ws, clock()).unwrap();
+        let at = |width: f32| {
+            render(
+                Some(&shown),
+                &ws,
+                &Route::parse("/book/B2"),
+                width,
+                Covers::Files,
+                None,
+            )
+            .main
+        };
+        // `1072.0` stacks the two parts, the bar jumping between them.
+        let narrow = at(1072.0);
+        assert!(narrow.contains("<div class=\"parts\"><div class=\"part\" id=\"kindles\">"));
+        assert!(narrow.contains("data-act=\"jump\" data-to=\"journal\""));
+        // `1400.0` leaves the Kindle's charts 600 px beside the journal's column.
+        let wide = at(1400.0);
+        assert!(
+            wide.contains(
+                "<div class=\"parts beside\" style=\"--journal: 640px; --beside: 40px\">"
+            ),
+            "{wide}"
+        );
+        assert!(!wide.contains("data-act=\"jump\""));
+        assert!(
+            wide.contains("x=\"281.0\" y=\"0.0\" width=\"38.0\""),
+            "{wide}"
+        );
+    }
+
+    #[test]
     fn a_book_read_on_one_day_draws_one_bar_a_row_wide_stating_its_time() {
         let ws = read("screen-one-day");
         let shown = Shown::of(&ws, clock()).unwrap();
@@ -1224,7 +1258,7 @@ mod tests {
     #[test]
     fn a_book_whose_cover_is_held_here_stands_where_books_without_one_are_hidden() {
         let mut ws = read("screen-uncovered");
-        // Each book names its cover by the Kindle's own path; `B1` alone has a
+        // `record` names each cover by the Kindle's own path; `B1` alone has a
         // copy on this computer.
         let mut record = Record::load(&ws.record_dir());
         for book in &mut record.books {
@@ -1481,7 +1515,7 @@ mod tests {
             }),
             ..Note::default()
         };
-        // Before any note is written here, the Kindle's note states no day.
+        // `page`, with no note written here: the Kindle's note states no day.
         let page = drawn(&ws, "/book/B1");
         assert!(
             page.contains("<p class=\"note\">The Kindle's own</p><p class=\"where\">"),
@@ -1506,7 +1540,7 @@ mod tests {
             "<div class=\"highlight alone\" data-kindle=\"\" data-written=\"2026-10-02T08:00:00\">"
         ));
         assert!(!page.contains("class=\"edited\""), "no row is marked");
-        // A day lists a passage made before it when a note on it was written then.
+        // `day`, 2026-10-01, lists a passage made before it, a note on it written that day.
         let day = drawn(&ws, "/day/2026-10-01");
         assert!(day.contains("On the passage"), "{day}");
         assert!(day.contains("<span>Journal<span class=\"count\">1</span></span>"));

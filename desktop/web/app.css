@@ -914,8 +914,9 @@ section h2 .said .chip {
   font-weight: 400;
 }
 
-/* `.part`: a book page's two parts, the Kindle's and the one written here;
-   `.measure` holds text to a reading width */
+/* `.part`: a book page's two parts, the Kindle's and the one written here,
+   one over the other in `.parts`; `.parts.beside` sets them side by side, the
+   journal's column `--journal` wide and `--beside` from the Kindle's */
 .part + .part {
   margin-top: 48px;
   border-top: 1px solid var(--rule);
@@ -923,8 +924,15 @@ section h2 .said .chip {
 .part > section:first-child {
   margin-top: 26px;
 }
-.measure {
-  max-width: 720px;
+.parts.beside {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--journal);
+  column-gap: var(--beside);
+  align-items: start;
+}
+.parts.beside > .part + .part {
+  margin-top: 0;
+  border-top: none;
 }
 #kindles,
 #journal {

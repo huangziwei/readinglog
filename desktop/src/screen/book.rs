@@ -19,6 +19,21 @@ use super::{Ctx, Route, Words, esc, key_of, lang};
 use crate::edits::HighlightId;
 use crate::notes::Laid;
 
+/// The journal's column beside the Kindle's part.
+const JOURNAL_COLUMN: f32 = 640.0;
+
+/// The gap between the Kindle's part and [`JOURNAL_COLUMN`].
+const BESIDE_GAP: f32 = 40.0;
+
+/// The narrowest a chart of the Kindle's part is drawn beside the journal.
+const BESIDE_CHART: f32 = 560.0;
+
+/// The width the Kindle's part draws its charts at beside the journal, where
+/// `width`, a whole card's chart, leaves it [`BESIDE_CHART`] at the least.
+fn beside(width: f32) -> Option<f32> {
+    Some(width - JOURNAL_COLUMN - BESIDE_GAP).filter(|chart| *chart >= BESIDE_CHART)
+}
+
 pub(super) fn page(cx: &Ctx, at: usize, reading: Option<usize>, way: Way, query: &str) -> String {
     let s = cx.s;
     let book = &cx.stats.books[at];
@@ -36,18 +51,25 @@ pub(super) fn page(cx: &Ctx, at: usize, reading: Option<usize>, way: Way, query:
         way,
         (!query.is_empty()).then_some(query),
     );
+    let charted = beside(cx.width);
+    // `jumps` take the bar where the two parts stand one over the other.
+    let jumps = match charted {
+        Some(_) => String::new(),
+        None => format!(
+            "<span class=\"chips\"><button class=\"chip\" data-act=\"jump\" data-to=\"kindles\">{}</button>\
+             <button class=\"chip\" data-act=\"jump\" data-to=\"journal\">{} {}</button></span>",
+            esc(s.graphs_tab),
+            esc(s.journal_tab),
+            listed.len()
+        ),
+    };
     let mut out = format!(
-        "<div class=\"slim\" hidden><b{}>{}</b><span class=\"chips\">\
-         <button class=\"chip\" data-act=\"jump\" data-to=\"kindles\">{}</button>\
-         <button class=\"chip\" data-act=\"jump\" data-to=\"journal\">{} {}</button></span></div>\
+        "<div class=\"slim\" hidden><b{}>{}</b>{jumps}</div>\
          <div class=\"hero\"><div class=\"cover\">{}</div><div class=\"words\"><h1{}>{}</h1><p class=\"author\"{}>{}</p>\
          <div class=\"meter\"><div class=\"track\"><i style=\"width: {percent}%; background: {}\"></i></div><b>{}</b></div>\
          <dl class=\"figures\">",
         lang(&book.language, &book.title),
         esc(&book.title),
-        esc(s.graphs_tab),
-        esc(s.journal_tab),
-        listed.len(),
         cx.cover(at),
         lang(&book.language, &book.title),
         esc(&book.title),
@@ -70,18 +92,42 @@ pub(super) fn page(cx: &Ctx, at: usize, reading: Option<usize>, way: Way, query:
             esc(value)
         );
     }
-    out.push_str("</dl></div></div><div class=\"part\" id=\"kindles\">");
-    out.push_str(&kindles(cx, at, reading, way, query));
+    out.push_str("</dl></div></div>");
+    match charted {
+        Some(_) => {
+            let _ = write!(
+                out,
+                "<div class=\"parts beside\" style=\"--journal: {JOURNAL_COLUMN}px; --beside: {BESIDE_GAP}px\">"
+            );
+        }
+        None => out.push_str("<div class=\"parts\">"),
+    }
+    out.push_str("<div class=\"part\" id=\"kindles\">");
+    out.push_str(&kindles(
+        cx,
+        at,
+        reading,
+        way,
+        query,
+        charted.unwrap_or(cx.width),
+    ));
     out.push_str("</div><div class=\"part\">");
     out.push_str(&journal(cx, at, reading, way, query, &listed));
-    out.push_str("</div>");
+    out.push_str("</div></div>");
     out
 }
 
-/// The Kindle's part: every reading as a chip where there are several, The
-/// Days and Where You Sat in one frame on one day axis, The Clock, and the
-/// reading's figures as a board.
-fn kindles(cx: &Ctx, at: usize, reading: Option<usize>, way: Way, query: &str) -> String {
+/// The Kindle's part, its charts `width` wide: every reading as a chip where
+/// there are several, The Days and Where You Sat in one frame on one day axis,
+/// The Clock, and the reading's figures as a board.
+fn kindles(
+    cx: &Ctx,
+    at: usize,
+    reading: Option<usize>,
+    way: Way,
+    query: &str,
+    width: f32,
+) -> String {
     let s = cx.s;
     let book = &cx.stats.books[at];
     let tone = cx.tones[at];
@@ -95,7 +141,7 @@ fn kindles(cx: &Ctx, at: usize, reading: Option<usize>, way: Way, query: &str) -
         out.push_str(&readings(cx, at, &reads, picked.unwrap_or(0), way, query));
     }
     if let Some(on) = picked {
-        let strip = BookStrip::of(cx.stats, at, reads[on], cx.week, s, cx.width);
+        let strip = BookStrip::of(cx.stats, at, reads[on], cx.week, s, width);
         let whole = book_graphs::whole(on, reads.len(), book.is_finished());
         let _ = write!(
             out,
@@ -132,7 +178,7 @@ fn kindles(cx: &Ctx, at: usize, reading: Option<usize>, way: Way, query: &str) -
                 date::duration(fold.each, s),
                 s
             )),
-            chart::fold(&fold, &names, book_graphs::HOURS_NAMED, s, &toned, cx.width)
+            chart::fold(&fold, &names, book_graphs::HOURS_NAMED, s, &toned, width)
         );
     }
     let _ = write!(
@@ -232,7 +278,7 @@ fn journal(
     };
     let (key, extent) = own(book);
     let mut out = format!(
-        "<section class=\"measure\" id=\"journal\">{}<div class=\"composer\" data-kindle=\"{}\" \
+        "<section id=\"journal\">{}<div class=\"composer\" data-kindle=\"{}\" \
          data-key=\"{}\" data-extent=\"{extent}\"><textarea data-part=\"note\" placeholder=\"{}\" rows=\"1\"></textarea>\
          <p class=\"acts\"><button data-act=\"cancel-note\">{}</button>\
          <button class=\"save\" data-act=\"write-note\">{}</button></p></div><div class=\"highlights\">",
@@ -299,7 +345,7 @@ pub(super) fn highlight(
         lang(&book.language, &highlight.body),
         washed(&highlight.body, needle)
     );
-    // A note's words name no book's language, and `lang` reads one off them.
+    // `lang` reads a note's language off its words, which name no book's.
     for note in &kindles {
         let _ = write!(
             out,
