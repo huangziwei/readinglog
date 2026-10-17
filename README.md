@@ -10,7 +10,7 @@ Reading Log keep track of your reading stats by parsing the local system logs on
     <img src=".github/assets/rhythm/year.png" width="250" alt="Year" />
 </p>
 
-It does not run in the background or capture any data by itself, it only parses what are already on the Kindle when you open the app. It works best on firmware from 5.16.* to 5.18.* because their system logs are better known. It should work on older ones, but will likely not work on newer ones. If you want me to diagnose your specific firmware, post the data in an issue by following the instruction [here](https://github.com/huangziwei/readinglog/tree/main/scripts). 
+It does not run anything extra in the background or capture any data by itself, it only parses what are already on the Kindle when you start the app. It works best on firmwares older than 5.19, because those system logs are better known. It will likely not work well on newer ones as Amazon keeps changing the logs in recent updates. If you want me to diagnose your specific firmware, post the data in an issue by following the instruction [here](https://github.com/huangziwei/readinglog/tree/main/scripts). 
 
 ## Install
 
