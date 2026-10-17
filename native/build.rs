@@ -1,39 +1,30 @@
-//! `READINGLOG_BUILD` carries the compile instant and the commit into the
-//! binary. The `cargo:rerun-if-changed` lines name `build.rs`, `src`, and
-//! every path `watched` returns.
+//! `READINGLOG_BUILD` carries the compile instant and the last commit to touch
+//! this package into the binary. The `cargo:rerun-if-changed` lines name
+//! `build.rs` and every path `watched` returns.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=src");
     for path in watched() {
         println!("cargo:rerun-if-changed={}", path.display());
     }
     println!("cargo:rustc-env=READINGLOG_BUILD={} {}", at(), commit());
 }
 
-/// The `.git` files that move on a commit and that exist: `HEAD`, and the
-/// loose or packed file holding the ref `HEAD` names. Empty where `..` holds
-/// no `.git`.
+/// Every entry of `src` other than `src/bin`: the files the lib and
+/// `src/main.rs` compile from.
 fn watched() -> Vec<PathBuf> {
-    let git = Path::new("..").join(".git");
-    if !git.is_dir() {
-        return Vec::new();
-    }
-    let head = git.join("HEAD");
-    let Ok(said) = std::fs::read_to_string(&head) else {
+    let Ok(entries) = std::fs::read_dir("src") else {
         return Vec::new();
     };
-    let mut out = vec![head];
-    // `ref: refs/heads/main` — `at` is the ref, held by a loose file under
-    // `.git/` or by a line in `packed-refs`.
-    if let Some(at) = said.trim().strip_prefix("ref: ") {
-        out.push(git.join(at));
-        out.push(git.join("packed-refs"));
-    }
-    out.retain(|path| path.exists());
+    let mut out: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| !path.ends_with("bin"))
+        .collect();
+    out.sort();
     out
 }
 
@@ -42,13 +33,15 @@ fn at() -> String {
     run("date", &["-u", "+%Y-%m-%dT%H:%M:%SZ"]).unwrap_or_else(|| "?".into())
 }
 
-/// `git rev-parse --short HEAD`, with `+` where `git status --porcelain`
-/// states any line. `?` where `git rev-parse` fails.
+/// `git log -1 --format=%h -- .`, the last commit to touch this package, with
+/// `+` where `git status --porcelain -- .` states any line. `?` where `git log`
+/// names no commit.
 fn commit() -> String {
-    let Some(short) = run("git", &["rev-parse", "--short", "HEAD"]) else {
+    let short = run("git", &["log", "-1", "--format=%h", "--", "."]).unwrap_or_default();
+    if short.is_empty() {
         return "?".into();
-    };
-    match run("git", &["status", "--porcelain"]) {
+    }
+    match run("git", &["status", "--porcelain", "--", "."]) {
         Some(changes) if !changes.is_empty() => format!("{short}+"),
         _ => short,
     }
