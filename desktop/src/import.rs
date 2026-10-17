@@ -54,7 +54,7 @@ pub struct Synced {
 }
 
 /// Import the backup at `from`, a `readinglog-*.zip` or `book-*.zip`: under
-/// the Kindle its `about.tsv` names, else where no Kindle is named.
+/// the Kindle its `about.tsv` names, or where no Kindle is named.
 pub fn backup(ws: &Workspace, from: &Path) -> Result<Imported> {
     // `backup::peek` refuses a file carrying no record before it is kept.
     backup::peek(from)
@@ -225,11 +225,9 @@ fn take(ws: &Workspace, serial: Option<&str>, transport: &dyn Transport) -> Resu
 
 /// How a backup folds into the record beside it.
 enum Fold {
-    /// `backup::restore`, the Kindle's own Restore, then [`keep_latest`]: for
-    /// backups naming no Kindle, which may come from several.
+    /// `backup::restore`, then [`keep_latest`]: the backups naming no Kindle.
     Restore,
-    /// [`latest`], the `w` and `r` rows of both taken by `Record::take_written`,
-    /// then [`keep_latest`]: for one Kindle's backups.
+    /// [`latest`] with the `w` and `r` rows of both, then [`keep_latest`]: one Kindle's backups.
     Latest,
 }
 
@@ -485,7 +483,7 @@ mod tests {
             "and states what it holds, as the Kindle's own backups do"
         );
         assert_eq!(ws.record().sittings.len(), 1);
-        assert_eq!(std::fs::read_dir(ws.backups()).unwrap().count(), 0);
+        assert!(!ws.backups().exists());
 
         let second = kindle(&ws, &plugged(&root, "G003H21234567890"), || {})
             .unwrap()
@@ -888,7 +886,7 @@ mod tests {
         let stray = scratch("import-refused-file").join("notes.zip");
         std::fs::write(&stray, "not an archive").unwrap();
         assert!(backup(&ws, &stray).is_err());
-        assert_eq!(std::fs::read_dir(ws.backups()).unwrap().count(), 0);
+        assert!(!ws.backups().exists());
         assert!(folder(&ws, &scratch("import-refused-empty"), None).is_err());
     }
 }

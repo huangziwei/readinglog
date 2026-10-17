@@ -28,13 +28,13 @@ tauri-plugin-opener = "2"
 readinglog-native = { path = "../native" }
 # Error propagation with context strings through an import and a build.
 anyhow = "1"
-# `site.toml`, and the `highlights.toml`, `notes.toml` and `posts/` front matter
+# `config.toml`, and the `highlights.toml`, `notes.toml` and `posts/` front matter
 # read once into the records.
 serde = { version = "1", features = ["derive"] }
 toml = "1"
 # A note's Markdown, to HTML: `html` alone, no command line, no SIMD scanner.
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
-# A book's tone off its cover; the decoders `readinglog-native` builds already.
+# A book's tone off its cover, through the `jpeg` and `png` decoders `readinglog-native` builds.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 # A Kindle over MTP, one with no mass storage (2024 and after), pinned exact.
 mtp-rs = "=0.15.0"

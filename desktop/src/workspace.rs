@@ -1,6 +1,6 @@
 //! A workspace: every Kindle's imports and record under its cut serial, the
 //! backups no Kindle was named for and the record they fold into, and
-//! `site.toml`.
+//! `config.toml`.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -18,9 +18,8 @@ use crate::edits::HIGHLIGHTS_FILE;
 use crate::kindles::Source;
 use crate::notes::NOTES_FILE;
 
-/// `site.toml`: the window's language and the Kindle settings its figures are
-/// stated under.
-pub const CONFIG_FILE: &str = "site.toml";
+/// `config.toml`: the window's language and the Kindle settings its figures take.
+pub const CONFIG_FILE: &str = "config.toml";
 
 /// `books.toml`, which a reset removes with every other entry of [`KEPT`].
 const BOOKS_FILE: &str = "books.toml";
@@ -28,19 +27,16 @@ const BOOKS_FILE: &str = "books.toml";
 /// `sittings.toml`, which a reset removes with every other entry of [`KEPT`].
 const SITTINGS_FILE: &str = "sittings.toml";
 
-/// The folder of backups kept byte for byte, in the workspace and in each
-/// Kindle's folder.
+/// The folder of backups kept byte for byte, in the workspace and each Kindle's folder.
 pub const BACKUPS: &str = "backups";
 
 /// The folder of a record, `sessions.tsv` and its cover copies, beside `BACKUPS`.
 pub const RECORD: &str = "record";
 
-/// `posts/`: Markdown files, each read into a note once by
-/// [`crate::notes::take_markdown`].
+/// `posts/`: Markdown files, each read into a note once by [`crate::notes::take_markdown`].
 pub const MARKDOWN: &str = "posts";
 
-/// A folder per Kindle, named for its cut serial, each holding that Kindle's
-/// `BACKUPS` and `RECORD` as the workspace holds those no Kindle was named for.
+/// A folder per Kindle, named for its cut serial, each holding its `BACKUPS` and `RECORD`.
 pub const KINDLES: &str = "kindles";
 
 /// Every entry a workspace keeps in its folder, by its name there.
@@ -67,7 +63,7 @@ pub(crate) fn writing() -> MutexGuard<'static, ()> {
     WRITING.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// `site.toml`: the window's Config.
+/// `config.toml`: the window's Config.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ConfigToml {
@@ -152,24 +148,24 @@ fn token<'a>(text: &'a str, key: &str) -> &'a str {
         .unwrap_or_default()
 }
 
-/// One value a setting takes: the word `site.toml` writes, and its name.
+/// One value a setting takes: the word `config.toml` writes, and its name.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Pick {
     pub token: String,
     pub label: String,
 }
 
-/// One of `site.toml`'s settings, named as the Kindle's config page names it,
+/// One of `config.toml`'s settings, named as the Kindle's config page names it,
 /// with every value it takes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Setting {
-    /// Its key in `site.toml`.
+    /// Its key in `config.toml`.
     pub key: &'static str,
     pub label: String,
     pub picks: Vec<Pick>,
 }
 
-/// `site.toml`'s settings in the Kindle's own words, each value off the
+/// `config.toml`'s settings in the Kindle's own words, each value off the
 /// Kindle's settings file and named in `lang` as its config page names it.
 pub fn offered(lang: Lang) -> Vec<Setting> {
     let s = lang.strings();
@@ -272,7 +268,7 @@ fn shown_or_not(on: bool, s: &readinglog_native::lang::Strings) -> String {
     }
 }
 
-/// A workspace folder, and its `site.toml`.
+/// A workspace folder, and its `config.toml`.
 #[derive(Debug, Clone)]
 pub struct Workspace {
     pub dir: PathBuf,
@@ -280,13 +276,9 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    /// The workspace at `dir`, its folders made and a `site.toml` written
-    /// where none stands. A `site.toml` standing is read, never rewritten.
+    /// The workspace at `dir`, a `config.toml` written where none stands. A
+    /// `config.toml` standing is read, never rewritten.
     pub fn create(dir: &Path) -> Result<Self> {
-        for sub in [BACKUPS, RECORD] {
-            let at = dir.join(sub);
-            std::fs::create_dir_all(&at).with_context(|| format!("making {}", at.display()))?;
-        }
         let file = dir.join(CONFIG_FILE);
         if !file.exists() {
             write_toml(&file, &ConfigToml::default())?;
@@ -295,7 +287,7 @@ impl Workspace {
     }
 
     /// The workspace at `dir`, `highlights.toml`, `notes.toml` and `posts/` read
-    /// into its records where they stand. A missing `site.toml` reads as the
+    /// into its records where they stand. A missing `config.toml` reads as the
     /// default.
     pub fn open(dir: &Path) -> Result<Self> {
         let file = dir.join(CONFIG_FILE);
@@ -331,12 +323,12 @@ impl Workspace {
             .ok_or_else(|| anyhow!("no record of {kindle} in {}", self.dir.display()))
     }
 
-    /// Write [`Self::config`] back to `site.toml`.
+    /// Write [`Self::config`] back to `config.toml`.
     pub fn save_config(&self) -> Result<()> {
         write_toml(&self.dir.join(CONFIG_FILE), &self.config)
     }
 
-    /// The backups no Kindle was named for.
+    /// The backups no Kindle was named for, a folder the first import of one makes.
     pub fn backups(&self) -> PathBuf {
         self.dir.join(BACKUPS)
     }
@@ -596,7 +588,12 @@ mod tests {
         let dir = scratch("workspace-reset");
         let ws = Workspace::create(&dir).unwrap();
         let kindle = ws.kindle_dir("G003H2-0001");
-        for at in [kindle.join(BACKUPS), kindle.join(RECORD)] {
+        for at in [
+            kindle.join(BACKUPS),
+            kindle.join(RECORD),
+            ws.backups(),
+            ws.record_dir(),
+        ] {
             std::fs::create_dir_all(&at).unwrap();
             std::fs::write(at.join("held"), b"12345").unwrap();
         }
@@ -627,7 +624,7 @@ mod tests {
         let dir = scratch("workspace");
         let made = Workspace::create(&dir).unwrap();
         assert_eq!(made.config, ConfigToml::default());
-        assert!(made.backups().is_dir() && made.record_dir().is_dir());
+        assert!(!made.backups().exists() && !made.record_dir().exists());
 
         // A key no field reads is written back as it was read.
         let file = dir.join(CONFIG_FILE);
