@@ -338,21 +338,17 @@ pub(super) fn highlight(
             esc(w.edit)
         )
     };
-    // `day` empty sets the passage's Edit at the end of its words.
-    let day = made(cx, highlight);
-    let (ends, beside) = match day.is_empty() {
-        true => (edit("passage"), String::new()),
-        false => (String::new(), edit("passage")),
-    };
+    // `edit("passage")` ends the passage's words.
     let mut out = format!(
         "<div class=\"highlight\" data-kindle=\"{}\"{}{}>\
-         <blockquote style=\"border-color: {}\"{}>{}{ends}</blockquote>",
+         <blockquote style=\"border-color: {}\"{}>{}{}</blockquote>",
         esc(serial),
         named(highlight),
         edited(highlight),
         hex(paint::highlight_colour(&highlight.colour, true)),
         lang(&book.language, &highlight.body),
-        washed(&highlight.body, needle)
+        washed(&highlight.body, needle),
+        edit("passage")
     );
     // `lang` reads a note's language off its words, which name no book's.
     for note in &kindles {
@@ -393,14 +389,14 @@ pub(super) fn highlight(
     let _ = write!(
         out,
         "<p class=\"where\"><span>{}</span><span class=\"when\">\
-         <button class=\"edit\" data-act=\"add-note\">{}</button>{beside}{}</span></p></div>",
+         <button class=\"edit\" data-act=\"add-note\">{}</button>{}</span></p></div>",
         esc(&journal_view::label(
             highlight,
             crate::kindles::origin(book.extent).1,
             cx.s
         )),
         esc(w.add_note),
-        esc(&day)
+        esc(&made(cx, highlight))
     );
     out
 }

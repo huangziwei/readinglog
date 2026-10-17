@@ -1169,14 +1169,14 @@ mod tests {
         // `read` holds a highlight stating no `colour`, drawn `#f3ce2b`.
         assert!(
             page.main.contains(
-                "<blockquote style=\"border-color: #f3ce2b\" lang=\"en\">Some <mark>words</mark></blockquote>"
+                "<blockquote style=\"border-color: #f3ce2b\" lang=\"en\">Some <mark>words</mark>\
+                 <button class=\"edit\" data-act=\"edit\" data-part=\"passage\">Edit</button></blockquote>"
             ),
             "{}",
             page.main
         );
         assert!(page.main.contains(
-            "<span class=\"when\"><button class=\"edit\" data-act=\"add-note\">Add note</button>\
-             <button class=\"edit\" data-act=\"edit\" data-part=\"passage\">Edit</button>Sep 1, 2026</span></p>"
+            "<span class=\"when\"><button class=\"edit\" data-act=\"add-note\">Add note</button>Sep 1, 2026</span></p>"
         ));
     }
 
@@ -1521,7 +1521,7 @@ mod tests {
             ..Note::default()
         };
         // `page`, with no note written here: the Kindle's note states no day, its
-        // Edit ending its words, and the passage's Edit stands beside its day.
+        // Edit ending its words, as the passage's Edit ends the passage's.
         let page = drawn(&ws, "/book/B1");
         assert!(
             page.contains(
@@ -1531,7 +1531,7 @@ mod tests {
             "{page}"
         );
         assert!(page.contains(
-            "<button class=\"edit\" data-act=\"edit\" data-part=\"passage\">Edit</button>Sep 1, 2026"
+            "<button class=\"edit\" data-act=\"edit\" data-part=\"passage\">Edit</button></blockquote>"
         ));
         let mut record = Record::load(&ws.record_dir());
         record.add_note(note("2026-10-01T10:00:00", "On the passage", true));
