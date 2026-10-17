@@ -176,7 +176,8 @@ function openWritten(holder) {
   box.lang = note.lang;
   box.addEventListener("input", () => fit(box));
   holder.classList.add("open");
-  holder.append(editor);
+  holder.dataset.open = "note";
+  note.after(editor);
   fit(box);
   box.focus();
   editing = holder;
