@@ -581,7 +581,10 @@ svg text {
   flex-direction: column;
   gap: 14px;
 }
+/* `--apart`: the margin between the parts of a row (its passage, each note,
+   its label), twice a note's own paragraph margin */
 .highlight {
+  --apart: 16px;
   background: var(--card);
   border-radius: 10px;
   padding: 16px 20px;
@@ -597,13 +600,13 @@ svg text {
   line-height: 1.55;
 }
 .highlight .note {
-  margin: 10px 0 0;
+  margin: var(--apart) 0 0;
 }
 .highlight .where {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  margin: 10px 0 0;
+  margin: var(--apart) 0 0;
   font-size: 12px;
   color: var(--faint);
 }
@@ -1047,10 +1050,22 @@ section h2 .said .search {
 /* `.dnote`: a note written here, set as `.note` is with no rule, its day under
    it in `.stamp` */
 .highlight .dnote {
-  margin: 10px 0 0;
+  margin: var(--apart) 0 0;
 }
 .highlight .dnote .note {
   margin: 0;
+}
+/* `:first-child` opens at the card's padding, a `blockquote` 5px under it: its
+   rule's top as far under the card's top as the last baseline stands over the
+   card's foot. `.alone`'s `.where` stands 10px under its note */
+.highlight > :first-child {
+  margin-top: 0;
+}
+.highlight > blockquote:first-child {
+  margin-top: 5px;
+}
+.highlight.alone > :first-child + .where {
+  margin-top: 10px;
 }
 .highlight .stamp {
   display: flex;

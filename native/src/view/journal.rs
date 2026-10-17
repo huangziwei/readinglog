@@ -127,6 +127,32 @@ fn air(theme: &Theme) -> i32 {
     theme.gap * 3 / 2
 }
 
+/// How far over a row's foot the rule between two rows stands.
+pub(super) fn rule_over(theme: &Theme) -> i32 {
+    theme.gap * 3 / 2
+}
+
+/// The white over a row's first ink, from the rule over it, and under its last
+/// baseline, to the rule under it.
+fn pad(theme: &Theme) -> i32 {
+    theme.gap * 3
+}
+
+/// Where a row's first ink stands under the row's head: [`pad`] less the
+/// [`rule_over`] the row before keeps under its own rule.
+fn head(theme: &Theme) -> i32 {
+    pad(theme) - rule_over(theme)
+}
+
+/// Where a row's words open under its head, its passage's rule or its note's
+/// first cap: at [`head`], or a gap under `name` lines of its book's name.
+fn opened(m: Metrics, theme: &Theme, name: usize) -> i32 {
+    match name {
+        0 => head(theme),
+        n => head(theme) + n as i32 * m.small + theme.gap,
+    }
+}
+
 impl Metrics {
     fn of(text: &mut TextRenderer, theme: &Theme) -> Self {
         text.set_px(theme.small_px);
@@ -140,46 +166,48 @@ impl Metrics {
         }
     }
 
-    /// The height `lines` of passage take, the air over them included, which
-    /// the note and the label stand under. Never less than [`Metrics::ruled`].
-    fn quoted(self, theme: &Theme, lines: usize) -> i32 {
-        let (from, deep) = self.ruled(theme, lines);
-        (theme.gap * 2 + lines.max(1) as i32 * self.line).max(from + deep)
+    /// Where the last of `lines` of passage sets its baseline, from the rule's
+    /// head: [`air`] over the first line's cap.
+    fn last(self, theme: &Theme, lines: usize) -> i32 {
+        air(theme) + self.body_cap + (lines.max(1) as i32 - 1) * self.line
     }
 
-    /// Where the first line of the passage sets its baseline, from the head
-    /// of the block.
-    fn baseline(self, theme: &Theme) -> i32 {
-        theme.gap + air(theme) + self.body_cap
+    /// The height of the rule `paint::highlight_colour` draws beside `lines` of
+    /// passage: [`air`] under the last line's baseline.
+    fn ruled(self, theme: &Theme, lines: usize) -> i32 {
+        self.last(theme, lines) + air(theme)
     }
 
-    /// The rule `paint::highlight_colour` draws beside those lines, as its head and
-    /// height from the head of the block. [`air`] stands over the first line's
-    /// cap and under the last line's baseline.
-    fn ruled(self, theme: &Theme, lines: usize) -> (i32, i32) {
-        let from = theme.gap;
-        let last = self.baseline(theme) + (lines.max(1) as i32 - 1) * self.line;
-        (from, last + air(theme) - from)
+    /// The white between the last baseline of one part of a row (its passage, a
+    /// note or a note's day) and the cap of the part under it: a line's own white
+    /// and two gaps.
+    fn apart(self, theme: &Theme) -> i32 {
+        self.line - self.body_cap + theme.gap * 2
     }
 
-    /// The height the note under a passage takes, and 0 where there is none.
+    /// How far `note` lines of the note under a passage reach past the passage's
+    /// last baseline, to the note's own; 0 for none.
     fn noted(self, theme: &Theme, note: usize) -> i32 {
         match note {
             0 => 0,
-            n => theme.gap + n as i32 * self.line,
+            n => self.apart(theme) + self.body_cap + (n as i32 - 1) * self.line,
         }
     }
 
-    /// The height a row takes: `name` lines over the passage's `lines`, the
-    /// `note` under those, [`label`]'s own line under that, and the air
-    /// closing the row.
-    fn row(self, theme: &Theme, name: usize, lines: usize, note: usize) -> i32 {
-        name as i32 * self.small
-            + self.quoted(theme, lines)
+    /// Where [`label`]'s line sets its baseline, from the row's head:
+    /// [`Metrics::apart`] under the passage's `lines` and the `note` under those.
+    fn label(self, theme: &Theme, name: usize, lines: usize, note: usize) -> i32 {
+        opened(self, theme, name)
+            + self.last(theme, lines)
             + self.noted(theme, note)
-            + theme.gap * 2
-            + self.small
-            + theme.gap * 3
+            + self.apart(theme)
+            + self.cap
+    }
+
+    /// The height a row takes: [`Metrics::label`], [`pad`] under that and the
+    /// [`rule_over`] closing the row.
+    fn row(self, theme: &Theme, name: usize, lines: usize, note: usize) -> i32 {
+        self.label(theme, name, lines, note) + pad(theme) + rule_over(theme)
     }
 }
 
@@ -321,7 +349,10 @@ fn page_box(theme: &Theme, area: Rect, keyboard: bool) -> Rect {
 fn list_box(text: &mut TextRenderer, theme: &Theme, area: Rect) -> Rect {
     // `split_bottom` answers the strip first and what is left above it second.
     let (_, rest) = area.split_bottom(pager::height(theme));
-    rest.split_top(chrome::section_height(text, theme)).1
+    let under = rest.split_top(chrome::section_height(text, theme)).1;
+    // `chrome::section` sets its rule a gap over `under`; the first row's head
+    // stands `rule_over` under that rule, as under a rule between rows.
+    under.split_top(rule_over(theme) - theme.gap).1
 }
 
 /// One book's highlights under their own heading, in `order` and opened at `from`,
@@ -402,7 +433,7 @@ pub fn draw(
             paint::hline(
                 cx.fb,
                 inner.x,
-                y + high - theme.gap * 3 / 2,
+                y + high - rule_over(theme),
                 inner.w,
                 PALE,
                 1,
@@ -606,8 +637,10 @@ fn plan_in(
     let gap = theme.gap;
     let script = held.script();
     let mut out = Plan::default();
-    let mut baseline = m.cap;
-    for line in name_lines(text, theme, at, held) {
+    let names = name_lines(text, theme, at, held);
+    let top = opened(m, theme, names.len());
+    let mut baseline = head(theme) + m.cap;
+    for line in names {
         out.sets.push(Set {
             x: 0,
             baseline,
@@ -619,7 +652,6 @@ fn plan_in(
         });
         baseline += m.small;
     }
-    let top = baseline - m.cap;
     let passage = match &held.laid {
         Some(laid) => laid.gone.as_deref(),
         None => Some(held.highlight.body.as_str()),
@@ -631,18 +663,16 @@ fn plan_in(
             theme,
             at,
             &held.highlight.body,
-            top + gap * 2,
+            top,
             &mut budget,
         );
-        out.label = last + gap * 2 + m.cap;
-        out.high = out.label - m.cap + m.small + gap * 3;
+        footed(&mut out, theme, last + gap * 2 + m.cap);
         return out;
     };
     let (said, opens) = passage_lines(text, theme, at, script, words);
-    let quoted = m.quoted(theme, said.len());
-    let (from, deep) = m.ruled(theme, said.len());
-    out.rule = Some((top + from, deep));
-    let mut baseline = top + m.baseline(theme);
+    out.rule = Some((top, m.ruled(theme, said.len())));
+    let first = top + m.last(theme, said.len()) + m.apart(theme);
+    let mut baseline = top + air(theme) + m.body_cap;
     for line in said {
         out.sets.push(Set {
             x: indent(theme),
@@ -656,10 +686,9 @@ fn plan_in(
         baseline += m.line;
     }
     if opens > 0 {
-        out.more = Some(top + gap);
+        out.more = Some(top);
     }
     out.place = true;
-    let mut y = top + quoted + gap;
     if held.laid.is_some() {
         let (last, under) = note(
             &mut out,
@@ -667,18 +696,19 @@ fn plan_in(
             theme,
             at,
             &held.highlight.body,
-            y,
+            first,
             &mut budget,
         );
-        out.label = last + under + gap * 2 + m.cap;
-        out.high = out.label - m.cap + m.small + gap * 3;
+        footed(&mut out, theme, last + under + gap * 2 + m.cap);
         return out;
     }
+    // `ends`: the baseline the note set before ends on, its day's where it states one.
+    let mut ends = None;
     if let Some(kindle) = held.notes.first() {
         text.set_px(theme.body_px);
         let lines = text.wrap_and_clamp_in(script, &kindle.body, at.width.max(1) as u32, budget);
         budget = budget.saturating_sub(lines.len());
-        let mut last = y + m.body_cap - m.line;
+        let mut last = first + m.body_cap - m.line;
         for line in lines {
             last += m.line;
             out.sets.push(Set {
@@ -691,36 +721,41 @@ fn plan_in(
                 words: line,
             });
         }
-        y = dated(&mut out, theme, m, last, kindle);
+        ends = Some(dated(&mut out, theme, m, last, kindle));
     }
     for written in &held.written {
         if budget == 0 {
             ran_on(&mut out, text, at);
             break;
         }
-        let (last, _) = note(
-            &mut out,
-            text,
-            theme,
-            at,
-            &written.body,
-            y + gap,
-            &mut budget,
-        );
-        y = dated(&mut out, theme, m, last, written);
+        let y = ends.map_or(first, |end| end + m.apart(theme));
+        let (last, _) = note(&mut out, text, theme, at, &written.body, y, &mut budget);
+        ends = Some(dated(&mut out, theme, m, last, written));
     }
-    out.label = y + gap * 2 + m.cap;
-    out.high = out.label - m.cap + m.small + gap * 3;
+    let label = match ends {
+        Some(end) => end + m.apart(theme) + m.cap,
+        None => first + m.cap,
+    };
+    footed(&mut out, theme, label);
     out
 }
 
-/// `note`'s day under the line set on `last`; answers where the next note opens.
+/// `label` as the baseline `out` sets its label on, and the row's height under
+/// it: [`pad`] and the [`rule_over`] closing the row.
+fn footed(out: &mut Plan, theme: &Theme, label: i32) {
+    out.label = label;
+    out.high = label + pad(theme) + rule_over(theme);
+}
+
+/// `note`'s day a gap under the line set on `last`, where it states one;
+/// answers the baseline the note ends on, the day's or `last`.
 fn dated(out: &mut Plan, theme: &Theme, m: Metrics, last: i32, note: &Highlight) -> i32 {
+    let Some(on) = note.day() else {
+        return last;
+    };
     let day = last + theme.gap + m.cap;
-    if let Some(on) = note.day() {
-        out.days.push((day, on));
-    }
-    day + theme.gap / 2
+    out.days.push((day, on));
+    day
 }
 
 /// `words`, a desktop note's Markdown, set from `y` in `at.ui` as
@@ -937,8 +972,7 @@ fn opens_at(every: &[String], needle: &str) -> usize {
         .saturating_sub(1)
 }
 
-/// The height one row takes, the words wrapped to see how many lines they
-/// actually run to.
+/// The height one row takes, its words wrapped to the lines they run to.
 pub(super) fn height(text: &mut TextRenderer, theme: &Theme, at: &Layout, held: &Row) -> i32 {
     if held.writes() {
         return plan(text, theme, at, held).high;
@@ -1011,7 +1045,7 @@ fn planned(cx: &mut Ctx, area: Rect, held: &Row, at: &Layout) {
 
 /// One highlight: `title` where `at.named`, `highlight.body` behind a rule in
 /// `highlight.colour`, the `note` under that, and [`label`] with `Highlight::day` below
-/// both. The rule stands on `area`'s left margin and the words end at its right.
+/// both, the rule on `area`'s left margin and the words ending at its right.
 pub(super) fn row(cx: &mut Ctx, area: Rect, held: &Row, at: &Layout) {
     if held.writes() {
         return planned(cx, area, held, at);
@@ -1025,28 +1059,23 @@ pub(super) fn row(cx: &mut Ctx, area: Rect, held: &Row, at: &Layout) {
 
     // `title`, over the words and the whole width of `area`.
     cx.text.set_px(theme.small_px);
-    let mut baseline = area.y + cx.text.cap_height() as i32;
+    let top = area.y + opened(m, theme, w.name.len());
+    let mut baseline = area.y + head(theme) + m.cap;
     for line in &w.name {
         cx.text
             .draw_in(script, cx.fb, area.x, baseline, line, false);
         baseline += m.small;
     }
-    let top = area.y + w.name.len() as i32 * m.small;
 
     // An empty `highlight.colour` takes `paint::highlight_colour`'s yellow.
     let coloured = paint::is_coloured(&cx.palette);
     let ink = paint::highlight_colour(&held.highlight.colour, coloured);
-    let quoted = m.quoted(theme, w.said.len());
-    let (from, deep) = m.ruled(theme, w.said.len());
-    paint::fill_rgb(
-        cx.fb,
-        Rect::new(area.x, top + from, rule_width(theme), deep),
-        ink,
-    );
+    let deep = m.ruled(theme, w.said.len());
+    paint::fill_rgb(cx.fb, Rect::new(area.x, top, rule_width(theme), deep), ink);
 
     // The passage, set in the book's own script.
     cx.text.set_px(theme.body_px);
-    let mut y = top + m.baseline(theme);
+    let mut y = top + air(theme) + m.body_cap;
     for line in &w.said {
         if let Some(needle) = at.needle {
             wash(cx, script, x, y, line, needle);
@@ -1056,12 +1085,11 @@ pub(super) fn row(cx: &mut Ctx, area: Rect, held: &Row, at: &Layout) {
     }
     // [`MORE`] stands over a passage opening past `w.opens` 0.
     if w.opens > 0 {
-        cx.text
-            .draw_in(script, cx.fb, x, top + theme.gap, MORE, false);
+        cx.text.draw_in(script, cx.fb, x, top, MORE, false);
     }
 
     // `note` stands at `area.x`, past the rule and clear of [`indent`].
-    let mut baseline = top + quoted + theme.gap + m.body_cap;
+    let mut baseline = top + m.last(theme, w.said.len()) + m.apart(theme) + m.body_cap;
     for line in &w.noted {
         if let Some(needle) = at.needle {
             wash(cx, script, area.x, baseline, line, needle);
@@ -1074,7 +1102,7 @@ pub(super) fn row(cx: &mut Ctx, area: Rect, held: &Row, at: &Layout) {
     // The label last, under the words and the note.
     cx.text.set_px(theme.small_px);
     let ui = cx.ui_script();
-    let baseline = top + quoted + m.noted(theme, w.noted.len()) + theme.gap * 2 + m.cap;
+    let baseline = area.y + m.label(theme, w.name.len(), w.said.len(), w.noted.len());
     let said = label(&held.highlight, held.extent, s);
     cx.text.draw_in(ui, cx.fb, area.x, baseline, &said, false);
     // The day it was made, against the right edge.
@@ -1370,16 +1398,91 @@ mod tests {
                 line: (theme.body_px * 1.25) as i32 + leading(&theme),
             };
             for lines in 1..=WINDOW_LINES {
-                let (from, deep) = m.ruled(&theme, lines);
+                let deep = m.ruled(&theme, lines);
                 // The first line's cap and the last line's baseline, both
-                // where `row` sets them.
-                let first = m.baseline(&theme) - m.body_cap;
-                let last = m.baseline(&theme) + (lines as i32 - 1) * m.line;
-                assert_eq!(first - from, from + deep - last, "{w}x{h}, {lines}");
-                assert_eq!(first - from, air(&theme), "{w}x{h}, {lines}");
-                // `from + deep` stays inside the block the note stands under.
-                assert!(from + deep <= m.quoted(&theme, lines), "{w}x{h}");
+                // where `row` sets them under the rule's head.
+                let first = air(&theme);
+                let last = m.last(&theme, lines);
+                assert_eq!(first, deep - last, "{w}x{h}, {lines}");
+                // The note under the passage opens past the rule's foot.
+                assert!(last + m.apart(&theme) > deep, "{w}x{h}");
             }
+        }
+    }
+
+    #[test]
+    fn a_rows_parts_stand_apart_and_its_edges_hold_one_white() {
+        for (w, h) in PANELS {
+            let theme = Theme::for_screen(w, h);
+            let Ok(mut text) = TextRenderer::load(theme.body_px) else {
+                return;
+            };
+            let at = Layout::of(
+                &mut text,
+                &theme,
+                Rect::new(0, 0, w as i32, h as i32),
+                false,
+                Script::of_language("en"),
+            );
+            let m = at.m;
+            let note = |at: &str, body: &str| Highlight {
+                extent: 1_000,
+                kind: Kind::Note,
+                at: at.into(),
+                body: body.into(),
+                ..Highlight::default()
+            };
+            // `passage` with two notes written on the desktop under it.
+            let passage = Row {
+                highlight: highlight(State::Live, 100, 10),
+                written: vec![
+                    note("2026-02-08T10:00:00", "The first."),
+                    note("2026-02-12T10:00:00", "The second."),
+                ],
+                language: "en".into(),
+                extent: 1_000,
+                ..Row::default()
+            };
+            let out = plan(&mut text, &theme, &at, &passage);
+            let (top, _) = out.rule.expect("a rule");
+            let edge = |plan: &Plan, first: i32| {
+                (
+                    rule_over(&theme) + first,
+                    plan.high - rule_over(&theme) - plan.label,
+                )
+            };
+            assert_eq!(edge(&out, top), (pad(&theme), pad(&theme)), "{w}x{h}");
+            let lines: Vec<i32> = out
+                .sets
+                .iter()
+                .filter(|set| set.x == 0)
+                .map(|set| set.baseline)
+                .collect();
+            let days: Vec<i32> = out.days.iter().map(|(day, _)| *day).collect();
+            assert_eq!((lines.len(), days.len()), (2, 2), "{w}x{h}");
+            // Each note's day a gap under it, the next part `apart` under that day.
+            assert_eq!(
+                lines[0] - m.body_cap - (top + m.last(&theme, 1)),
+                m.apart(&theme)
+            );
+            assert_eq!(days[0] - m.cap - lines[0], theme.gap);
+            assert_eq!(lines[1] - m.body_cap - days[0], m.apart(&theme));
+            assert_eq!(out.label - m.cap - days[1], m.apart(&theme));
+            assert!(m.apart(&theme) > m.line - m.body_cap + theme.gap, "{w}x{h}");
+            // `alone`, a note on the book alone, holds the same white at both edges.
+            let alone = Row {
+                highlight: note("2026-01-25T10:00:00", "Halfway."),
+                laid: Some(Laid {
+                    written: "2026-01-25T10:00:00".into(),
+                    on: None,
+                    gone: None,
+                }),
+                language: "en".into(),
+                ..Row::default()
+            };
+            let out = plan(&mut text, &theme, &at, &alone);
+            let first = out.sets[0].baseline - m.body_cap;
+            assert_eq!(edge(&out, first), (pad(&theme), pad(&theme)), "{w}x{h}");
         }
     }
 

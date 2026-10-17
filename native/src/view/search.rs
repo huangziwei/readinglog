@@ -60,9 +60,8 @@ impl Needle {
         body.contains(&self.said) || hanfold::fold(&body).contains(&self.folded)
     }
 
-    /// Whether a body lowercased and folded — [`Stats::folded`] holds
-    /// one per highlight — holds it. Same answer as [`Self::holds`], without the
-    /// allocation and the per-character walk that one pays on every keystroke.
+    /// Whether `folded`, a body lowercased and folded as [`Stats::folded`] holds
+    /// one per highlight, holds it: the answer [`Self::holds`] gives that body.
     pub(super) fn holds_folded(&self, folded: &str) -> bool {
         self.said.is_empty() || folded.contains(&self.folded)
     }
@@ -78,8 +77,8 @@ pub fn listed_highlights<'a>(stats: &'a Stats, query: &str, uncovered: bool) -> 
         .into_iter()
         .filter(|row| uncovered || stats.books.get(row.book).is_some_and(BookStat::has_cover))
         .filter(|row| {
-            // The highlight's own body is folded once per `Stats::build`; a note is
-            // rare enough to fold where it is asked about.
+            // `Stats::folded` holds each highlight's body folded once; `needle.holds`
+            // folds a note's `body` here.
             let body = match stats.folded.get(row.held).and_then(Option::as_deref) {
                 Some(folded) => needle.holds_folded(folded),
                 None => needle.holds(&row.highlight.body),
@@ -272,7 +271,7 @@ fn highlighted(cx: &mut Ctx, area: Rect, search: &Search) {
             paint::hline(
                 cx.fb,
                 inner.x,
-                y + high - theme.gap * 3 / 2,
+                y + high - journal::rule_over(theme),
                 inner.w,
                 paint::PALE,
                 1,
