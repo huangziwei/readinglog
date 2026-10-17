@@ -12,7 +12,13 @@ fn main() {
         hasher.finish()
     );
 
-    tauri_build::build()
+    // `CodegenContext` writes the context `tauri_build_context!` includes, and its
+    // copies of `web` and `icons`, into `OUT_DIR` ahead of the crate's compile.
+    let attributes = tauri_build::Attributes::new().codegen(tauri_build::CodegenContext::new());
+    if let Err(error) = tauri_build::try_build(attributes) {
+        println!("{error:#}");
+        std::process::exit(1);
+    }
 }
 
 fn fingerprint_dir(dir: &Path, hasher: &mut impl Hasher) {

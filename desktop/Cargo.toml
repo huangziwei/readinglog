@@ -1,10 +1,7 @@
-# Outside the root workspace, which `release.yml` lints with no webview.
-[workspace]
-
 [package]
 name = "readinglog-desktop"
-version = "0.1.0"
-license = "GPL-3.0-or-later"
+version.workspace = true
+license.workspace = true
 edition = "2024"
 publish = false
 
@@ -17,7 +14,8 @@ name = "readinglog-desktop"
 path = "src/main.rs"
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+# `codegen` writes the window's context and its copies of `web/` and `icons/` from `build.rs`.
+tauri-build = { version = "2", features = ["codegen"] }
 
 [dependencies]
 # The window. `protocol-asset` serves the record's covers from disk.
@@ -56,11 +54,3 @@ mtp-rs = { version = "=0.15.0", features = ["virtual-device"] }
 [features]
 # `cargo tauri build` turns this on: the window loads `web/` from the binary.
 custom-protocol = ["tauri/custom-protocol"]
-
-[profile.dev]
-incremental = true
-
-# `readinglog-native` draws and decodes covers; built once at 3, as the root
-# workspace builds it for `preview`.
-[profile.dev.package."*"]
-opt-level = 3

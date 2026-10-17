@@ -2,7 +2,7 @@
 
 <p align="center"><img src=".github/assets/icon.png" width="128" height="128"/></p>
 
-Keep track of your reading stats by parsing the local system logs on your jailbroken Kindle.  
+Reading Log keep track of your reading stats by parsing the local system logs on your jailbroken Kindle.  
 
 <p align="center">
     <img src=".github/assets/books/today.png" width="250" alt="Today" />
@@ -10,7 +10,7 @@ Keep track of your reading stats by parsing the local system logs on your jailbr
     <img src=".github/assets/rhythm/year.png" width="250" alt="Year" />
 </p>
 
-Reading Log does not track or record any reading data, it only parses what are already on the Kindle. It works best on firmware from 5.16.* to 5.18.* because their system logs are better known. It should work on older ones, but will likely not work on newer ones. If you want me to diagnose your specific firmware, post the data in an issue by following the instruction [here](https://github.com/huangziwei/readinglog/tree/main/scripts). 
+It does not run in the background or capture any data by itself, it only parses what are already on the Kindle when you open the app. It works best on firmware from 5.16.* to 5.18.* because their system logs are better known. It should work on older ones, but will likely not work on newer ones. If you want me to diagnose your specific firmware, post the data in an issue by following the instruction [here](https://github.com/huangziwei/readinglog/tree/main/scripts). 
 
 ## Install
 

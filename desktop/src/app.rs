@@ -95,8 +95,8 @@ fn said(err: anyhow::Error) -> String {
     format!("{err:#}")
 }
 
-/// The folder the window shows: the one held, else the one last opened, else
-/// `FOLDER` under Documents, made by the first import into it.
+/// The folder the window shows: the one held, the one [`last`] names where none
+/// is held, or `FOLDER` under Documents, made by the first import into it.
 fn folder(app: &AppHandle, open: &State<'_, Open>) -> Answer<PathBuf> {
     let mut held = open
         .dir
@@ -548,7 +548,7 @@ pub fn run() {
             delete_backups,
             reset,
         ])
-        .run(tauri::generate_context!())
+        .run(tauri::tauri_build_context!())
         .expect("the window could not open");
 }
 

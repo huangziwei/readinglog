@@ -1,7 +1,10 @@
 [workspace]
 resolver = "3"
-members = ["native"]
+members = ["native", "desktop"]
+# `default-members` holds a bare `cargo build`, `test` or `clippy` to `native`.
+default-members = ["native"]
 
+# `version` is the one both members state, `version.workspace = true`.
 [workspace.package]
 version = "0.4.0"
 license = "GPL-3.0-or-later"
@@ -9,9 +12,7 @@ license = "GPL-3.0-or-later"
 [profile.dev]
 incremental = true
 
-# `preview` rasterizes glyphs and encodes whole panels every run. The crates
-# doing that work are built once at 3; this crate is rebuilt on every edit and
-# stays at the default, which is the shorter half of an edit-to-picture turn.
+# `"*"` sets every dependency, never a member, at `opt-level = 3`.
 [profile.dev.package."*"]
 opt-level = 3
 

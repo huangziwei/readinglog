@@ -56,11 +56,12 @@ jobs:
                       target
                   key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
 
+            # `--exclude readinglog-desktop` leaves out the window, its webview absent on this runner.
             - name: Format, lint, test
               run: |
                   cargo fmt --all --check
-                  cargo clippy --workspace --all-targets -- -D warnings
-                  cargo test --workspace
+                  cargo clippy --workspace --exclude readinglog-desktop --all-targets -- -D warnings
+                  cargo test --workspace --exclude readinglog-desktop
 
             - name: Build the device tree
               run: ./build.sh
