@@ -47,10 +47,11 @@ pub(super) fn tile(cx: &Ctx, at: usize, over: Option<RangeInclusive<i64>>) -> St
         .map(|k| format!("<p class=\"meta\">{}</p>", esc(k)))
         .unwrap_or_default();
     let mut out = format!(
-        "<a class=\"tile\" href=\"{}\"><div class=\"cover\">{}</div>\
+        "<a class=\"tile\" href=\"{}\"{}><div class=\"cover\">{}</div>\
          <div class=\"progress\"><i style=\"width: {bar}%\"></i></div>\
          <p class=\"title\"{}>{}</p><p class=\"author\"{}>{}</p>{kindle}<p class=\"meta\">{}</p>",
         cx.book_link(at),
+        super::metadata::tile_data(cx, at),
         cx.cover(at),
         lang(&book.language, &book.title),
         esc(&book.title),

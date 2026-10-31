@@ -65,7 +65,7 @@ pub(super) fn page(cx: &Ctx, at: usize, reading: Option<usize>, way: Way, query:
     };
     let mut out = format!(
         "<div class=\"slim\" hidden><b{}>{}</b>{jumps}</div>\
-         <div class=\"hero\"><div class=\"cover\">{}</div><div class=\"words\"><h1{}>{}</h1><p class=\"author\"{}>{}</p>\
+         <div class=\"hero\"><div class=\"cover\">{}</div><div class=\"words\"><h1{}>{}</h1>{}\
          <div class=\"meter\"><div class=\"track\"><i style=\"width: {percent}%; background: {}\"></i></div><b>{}</b></div>\
          <dl class=\"figures\">",
         lang(&book.language, &book.title),
@@ -73,8 +73,7 @@ pub(super) fn page(cx: &Ctx, at: usize, reading: Option<usize>, way: Way, query:
         cx.cover(at),
         lang(&book.language, &book.title),
         esc(&book.title),
-        lang(&book.language, &book.author),
-        esc(&book.author),
+        super::metadata::head(cx, at),
         hex(tone),
         esc(&standing)
     );

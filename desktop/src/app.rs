@@ -23,9 +23,10 @@ use crate::device::mtp::transport::InUse;
 use crate::device::{self, DeviceInfo};
 use crate::edits::{self, HighlightId};
 use crate::import::{self, Imported};
+use crate::metadata;
 use crate::notes;
 use crate::screen::{self, Covers, Page, Route, Shown};
-use crate::workspace::{CONFIG_FILE, Workspace};
+use crate::workspace::{CONFIG_FILE, Workspace, now};
 
 /// The folder the window shows, and the record as last built off it.
 #[derive(Default)]
@@ -388,6 +389,54 @@ fn reword_note(
     notes::reword(&ws, &kindle, &written, &text).map_err(said)
 }
 
+/// Set `patch` on each of `books`, in the record of each one's Kindle.
+/// Answers what `undo_metadata` takes back.
+#[tauri::command]
+fn edit_metadata(
+    app: AppHandle,
+    open: State<'_, Open>,
+    books: Vec<metadata::Named>,
+    patch: metadata::Patch,
+) -> Answer<Vec<metadata::Undo>> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    metadata::edit(&ws, &books, &patch, &now()).map_err(said)
+}
+
+/// Set each book's own patch, each in the record of its Kindle. Answers what
+/// `undo_metadata` takes back.
+#[tauri::command]
+fn edit_metadata_each(
+    app: AppHandle,
+    open: State<'_, Open>,
+    each: Vec<metadata::One>,
+) -> Answer<Vec<metadata::Undo>> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    let each: Vec<(metadata::Named, metadata::Patch)> =
+        each.into_iter().map(|one| (one.book, one.patch)).collect();
+    metadata::edit_each(&ws, &each, &now()).map_err(said)
+}
+
+/// Rename `by`'s value to `to` on each of `books`. Answers what
+/// `undo_metadata` takes back.
+#[tauri::command]
+fn rename_metadata(
+    app: AppHandle,
+    open: State<'_, Open>,
+    books: Vec<metadata::Named>,
+    by: metadata::By,
+    to: String,
+) -> Answer<Vec<metadata::Undo>> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    metadata::rename(&ws, &books, &by, &to, &now()).map_err(said)
+}
+
+/// Set back what one `edit_metadata` changed.
+#[tauri::command]
+fn undo_metadata(app: AppHandle, open: State<'_, Open>, undone: Vec<metadata::Undo>) -> Answer<()> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    metadata::undo(&ws, &undone, &now()).map_err(said)
+}
+
 /// Delete the note `written` names in the Kindle `kindle`'s notes, once a
 /// dialog is answered yes. Answers whether it went.
 #[tauri::command]
@@ -541,6 +590,10 @@ pub fn run() {
             write_note,
             reword_note,
             delete_note,
+            edit_metadata,
+            edit_metadata_each,
+            rename_metadata,
+            undo_metadata,
             choose_folder,
             pick_backup,
             reveal,

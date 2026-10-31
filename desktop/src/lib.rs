@@ -1,12 +1,13 @@
 //! [`import`] fills a [`workspace`] off backups and Kindles read over [`device`];
-//! [`edits`] and [`notes`] write into each Kindle's record, [`kindles`] lays them
-//! together, [`screen`] draws them, [`app`] is the window.
+//! [`edits`], [`notes`] and [`metadata`] write into each Kindle's record,
+//! [`kindles`] lays them together, [`screen`] draws them, [`app`] is the window.
 
 pub mod app;
 pub mod device;
 pub mod edits;
 pub mod import;
 pub mod kindles;
+pub mod metadata;
 pub mod notes;
 pub mod screen;
 pub mod workspace;

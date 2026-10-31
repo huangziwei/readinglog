@@ -1,5 +1,5 @@
 //! [`kindle`] and [`backup`] keep what they read under the `backups/` of the Kindle its cut
-//! serial names, its record the latest whole but the `w` and `r` rows of both; a [`folder`]
+//! serial names, its record the latest whole but the `w`, `r` and `d` rows of both; a [`folder`]
 //! or [`backup`] naming no Kindle folds by `backup::restore`; `keep_latest` leaves one in each.
 
 use std::path::{Path, PathBuf};
@@ -7,14 +7,13 @@ use std::sync::{Mutex, PoisonError};
 
 use anyhow::{Context, Result, anyhow};
 
+use crate::device::mass_storage::transport::MassStorageTransport;
+use crate::device::{DeviceInfo, TPath, Transport};
+use crate::metadata;
+use crate::workspace::{BACKUPS, RECORD, Workspace, write_file, writing};
 use readinglog_native::backup::{self, About, Kind};
 use readinglog_native::record::{self, PARTIAL_FILE, Record};
 use readinglog_native::update::archive::{self, Archive, Source};
-use readinglog_native::written;
-
-use crate::device::mass_storage::transport::MassStorageTransport;
-use crate::device::{DeviceInfo, TPath, Transport};
-use crate::workspace::{BACKUPS, RECORD, Workspace, write_file, writing};
 
 /// The record's name inside a backup, and in the Kindle's own folder.
 const RECORD_NAME: &str = "sessions.tsv";
@@ -92,7 +91,7 @@ static SYNCING: Mutex<()> = Mutex::new(());
 
 /// Sync the Kindle `device` names over one session, after any sync running:
 /// import its record and covers under its cut serial, call `putting`, then
-/// [`put_back`] the notes and corrections the workspace's copy holds.
+/// [`put_back`] the notes, corrections and metadata the workspace's copy holds.
 pub fn kindle(ws: &Workspace, device: &DeviceInfo, putting: impl FnOnce()) -> Result<Synced> {
     let _one = SYNCING.lock().unwrap_or_else(PoisonError::into_inner);
     let transport = device.open_transport()?;
@@ -103,16 +102,21 @@ pub fn kindle(ws: &Workspace, device: &DeviceInfo, putting: impl FnOnce()) -> Re
     Ok(Synced { imported, put })
 }
 
-/// Write the workspace copy's `w` and `r` rows for `serial` into the Kindle's
-/// `sessions.tsv` as [`record_on`] reads it, every other line as it stands,
-/// where a row moves or `record_on` reads the partial. Answers whether it wrote.
+/// Write the workspace copy's `w`, `r` and `d` rows for `serial` into the
+/// Kindle's `sessions.tsv` as [`record_on`] reads it, every other line as it
+/// stands, where a row moves or `record_on` reads the partial. Answers whether
+/// it wrote.
 fn put_back(ws: &Workspace, serial: &str, transport: &dyn Transport) -> Result<bool> {
     let app = app_folder(transport)?;
     let (bytes, in_place) = record_on(transport, &app)?;
     let held = String::from_utf8_lossy(&bytes).into_owned();
+    let ours = ws.kindle_dir(serial).join(RECORD);
     let mut merged = Record::from_text(&held);
-    let text = match merged.take_written(&Record::load(&ws.kindle_dir(serial).join(RECORD))) {
-        true => written::splice(&held, &merged),
+    let mut rows = metadata::rows(&held);
+    let notes_moved = merged.take_written(&Record::load(&ours));
+    let rows_moved = metadata::take(&mut rows, &metadata::read(&ours));
+    let text = match notes_moved || rows_moved {
+        true => metadata::splice(&held, &merged, &rows),
         false if in_place => return Ok(false),
         false => held,
     };
@@ -227,7 +231,7 @@ fn take(ws: &Workspace, serial: Option<&str>, transport: &dyn Transport) -> Resu
 enum Fold {
     /// `backup::restore`, then [`keep_latest`]: the backups naming no Kindle.
     Restore,
-    /// [`latest`] with the `w` and `r` rows of both, then [`keep_latest`]: one Kindle's backups.
+    /// [`latest`] with the `w`, `r` and `d` rows of both, then [`keep_latest`]: one Kindle's backups.
     Latest,
 }
 
@@ -250,11 +254,16 @@ fn settle(
             let _held = writing();
             let mut record = Record::load(&dir);
             let was = record.text();
+            let mut rows = metadata::read(&dir);
+            let carried = inside(&kept)
+                .map(|bytes| metadata::rows(&String::from_utf8_lossy(&bytes)))
+                .unwrap_or_default();
+            let rows_moved = metadata::take(&mut rows, &carried);
             backup::restore(&dir, &kept, &mut record, &mut |_, _| {})
                 .with_context(|| format!("folding in {}", kept.display()))?;
-            if record.text() != was {
-                record
-                    .save(&dir)
+            if record.text() != was || rows_moved {
+                let text = metadata::splice(&record.text(), &record, &rows);
+                write_file(&Record::file(&dir), text.as_bytes())
                     .with_context(|| format!("saving the record in {}", dir.display()))?;
             }
             keep_latest(group, &newest(group, &kept), &record);
@@ -264,7 +273,9 @@ fn settle(
                 latest(group, &kept).with_context(|| format!("folding in {}", kept.display()))?;
             let _held = writing();
             fresh.take_written(&Record::load(&dir));
-            let merged = written::splice(&text, &fresh);
+            let mut rows = metadata::rows(&text);
+            metadata::take(&mut rows, &metadata::read(&dir));
+            let merged = metadata::splice(&text, &fresh, &rows);
             let file = Record::file(&dir);
             if std::fs::read_to_string(&file).ok().as_deref() != Some(merged.as_str()) {
                 write_file(&file, merged.as_bytes())
@@ -755,6 +766,82 @@ mod tests {
         .unwrap();
         let held = Record::load(&ws.kindle_dir(serial).join(RECORD));
         assert_eq!(held.notes[0].text, "reworded");
+    }
+
+    #[test]
+    fn metadata_set_here_outlasts_the_next_import_and_goes_onto_the_kindle() {
+        let ws = Workspace::create(&scratch("import-metadata")).unwrap();
+        let serial = "G000K1";
+        kindle(
+            &ws,
+            &plugged(&kindle_dir("import-metadata-volume", &one()), serial),
+            || {},
+        )
+        .unwrap();
+        let named = metadata::Named {
+            kindle: serial.into(),
+            key: "B1".into(),
+            extent: 100,
+        };
+        let patch = metadata::Patch {
+            title: Some(metadata::Change::To("Retitled".into())),
+            ..metadata::Patch::default()
+        };
+        metadata::edit(&ws, &[named], &patch, "2026-10-31T10:00:00").unwrap();
+        // `since`, the Kindle's record a sitting on, holding none of the rows set here.
+        let mut since = one();
+        since
+            .sittings
+            .push(sitting("2026-09-02T09:00:00", 100, 600));
+        let root = kindle_dir("import-metadata-since", &since);
+        assert!(kindle(&ws, &plugged(&root, serial), || {}).unwrap().put);
+        let title = |dir: &Path| metadata::Set::of(&metadata::read(dir), "B1", 100).title;
+        let ours = ws.kindle_dir(serial).join(RECORD);
+        assert_eq!(
+            Record::load(&ours).sittings.len(),
+            2,
+            "the latest backup stands"
+        );
+        assert_eq!(
+            title(&ours).as_deref(),
+            Some("Retitled"),
+            "and the row with it"
+        );
+        let on_kindle = root.join(APP_DIR);
+        assert_eq!(title(&on_kindle).as_deref(), Some("Retitled"));
+        assert_eq!(Record::load(&on_kindle).sittings.len(), 2);
+        // Once more: the Kindle holds the row, nothing to put.
+        assert!(!kindle(&ws, &plugged(&root, serial), || {}).unwrap().put);
+    }
+
+    #[test]
+    fn metadata_set_on_a_record_naming_no_kindle_outlasts_a_restore() {
+        let ws = Workspace::create(&scratch("import-metadata-unnamed")).unwrap();
+        let zip = kindle_backup("import-metadata-unnamed-zip", &one(), "260901:100000", None);
+        backup(&ws, &zip).unwrap();
+        let named = metadata::Named {
+            kindle: String::new(),
+            key: "B1".into(),
+            extent: 100,
+        };
+        let patch = metadata::Patch {
+            publisher: Some(metadata::Change::To("Example Press".into())),
+            ..metadata::Patch::default()
+        };
+        metadata::edit(&ws, &[named], &patch, "2026-10-31T10:00:00").unwrap();
+        let mut two = one();
+        two.sittings.push(sitting("2026-09-02T09:00:00", 100, 600));
+        let later = kindle_backup("import-metadata-unnamed-later", &two, "260902:100000", None);
+        assert_eq!(
+            backup(&ws, &later).unwrap().sittings,
+            1,
+            "the later backup folded in"
+        );
+        let rows = metadata::read(&ws.record_dir());
+        assert_eq!(
+            metadata::Set::of(&rows, "B1", 100).publisher.as_deref(),
+            Some("Example Press")
+        );
     }
 
     #[test]

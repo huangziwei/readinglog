@@ -57,7 +57,10 @@ pub(super) fn span(cx: &Ctx, span: Span, day: i64) -> String {
         _ => year_strip(cx, day, cx.width, true),
     };
     let _ = write!(out, "<div class=\"card\">{grid}</div>");
+    let charted = matches!(span, Span::Year | Span::Month)
+        .then(|| super::metadata::charts(cx, Some(days.clone()), Some(Window { span, day })));
     out.push_str(&what_was_read(cx, days));
+    out.push_str(&charted.unwrap_or_default());
     out
 }
 
@@ -190,6 +193,7 @@ pub(super) fn all_time(cx: &Ctx, years: &[i64]) -> String {
     }
     out.push_str("</div>");
     out.push_str(&trends(cx));
+    out.push_str(&super::metadata::charts(cx, None, None));
     let opens: [Option<Route>; 12] = {
         let finished = cx.stats.finished_in(i64::MIN..=i64::MAX).next().is_some();
         let best = cx.stats.busiest_day(i64::MIN..=i64::MAX);

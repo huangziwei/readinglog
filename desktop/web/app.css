@@ -1170,3 +1170,496 @@ section h2 .said .search {
 .note.md a {
   color: var(--accent);
 }
+
+/* `.meta`: a book's head under its title — its authors, the facts line with
+   its Edit, its tags with + Tag — and the editors those open in place. */
+.hero .author a,
+.hero .facts a,
+.tags .type,
+.tags .tag a {
+  color: inherit;
+}
+.hero .author a:hover,
+.hero .facts a:hover,
+.tags .type:hover,
+.tags .tag a:hover {
+  text-decoration: underline;
+}
+.hero .meta .author {
+  margin: 0 0 6px;
+}
+.hero .facts {
+  color: var(--soft);
+  font-size: 13px;
+  margin: 0 0 10px;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.hero .facts .dot {
+  color: var(--faint);
+}
+.hero .facts .edit,
+.tags .add {
+  border: none;
+  background: none;
+  color: var(--faint);
+  font-size: 12px;
+  padding: 0;
+}
+.hero .facts .edit:hover,
+.tags .add:hover {
+  color: var(--ink);
+}
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 16px;
+}
+.tags .type {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--faint);
+  margin: 0 2px 0 8px;
+}
+.tags .type:first-child,
+.tags .group:first-child .type {
+  margin-left: 0;
+}
+.tags .group {
+  display: contents;
+}
+.tags .tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px 2px 10px;
+  border-radius: 999px;
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px var(--rule);
+  font-size: 12px;
+  color: var(--ink);
+}
+.tags .off {
+  border: none;
+  background: none;
+  padding: 0 2px;
+  color: var(--faint);
+  font-size: 12px;
+  line-height: 1;
+  visibility: hidden;
+}
+.tags .tag:hover .off,
+.sheet .tags .off {
+  visibility: visible;
+}
+.tags .off:hover {
+  color: var(--ink);
+}
+.hero.editing {
+  align-items: flex-start;
+}
+.hero.editing h1,
+.meta.open > :not(.metaedit) {
+  display: none;
+}
+
+/* `.field` and `.box`, set as `.search` is; a `.pick` lists what a field's words match. */
+.field {
+  display: block;
+  position: relative;
+  margin: 0 0 12px;
+}
+.field > span {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--soft);
+  margin: 0 0 4px;
+}
+.box {
+  display: block;
+  width: 100%;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--rule);
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+}
+.box:focus {
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  border-color: var(--accent);
+}
+.box:disabled {
+  opacity: 0.45;
+}
+.box.title {
+  font-family: var(--serif);
+  font-size: 22px;
+  font-weight: 600;
+}
+.metaedit .book {
+  font-size: 12px;
+  color: var(--faint);
+  margin: -6px 0 12px;
+}
+.metaedit .book button,
+.field .clear {
+  border: none;
+  background: none;
+  padding: 0;
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--accent);
+}
+.field .clear {
+  font-size: 11px;
+  letter-spacing: 0;
+}
+.field .clear.on {
+  color: var(--paper);
+  background: var(--accent);
+  border-radius: 999px;
+  padding: 0 8px;
+}
+.pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.pick {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  z-index: 20;
+  margin: 4px 0 0;
+  max-height: 280px;
+  overflow-y: auto;
+  border-radius: 8px;
+  background: var(--card);
+  box-shadow: 0 0 0 1px var(--rule), 0 8px 20px rgba(0, 0, 0, 0.12);
+  padding: 4px 0;
+  font-size: 13px;
+}
+.pick > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 12px;
+  cursor: default;
+}
+.pick > div:hover {
+  background: var(--accent-soft);
+}
+.pick > .head {
+  font-size: 11px;
+  color: var(--faint);
+  letter-spacing: 0.04em;
+  padding: 4px 12px 2px;
+}
+.pick > .head:hover {
+  background: none;
+}
+.pick small {
+  color: var(--faint);
+  font-size: 12px;
+}
+.metaedit {
+  max-width: 560px;
+}
+.metaedit .acts,
+.adding .acts,
+.sheet .acts,
+.renaming .acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin: 6px 0 0;
+}
+.metaedit .acts button,
+.adding .acts button,
+.sheet .acts button,
+.renaming .acts button {
+  margin-left: 0;
+}
+.acts .save {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: none;
+}
+.adding {
+  display: grid;
+  grid-template-columns: 150px 200px auto;
+  gap: 8px;
+  align-items: start;
+  margin: 0 0 16px;
+}
+.adding .field {
+  margin: 0;
+}
+.adding .acts {
+  justify-content: flex-start;
+  padding-top: 19px;
+  margin: 0;
+}
+.renaming {
+  grid-template-columns: minmax(0, 420px) auto;
+}
+
+/* `.tile.picked`, `.chosen`, `.chip.filter`, `.sheet`, `.suggest`: on Books, a picked tile,
+   the selection's bar, a value's chip, the bulk editor over its grid, the suggestions. */
+.tile .cover {
+  position: relative;
+}
+.tile.picked .cover {
+  box-shadow: 0 0 0 3px var(--accent);
+}
+.tile.picked .cover::after {
+  content: "✓";
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  line-height: 22px;
+  text-align: center;
+  box-shadow: 0 0 0 2px #fff;
+}
+.chosen {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+.chosen[hidden] {
+  display: none;
+}
+.chosen b {
+  font-weight: 600;
+}
+.chosen .quiet {
+  display: inline-block;
+  padding: 4px 6px;
+}
+.chip.filter {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.chip.filter small {
+  opacity: 0.7;
+}
+.chip.filter .off {
+  opacity: 0.6;
+}
+.chip.filter .off:hover {
+  opacity: 1;
+}
+.chip.act {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.grid.under {
+  opacity: 0.3;
+  pointer-events: none;
+}
+.sheet {
+  max-width: 560px;
+  margin: 0 auto 28px;
+  border-radius: 14px;
+  background: var(--paper);
+  box-shadow: 0 0 0 1px var(--rule), 0 2px 6px rgba(0, 0, 0, 0.12), 0 24px 60px rgba(0, 0, 0, 0.22);
+  padding: 22px 24px 18px;
+}
+.sheet h3 {
+  font-family: var(--serif);
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+.sheet .lede {
+  color: var(--soft);
+  font-size: 12px;
+  margin: 0 0 16px;
+}
+.sheet .tags {
+  margin: 0 0 8px;
+}
+.sheet .tags .tag.gone {
+  text-decoration: line-through;
+  color: var(--faint);
+}
+.sheet .tags .tag.new {
+  box-shadow: inset 0 0 0 1px var(--accent);
+  color: var(--accent);
+}
+.suggest {
+  background: var(--card);
+  box-shadow: 0 0 0 1px var(--rule);
+  border-radius: 10px;
+  padding: 8px 14px;
+  margin: 0 0 22px;
+  font-size: 13px;
+}
+.suggest p {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 4px 0;
+}
+
+/* `.ranked`, `.share`, `.legend`, `.months`, `.cols`: the charts' ranked bars, a language's
+   share and legend, the months split by language, a numbered type's columns, every bar square. */
+.ranked .r {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr) 64px 54px;
+  align-items: center;
+  column-gap: 10px;
+  height: 27px;
+  color: inherit;
+}
+.ranked .who {
+  font-size: 12px;
+  color: var(--ink);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ranked .bar {
+  display: block;
+  height: 17px;
+}
+.ranked .bar i {
+  display: block;
+  height: 100%;
+}
+.ranked .r b {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--ink);
+  text-align: right;
+  white-space: nowrap;
+}
+.ranked .n {
+  font-size: 11px;
+  color: var(--faint);
+  text-align: right;
+}
+.ranked .unset .who {
+  color: var(--faint);
+}
+.ranked .r:hover .who,
+.legend .r:hover span:nth-child(2) {
+  text-decoration: underline;
+}
+.note {
+  font-size: 11px;
+  color: var(--faint);
+  margin: 10px 0 0;
+}
+.share {
+  display: flex;
+  gap: 2px;
+  height: 22px;
+  margin: 2px 0 14px;
+}
+.share i {
+  display: block;
+  height: 100%;
+}
+.legend .r {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) 64px 40px;
+  align-items: center;
+  column-gap: 8px;
+  height: 24px;
+  font-size: 12px;
+  color: inherit;
+}
+.legend .r i {
+  display: block;
+  width: 10px;
+  height: 10px;
+}
+.legend .r .h {
+  text-align: right;
+  color: var(--ink);
+}
+.legend .r .p {
+  text-align: right;
+  color: var(--faint);
+}
+.legend .unset {
+  color: var(--faint);
+}
+.months {
+  display: flex;
+  align-items: flex-end;
+  gap: 18px;
+  min-height: 150px;
+  margin: 18px 0 0;
+  padding: 0 0 0 4px;
+}
+.months .m,
+.cols .c {
+  width: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  color: inherit;
+}
+.months .m b,
+.cols .c b {
+  font-size: 11px;
+  font-weight: 400;
+  text-align: center;
+  color: var(--ink);
+  margin: 0 0 3px;
+  white-space: nowrap;
+}
+.months .m i {
+  display: block;
+  margin-top: 2px;
+}
+.months .m span,
+.cols .c span {
+  font-size: 11px;
+  color: var(--faint);
+  text-align: center;
+  margin: 5px 0 0;
+}
+.cols {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-around;
+  min-height: 176px;
+}
+.cols .c i {
+  display: block;
+}
+.cols .c i.none {
+  background: var(--l0);
+  height: 2px;
+}
+
+/* `hidden` hides, whatever display a rule above sets. */
+[hidden] {
+  display: none !important;
+}

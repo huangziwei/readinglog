@@ -8,6 +8,7 @@ mod chart;
 mod day;
 mod journal;
 mod look;
+mod metadata;
 mod rhythm;
 mod settings;
 mod tile;
@@ -31,6 +32,7 @@ pub use look::Look;
 pub use words::Words;
 
 use crate::edits::HighlightId;
+use crate::metadata::By;
 use crate::notes::Laid;
 use crate::workspace::Workspace;
 
@@ -62,6 +64,8 @@ pub enum Route {
         way: Way,
         query: String,
         window: Option<Window>,
+        /// The value the books shown state, where Books is narrowed to one.
+        by: Option<By>,
     },
     Book {
         key: String,
@@ -137,6 +141,18 @@ impl Route {
                     span.zip(day(&asked("day")))
                         .map(|(span, day)| Window { span, day })
                 },
+                by: {
+                    let is = asked("is");
+                    let some = || (!is.is_empty()).then(|| is.clone());
+                    match asked("by").as_str() {
+                        "author" => Some(By::Author(some())),
+                        "publisher" => Some(By::Publisher(some())),
+                        "language" => Some(By::Language(some())),
+                        "type" if !is.is_empty() => Some(By::Type(is.clone())),
+                        "tag" => Some(By::Tag(asked("type"), some())),
+                        _ => None,
+                    }
+                },
             },
             ["book", key] => Route::Book {
                 key: unescape(key),
@@ -187,6 +203,7 @@ impl Route {
                 way: turned,
                 query: search,
                 window,
+                by,
             } => {
                 let shelf = match shelf {
                     Shelf::All => "",
@@ -210,6 +227,14 @@ impl Route {
                     ),
                     None => ("", String::new()),
                 };
+                let (by, r#type, is) = match by {
+                    None => ("", String::new(), None),
+                    Some(By::Author(is)) => ("author", String::new(), is.clone()),
+                    Some(By::Publisher(is)) => ("publisher", String::new(), is.clone()),
+                    Some(By::Language(is)) => ("language", String::new(), is.clone()),
+                    Some(By::Type(is)) => ("type", String::new(), Some(is.clone())),
+                    Some(By::Tag(r#type, is)) => ("tag", r#type.clone(), is.clone()),
+                };
                 format!(
                     "#/books{}",
                     query(&[
@@ -219,6 +244,9 @@ impl Route {
                         ("q", search.clone()),
                         ("span", span.into()),
                         ("day", day),
+                        ("by", by.into()),
+                        ("type", r#type),
+                        ("is", is.unwrap_or_default()),
                     ])
                 )
             }
@@ -269,6 +297,7 @@ impl Route {
             way: Way::Down,
             query: String::new(),
             window,
+            by: None,
         }
     }
 
@@ -313,7 +342,8 @@ pub enum Covers {
 }
 
 /// The record as every screen states it: `Stats` as of `today` under the
-/// settings `Workspace::config` names, and each book's cover, tone and Kindle.
+/// settings `Workspace::config` names, each book in the metadata its Kindle's
+/// record sets, and each book's cover, tone and Kindle.
 pub struct Shown {
     pub record: Record,
     pub stats: Stats,
@@ -323,8 +353,7 @@ pub struct Shown {
     pub today: i64,
     pub covers: Vec<Option<PathBuf>>,
     pub tones: Vec<[u8; 3]>,
-    /// Each book's Kindle as `kindles::labels` calls it, `None` throughout for
-    /// one source.
+    /// Each book's Kindle as `kindles::labels` calls it, `None` throughout for one source.
     pub kindles: Vec<Option<String>>,
     /// Each source's Kindle by its cut serial, empty for the backups naming none.
     pub serials: Vec<String>,
@@ -332,9 +361,12 @@ pub struct Shown {
     pub labels: Vec<String>,
     /// The highlights in words a correction sets, by their Kindle's serial.
     pub corrected: HashSet<(String, HighlightId)>,
-    /// The notes laid into the record, by their Kindle's serial and the
-    /// identity each takes there.
+    /// The notes laid into the record, by their Kindle's serial and the identity each takes.
     pub written: HashMap<(String, HighlightId), Laid>,
+    /// Each book's `Set` off its Kindle's `d` rows, by its place in `stats.books`.
+    pub metadata: Vec<crate::metadata::Set>,
+    /// Each book's title and author as its Kindle states them, by its place in `stats.books`.
+    pub own: Vec<(String, String)>,
 }
 
 impl Shown {
@@ -382,6 +414,31 @@ impl Shown {
             .iter()
             .map(|((_, id), laid)| (id.clone(), laid.clone()))
             .collect();
+        // `sets`: what each book's `d` rows set, laid over `stats` after `Stats::build`
+        // hands out the highlights by the Kindle's own titles.
+        let rows: Vec<Vec<crate::metadata::Metadata>> = sources
+            .iter()
+            .map(|s| crate::metadata::read(&s.dir))
+            .collect();
+        let sets: Vec<crate::metadata::Set> = stats
+            .books
+            .iter()
+            .map(|b| {
+                let from = match sources.len() {
+                    1 => Some(0),
+                    _ => crate::kindles::origin(b.extent)
+                        .0
+                        .or_else(|| crate::kindles::key_origin(&b.cde_key).0),
+                };
+                let (key, extent) = (
+                    crate::kindles::key_origin(&b.cde_key).1,
+                    crate::kindles::origin(b.extent).1,
+                );
+                from.and_then(|n| rows.get(n))
+                    .map(|rows| crate::metadata::Set::of(rows, key, extent))
+                    .unwrap_or_default()
+            })
+            .collect();
         // `thumbnail`: the copy `on_this_computer` names, where `has_cover`.
         let covers: Vec<Option<PathBuf>> = stats
             .books
@@ -409,6 +466,15 @@ impl Shown {
                     .unwrap_or_else(|| look::title_tone(&b.title))
             })
             .collect();
+        let own: Vec<(String, String)> = stats
+            .books
+            .iter()
+            .map(|b| (b.title.clone(), b.author.clone()))
+            .collect();
+        // `tones` come off the Kindle's own titles; `lay_over` sets the words alone.
+        for (book, set) in stats.books.iter_mut().zip(&sets) {
+            set.lay_over(book);
+        }
         Some(Shown {
             record,
             stats,
@@ -422,6 +488,8 @@ impl Shown {
             labels,
             corrected,
             written,
+            metadata: sets,
+            own,
         })
     }
 
@@ -503,6 +571,8 @@ pub fn render(
         serials: &shown.serials,
         corrected: &shown.corrected,
         written: &shown.written,
+        metadata: &shown.metadata,
+        own: &shown.own,
         links,
         uncovered: shown.settings.show_uncovered,
         width: (width - 120.0).max(320.0),
@@ -525,9 +595,10 @@ pub fn render(
             way,
             query,
             window,
+            by,
         } => (
             s.books.to_string(),
-            books::page(&cx, *shelf, *order, *way, query, *window),
+            books::page(&cx, *shelf, *order, *way, query, *window, by.as_ref()),
         ),
         Route::Book {
             key,
@@ -546,6 +617,12 @@ pub fn render(
         Route::Settings => (s.config.to_string(), settings::page(ws, Some(shown), s, w)),
     };
     main.push_str(&editor(s, w));
+    let _ = write!(
+        main,
+        "<div id=\"metawords\" hidden data-undo=\"{}\" data-changed=\"{}\"></div>",
+        esc(w.undo),
+        esc(w.changed)
+    );
     Page {
         title,
         side: side(Some(shown), &route, s, w, kindle),
@@ -597,6 +674,9 @@ struct Ctx<'a> {
     serials: &'a [String],
     corrected: &'a HashSet<(String, HighlightId)>,
     written: &'a HashMap<(String, HighlightId), Laid>,
+    /// [`Shown::metadata`] and [`Shown::own`].
+    metadata: &'a [crate::metadata::Set],
+    own: &'a [(String, String)],
     links: Covers,
     /// `Settings::show_uncovered`, which `view::books::listed` takes.
     uncovered: bool,
@@ -843,8 +923,7 @@ mod tests {
     use crate::tests::{book, highlight, record_of, scratch, sitting};
     use readinglog_native::view::book::DASH;
 
-    /// A workspace holding two books read over three days, one highlight on
-    /// the first.
+    /// `name`'s workspace of two books read over three days, one highlight on the first.
     fn read(name: &str) -> Workspace {
         let ws = Workspace::create(&scratch(name)).unwrap();
         let mut record = record_of(
@@ -868,6 +947,58 @@ mod tests {
     }
 
     #[test]
+    fn a_book_is_drawn_in_the_metadata_set_on_it_and_keeps_its_highlights() {
+        let ws = Workspace::create(&scratch("screen-metadata")).unwrap();
+        let mut record = record_of(
+            vec![book(100, "B1", "A Map of Small Rivers")],
+            vec![sitting("2026-09-01T09:00:00", 100, 600)],
+        );
+        // `highlight(0, …)` states no extent: `Stats::build` hands it to its book by the title.
+        record.highlights = vec![highlight(0, "A Map of Small Rivers", "2026-09-01T09:05:00")];
+        record.save(&ws.record_dir()).unwrap();
+        let named = crate::metadata::Named {
+            kindle: String::new(),
+            key: "B1".into(),
+            extent: 100,
+        };
+        let to = |words: &str| Some(crate::metadata::Change::To(words.into()));
+        let patch = crate::metadata::Patch {
+            title: to("Small Rivers"),
+            authors: to("Roe, Jane"),
+            language: to("de"),
+            publisher: to("Example Press"),
+            ..crate::metadata::Patch::default()
+        };
+        crate::metadata::edit(&ws, &[named], &patch, "2026-10-31T10:00:00").unwrap();
+        let shown = Shown::of(&ws, clock()).unwrap();
+        let at = shown
+            .stats
+            .books
+            .iter()
+            .position(|b| b.cde_key == "B1")
+            .unwrap();
+        let book = &shown.stats.books[at];
+        assert_eq!(
+            (
+                book.title.as_str(),
+                book.author.as_str(),
+                book.language.as_str()
+            ),
+            ("Small Rivers", "Jane Roe", "de")
+        );
+        assert_eq!(
+            shown.metadata[at].publisher.as_deref(),
+            Some("Example Press")
+        );
+        assert_eq!(shown.stats.highlights_of(at).count(), 1);
+        assert_eq!(
+            shown.tones[at],
+            super::look::title_tone("A Map of Small Rivers"),
+            "a coverless book keeps the tone of its Kindle's title"
+        );
+    }
+
+    #[test]
     fn a_route_reads_back_the_link_it_makes() {
         let day = date::parse_day("2026-09-02").unwrap();
         let routes = [
@@ -886,7 +1017,10 @@ mod tests {
                     span: Span::Month,
                     day,
                 }),
+                by: Some(By::Tag("ジャンル".into(), Some("SF & ミステリ".into()))),
             },
+            metadata::narrowed(By::Language(None), None),
+            metadata::narrowed(By::Author(Some("Doe, John".into())), None),
             Route::shelf(Shelf::All, None),
             Route::Book {
                 key: "*AB/CD?".into(),
@@ -1333,7 +1467,15 @@ mod tests {
             )
             .main
         };
-        let opens = "<a class=\"tile\" href=\"#/book/B1\"><div class=\"cover\">";
+        // `opening`: a tile's tag, the same on every page, its selection data and all.
+        let opening = |main: &str| {
+            let at = main.find("<a class=\"tile\" href=\"#/book/B1\"")?;
+            main[at..]
+                .split_once("<div class=\"cover\">")
+                .map(|(tag, _)| tag.to_string())
+        };
+        let opens = opening(&draw("/books")).unwrap();
+        assert!(opens.contains(" data-book="), "{opens}");
         let named = "<p class=\"title\" lang=\"en\">A Map of Small Rivers</p>\
                      <p class=\"author\" lang=\"en\">Someone</p>";
         // `/books` and `/journal` state the whole record, `/week/` and `/day/` their own days.
@@ -1344,7 +1486,7 @@ mod tests {
             ("/day/2026-09-01", "10m"),
         ] {
             let main = draw(route);
-            assert!(main.contains(opens), "{route}: {main}");
+            assert_eq!(opening(&main).as_deref(), Some(opens.as_str()), "{route}");
             assert!(main.contains(named), "{route}");
             assert!(
                 main.contains(&format!(

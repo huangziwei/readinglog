@@ -9,18 +9,48 @@ const main = document.getElementById("main");
 const tip = document.getElementById("tip");
 const veil = document.getElementById("veil");
 
-/** `said` at the foot of the window for a while; `wrong` marks a failure. */
-function flash(said, wrong = false) {
+/** `said` at the foot of the window for a while; `wrong` marks a failure, and `act`, `{ label, run }`, stands as a button after it. */
+function flash(said, wrong = false, act = null) {
   const at = document.getElementById("flash");
   at.textContent = said;
+  if (act) {
+    const button = document.createElement("button");
+    button.textContent = act.label;
+    button.addEventListener("click", () => {
+      at.hidden = true;
+      act.run().catch(console.error);
+    });
+    at.append(" ", button);
+  }
   at.className = wrong ? "flash wrong" : "flash";
   at.hidden = false;
   clearTimeout(flash.timer);
-  flash.timer = setTimeout(() => (at.hidden = true), wrong ? 9000 : 4000);
+  flash.timer = setTimeout(() => (at.hidden = true), wrong || act ? 9000 : 4000);
+}
+
+/** `template` with `{d}` set to `count`, and text in brackets kept only where `count` is not one, as `lang::counted` sets it. */
+function counted(template, count) {
+  let out = "";
+  let dropping = false;
+  for (const ch of template) {
+    if (ch === "[") dropping = count === 1;
+    else if (ch === "]") dropping = false;
+    else if (!dropping) out += ch;
+  }
+  return out.replaceAll("{d}", String(count));
 }
 
 /** The commands changing the notes and corrections a Kindle plugged in takes at its next sync. */
-const WRITING = new Set(["write_note", "reword_note", "delete_note", "edit_highlight"]);
+const WRITING = new Set([
+  "write_note",
+  "reword_note",
+  "delete_note",
+  "edit_highlight",
+  "edit_metadata",
+  "edit_metadata_each",
+  "rename_metadata",
+  "undo_metadata",
+]);
 
 /** The command `name`'s answer; `err` is flashed and thrown on. One of `WRITING` sets `resync` going. */
 async function call(name, args = {}) {
@@ -123,6 +153,10 @@ function template(id) {
 /** Close whatever `editing` holds open. */
 function closeAny() {
   if (!editing) return;
+  if (editing.closest(".meta, .sheet, .renaming")) {
+    closeMeta();
+    return;
+  }
   if (editing.classList.contains("composer")) {
     editing.querySelector("textarea").value = "";
     editing.querySelector("textarea").blur();
@@ -360,6 +394,419 @@ document.addEventListener("click", async (event) => {
   if (!pick) return;
   await call("set_setting", { key: pick.dataset.set, value: pick.dataset.value });
   await show();
+});
+
+// `bookOf` … `rename`: the head's editor and tags, the pick lists, the Books
+// selection and its bulk editor, Rename…, and the suggestions.
+
+/** The words the metadata editors flash: `undo`, and `changed` with `{d}` books. */
+function metaWords() {
+  return document.getElementById("metawords")?.dataset ?? { undo: "Undo", changed: "{d}" };
+}
+
+/** The book `at` names in its `data-book`, as the commands name one. */
+function bookOf(at) {
+  return JSON.parse(at.closest("[data-book]").dataset.book);
+}
+
+/** Close the metadata editor, the tag form, the bulk editor or Rename… open. */
+function closeMeta() {
+  for (const open of main.querySelectorAll(".metaedit, .meta .adding, .renaming")) open.hidden = true;
+  for (const box of main.querySelectorAll(".meta input[data-was]")) {
+    box.value = box.dataset.was;
+    if (box.dataset.field === "language") box.dataset.code = box.dataset.held ?? "";
+  }
+  main.querySelector(".hero")?.classList.remove("editing");
+  main.querySelector(".meta")?.classList.remove("open");
+  const sheet = main.querySelector(".sheet");
+  if (sheet && !sheet.hidden) {
+    sheet.hidden = true;
+    main.querySelector(".grid")?.classList.remove("under");
+  }
+  for (const pick of main.querySelectorAll(".pick")) pick.hidden = true;
+  editing = null;
+}
+
+/** Edit what `patch` changes on `books`, draw again, and flash Undo where `said` names it. */
+async function patched(books, patch, said = null) {
+  const undone = await call("edit_metadata", { books, patch });
+  closeMeta();
+  await show();
+  if (said && undone.length) offerUndo(said, undone);
+}
+
+/** Flash `said`, with Undo taking back `undone`. */
+function offerUndo(said, undone) {
+  flash(said, false, {
+    label: metaWords().undo,
+    run: async () => {
+      await call("undo_metadata", { undone });
+      await show();
+    },
+  });
+}
+
+/** What the language field `box` holds as a code: the one picked, a listed language its words name, or the words as typed. */
+function codeOf(box) {
+  const typed = box.value.trim();
+  if (!typed) return "";
+  if (box.dataset.code && box.dataset.name === typed) return box.dataset.code;
+  const pick = box.parentElement.querySelector(".pick");
+  const named = [...(pick?.querySelectorAll("[data-code]") ?? [])].find((o) =>
+    o.dataset.name.toLowerCase() === typed.toLowerCase() ||
+    o.dataset.code.toLowerCase() === typed.toLowerCase() ||
+    o.dataset.words.split(" ")[0] === typed.toLowerCase()
+  );
+  return named ? named.dataset.code : box.dataset.code && box.dataset.was === typed ? box.dataset.code : typed;
+}
+
+/** The change a field `box` asks for, against `was`: `back` where emptied, else its words, `null` where it stands as it was. */
+function changeOf(box, was, value = box.value.trim()) {
+  if (value === was) return null;
+  return value ? { to: value } : "back";
+}
+
+/** Save the head's editor: each field changed, the language as its code. */
+async function saveMeta(meta) {
+  const patch = {};
+  for (const box of meta.querySelectorAll(".metaedit input[data-field]")) {
+    const field = box.dataset.field;
+    const change = field === "language"
+      ? (box.value.trim() === box.dataset.was ? null : changeOf(box, null, codeOf(box)))
+      : changeOf(box, box.dataset.was);
+    if (change) patch[field] = change;
+  }
+  if (Object.keys(patch).length === 0) return closeMeta();
+  await patched([bookOf(meta)], patch);
+}
+
+/** The tag the form `adding` holds, `null` where either field is blank. */
+function tagOf(adding) {
+  const type = adding.querySelector('input[data-field="type"]').value.trim();
+  const tag = adding.querySelector('input[data-field="tag"]').value.trim();
+  return type && tag ? { type, tag } : null;
+}
+
+/** The pick list a field `box` offers, its options narrowed to its words, and to the type typed beside a tag field. */
+function narrowPick(box) {
+  const pick = box.parentElement.querySelector(".pick");
+  if (!pick) return;
+  const typed = box.value.trim().toLowerCase();
+  const type = box.dataset.field === "tag"
+    ? box.closest(".adding").querySelector('input[data-field="type"]').value.trim().toLowerCase()
+    : "";
+  let shown = 0;
+  for (const option of pick.children) {
+    if (option.classList.contains("head")) continue;
+    const fits = (!typed || option.dataset.words.includes(typed)) && (!type || option.dataset.type === type);
+    option.hidden = !fits;
+    if (fits) shown++;
+  }
+  for (const head of pick.querySelectorAll(".head")) head.hidden = typed !== "";
+  pick.hidden = shown === 0;
+}
+
+main.addEventListener("focusin", (event) => {
+  const box = event.target.closest("input[data-pick]");
+  if (box) narrowPick(box);
+});
+main.addEventListener("input", (event) => {
+  const box = event.target.closest("input[data-pick]");
+  if (!box) return;
+  if (box.dataset.field === "language") box.dataset.code = "";
+  narrowPick(box);
+});
+main.addEventListener("focusout", (event) => {
+  const box = event.target.closest("input[data-pick]");
+  if (box) setTimeout(() => (box.parentElement.querySelector(".pick").hidden = true), 120);
+});
+// `mousedown` takes an option, before its field loses the focus.
+main.addEventListener("mousedown", (event) => {
+  const option = event.target.closest(".pick > [data-name]");
+  if (!option) return;
+  event.preventDefault();
+  const box = option.closest(".field").querySelector("input");
+  box.value = option.dataset.name;
+  if (option.dataset.code !== undefined) {
+    box.dataset.code = option.dataset.code;
+    box.dataset.name = option.dataset.name;
+  }
+  option.parentElement.hidden = true;
+  if (box.dataset.field === "type") box.closest(".adding").querySelector('input[data-field="tag"]').focus();
+});
+
+// Enter keeps the head's editor, adds a tag, or renames, never while an input
+// method composes; Escape closes.
+main.addEventListener("keydown", async (event) => {
+  const box = event.target.closest(".meta input, .sheet input, .renaming input");
+  if (!box || event.isComposing || event.keyCode === 229) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeMeta();
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    if (box.closest(".adding")) await addTag(box.closest(".adding"));
+    else if (box.closest(".renaming")) await rename(box.closest(".renaming"));
+    else if (box.closest(".metaedit")) await saveMeta(box.closest(".meta"));
+  }
+});
+
+/** Add the tag `adding` holds: on the book, or pending in the bulk editor. */
+async function addTag(adding) {
+  const tag = tagOf(adding);
+  if (!tag) return;
+  const sheet = adding.closest(".sheet");
+  if (sheet) {
+    sheetTag(sheet, tag, 0, "new");
+    for (const box of adding.querySelectorAll("input")) box.value = "";
+    adding.querySelector("input").focus();
+    return;
+  }
+  await patched([bookOf(adding)], { add: [tag] });
+}
+
+/** The tiles picked on Books. */
+function picked() {
+  return [...main.querySelectorAll("[data-pickable] .tile.picked")];
+}
+
+/** The tile last picked, which Shift-click picks from. */
+let pickedLast = null;
+
+/** The selection's bar in place of the shelf chips, stating how many are picked. */
+function drawPicked() {
+  const chosen = main.querySelector(".chosen");
+  if (!chosen) return;
+  const n = picked().length;
+  chosen.hidden = n === 0;
+  chosen.previousElementSibling.hidden = n > 0;
+  chosen.querySelector("b").textContent = counted(chosen.dataset.said.replace("{n}", n), Number(chosen.dataset.total));
+}
+
+main.addEventListener("click", (event) => {
+  const tile = event.target.closest("[data-pickable] .tile");
+  if (!tile || !(event.metaKey || event.ctrlKey || event.shiftKey)) return;
+  event.preventDefault();
+  const tiles = [...main.querySelectorAll("[data-pickable] .tile")];
+  if (event.shiftKey && pickedLast && tiles.includes(pickedLast)) {
+    const [a, b] = [tiles.indexOf(pickedLast), tiles.indexOf(tile)].sort((x, y) => x - y);
+    for (const each of tiles.slice(a, b + 1)) each.classList.add("picked");
+  } else {
+    tile.classList.toggle("picked");
+  }
+  pickedLast = tile;
+  drawPicked();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.target.closest("input, textarea") || !main.querySelector("[data-pickable]")) return;
+  if (event.key === "a" && (event.metaKey || event.ctrlKey)) {
+    event.preventDefault();
+    for (const tile of main.querySelectorAll("[data-pickable] .tile")) tile.classList.add("picked");
+    drawPicked();
+  } else if (event.key === "Escape" && picked().length) {
+    for (const tile of picked()) tile.classList.remove("picked");
+    drawPicked();
+  }
+});
+
+/** A tag chip in the bulk editor: `n` of the books picked hold it, `how` is `""`, `"new"` or `"gone"`. */
+function sheetTag(sheet, tag, n, how) {
+  const list = sheet.querySelector(":scope > .field .tags");
+  const total = picked().length;
+  let group = [...list.querySelectorAll(".group")].find((g) => g.dataset.type === tag.type);
+  if (!group) {
+    group = document.createElement("span");
+    group.className = "group";
+    group.dataset.type = tag.type;
+    const name = document.createElement("span");
+    name.className = "type";
+    name.textContent = tag.type;
+    group.append(name);
+    list.append(group);
+  }
+  const chip = document.createElement("span");
+  chip.className = `tag ${how}`.trim();
+  chip.dataset.type = tag.type;
+  chip.dataset.tag = tag.tag;
+  chip.textContent = n && n < total
+    ? `${tag.tag} · ${counted(sheet.dataset.some.replace("{n}", n), total)}`
+    : tag.tag;
+  const off = document.createElement("button");
+  off.className = "off";
+  off.dataset.act = "sheet-untag";
+  off.textContent = "×";
+  chip.append(off);
+  group.append(chip);
+}
+
+/** The bulk editor open on the books picked: each field's books stated, their tags listed. */
+function openSheet() {
+  const sheet = main.querySelector(".sheet");
+  const tiles = picked();
+  if (!sheet || tiles.length === 0) return;
+  closeMeta();
+  const values = tiles.map((t) => JSON.parse(t.dataset.values));
+  const said = sheet.dataset;
+  sheet.querySelector("h3").textContent = counted(said.head, tiles.length);
+  sheet.querySelector('[data-act="apply-bulk"]').textContent = counted(said.apply, tiles.length);
+  const fields = {
+    authors: values.map((v) => v.authors.join(" & ")),
+    publisher: values.map((v) => v.publisher ?? ""),
+    language: values.map((v) => v.language ?? ""),
+  };
+  for (const [field, held] of Object.entries(fields)) {
+    const box = sheet.querySelector(`input[data-field="${field}"]`);
+    box.value = "";
+    box.disabled = false;
+    box.dataset.code = "";
+    const distinct = [...new Set(held.filter((v) => v))];
+    box.placeholder = distinct.length === 0
+      ? said.none
+      : distinct.length === 1
+      ? `${said.leave} · ${distinct[0]}`
+      : counted(said.values, distinct.length);
+  }
+  for (const back of sheet.querySelectorAll('[data-act="bulk-back"]')) back.classList.remove("on");
+  sheet.querySelector(":scope > .field .tags").replaceChildren();
+  const counts = new Map();
+  for (const v of values) {
+    for (const tag of v.tags) {
+      const key = JSON.stringify([tag.type, tag.tag]);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+  }
+  for (const [key, n] of counts) {
+    const [type, tag] = JSON.parse(key);
+    sheetTag(sheet, { type, tag }, n, "");
+  }
+  sheet.hidden = false;
+  main.querySelector(".grid").classList.add("under");
+  editing = sheet;
+  sheet.scrollIntoView({ block: "nearest" });
+}
+
+/** Apply the bulk editor to the books picked, Undo offered. */
+async function applySheet(sheet) {
+  const patch = {};
+  for (const box of sheet.querySelectorAll(':scope > .field input[data-field]')) {
+    const field = box.dataset.field;
+    const back = sheet.querySelector(`[data-act="bulk-back"][data-field="${field}"]`).classList.contains("on");
+    const value = field === "language" ? codeOf(box) : box.value.trim();
+    if (back) patch[field] = "back";
+    else if (value) patch[field] = { to: value };
+  }
+  const tags = [...sheet.querySelectorAll(":scope > .field .tags .tag")];
+  const add = tags.filter((t) => t.classList.contains("new")).map((t) => ({ type: t.dataset.type, tag: t.dataset.tag }));
+  const remove = tags.filter((t) => t.classList.contains("gone")).map((t) => ({ type: t.dataset.type, tag: t.dataset.tag }));
+  if (add.length) patch.add = add;
+  if (remove.length) patch.remove = remove;
+  const books = picked().map((t) => JSON.parse(t.dataset.book));
+  if (Object.keys(patch).length === 0) return closeMeta();
+  const said = counted(metaWords().changed, books.length);
+  await patched(books, patch, said);
+}
+
+/** Rename the value Books is narrowed to on every book shown, then follow it to its new name. */
+async function rename(renaming) {
+  const to = renaming.querySelector("input").value.trim();
+  const by = JSON.parse(renaming.dataset.by);
+  if (!to) return;
+  const books = [...main.querySelectorAll("[data-pickable] .tile")].map((t) => JSON.parse(t.dataset.book));
+  const undone = await call("rename_metadata", { books, by, to });
+  closeMeta();
+  const [path, query] = (location.hash.slice(1) || "/").split("?");
+  const params = new URLSearchParams(query ?? "");
+  params.set("is", to);
+  history.replaceState(null, "", `#${path}?${params.toString()}`);
+  await show();
+  if (undone.length) offerUndo(counted(metaWords().changed, books.length), undone);
+}
+
+document.addEventListener("click", async (event) => {
+  const act = event.target.closest("[data-act]");
+  if (!act) return;
+  switch (act.dataset.act) {
+    case "edit-meta": {
+      closeAny();
+      const meta = act.closest(".meta");
+      meta.classList.add("open");
+      meta.querySelector(".metaedit").hidden = false;
+      main.querySelector(".hero")?.classList.add("editing");
+      meta.querySelector(".metaedit input").focus();
+      editing = meta;
+      break;
+    }
+    case "cancel-meta":
+    case "cancel-tag":
+    case "cancel-rename":
+    case "cancel-bulk":
+      closeMeta();
+      break;
+    case "save-meta":
+      await saveMeta(act.closest(".meta"));
+      break;
+    case "revert-field":
+      await patched([bookOf(act)], { [act.dataset.field]: "back" });
+      break;
+    case "add-tag": {
+      closeAny();
+      const adding = act.closest(".meta").querySelector(".adding");
+      adding.hidden = false;
+      adding.querySelector("input").focus();
+      editing = adding;
+      break;
+    }
+    case "save-tag":
+      await addTag(act.closest(".adding"));
+      break;
+    case "untag":
+      await patched([bookOf(act)], { remove: [{ type: act.dataset.type, tag: act.dataset.tag }] });
+      break;
+    case "unpick":
+      for (const tile of picked()) tile.classList.remove("picked");
+      drawPicked();
+      break;
+    case "bulk":
+      openSheet();
+      break;
+    case "bulk-back": {
+      act.classList.toggle("on");
+      const box = act.closest(".field").querySelector("input");
+      box.disabled = act.classList.contains("on");
+      if (box.disabled) box.value = "";
+      break;
+    }
+    case "sheet-untag": {
+      const chip = act.closest(".tag");
+      if (chip.classList.contains("new")) chip.remove();
+      else chip.classList.toggle("gone");
+      break;
+    }
+    case "apply-bulk":
+      await applySheet(act.closest(".sheet"));
+      break;
+    case "rename": {
+      closeAny();
+      const renaming = main.querySelector(".renaming");
+      renaming.hidden = false;
+      const box = renaming.querySelector("input");
+      box.focus();
+      box.select();
+      editing = renaming;
+      break;
+    }
+    case "save-rename":
+      await rename(act.closest(".renaming"));
+      break;
+    case "suggest": {
+      const each = JSON.parse(act.dataset.each);
+      const undone = await call("edit_metadata_each", { each });
+      await show();
+      if (undone.length) offerUndo(counted(metaWords().changed, each.length), undone);
+      break;
+    }
+  }
 });
 
 /** Whether an input method is composing text, which `show` throws away with the box it is typed in. */
