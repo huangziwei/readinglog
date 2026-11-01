@@ -91,6 +91,9 @@ async function show() {
   document.title = page.title;
   side.innerHTML = page.side;
   main.innerHTML = page.main;
+  for (const chart of main.querySelectorAll("[data-chart]")) {
+    if (whole.has(chart.dataset.chart)) openWhole(chart, true);
+  }
   drawCard();
   for (const img of document.querySelectorAll("img[data-cover]")) {
     img.src = TAURI.core.convertFileSrc(img.dataset.cover);
@@ -396,8 +399,19 @@ document.addEventListener("click", async (event) => {
   await show();
 });
 
-// `bookOf` … `rename`: the head's editor and tags, the pick lists, the Books
-// selection and its bulk editor, Rename…, and the suggestions.
+// `whole` … `rename`: the ranked charts shown whole, the head's editor and
+// tags, the pick lists, the Books selection and its bulk editor, Rename…, and
+// the suggestions.
+
+/** The ranked charts shown whole, by their `data-chart`: `show` opens them again on every page drawn. */
+const whole = new Set();
+
+/** `chart`'s bars past the first ten shown where `open`, hidden where not; its button says what a click does next. */
+function openWhole(chart, open) {
+  for (const row of chart.querySelectorAll(".r.past")) row.hidden = !open;
+  const button = chart.querySelector('[data-act="whole"]');
+  if (button) button.textContent = open ? button.dataset.top : button.dataset.all;
+}
 
 /** The words the metadata editors flash: `undo`, and `changed` with `{d}` books. */
 function metaWords() {
@@ -415,7 +429,9 @@ function closeMeta() {
   for (const box of main.querySelectorAll(".meta input[data-was]")) {
     box.value = box.dataset.was;
     if (box.dataset.field === "language") box.dataset.code = box.dataset.held ?? "";
+    if (box.closest(".tagged")) fitTag(box);
   }
+  for (const gone of main.querySelectorAll(".meta .tagged.gone")) gone.classList.remove("gone");
   main.querySelector(".hero")?.classList.remove("editing");
   main.querySelector(".meta")?.classList.remove("open");
   const sheet = main.querySelector(".sheet");
@@ -427,17 +443,26 @@ function closeMeta() {
   editing = null;
 }
 
-/** Edit what `patch` changes on `books`, draw again, and flash Undo where `said` names it. */
-async function patched(books, patch, said = null) {
+/** Edit what `patch` changes on `books` and draw again; Undo is flashed where `offer` asks for it, or where the edit reached further than `books`. */
+async function patched(books, patch, offer = false) {
   const undone = await call("edit_metadata", { books, patch });
   closeMeta();
   await show();
-  if (said && undone.length) offerUndo(said, undone);
+  if (undone.length && (offer || reached(undone) > books.length)) offerUndo(undone);
 }
 
-/** Flash `said`, with Undo taking back `undone`. */
-function offerUndo(said, undone) {
-  flash(said, false, {
+/** How many books the rows `undone` sets back are of. */
+function reached(undone) {
+  const books = new Set();
+  for (const each of undone) {
+    for (const row of each.rows) books.add(`${each.kindle}\t${row.key}\t${row.key ? "" : row.extent}`);
+  }
+  return books.size;
+}
+
+/** Flash how many books `undone` reaches, with Undo taking it back. */
+function offerUndo(undone) {
+  flash(counted(metaWords().changed, reached(undone)), false, {
     label: metaWords().undo,
     run: async () => {
       await call("undo_metadata", { undone });
@@ -466,18 +491,54 @@ function changeOf(box, was, value = box.value.trim()) {
   return value ? { to: value } : "back";
 }
 
-/** Save the head's editor: each field changed, the language as its code. */
+/** Save the head's editor: each field changed, the language as its code, and the tags retyped, renamed or taken off. */
 async function saveMeta(meta) {
   const patch = {};
   for (const box of meta.querySelectorAll(".metaedit input[data-field]")) {
+    if (box.closest(".retag")) continue;
     const field = box.dataset.field;
     const change = field === "language"
       ? (box.value.trim() === box.dataset.was ? null : changeOf(box, null, codeOf(box)))
       : changeOf(box, box.dataset.was);
     if (change) patch[field] = change;
   }
+  Object.assign(patch, retagsOf(meta.querySelector(".metaedit")));
   if (Object.keys(patch).length === 0) return closeMeta();
   await patched([bookOf(meta)], patch);
+}
+
+/** What the tag fields in `holder` ask for: `retag`, each tag whose group's type or own words changed, and `remove`, each marked gone; a blank field stands as it was. */
+function retagsOf(holder) {
+  const retag = [];
+  const remove = [];
+  for (const group of holder?.querySelectorAll(".group") ?? []) {
+    const kind = group.querySelector('input[data-field="type"]');
+    if (!kind) continue;
+    const type = kind.value.trim() || kind.dataset.was;
+    for (const box of group.querySelectorAll('.tagged input[data-field="tag"]')) {
+      if (box.closest(".tagged").classList.contains("new")) continue;
+      const from = { type: kind.dataset.was, tag: box.dataset.was };
+      const tag = box.value.trim() || from.tag;
+      if (box.closest(".tagged").classList.contains("gone")) remove.push(from);
+      else if (type !== from.type || tag !== from.tag) retag.push({ from, to: { type, tag } });
+    }
+  }
+  const out = {};
+  if (retag.length) out.retag = retag;
+  if (remove.length) out.remove = remove;
+  return out;
+}
+
+/** The width of `words` in `ch`, as `screen::metadata::width` reckons it. */
+function widthOf(words) {
+  let n = 0;
+  for (const ch of words) n += ch.codePointAt(0) >= 0x2e80 ? 2 : 1;
+  return n;
+}
+
+/** The tag field `box` as wide as its words. */
+function fitTag(box) {
+  box.style.width = `calc(${Math.max(4, widthOf(box.value))}ch + 16px)`;
 }
 
 /** The tag the form `adding` holds, `null` where either field is blank. */
@@ -487,13 +548,22 @@ function tagOf(adding) {
   return type && tag ? { type, tag } : null;
 }
 
+/** The pick list a field `box` offers: its own, or the editor's list of types or tags moved under it. */
+function pickOf(box) {
+  const own = box.parentElement.querySelector(".pick");
+  if (own) return own;
+  const held = box.closest(".meta, .sheet")?.querySelector(`.pick[data-for="${box.dataset.pick}"]`);
+  if (held) box.parentElement.append(held);
+  return held ?? null;
+}
+
 /** The pick list a field `box` offers, its options narrowed to its words, and to the type typed beside a tag field. */
 function narrowPick(box) {
-  const pick = box.parentElement.querySelector(".pick");
+  const pick = pickOf(box);
   if (!pick) return;
   const typed = box.value.trim().toLowerCase();
   const type = box.dataset.field === "tag"
-    ? box.closest(".adding").querySelector('input[data-field="type"]').value.trim().toLowerCase()
+    ? box.closest(".adding, .group").querySelector('input[data-field="type"]').value.trim().toLowerCase()
     : "";
   let shown = 0;
   for (const option of pick.children) {
@@ -514,25 +584,28 @@ main.addEventListener("input", (event) => {
   const box = event.target.closest("input[data-pick]");
   if (!box) return;
   if (box.dataset.field === "language") box.dataset.code = "";
+  if (box.closest(".tagged")) fitTag(box);
   narrowPick(box);
 });
 main.addEventListener("focusout", (event) => {
   const box = event.target.closest("input[data-pick]");
-  if (box) setTimeout(() => (box.parentElement.querySelector(".pick").hidden = true), 120);
+  const pick = box?.parentElement.querySelector(".pick");
+  if (pick) setTimeout(() => (pick.hidden = true), 120);
 });
 // `mousedown` takes an option, before its field loses the focus.
 main.addEventListener("mousedown", (event) => {
   const option = event.target.closest(".pick > [data-name]");
   if (!option) return;
   event.preventDefault();
-  const box = option.closest(".field").querySelector("input");
+  const box = option.parentElement.parentElement.querySelector("input");
   box.value = option.dataset.name;
   if (option.dataset.code !== undefined) {
     box.dataset.code = option.dataset.code;
     box.dataset.name = option.dataset.name;
   }
+  if (box.closest(".tagged")) fitTag(box);
   option.parentElement.hidden = true;
-  if (box.dataset.field === "type") box.closest(".adding").querySelector('input[data-field="tag"]').focus();
+  if (box.dataset.field === "type") box.closest(".adding")?.querySelector('input[data-field="tag"]').focus();
 });
 
 // Enter keeps the head's editor, adds a tag, or renames, never while an input
@@ -610,34 +683,57 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-/** A tag chip in the bulk editor: `n` of the books picked hold it, `how` is `""`, `"new"` or `"gone"`. */
-function sheetTag(sheet, tag, n, how) {
-  const list = sheet.querySelector(":scope > .field .tags");
+/** A field of the bulk editor's tags, as `screen::metadata::group` sets one out: `field` `type` or `tag`, holding `words`. */
+function tagBox(field, words) {
+  const box = document.createElement("input");
+  box.className = "box";
+  box.dataset.field = field;
+  box.dataset.pick = `${field}s`;
+  box.dataset.was = words;
+  box.value = words;
+  box.autocomplete = "off";
+  box.spellcheck = false;
+  return box;
+}
+
+/** A tag in the bulk editor, in its type's group: held by `n` of the books picked, a field; `"new"` in `how`, one waiting to be added. */
+function sheetTag(sheet, tag, n, how = "") {
+  const list = sheet.querySelector(".retag");
   const total = picked().length;
   let group = [...list.querySelectorAll(".group")].find((g) => g.dataset.type === tag.type);
   if (!group) {
-    group = document.createElement("span");
+    group = document.createElement("div");
     group.className = "group";
     group.dataset.type = tag.type;
-    const name = document.createElement("span");
-    name.className = "type";
-    name.textContent = tag.type;
-    group.append(name);
+    const kind = document.createElement("span");
+    kind.className = "kind";
+    if (how === "new") kind.textContent = tag.type;
+    else kind.append(tagBox("type", tag.type));
+    const under = document.createElement("span");
+    under.className = "under";
+    group.append(kind, under);
     list.append(group);
   }
-  const chip = document.createElement("span");
-  chip.className = `tag ${how}`.trim();
-  chip.dataset.type = tag.type;
-  chip.dataset.tag = tag.tag;
-  chip.textContent = n && n < total
-    ? `${tag.tag} · ${counted(sheet.dataset.some.replace("{n}", n), total)}`
-    : tag.tag;
+  const tagged = document.createElement("span");
+  tagged.className = `tagged ${how}`.trim();
+  tagged.dataset.type = tag.type;
+  tagged.dataset.tag = tag.tag;
+  const box = tagBox("tag", tag.tag);
+  box.disabled = how === "new";
+  fitTag(box);
+  tagged.append(box);
+  if (n && n < total) {
+    const some = document.createElement("small");
+    some.textContent = counted(sheet.dataset.some.replace("{n}", n), total);
+    tagged.append(some);
+  }
   const off = document.createElement("button");
   off.className = "off";
-  off.dataset.act = "sheet-untag";
+  off.dataset.act = "drop-tag";
+  off.dataset.tip = list.dataset.off;
   off.textContent = "×";
-  chip.append(off);
-  group.append(chip);
+  tagged.append(off);
+  group.querySelector(".under").append(tagged);
 }
 
 /** The bulk editor open on the books picked: each field's books stated, their tags listed. */
@@ -668,7 +764,7 @@ function openSheet() {
       : counted(said.values, distinct.length);
   }
   for (const back of sheet.querySelectorAll('[data-act="bulk-back"]')) back.classList.remove("on");
-  sheet.querySelector(":scope > .field .tags").replaceChildren();
+  for (const group of sheet.querySelectorAll(".retag .group")) group.remove();
   const counts = new Map();
   for (const v of values) {
     for (const tag of v.tags) {
@@ -678,7 +774,7 @@ function openSheet() {
   }
   for (const [key, n] of counts) {
     const [type, tag] = JSON.parse(key);
-    sheetTag(sheet, { type, tag }, n, "");
+    sheetTag(sheet, { type, tag }, n);
   }
   sheet.hidden = false;
   main.querySelector(".grid").classList.add("under");
@@ -689,22 +785,24 @@ function openSheet() {
 /** Apply the bulk editor to the books picked, Undo offered. */
 async function applySheet(sheet) {
   const patch = {};
-  for (const box of sheet.querySelectorAll(':scope > .field input[data-field]')) {
+  for (const box of sheet.querySelectorAll(":scope > .field input[data-field]")) {
+    if (box.closest(".retag")) continue;
     const field = box.dataset.field;
     const back = sheet.querySelector(`[data-act="bulk-back"][data-field="${field}"]`).classList.contains("on");
     const value = field === "language" ? codeOf(box) : box.value.trim();
     if (back) patch[field] = "back";
     else if (value) patch[field] = { to: value };
   }
-  const tags = [...sheet.querySelectorAll(":scope > .field .tags .tag")];
-  const add = tags.filter((t) => t.classList.contains("new")).map((t) => ({ type: t.dataset.type, tag: t.dataset.tag }));
-  const remove = tags.filter((t) => t.classList.contains("gone")).map((t) => ({ type: t.dataset.type, tag: t.dataset.tag }));
+  const list = sheet.querySelector(".retag");
+  Object.assign(patch, retagsOf(list));
+  const add = [...list.querySelectorAll(".tagged.new")].map((t) => {
+    const kind = t.closest(".group").querySelector('input[data-field="type"]');
+    return { type: kind?.value.trim() || t.dataset.type, tag: t.dataset.tag };
+  });
   if (add.length) patch.add = add;
-  if (remove.length) patch.remove = remove;
   const books = picked().map((t) => JSON.parse(t.dataset.book));
   if (Object.keys(patch).length === 0) return closeMeta();
-  const said = counted(metaWords().changed, books.length);
-  await patched(books, patch, said);
+  await patched(books, patch, true);
 }
 
 /** Rename the value Books is narrowed to on every book shown, then follow it to its new name. */
@@ -720,7 +818,7 @@ async function rename(renaming) {
   params.set("is", to);
   history.replaceState(null, "", `#${path}?${params.toString()}`);
   await show();
-  if (undone.length) offerUndo(counted(metaWords().changed, books.length), undone);
+  if (undone.length) offerUndo(undone);
 }
 
 document.addEventListener("click", async (event) => {
@@ -777,10 +875,20 @@ document.addEventListener("click", async (event) => {
       if (box.disabled) box.value = "";
       break;
     }
-    case "sheet-untag": {
-      const chip = act.closest(".tag");
-      if (chip.classList.contains("new")) chip.remove();
-      else chip.classList.toggle("gone");
+    case "drop-tag": {
+      const tagged = act.closest(".tagged");
+      const group = tagged.closest(".group");
+      if (!tagged.classList.contains("new")) tagged.classList.toggle("gone");
+      else tagged.remove();
+      if (!group.querySelector(".tagged")) group.remove();
+      break;
+    }
+    case "whole": {
+      const chart = act.closest("[data-chart]");
+      const open = !whole.has(chart.dataset.chart);
+      if (open) whole.add(chart.dataset.chart);
+      else whole.delete(chart.dataset.chart);
+      openWhole(chart, open);
       break;
     }
     case "apply-bulk":
@@ -803,7 +911,7 @@ document.addEventListener("click", async (event) => {
       const each = JSON.parse(act.dataset.each);
       const undone = await call("edit_metadata_each", { each });
       await show();
-      if (undone.length) offerUndo(counted(metaWords().changed, each.length), undone);
+      if (undone.length) offerUndo(undone);
       break;
     }
   }

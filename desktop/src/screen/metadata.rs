@@ -14,8 +14,7 @@ use super::words::Words;
 use super::{Ctx, Route, esc, lang, language_of};
 use crate::metadata::{self, By, Named, Patch, Tag, Values, names};
 
-/// `HUES`: each language's hue, in the order the record's languages take by
-/// time read; a fifth and on take `OTHER`.
+/// `HUES`: each language's hue, by the record's languages in time read; `OTHER` past the fourth.
 const HUES: [&str; 4] = ["#0f86a3", "#b8781e", "#7d4fb0", "#c4456e"];
 const OTHER: &str = "#9a958b";
 
@@ -24,12 +23,15 @@ const UNSET: &str = "#ccc8bf";
 const BAR: &str = "#79a260";
 const MOST: &str = "#d23f6b";
 
+/// `TOP`: the bars a ranked chart shows until Show all opens the rest.
+const TOP: usize = 10;
+
 /// What the book at `at` states.
 pub(super) fn values(cx: &Ctx, at: usize) -> Values {
     Values::of(&cx.own[at].1, &cx.metadata[at])
 }
 
-/// The book at `at` as the commands name it.
+/// The [`Named`] of the book at `at`, as the commands take it.
 pub(super) fn named(cx: &Ctx, at: usize) -> Named {
     let book = &cx.stats.books[at];
     Named {
@@ -39,7 +41,7 @@ pub(super) fn named(cx: &Ctx, at: usize) -> Named {
     }
 }
 
-/// Books narrowed to `by`, under `window`.
+/// [`Route::Books`] narrowed to `by`, under `window`.
 pub(super) fn narrowed(by: By, window: Option<Window>) -> Route {
     Route::Books {
         shelf: Shelf::All,
@@ -51,8 +53,7 @@ pub(super) fn narrowed(by: By, window: Option<Window>) -> Route {
     }
 }
 
-/// The language `code` names, in the interface's language; the code itself
-/// where no name is listed.
+/// `code`'s name in `cx.lang`; `code` itself where [`names`] lists none.
 fn language_name(cx: &Ctx, code: &str) -> String {
     names::name(code, cx.lang).unwrap_or(code).to_string()
 }
@@ -154,11 +155,47 @@ pub(super) fn head(cx: &Ctx, at: usize) -> String {
     );
     out.push_str(&editor(cx, at, &values));
     out.push_str(&adder(cx, true));
+    out.push_str(&picks(cx));
     out.push_str("</div>");
     out
 }
 
-/// The editor of `at`'s title, authors, publisher and language, each field
+/// `words`' width in a field, in `ch`: two for a wide character, one for any other.
+fn width(words: &str) -> usize {
+    words
+        .chars()
+        .map(|c| match c as u32 >= 0x2E80 {
+            true => 2,
+            false => 1,
+        })
+        .sum()
+}
+
+/// `r#type` and `tags` as an editor's `.group`: each a field, a tag's with ×
+/// taking it off on Save.
+fn group(cx: &Ctx, r#type: &str, tags: &[&str]) -> String {
+    let w = Words::of(cx.lang);
+    let mut out = format!(
+        "<div class=\"group\"><span class=\"kind\"><input class=\"box\" data-field=\"type\" \
+         data-pick=\"types\" value=\"{0}\" data-was=\"{0}\" autocomplete=\"off\" spellcheck=\"false\"></span><span class=\"under\">",
+        esc(r#type)
+    );
+    for tag in tags {
+        let _ = write!(
+            out,
+            "<span class=\"tagged\"><input class=\"box\" data-field=\"tag\" data-pick=\"tags\" \
+             value=\"{0}\" data-was=\"{0}\" style=\"width: calc({1}ch + 16px)\" autocomplete=\"off\" \
+             spellcheck=\"false\"><button class=\"off\" data-act=\"drop-tag\" data-tip=\"{2}\">×</button></span>",
+            esc(tag),
+            width(tag).max(4),
+            esc(w.remove_tip)
+        );
+    }
+    out.push_str("</span></div>");
+    out
+}
+
+/// `at`'s editor: its title, authors, publisher, language and tags, each field
 /// holding what `values` states; under a title or authors `cx.metadata` sets,
 /// the book's own words with Revert.
 fn editor(cx: &Ctx, at: usize, values: &Values) -> String {
@@ -217,9 +254,21 @@ fn editor(cx: &Ctx, at: usize, values: &Values) -> String {
         esc(&code),
         languages(cx)
     );
+    out.push_str("</div>");
+    if !values.tags.is_empty() {
+        let _ = write!(
+            out,
+            "<div class=\"field retag\"><span>{}</span>",
+            esc(w.tags_field)
+        );
+        for (r#type, tags) in grouped(&values.tags) {
+            out.push_str(&group(cx, r#type, &tags));
+        }
+        out.push_str("</div>");
+    }
     let _ = write!(
         out,
-        "</div><p class=\"acts\"><button data-act=\"cancel-meta\">{}</button>\
+        "<p class=\"acts\"><button data-act=\"cancel-meta\">{}</button>\
          <button class=\"save\" data-act=\"save-meta\">{}</button></p></div>",
         esc(cx.s.cancel),
         esc(w.save)
@@ -227,8 +276,8 @@ fn editor(cx: &Ctx, at: usize, values: &Values) -> String {
     out
 }
 
-/// The list a language field offers: the languages `cx.metadata` sets first,
-/// then every other [`names::LANGUAGES`] lists, each named in `cx.lang` and its own.
+/// [`names::LANGUAGES`] as a language field lists them: those `cx.metadata` sets
+/// first, each named in `cx.lang` and its own.
 fn languages(cx: &Ctx) -> String {
     let w = Words::of(cx.lang);
     let mut used: Vec<(String, usize)> = Vec::new();
@@ -280,8 +329,7 @@ type Types = Vec<(String, usize)>;
 /// `Tags`: each tag in use, its type and the books holding it.
 type Tags = Vec<(String, String, usize)>;
 
-/// Every type in use and every tag under each, with the books holding them,
-/// most held first.
+/// [`Types`] and [`Tags`] across `cx.metadata`, most held first.
 fn in_use(cx: &Ctx) -> (Types, Tags) {
     let mut types: Types = Vec::new();
     let mut tags: Tags = Vec::new();
@@ -309,21 +357,12 @@ fn in_use(cx: &Ctx) -> (Types, Tags) {
     (types, tags)
 }
 
-/// The form adding a tag, its fields offering the types and tags in use; with
-/// `alone`, hidden until + Tag opens it and with its own Cancel.
-fn adder(cx: &Ctx, alone: bool) -> String {
-    let w = Words::of(cx.lang);
+/// [`in_use`]'s types and tags as the lists a type or tag field offers, held once
+/// beside the fields for `app.js` to move under the one focused.
+fn picks(cx: &Ctx) -> String {
     let (types, tags) = in_use(cx);
     let books = |n: usize| counted(cx.s.n_books, n as i64);
-    let mut out = format!(
-        "<div class=\"adding\"{}><div class=\"field\"><span>{}</span><input class=\"box\" \
-         data-field=\"type\" data-pick=\"types\" autocomplete=\"off\" spellcheck=\"false\"><div class=\"pick\" hidden>",
-        match alone {
-            true => " hidden",
-            false => "",
-        },
-        esc(w.type_field)
-    );
+    let mut out = String::from("<div class=\"pick\" data-for=\"types\" hidden>");
     for (r#type, n) in &types {
         let _ = write!(
             out,
@@ -334,12 +373,7 @@ fn adder(cx: &Ctx, alone: bool) -> String {
             esc(&books(*n))
         );
     }
-    let _ = write!(
-        out,
-        "</div></div><div class=\"field\"><span>{}</span><input class=\"box\" data-field=\"tag\" \
-         data-pick=\"tags\" autocomplete=\"off\" spellcheck=\"false\"><div class=\"pick\" hidden>",
-        esc(w.tag_field)
-    );
+    out.push_str("</div><div class=\"pick\" data-for=\"tags\" hidden>");
     for (r#type, tag, n) in &tags {
         let _ = write!(
             out,
@@ -351,7 +385,26 @@ fn adder(cx: &Ctx, alone: bool) -> String {
             esc(&books(*n))
         );
     }
-    out.push_str("</div></div><p class=\"acts\">");
+    out.push_str("</div>");
+    out
+}
+
+/// `.adding`: the Type and Tag fields with Add, offering [`picks`]; with `alone`,
+/// hidden until + Tag opens it, with Cancel.
+fn adder(cx: &Ctx, alone: bool) -> String {
+    let w = Words::of(cx.lang);
+    let mut out = format!(
+        "<div class=\"adding\"{}><div class=\"field\"><span>{}</span><input class=\"box\" \
+         data-field=\"type\" data-pick=\"types\" autocomplete=\"off\" spellcheck=\"false\"></div>\
+         <div class=\"field\"><span>{}</span><input class=\"box\" data-field=\"tag\" \
+         data-pick=\"tags\" autocomplete=\"off\" spellcheck=\"false\"></div><p class=\"acts\">",
+        match alone {
+            true => " hidden",
+            false => "",
+        },
+        esc(w.type_field),
+        esc(w.tag_field)
+    );
     if alone {
         let _ = write!(
             out,
@@ -367,8 +420,8 @@ fn adder(cx: &Ctx, alone: bool) -> String {
     out
 }
 
-/// The chip naming the value Books is narrowed to, its × going back to the
-/// books unnarrowed at `back`, and Rename… where the value is set.
+/// `by`'s chip on Books, its × going back to `back`, and Rename… where `by`
+/// names a value.
 pub(super) fn chip(cx: &Ctx, by: &By, back: &str) -> String {
     let w = Words::of(cx.lang);
     let (what, value) = match by {
@@ -396,7 +449,7 @@ pub(super) fn chip(cx: &Ctx, by: &By, back: &str) -> String {
     out
 }
 
-/// Rename…'s field over `count` books, hidden until Rename… opens it.
+/// `.renaming`: the field renaming `by` on `count` books, hidden until Rename… opens it.
 pub(super) fn renaming(cx: &Ctx, by: &By, count: usize) -> String {
     let w = Words::of(cx.lang);
     if matches!(
@@ -425,7 +478,8 @@ pub(super) fn renaming(cx: &Ctx, by: &By, count: usize) -> String {
     )
 }
 
-/// The selection's bar over `total` books, hidden until a book is picked, in the shelf chips' place.
+/// `.chosen`: the selection's bar over `total` books, hidden until a book is picked, in the
+/// shelf chips' place.
 pub(super) fn chosen(cx: &Ctx, total: usize) -> String {
     let w = Words::of(cx.lang);
     format!(
@@ -438,8 +492,8 @@ pub(super) fn chosen(cx: &Ctx, total: usize) -> String {
     )
 }
 
-/// The bulk editor, hidden until Edit… opens it on the books picked; `app.js`
-/// states each field's books.
+/// `.sheet`: the bulk editor, hidden until Edit… opens it on the books picked; `app.js`
+/// states each field's books and sets their tags out as [`group`] does.
 pub(super) fn sheet(cx: &Ctx) -> String {
     let w = Words::of(cx.lang);
     let field = |name: &str, field: &str, back: &str, more: &str| {
@@ -458,7 +512,7 @@ pub(super) fn sheet(cx: &Ctx) -> String {
     format!(
         "<div class=\"sheet\" hidden data-head=\"{}\" data-leave=\"{}\" data-values=\"{}\" \
          data-none=\"{}\" data-some=\"{}\" data-apply=\"{}\"><h3></h3><p class=\"lede\">{}</p>{}{}{}\
-         <div class=\"field\"><span>{}</span><div class=\"tags\"></div></div>{}\
+         <div class=\"field retag\" data-off=\"{}\"><span>{}</span></div>{}{}\
          <p class=\"acts\"><button data-act=\"cancel-bulk\">{}</button>\
          <button class=\"save\" data-act=\"apply-bulk\"></button></p></div>",
         esc(w.edit_books),
@@ -476,14 +530,15 @@ pub(super) fn sheet(cx: &Ctx) -> String {
             w.empty,
             " data-pick=\"languages\" data-code=\"\""
         ),
+        esc(w.remove_tip),
         esc(w.tags_field),
         adder(cx, false),
+        picks(cx),
         esc(cx.s.cancel)
     )
 }
 
-/// What a tile carries for the selection: the book as the commands name it,
-/// and what it states.
+/// `data-book` and `data-values` of the tile of `at`: [`named`] and [`values`].
 pub(super) fn tile_data(cx: &Ctx, at: usize) -> String {
     format!(
         " data-book=\"{}\" data-values=\"{}\"",
@@ -499,8 +554,8 @@ struct One<'a> {
     patch: &'a Patch,
 }
 
-/// The suggestions over the books `shown`: a language their characters settle
-/// for books setting none, and authors written surname first turned round.
+/// `.suggest` over the books `shown`: a language their characters settle where
+/// `cx.metadata` sets none, and authors written surname first turned round.
 pub(super) fn suggestions(cx: &Ctx, shown: &[usize]) -> String {
     let w = Words::of(cx.lang);
     let mut by_language: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
@@ -588,9 +643,9 @@ struct Bar {
     to: Route,
 }
 
-/// The charts of the books read over `days` (the whole record where none): authors, publishers,
-/// languages and each type of tag, a value not set as its own bar, each bar opening Books
-/// narrowed to it under `window`; empty where no book read sets any.
+/// `days`' charts, the whole record's where `None`: authors, publishers, languages and each
+/// type of tag, a value not set as its own bar, each bar opening Books narrowed to it under
+/// `window`; empty where no book read sets any.
 pub(super) fn charts(
     cx: &Ctx,
     days: Option<RangeInclusive<i64>>,
@@ -679,6 +734,7 @@ pub(super) fn charts(
     if !authors.is_empty() {
         cards.push(ranked(
             cx,
+            "authors",
             w.authors_head,
             total,
             authors,
@@ -689,6 +745,7 @@ pub(super) fn charts(
     if !publishers.is_empty() {
         cards.push(ranked(
             cx,
+            "publishers",
             w.publishers_head,
             total,
             publishers,
@@ -738,7 +795,15 @@ pub(super) fn charts(
         let numbers = bars.iter().all(|b| b.name.parse::<i64>().is_ok());
         cards.push(match numbers {
             true => columns(cx, &r#type, bars, unset, note),
-            false => ranked(cx, &r#type, total, bars, unset, note),
+            false => ranked(
+                cx,
+                &format!("type {}", r#type),
+                &r#type,
+                total,
+                bars,
+                unset,
+                note,
+            ),
         });
     }
     for pair in cards.chunks(2) {
@@ -747,22 +812,31 @@ pub(super) fn charts(
     out
 }
 
-/// A card of ranked bars headed `head`: `bars` by time, the most read in the
-/// mark's colour, and `unset` under them, then `note`; `head` states `total` and
-/// the most.
+/// `chart`'s card of ranked bars headed `head`: `bars` by time, the most read in the mark's
+/// colour, the first [`TOP`] shown and the rest behind Show all, then `unset` and `note`;
+/// `head` states `total` and the most.
 fn ranked(
     cx: &Ctx,
+    chart: &str,
     head: &str,
     total: i64,
     mut bars: Vec<Bar>,
     unset: Vec<Bar>,
     note: Option<String>,
 ) -> String {
+    let w = Words::of(cx.lang);
     bars.sort_by(|a, b| b.secs.cmp(&a.secs).then(a.name.cmp(&b.name)));
-    let most = bars.first().map(|b| b.secs).unwrap_or(0).max(1);
+    let most = bars
+        .iter()
+        .chain(&unset)
+        .map(|b| b.secs)
+        .max()
+        .unwrap_or(0)
+        .max(1);
     let books = |n: usize| counted(cx.s.n_books, n as i64);
     let mut out = format!(
-        "<div><h2>{}<span class=\"said\">{} · {} {}</span></h2><div class=\"card\"><div class=\"ranked\">",
+        "<div data-chart=\"{}\"><h2>{}<span class=\"said\">{} · {} {}</span></h2><div class=\"card\"><div class=\"ranked\">",
+        esc(chart),
         esc(head),
         esc(&date::duration(total, cx.s)),
         esc(cx.s.most),
@@ -778,21 +852,27 @@ fn ranked(
             (0, false) => MOST,
             _ => BAR,
         };
+        let past = !not_set && n >= TOP;
         let width = bar.secs as f64 / most as f64 * 78.0;
         let time = date::duration(bar.secs, cx.s);
         let _ = write!(
             out,
-            "<a class=\"r{}\" href=\"{}\" data-tip=\"{} · {} · {}\"><span class=\"who\"{}>{}</span>\
+            "<a class=\"r{}\" href=\"{}\" data-tip=\"{} · {} · {}\"{}><span class=\"who\"{}>{}</span>\
              <span class=\"bar\"><i style=\"width: {width:.1}%; background: {colour}\"></i></span>\
              <b>{}</b><span class=\"n\">{}</span></a>",
-            match colour {
-                UNSET => " unset",
+            match (colour, past) {
+                (UNSET, _) => " unset",
+                (_, true) => " past",
                 _ => "",
             },
             bar.to.link(),
             esc(&bar.name),
             esc(&time),
             esc(&books(bar.books)),
+            match past {
+                true => " hidden",
+                false => "",
+            },
             bar.lang
                 .as_deref()
                 .map(|l| format!(" lang=\"{}\"", esc(l)))
@@ -803,6 +883,16 @@ fn ranked(
         );
     }
     out.push_str("</div>");
+    if bars.len() > TOP {
+        let all = w.show_all.replace("{d}", &bars.len().to_string());
+        let _ = write!(
+            out,
+            "<button class=\"whole\" data-act=\"whole\" data-all=\"{}\" data-top=\"{}\">{}</button>",
+            esc(&all),
+            esc(&w.show_top.replace("{d}", &TOP.to_string())),
+            esc(&all)
+        );
+    }
     if let Some(note) = note {
         let _ = write!(out, "<p class=\"note\">{}</p>", esc(&note));
     }
@@ -810,9 +900,9 @@ fn ranked(
     out
 }
 
-/// A card of columns headed `head`, for a type whose tags are all numbers:
-/// one column a number, in their order, every whole number between standing;
-/// `unset` stated under them.
+/// `bars` as columns under `head`, for a type whose tags are all numbers: one a
+/// number, in their order, every whole number between standing; `unset` stated
+/// under them.
 fn columns(cx: &Ctx, head: &str, bars: Vec<Bar>, unset: Vec<Bar>, note: Option<String>) -> String {
     let w = Words::of(cx.lang);
     let numbered: Vec<(i64, &Bar)> = bars
@@ -882,8 +972,8 @@ fn columns(cx: &Ctx, head: &str, bars: Vec<Bar>, unset: Vec<Bar>, note: Option<S
     out
 }
 
-/// The languages card: each language's share of the time read, its legend,
-/// and the months split by language where the span holds more than one.
+/// `read`'s languages card: each language's share of the time read, its legend,
+/// and the months split by language where `days` holds more than one.
 fn languages_chart(
     cx: &Ctx,
     read: &[(usize, i64, Values)],
@@ -1024,7 +1114,7 @@ fn languages_chart(
 /// `Split`: a month's name and each language's time read in it.
 type Split = (String, Vec<(Option<String>, i64)>);
 
-/// Each language's hue, in the order the whole record's languages take by time
+/// [`HUES`] by language, in the order the whole record's languages take by time
 /// read, the same on every span.
 fn hues<'a>(cx: &'a Ctx) -> impl Fn(&str) -> String + 'a {
     let mut order: Vec<(String, i64)> = Vec::new();
@@ -1048,7 +1138,7 @@ fn hues<'a>(cx: &'a Ctx) -> impl Fn(&str) -> String + 'a {
     }
 }
 
-/// Whole percents of `parts` summing to 100, by the largest remainder.
+/// `parts` as whole percents summing to 100, by the largest remainder.
 fn shares(parts: &[i64]) -> Vec<i64> {
     let total: i64 = parts.iter().sum();
     if total == 0 {
@@ -1068,8 +1158,8 @@ fn shares(parts: &[i64]) -> Vec<i64> {
     out.into_iter().map(|(_, share, _)| share).collect()
 }
 
-/// The months `days` spans, the record's from its first day to today where
-/// none, each named and as its days.
+/// `days`' months, the record's from its first day to `cx.today` where `None`,
+/// each named and as its days.
 fn months(cx: &Ctx, days: Option<&RangeInclusive<i64>>) -> Vec<(String, RangeInclusive<i64>)> {
     let (first, last) = match days {
         Some(days) => (*days.start(), *days.end()),

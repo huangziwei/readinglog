@@ -71,15 +71,15 @@ pub struct Tag {
 /// `Metadata`: a `d` row, one field of one book and the value set on it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Metadata {
-    /// When set, `YYYY-MM-DDTHH:MM:SS`; [`take`] keeps the later of two copies.
+    /// `edited`: `YYYY-MM-DDTHH:MM:SS`; [`take`] keeps the later of two copies.
     pub edited: String,
-    /// The book's `cde_key`, empty where it carries none, and its `extent`.
+    /// `key`: the book's `cde_key`, empty where it carries none; `extent`, its extent.
     pub key: String,
     pub extent: i64,
     pub field: Field,
-    /// The value set, `None` once taken back; [`tags_value`] lays tags out.
+    /// `value`: the value set, `None` once taken back; [`tags_value`] lays tags out.
     pub value: Option<String>,
-    /// The book's own title or author when `value` was set.
+    /// `was`: the book's own title or author when `value` was set.
     pub was: Option<String>,
 }
 
@@ -165,9 +165,9 @@ pub enum By {
     Author(Option<String>),
     Publisher(Option<String>),
     Language(Option<String>),
-    /// Books holding any tag of this type.
+    /// `Type`: books holding any tag of this type.
     Type(String),
-    /// Books holding this tag of this type; `None`, those holding no tag of it.
+    /// `Tag`: books holding this tag of this type; `None`, those holding no tag of it.
     Tag(String, Option<String>),
 }
 
@@ -232,6 +232,15 @@ impl Named {
             true => book.cde_key.is_empty() && book.extent == self.extent,
         }
     }
+
+    /// Whether `other` names the book this does, on the same Kindle.
+    fn is(&self, other: &Named) -> bool {
+        self.kindle == other.kindle
+            && match self.key.is_empty() {
+                false => self.key == other.key,
+                true => other.key.is_empty() && self.extent == other.extent,
+            }
+    }
 }
 
 /// `Change`: a field's new value, or `Back` to the book's own.
@@ -240,6 +249,13 @@ impl Named {
 pub enum Change {
     To(String),
     Back,
+}
+
+/// `Retag`: a tag a book holds, `from`, and the tag it becomes, `to`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Retag {
+    pub from: Tag,
+    pub to: Tag,
 }
 
 /// `Patch`: what one edit changes on one book or many; a field `None` stands
@@ -251,13 +267,23 @@ pub struct Patch {
     pub authors: Option<Change>,
     pub publisher: Option<Change>,
     pub language: Option<Change>,
-    /// Each book's tags whole where given; `add` and `remove` apply over them.
+    /// `tags`: each book's tags whole where given; `retag`, `remove` and `add` apply over them.
     pub tags: Option<Vec<Tag>>,
+    /// `retag`: a tag held folding as a `from` becomes its `to`, in its place.
+    pub retag: Vec<Retag>,
     pub add: Vec<Tag>,
     pub remove: Vec<Tag>,
 }
 
 impl Patch {
+    /// Whether this sets each book's tags.
+    fn retags(&self) -> bool {
+        self.tags.is_some()
+            || !self.retag.is_empty()
+            || !self.add.is_empty()
+            || !self.remove.is_empty()
+    }
+
     /// Each field this changes on `book` (its rows setting `held`) and the value
     /// it takes; `None`, the book's own, for blank words or the title or
     /// authors its row states.
@@ -294,29 +320,27 @@ impl Patch {
             let language = lang::normalize(&words);
             out.push((Field::Language, (!language.is_empty()).then_some(language)));
         }
-        if self.tags.is_some() || !self.add.is_empty() || !self.remove.is_empty() {
+        if self.retags() {
             let mut tags: Vec<Tag> = Vec::new();
             for held in self.tags.as_ref().unwrap_or(&held.tags) {
-                let Some(tag) = spelling.spell(held) else {
+                if self.remove.iter().any(|gone| same(held, gone)) {
                     continue;
-                };
-                if !self.remove.iter().any(|gone| same(&tag, gone))
+                }
+                // `to` with a blank field leaves `held` as it is.
+                let tag = self
+                    .retag
+                    .iter()
+                    .find(|r| same(&r.from, held))
+                    .and_then(|r| spelling.spell(&r.to))
+                    .or_else(|| spelling.spell(held));
+                if let Some(tag) = tag
                     && !tags.iter().any(|t| same(t, &tag))
                 {
                     tags.push(tag);
                 }
             }
-            // `typed`, folding as a tag of `self.remove`, is a respelling, kept as typed.
             for typed in &self.add {
-                let tag = match self.remove.iter().any(|gone| same(gone, typed)) {
-                    true => Some(Tag {
-                        r#type: clean(&typed.r#type),
-                        tag: clean(&typed.tag),
-                    })
-                    .filter(|t| !t.r#type.is_empty() && !t.tag.is_empty()),
-                    false => spelling.spell(typed),
-                };
-                if let Some(tag) = tag {
+                if let Some(tag) = spelling.spell(typed) {
                     tags.retain(|t| !same(t, &tag));
                     tags.push(tag);
                 }
@@ -384,35 +408,33 @@ pub fn rename(ws: &Workspace, books: &[Named], by: &By, to: &str, at: &str) -> R
                     ..Patch::default()
                 },
                 By::Tag(r#type, Some(from)) => Patch {
-                    remove: vec![Tag {
-                        r#type: r#type.clone(),
-                        tag: from.clone(),
-                    }],
-                    add: vec![Tag {
-                        r#type: r#type.clone(),
-                        tag: to.clone(),
+                    retag: vec![Retag {
+                        from: Tag {
+                            r#type: r#type.clone(),
+                            tag: from.clone(),
+                        },
+                        to: Tag {
+                            r#type: r#type.clone(),
+                            tag: to.clone(),
+                        },
                     }],
                     ..Patch::default()
                 },
-                By::Type(from) => {
-                    let under: Vec<Tag> = values
+                By::Type(from) => Patch {
+                    retag: values
                         .tags
                         .iter()
                         .filter(|t| folded(&t.r#type) == folded(from))
-                        .cloned()
-                        .collect();
-                    Patch {
-                        add: under
-                            .iter()
-                            .map(|t| Tag {
+                        .map(|t| Retag {
+                            from: t.clone(),
+                            to: Tag {
                                 r#type: to.clone(),
                                 tag: t.tag.clone(),
-                            })
-                            .collect(),
-                        remove: under,
-                        ..Patch::default()
-                    }
-                }
+                            },
+                        })
+                        .collect(),
+                    ..Patch::default()
+                },
                 _ => Patch::default(),
             };
             (named, patch)
@@ -450,10 +472,51 @@ fn loaded(ws: &Workspace, books: &[Named]) -> Result<Vec<(Named, Values)>> {
     Ok(out)
 }
 
-/// Set each book's own patch as of `at`, in the record of each one's Kindle.
+/// Each book of `ws` holding a tag `spelling` spells unlike its row, with a patch
+/// setting its tags as held; `each`'s books with a patch of their tags left out.
+fn respelled(ws: &Workspace, spelling: &Spelling, each: &[(Named, Patch)]) -> Vec<(Named, Patch)> {
+    let mut out: Vec<(Named, Patch)> = Vec::new();
+    for source in ws.sources() {
+        let kindle = source.serial.clone().unwrap_or_default();
+        for row in read(&source.dir) {
+            let Some(value) = row.value.filter(|_| row.field == Field::Tags) else {
+                continue;
+            };
+            let tags = tags_of(&value);
+            if tags.iter().all(|t| spelling.spell(t).as_ref() == Some(t)) {
+                continue;
+            }
+            let book = Named {
+                kindle: kindle.clone(),
+                key: row.key,
+                extent: row.extent,
+            };
+            let named = each.iter().any(|(b, patch)| b.is(&book) && patch.retags());
+            if named || !source.record.books.iter().any(|b| book.names(b)) {
+                continue;
+            }
+            out.push((
+                book,
+                Patch {
+                    tags: Some(tags),
+                    ..Patch::default()
+                },
+            ));
+        }
+    }
+    out
+}
+
+/// Set each book's own patch as of `at`, in the record of each one's Kindle;
+/// a [`Retag`] respelling a type or a tag respells it on every book of `ws`.
 /// Answers what [`undo`] takes back, one [`Undo`] for each record it wrote.
 pub fn edit_each(ws: &Workspace, each: &[(Named, Patch)], at: &str) -> Result<Vec<Undo>> {
-    let spelling = Spelling::of(ws);
+    let mut spelling = Spelling::of(ws);
+    let mut each = each.to_vec();
+    if spelling.respell(each.iter().flat_map(|(_, patch)| &patch.retag)) {
+        let more = respelled(ws, &spelling, &each);
+        each.extend(more);
+    }
     let mut kindles: Vec<&str> = each.iter().map(|(b, _)| b.kindle.as_str()).collect();
     kindles.sort_unstable();
     kindles.dedup();
@@ -554,9 +617,8 @@ pub struct One {
     pub patch: Patch,
 }
 
-/// The language a book's title and author settle by their characters alone:
-/// Japanese where either holds kana, Korean where either holds Hangul. `None`
-/// for any other text, Han alone among it.
+/// `"ja"` where `title` or `author` holds kana, `"ko"` where either holds
+/// Hangul; `None` for any other text, Han alone among it.
 pub fn suggested_language(title: &str, author: &str) -> Option<&'static str> {
     match Script::resolve(Script::Unknown, &format!("{title} {author}")) {
         Script::Japanese => Some("ja"),
@@ -588,7 +650,7 @@ pub fn rows(text: &str) -> Vec<Metadata> {
     out
 }
 
-/// Take `fresh` into `held`: a row `held` holds none of is added, and of two
+/// Take `fresh` into `held`: each `row` `held` lacks is added, and of two
 /// copies of one row the later `edited` stands. Answers whether anything moved.
 pub fn take(held: &mut Vec<Metadata>, fresh: &[Metadata]) -> bool {
     let mut moved = false;
@@ -682,7 +744,7 @@ fn write_row(out: &mut String, row: &Metadata) {
     );
 }
 
-/// The tags a `tags` value holds.
+/// Each [`Tag`] a `tags` value holds.
 fn tags_of(value: &str) -> Vec<Tag> {
     value
         .lines()
@@ -710,7 +772,7 @@ struct Spelling {
 }
 
 impl Spelling {
-    /// The tags `ws`'s records hold.
+    /// The [`Spelling`] of every tag `ws`'s records hold.
     fn of(ws: &Workspace) -> Self {
         let tags = ws
             .record_dirs()
@@ -743,6 +805,36 @@ impl Spelling {
             .map_or(tag, |t| t.tag.clone());
         Some(Tag { r#type, tag })
     }
+
+    /// Take each of `retags` whose `to` respells its `from`'s type, or its tag under
+    /// a type folding alike, as that type's or tag's spelling wherever it is in
+    /// use. Answers whether a spelling in use moved.
+    fn respell<'a>(&mut self, retags: impl Iterator<Item = &'a Retag>) -> bool {
+        let mut moved = false;
+        for retag in retags {
+            let (from, to) = (&retag.from, &retag.to);
+            let (r#type, tag) = (clean(&to.r#type), clean(&to.tag));
+            if folded(&from.r#type) != folded(&r#type) || tag.is_empty() {
+                continue;
+            }
+            let retyped = clean(&from.r#type) != r#type;
+            let retagged = clean(&from.tag) != tag && folded(&from.tag) == folded(&tag);
+            for held in &mut self.tags {
+                if folded(&held.r#type) != folded(&r#type) {
+                    continue;
+                }
+                if retyped && held.r#type != r#type {
+                    held.r#type.clone_from(&r#type);
+                    moved = true;
+                }
+                if retagged && folded(&held.tag) == folded(&tag) && held.tag != tag {
+                    held.tag.clone_from(&tag);
+                    moved = true;
+                }
+            }
+        }
+        moved
+    }
 }
 
 /// Whether `a` and `b` are one tag spelled two ways.
@@ -768,11 +860,11 @@ fn folded(words: &str) -> String {
         .collect()
 }
 
-/// `now`, or a second past `held` where `now` is no later: each edit of a row
+/// `at`, or a second past `held` where `at` is no later: each edit of a row
 /// stamped after the one before it.
-fn after(held: &str, now: &str) -> String {
-    match now > held {
-        true => now.to_string(),
+fn after(held: &str, at: &str) -> String {
+    match at > held {
+        true => at.to_string(),
         false => later(held),
     }
 }
@@ -1068,7 +1160,7 @@ mod tests {
         for (key, extent) in [("B00KEY", 7), ("", 9)] {
             assert_eq!(
                 Set::of(&read(&at), key, extent).tags,
-                vec![tag("mood", "dark"), tag("Genre", "sci-fi")]
+                vec![tag("Genre", "sci-fi"), tag("mood", "dark")]
             );
         }
         assert!(rename(&ws, &both, &By::Language(None), "en", "2026-10-31T10:00:06").is_err());
@@ -1078,6 +1170,7 @@ mod tests {
     fn the_json_app_js_sends_reads_as_the_commands_take_it() {
         let patch: Patch = serde_json::from_str(
             r#"{"publisher":{"to":"Example Press"},"language":"back",
+                "retag":[{"from":{"type":"genre","tag":"scifi"},"to":{"type":"genre","tag":"sci-fi"}}],
                 "add":[{"type":"pace","tag":"slow"}],"remove":[{"type":"genre","tag":"sci-fi"}]}"#,
         )
         .unwrap();
@@ -1086,6 +1179,10 @@ mod tests {
             Patch {
                 publisher: to("Example Press"),
                 language: Some(Change::Back),
+                retag: vec![Retag {
+                    from: tag("genre", "scifi"),
+                    to: tag("genre", "sci-fi"),
+                }],
                 add: vec![tag("pace", "slow")],
                 remove: vec![tag("genre", "sci-fi")],
                 ..Patch::default()
@@ -1176,5 +1273,74 @@ mod tests {
             vec![tag("genre", "sci-fi"), tag("pace", "slow")]
         );
         assert_eq!(Set::of(&rows, "", 9).tags, vec![tag("pace", "slow")]);
+    }
+
+    #[test]
+    fn a_tag_edited_in_place_changes_its_book_and_a_respelling_every_book() {
+        let (ws, at) = workspace("metadata-retag");
+        let both = [named("B00KEY", 7), named("", 9)];
+        let tags = |key: &str, extent: i64| Set::of(&read(&at), key, extent).tags;
+        let retag = |from: Tag, to: Tag| Patch {
+            retag: vec![Retag { from, to }],
+            ..Patch::default()
+        };
+        edit(
+            &ws,
+            &both,
+            &Patch {
+                add: vec![tag("genre", "sci-fi"), tag("mood", "dark")],
+                ..Patch::default()
+            },
+            "2026-10-31T10:00:00",
+        )
+        .unwrap();
+        // `science fiction`: another tag, on book 7 alone.
+        let other = retag(tag("genre", "sci-fi"), tag("genre", "science fiction"));
+        edit(&ws, &both[..1], &other, "2026-10-31T10:00:01").unwrap();
+        assert_eq!(
+            tags("B00KEY", 7),
+            vec![tag("genre", "science fiction"), tag("mood", "dark")]
+        );
+        assert_eq!(
+            tags("", 9),
+            vec![tag("genre", "sci-fi"), tag("mood", "dark")]
+        );
+        // `Mood` and `Dark`: a type and a tag respelled on book 7 reach book 9 too.
+        let respelled = retag(tag("mood", "dark"), tag("Mood", "Dark"));
+        let undone = edit(&ws, &both[..1], &respelled, "2026-10-31T10:00:02").unwrap();
+        assert_eq!(
+            tags("B00KEY", 7),
+            vec![tag("genre", "science fiction"), tag("Mood", "Dark")]
+        );
+        assert_eq!(
+            tags("", 9),
+            vec![tag("genre", "sci-fi"), tag("Mood", "Dark")]
+        );
+        assert_eq!(undone[0].rows.len(), 2, "both books' rows");
+        // `MOOD` takes the spelling in use; a `to` with a blank field changes nothing.
+        let patch = Patch {
+            retag: vec![
+                Retag {
+                    from: tag("GENRE", "Sci-Fi"),
+                    to: tag("MOOD", "calm"),
+                },
+                Retag {
+                    from: tag("mood", "dark"),
+                    to: tag("mood", " "),
+                },
+            ],
+            ..Patch::default()
+        };
+        edit(&ws, &both[1..], &patch, "2026-10-31T10:00:03").unwrap();
+        assert_eq!(tags("", 9), vec![tag("Mood", "calm"), tag("Mood", "Dark")]);
+        undo(&ws, &undone, "2026-10-31T10:00:04").unwrap();
+        assert_eq!(
+            tags("B00KEY", 7),
+            vec![tag("genre", "science fiction"), tag("mood", "dark")]
+        );
+        assert_eq!(
+            tags("", 9),
+            vec![tag("genre", "sci-fi"), tag("mood", "dark")]
+        );
     }
 }

@@ -1252,8 +1252,7 @@ section h2 .said .search {
   line-height: 1;
   visibility: hidden;
 }
-.tags .tag:hover .off,
-.sheet .tags .off {
+.tags .tag:hover .off {
   visibility: visible;
 }
 .tags .off:hover {
@@ -1415,6 +1414,90 @@ section h2 .said .search {
   grid-template-columns: minmax(0, 420px) auto;
 }
 
+/* `.retag`: an editor's tags, each type's `.group` a field for the type beside
+   `.under`, a pill for each tag; `.gone` is struck through until Save, `.new`
+   waits to be added. */
+.retag .group {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  align-items: start;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+.retag .under {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.retag .kind,
+.retag .tagged {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.retag .kind {
+  min-height: 30px;
+  font-size: 12px;
+  color: var(--soft);
+}
+.retag .kind .box {
+  padding: 5px 12px;
+  font-size: 13px;
+  color: var(--soft);
+}
+.retag .tagged {
+  gap: 6px;
+  padding: 0 8px 0 0;
+  border-radius: 999px;
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+.retag .tagged:focus-within {
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft);
+}
+.retag .tagged .box {
+  border: none;
+  background: none;
+  border-radius: 999px;
+  padding: 6px 0 6px 12px;
+  font-size: 13px;
+}
+.retag .tagged .box:focus {
+  box-shadow: none;
+}
+.retag .tagged small {
+  font-size: 11px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+.retag .tagged .off {
+  border: none;
+  background: none;
+  padding: 0 2px;
+  color: var(--faint);
+  font-size: 12px;
+  line-height: 1;
+}
+.retag .tagged .off:hover {
+  color: var(--ink);
+}
+.retag .tagged.gone .box {
+  text-decoration: line-through;
+  color: var(--faint);
+}
+.retag .tagged.new {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.retag .tagged.new .box {
+  color: var(--accent);
+  opacity: 1;
+}
+.retag .pick {
+  right: auto;
+  min-width: 220px;
+}
+
 /* `.tile.picked`, `.chosen`, `.chip.filter`, `.sheet`, `.suggest`: on Books, a picked tile,
    the selection's bar, a value's chip, the bulk editor over its grid, the suggestions. */
 .tile .cover {
@@ -1498,17 +1581,6 @@ section h2 .said .search {
   font-size: 12px;
   margin: 0 0 16px;
 }
-.sheet .tags {
-  margin: 0 0 8px;
-}
-.sheet .tags .tag.gone {
-  text-decoration: line-through;
-  color: var(--faint);
-}
-.sheet .tags .tag.new {
-  box-shadow: inset 0 0 0 1px var(--accent);
-  color: var(--accent);
-}
 .suggest {
   background: var(--card);
   box-shadow: 0 0 0 1px var(--rule);
@@ -1564,6 +1636,17 @@ section h2 .said .search {
 }
 .ranked .unset .who {
   color: var(--faint);
+}
+.whole {
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 8px 0 0;
+  color: var(--accent);
+  font-size: 12px;
+}
+.whole:hover {
+  text-decoration: underline;
 }
 .ranked .r:hover .who,
 .legend .r:hover span:nth-child(2) {

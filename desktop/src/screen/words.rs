@@ -115,6 +115,9 @@ pub struct Words {
     pub publishers_head: &'static str,
     pub languages_head: &'static str,
     pub counts_each: &'static str,
+    /// `show_all`, `show_top`: the button under a ranked chart opening its `{d}` bars, and closing them to the first `{d}`.
+    pub show_all: &'static str,
+    pub show_top: &'static str,
     /// `search_books`: the Books search's hint, naming publishers and tags too.
     pub search_books: &'static str,
 }
@@ -202,6 +205,8 @@ const ENGLISH: Words = Words {
     publishers_head: "PUBLISHERS",
     languages_head: "LANGUAGES",
     counts_each: "A book under two tags of one type counts under each, so the bars add up to more than the {t} read.",
+    show_all: "Show all {d}",
+    show_top: "Show top {d}",
     search_books: "Search title, author, publisher or tag",
 };
 
@@ -289,6 +294,8 @@ const GERMAN: Words = Words {
     publishers_head: "VERLAGE",
     languages_head: "SPRACHEN",
     counts_each: "Ein Titel mit zwei Tags eines Typs zählt bei beiden; die Balken ergeben mehr als die gelesenen {t}.",
+    show_all: "Alle {d} anzeigen",
+    show_top: "Die ersten {d} anzeigen",
     search_books: "Titel, Autor, Verlag oder Tag suchen",
 };
 
@@ -374,6 +381,8 @@ const JAPANESE: Words = Words {
     publishers_head: "出版社",
     languages_head: "言語",
     counts_each: "同じ種類のタグが二つある本は両方に数えるため、棒の合計は読んだ時間 {t} を超えます。",
+    show_all: "全{d}件を表示",
+    show_top: "上位{d}件を表示",
     search_books: "題名・著者・出版社・タグで検索",
 };
 
@@ -457,6 +466,8 @@ const SIMPLIFIED: Words = Words {
     publishers_head: "出版社",
     languages_head: "语言",
     counts_each: "同一类型有两个标签的书在两处都计入，因此各条之和超过阅读时间 {t}。",
+    show_all: "显示全部{d}项",
+    show_top: "只显示前{d}项",
     search_books: "搜索书名、作者、出版社或标签",
 };
 
@@ -540,6 +551,8 @@ const TRADITIONAL: Words = Words {
     publishers_head: "出版社",
     languages_head: "語言",
     counts_each: "同一類型有兩個標籤的書在兩處都計入，因此各條之和超過閱讀時間 {t}。",
+    show_all: "顯示全部{d}項",
+    show_top: "只顯示前{d}項",
     search_books: "搜尋書名、作者、出版社或標籤",
 };
 
