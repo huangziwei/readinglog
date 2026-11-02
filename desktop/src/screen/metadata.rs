@@ -26,12 +26,12 @@ const MOST: &str = "#d23f6b";
 /// `TOP`: the bars a ranked chart shows until Show all opens the rest.
 const TOP: usize = 10;
 
-/// What the book at `at` states.
+/// `values`: what the book at `at` states.
 pub(super) fn values(cx: &Ctx, at: usize) -> Values {
     Values::of(&cx.own[at].1, &cx.metadata[at])
 }
 
-/// The [`Named`] of the book at `at`, as the commands take it.
+/// `named`: the [`Named`] of the book at `at`, as the commands take it.
 pub(super) fn named(cx: &Ctx, at: usize) -> Named {
     let book = &cx.stats.books[at];
     Named {
@@ -58,26 +58,14 @@ fn language_name(cx: &Ctx, code: &str) -> String {
     names::name(code, cx.lang).unwrap_or(code).to_string()
 }
 
-/// `tags` grouped by type, each type and its tags in the order they stand.
-fn grouped(tags: &[Tag]) -> Vec<(&str, Vec<&str>)> {
-    let mut out: Vec<(&str, Vec<&str>)> = Vec::new();
-    for tag in tags {
-        match out.iter_mut().find(|(t, _)| *t == tag.r#type) {
-            Some((_, under)) => under.push(&tag.tag),
-            None => out.push((&tag.r#type, vec![&tag.tag])),
-        }
-    }
-    out
-}
-
 /// `value` as JSON inside an attribute.
 fn json(value: &impl Serialize) -> String {
     esc(&serde_json::to_string(value).unwrap_or_default())
 }
 
 /// `at`'s head under its title: its authors (each opening the books by them),
-/// the facts line with Edit, its tags with + Tag, and the editors those open,
-/// hidden until `app.js` shows them.
+/// the facts line with Edit, [`types`], and the editor Edit opens, hidden
+/// until `app.js` shows it.
 pub(super) fn head(cx: &Ctx, at: usize) -> String {
     let w = Words::of(cx.lang);
     let book = &cx.stats.books[at];
@@ -124,78 +112,100 @@ pub(super) fn head(cx: &Ctx, at: usize) -> String {
     }
     let _ = write!(
         out,
-        "<p class=\"facts\">{}<button class=\"edit\" data-act=\"edit-meta\">{}</button></p><div class=\"tags\">",
+        "<p class=\"facts\">{}<button class=\"edit\" data-act=\"edit-meta\">{}</button></p>",
         facts.join("<span class=\"dot\">·</span>"),
         esc(w.edit)
     );
-    for (r#type, tags) in grouped(&values.tags) {
-        let _ = write!(
-            out,
-            "<a class=\"type\" href=\"{}\">{}</a>",
-            narrowed(By::Type(r#type.to_string()), None).link(),
-            esc(r#type)
-        );
-        for tag in tags {
-            let _ = write!(
-                out,
-                "<span class=\"tag\"><a href=\"{}\">{}</a><button class=\"off\" data-act=\"untag\" \
-                 data-type=\"{}\" data-tag=\"{}\" data-tip=\"{}\">×</button></span>",
-                narrowed(By::Tag(r#type.to_string(), Some(tag.to_string())), None).link(),
-                esc(tag),
-                esc(r#type),
-                esc(tag),
-                esc(w.remove_tip)
-            );
-        }
-    }
-    let _ = write!(
-        out,
-        "<button class=\"add\" data-act=\"add-tag\">{}</button></div>",
-        esc(w.add_tag)
-    );
+    out.push_str(&types(cx, &values));
     out.push_str(&editor(cx, at, &values));
-    out.push_str(&adder(cx, true));
     out.push_str(&picks(cx));
     out.push_str("</div>");
     out
 }
 
-/// `words`' width in a field, in `ch`: two for a wide character, one for any other.
-fn width(words: &str) -> usize {
+/// `words`' width in a field, in `em`, reckoned by each letter's breadth as
+/// `app.js`'s `reckoned` reckons it.
+fn width(words: &str) -> f64 {
     words
         .chars()
-        .map(|c| match c as u32 >= 0x2E80 {
-            true => 2,
-            false => 1,
+        .map(|c| match c {
+            c if c as u32 >= 0x2E80 => 1.0,
+            'i' | 'j' | 'l' | 'I' | '.' | ',' | ':' | ';' | '\'' | '!' | '|' => 0.26,
+            'f' | 'r' | 't' | ' ' | '-' | '(' | ')' | '/' => 0.36,
+            'm' | 'w' | 'M' | 'W' => 0.85,
+            'A'..='Z' => 0.68,
+            _ => 0.57,
         })
         .sum()
 }
 
-/// `r#type` and `tags` as an editor's `.group`: each a field, a tag's with ×
-/// taking it off on Save.
-fn group(cx: &Ctx, r#type: &str, tags: &[&str]) -> String {
+/// `words`' [`width`] as a field's `width`, a caret's room past them.
+fn fit(words: &str) -> String {
+    format!("calc({:.2}em + 2px)", width(words))
+}
+
+/// `.types`: each type [`in_use`] beside the tags of it `values` holds, the
+/// type a field renaming it on every book, each tag a field with ×, and a
+/// `.more` field adding one; under them, `.fresh`, a type and its first tag.
+fn types(cx: &Ctx, values: &Values) -> String {
     let w = Words::of(cx.lang);
-    let mut out = format!(
-        "<div class=\"group\"><span class=\"kind\"><input class=\"box\" data-field=\"type\" \
-         data-pick=\"types\" value=\"{0}\" data-was=\"{0}\" autocomplete=\"off\" spellcheck=\"false\"></span><span class=\"under\">",
-        esc(r#type)
-    );
-    for tag in tags {
+    // `field`: a field holding `words`, as wide as they are, named in `app.js` by `key`.
+    let field = |which: &str, words: &str, key: &[&str], more: &str| {
+        format!(
+            "<input data-field=\"{which}\" value=\"{0}\" data-was=\"{0}\" data-key=\"{1}\" \
+             data-fit style=\"width: {2}\"{more} autocomplete=\"off\" spellcheck=\"false\">",
+            esc(words),
+            json(&key),
+            fit(words)
+        )
+    };
+    let (in_use, _) = in_use(cx);
+    let mut out = String::from("<div class=\"types\">");
+    for (r#type, _) in &in_use {
         let _ = write!(
             out,
-            "<span class=\"tagged\"><input class=\"box\" data-field=\"tag\" data-pick=\"tags\" \
-             value=\"{0}\" data-was=\"{0}\" style=\"width: calc({1}ch + 16px)\" autocomplete=\"off\" \
-             spellcheck=\"false\"><button class=\"off\" data-act=\"drop-tag\" data-tip=\"{2}\">×</button></span>",
-            esc(tag),
-            width(tag).max(4),
-            esc(w.remove_tip)
+            "<div class=\"kind\">{}<span class=\"held\">",
+            field(
+                "type",
+                r#type,
+                &["type", r#type],
+                &format!(" class=\"name\" data-tip=\"{}\"", esc(w.rename_type_tip))
+            )
+        );
+        for tag in values.tags.iter().filter(|t| t.r#type == *r#type) {
+            let _ = write!(
+                out,
+                "<span class=\"tag\">{}<button class=\"off\" data-act=\"untag\" data-type=\"{}\" \
+                 data-tag=\"{}\" data-tip=\"{}\">×</button></span>",
+                field("tag", &tag.tag, &["tag", r#type, &tag.tag], ""),
+                esc(r#type),
+                esc(&tag.tag),
+                esc(w.remove_tip)
+            );
+        }
+        let _ = write!(
+            out,
+            "<span class=\"more\"><input data-field=\"tag\" data-pick=\"tags\" placeholder=\"+\" \
+             data-key=\"{}\" autocomplete=\"off\" spellcheck=\"false\"></span></span></div>",
+            json(&["more", r#type])
         );
     }
-    out.push_str("</span></div>");
+    let _ = write!(
+        out,
+        "<div class=\"kind fresh\"><input class=\"name\" data-field=\"type\" placeholder=\"{}\" \
+         data-key=\"{}\" data-fit style=\"width: {}\" autocomplete=\"off\" spellcheck=\"false\">\
+         <span class=\"held\"><span class=\"more\"><input data-field=\"tag\" data-pick=\"tags\" \
+         placeholder=\"{}\" data-key=\"{}\" autocomplete=\"off\" spellcheck=\"false\" hidden></span></span></div></div>",
+        esc(w.add_type),
+        json(&["fresh"]),
+        fit(w.add_type),
+        esc(w.tag_field),
+        json(&["fresh", "tag"])
+    );
     out
 }
 
-/// `at`'s editor: its title, authors, publisher, language and tags, each field
+/// `at`'s editor: its title, authors, publisher and language, each field
 /// holding what `values` states; under a title or authors `cx.metadata` sets,
 /// the book's own words with Revert.
 fn editor(cx: &Ctx, at: usize, values: &Values) -> String {
@@ -255,17 +265,6 @@ fn editor(cx: &Ctx, at: usize, values: &Values) -> String {
         languages(cx)
     );
     out.push_str("</div>");
-    if !values.tags.is_empty() {
-        let _ = write!(
-            out,
-            "<div class=\"field retag\"><span>{}</span>",
-            esc(w.tags_field)
-        );
-        for (r#type, tags) in grouped(&values.tags) {
-            out.push_str(&group(cx, r#type, &tags));
-        }
-        out.push_str("</div>");
-    }
     let _ = write!(
         out,
         "<p class=\"acts\"><button data-act=\"cancel-meta\">{}</button>\
@@ -389,35 +388,19 @@ fn picks(cx: &Ctx) -> String {
     out
 }
 
-/// `.adding`: the Type and Tag fields with Add, offering [`picks`]; with `alone`,
-/// hidden until + Tag opens it, with Cancel.
-fn adder(cx: &Ctx, alone: bool) -> String {
+/// `.adding`: the bulk editor's Type and Tag fields with Add, offering [`picks`].
+fn adder(cx: &Ctx) -> String {
     let w = Words::of(cx.lang);
-    let mut out = format!(
-        "<div class=\"adding\"{}><div class=\"field\"><span>{}</span><input class=\"box\" \
+    format!(
+        "<div class=\"adding\"><div class=\"field\"><span>{}</span><input class=\"box\" \
          data-field=\"type\" data-pick=\"types\" autocomplete=\"off\" spellcheck=\"false\"></div>\
          <div class=\"field\"><span>{}</span><input class=\"box\" data-field=\"tag\" \
-         data-pick=\"tags\" autocomplete=\"off\" spellcheck=\"false\"></div><p class=\"acts\">",
-        match alone {
-            true => " hidden",
-            false => "",
-        },
+         data-pick=\"tags\" autocomplete=\"off\" spellcheck=\"false\"></div><p class=\"acts\">\
+         <button class=\"save\" data-act=\"save-tag\">{}</button></p></div>",
         esc(w.type_field),
-        esc(w.tag_field)
-    );
-    if alone {
-        let _ = write!(
-            out,
-            "<button data-act=\"cancel-tag\">{}</button>",
-            esc(cx.s.cancel)
-        );
-    }
-    let _ = write!(
-        out,
-        "<button class=\"save\" data-act=\"save-tag\">{}</button></p></div>",
+        esc(w.tag_field),
         esc(w.add)
-    );
-    out
+    )
 }
 
 /// `by`'s chip on Books, its × going back to `back`, and Rename… where `by`
@@ -431,7 +414,6 @@ pub(super) fn chip(cx: &Ctx, by: &By, back: &str) -> String {
             w.language_field.to_string(),
             v.as_deref().map(|code| language_name(cx, code)),
         ),
-        By::Type(t) => (w.type_field.to_string(), Some(t.clone())),
         By::Tag(t, v) => (t.clone(), v.clone()),
     };
     let mut out = format!(
@@ -461,7 +443,6 @@ pub(super) fn renaming(cx: &Ctx, by: &By, count: usize) -> String {
     let value = match by {
         By::Author(v) | By::Publisher(v) | By::Tag(_, v) => v.clone(),
         By::Language(v) => v.clone(),
-        By::Type(t) => Some(t.clone()),
     }
     .unwrap_or_default();
     let ask = counted(w.rename_ask, count as i64).replace("{v}", &value);
@@ -492,8 +473,8 @@ pub(super) fn chosen(cx: &Ctx, total: usize) -> String {
     )
 }
 
-/// `.sheet`: the bulk editor, hidden until Edit… opens it on the books picked; `app.js`
-/// states each field's books and sets their tags out as [`group`] does.
+/// `.sheet`: the bulk editor, hidden until Edit… opens it on the books picked, each
+/// field's books and their tags set out by `app.js`'s `openSheet`.
 pub(super) fn sheet(cx: &Ctx) -> String {
     let w = Words::of(cx.lang);
     let field = |name: &str, field: &str, back: &str, more: &str| {
@@ -532,7 +513,7 @@ pub(super) fn sheet(cx: &Ctx) -> String {
         ),
         esc(w.remove_tip),
         esc(w.tags_field),
-        adder(cx, false),
+        adder(cx),
         picks(cx),
         esc(cx.s.cancel)
     )

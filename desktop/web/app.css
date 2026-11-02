@@ -470,6 +470,7 @@ svg text {
 .hero .cover {
   width: 168px;
   flex: none;
+  align-self: flex-start;
   aspect-ratio: 2 / 3;
   border-radius: 5px;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.14), 0 12px 28px rgba(0, 0, 0, 0.16);
@@ -1172,17 +1173,13 @@ section h2 .said .search {
 }
 
 /* `.meta`: a book's head under its title — its authors, the facts line with
-   its Edit, its tags with + Tag — and the editors those open in place. */
+   its Edit, `.types` — and the editor Edit opens in place. */
 .hero .author a,
-.hero .facts a,
-.tags .type,
-.tags .tag a {
+.hero .facts a {
   color: inherit;
 }
 .hero .author a:hover,
-.hero .facts a:hover,
-.tags .type:hover,
-.tags .tag a:hover {
+.hero .facts a:hover {
   text-decoration: underline;
 }
 .hero .meta .author {
@@ -1200,50 +1197,76 @@ section h2 .said .search {
 .hero .facts .dot {
   color: var(--faint);
 }
-.hero .facts .edit,
-.tags .add {
+.hero .facts .edit {
   border: none;
   background: none;
   color: var(--faint);
   font-size: 12px;
   padding: 0;
 }
-.hero .facts .edit:hover,
-.tags .add:hover {
+.hero .facts .edit:hover {
   color: var(--ink);
 }
-.tags {
+
+/* `.types`: a row for each type in use, its `.name` beside the book's tags of
+   it and `.more`; each field reads as words until it takes the focus. */
+.types {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 6px 14px;
+  margin: 0 0 16px;
+}
+.types .kind {
+  display: contents;
+}
+.types input {
+  box-sizing: content-box;
+  margin: 0;
+  border: none;
+  background: none;
+  outline: none;
+  font: inherit;
+  color: inherit;
+}
+.types input::placeholder {
+  color: var(--faint);
+}
+.types .name {
+  justify-self: start;
+  margin-left: -6px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--soft);
+}
+.types .name:hover {
+  background: var(--shade);
+}
+.types .held {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  margin: 0 0 16px;
+  min-height: 24px;
 }
-.tags .type {
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  color: var(--faint);
-  margin: 0 2px 0 8px;
-}
-.tags .type:first-child,
-.tags .group:first-child .type {
-  margin-left: 0;
-}
-.tags .group {
-  display: contents;
-}
-.tags .tag {
+.types .tag {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 6px 2px 10px;
+  gap: 2px;
+  padding: 0 6px 0 10px;
   border-radius: 999px;
   background: var(--card);
   box-shadow: inset 0 0 0 1px var(--rule);
   font-size: 12px;
-  color: var(--ink);
 }
-.tags .off {
+.types .tag:focus-within {
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft);
+}
+.types .tag input {
+  padding: 3px 0;
+}
+.types .off {
   border: none;
   background: none;
   padding: 0 2px;
@@ -1252,11 +1275,49 @@ section h2 .said .search {
   line-height: 1;
   visibility: hidden;
 }
-.tags .tag:hover .off {
+.types .tag:hover .off,
+.types .tag:focus-within .off {
   visibility: visible;
 }
-.tags .off:hover {
+.types .off:hover {
   color: var(--ink);
+}
+.types .more {
+  position: relative;
+  display: inline-flex;
+}
+.types .more input {
+  width: 1.2em;
+  padding: 3px 6px;
+  border-radius: 999px;
+  font-size: 12px;
+  text-align: center;
+}
+.types .more input:hover {
+  background: var(--shade);
+}
+.types .more input:focus,
+.types .fresh .more input {
+  text-align: left;
+}
+.types .fresh .more input {
+  width: 9em;
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+/* `:focus`: the field being typed in, over `.fresh`'s own look; `.more` opens to 9em, sideways. */
+.types .name:focus,
+.types .more input:focus {
+  color: var(--ink);
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft);
+}
+.types .more input:focus {
+  min-width: 9em;
+}
+.types .pick {
+  right: auto;
+  min-width: 220px;
 }
 .hero.editing {
   align-items: flex-start;
@@ -1414,9 +1475,9 @@ section h2 .said .search {
   grid-template-columns: minmax(0, 420px) auto;
 }
 
-/* `.retag`: an editor's tags, each type's `.group` a field for the type beside
-   `.under`, a pill for each tag; `.gone` is struck through until Save, `.new`
-   waits to be added. */
+/* `.retag`: the bulk editor's tags, each type's `.group` a field for the type
+   beside `.under`, a pill for each tag; `.gone` is struck through until Apply,
+   `.new` waits to be added. */
 .retag .group {
   display: grid;
   grid-template-columns: 150px minmax(0, 1fr);
@@ -1457,6 +1518,7 @@ section h2 .said .search {
   box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft);
 }
 .retag .tagged .box {
+  box-sizing: content-box;
   border: none;
   background: none;
   border-radius: 999px;

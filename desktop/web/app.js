@@ -1,6 +1,6 @@
-// The window's shell: `show` sets in place the route the hash names, as the
-// `page` command draws it, covers through the asset protocol and a chart's
-// figures as tooltips; each `addEventListener` carries a click, search or drop.
+// `show` sets in place the route `location.hash` names, as the `page` command
+// draws it, covers through `convertFileSrc` and a chart's figures as `data-tip`;
+// each `addEventListener` carries a click, search or drop.
 
 const TAURI = window.__TAURI__;
 
@@ -40,7 +40,7 @@ function counted(template, count) {
   return out.replaceAll("{d}", String(count));
 }
 
-/** The commands changing the notes and corrections a Kindle plugged in takes at its next sync. */
+/** `WRITING`: the commands writing rows a Kindle plugged in takes at its next sync. */
 const WRITING = new Set([
   "write_note",
   "reword_note",
@@ -49,10 +49,11 @@ const WRITING = new Set([
   "edit_metadata",
   "edit_metadata_each",
   "rename_metadata",
+  "rename_type",
   "undo_metadata",
 ]);
 
-/** The command `name`'s answer; `err` is flashed and thrown on. One of `WRITING` sets `resync` going. */
+/** `call`: the command `name`'s answer, `err` flashed and thrown on, and `resync` set going where `WRITING` holds `name`. */
 async function call(name, args = {}) {
   try {
     const answer = await TAURI.core.invoke(name, args);
@@ -73,13 +74,16 @@ function settled(run, wait) {
   };
 }
 
-/** The route and width last drawn. */
+/** `drawn`: the route and width last drawn. */
 let drawn = { route: null, width: 0 };
 
-/** The row or note open in an editor, or the note field holding words: only `show`, their own buttons and Escape close it. */
+/** `editing`: what holds an editor open (a row, a note, the note field holding words, a metadata editor or a `.types` field), which `show`, its own buttons and Escape close. */
 let editing = null;
 
-/** The route the hash names, drawn at the width of the page column. */
+/** `drawing`: whether `show` is setting a page in place, its fields losing the focus keeping nothing. */
+let drawing = false;
+
+/** `show`: the route `location.hash` names, drawn at `main`'s width. */
 async function show() {
   editing = null;
   const route = location.hash.slice(1) || "/";
@@ -89,10 +93,18 @@ async function show() {
   document.getElementById("vars").textContent = page.vars;
   document.documentElement.lang = page.lang;
   document.title = page.title;
+  drawing = true;
   side.innerHTML = page.side;
   main.innerHTML = page.main;
+  drawing = false;
   for (const chart of main.querySelectorAll("[data-chart]")) {
     if (whole.has(chart.dataset.chart)) openWhole(chart, true);
+  }
+  for (const box of main.querySelectorAll("input[data-fit]")) fitted(box);
+  if (refocus) {
+    const key = refocus.toLowerCase();
+    refocus = null;
+    [...main.querySelectorAll("input[data-key]")].find((b) => b.dataset.key.toLowerCase() === key)?.focus();
   }
   drawCard();
   for (const img of document.querySelectorAll("img[data-cover]")) {
@@ -112,7 +124,7 @@ async function show() {
   watch();
 }
 
-/** What names the passage or the Kindle's note `holder` stands for, as `edit_highlight` takes it. */
+/** `named`: what names the passage or the Kindle's note `holder` stands for, as `edit_highlight` takes it. */
 function named(holder) {
   const field = holder.dataset;
   if (field.at === undefined) return null;
@@ -132,7 +144,7 @@ function textOf(words) {
   return copy.textContent;
 }
 
-/** A text area holding `text`, as tall as its lines. */
+/** `area`: a text area holding `text`, as tall as its lines. */
 function area(part, text, lang) {
   const box = document.createElement("textarea");
   box.dataset.part = part;
@@ -148,12 +160,12 @@ function fit(box) {
   box.style.height = `${box.scrollHeight + 2}px`;
 }
 
-/** A copy of the template `id`'s first element. */
+/** `template`: a copy of the template `id`'s first element. */
 function template(id) {
   return document.getElementById(id).content.firstElementChild.cloneNode(true);
 }
 
-/** Close whatever `editing` holds open. */
+/** `closeAny` closes whatever `editing` holds open. */
 function closeAny() {
   if (!editing) return;
   if (editing.closest(".meta, .sheet, .renaming")) {
@@ -189,7 +201,7 @@ function open(holder, part) {
   editing = holder;
 }
 
-/** Keep the words `holder`'s editor holds, or the Kindle's where `revert`, and draw again. */
+/** `keep` keeps the words `holder`'s editor holds, or the Kindle's where `revert`, and draws again. */
 async function keep(holder, revert) {
   const id = named(holder);
   const box = holder.querySelector(":scope > .editor textarea");
@@ -233,7 +245,7 @@ function openAdding(row) {
   editing = row;
 }
 
-/** Keep what the note editor `editor` holds: a new note on its row's passage, or new words for the note it opened on. */
+/** `keepNote` keeps what the note editor `editor` holds: a new note on its row's passage, or new words for the note it opened on. */
 async function keepNote(editor) {
   const text = editor.querySelector("textarea").value;
   const row = editor.closest(".highlight");
@@ -257,7 +269,7 @@ async function keepNote(editor) {
   await show();
 }
 
-/** Write what the field `composer` holds as a note on its book alone. */
+/** `keepComposed` writes what the field `composer` holds as a note on its book alone. */
 async function keepComposed(composer) {
   const box = composer.querySelector("textarea");
   if (box.value.trim() === "") return;
@@ -271,8 +283,8 @@ async function keepComposed(composer) {
   await show();
 }
 
-// Escape closes what `editing` holds open, and ⌘↩ keeps it: the note field's
-// words, a note editor's, or a row's.
+// `Escape` closes what `editing` holds open, and `Enter` with `metaKey` or
+// `ctrlKey` keeps it: the note field's words, a note editor's, or a row's.
 main.addEventListener("keydown", (event) => {
   if (event.target.tagName !== "TEXTAREA" || !editing) return;
   const editor = event.target.closest(".editor");
@@ -301,7 +313,7 @@ main.addEventListener("focusout", (event) => {
   }
 });
 
-/** Import `paths`, say what the record gained, and draw the route again. */
+/** `bring` imports `paths`, flashes what the record gained, and draws the route again. */
 async function bring(paths) {
   if (paths.length === 0) return;
   flash(await call("import", { paths }));
@@ -400,38 +412,37 @@ document.addEventListener("click", async (event) => {
 });
 
 // `whole` … `rename`: the ranked charts shown whole, the head's editor and
-// tags, the pick lists, the Books selection and its bulk editor, Rename…, and
-// the suggestions.
+// `.types`, the pick lists, the Books selection and its bulk editor, Rename…,
+// and the suggestions.
 
-/** The ranked charts shown whole, by their `data-chart`: `show` opens them again on every page drawn. */
+/** `whole`: the ranked charts shown whole, by their `data-chart`, which `show` opens again on every page drawn. */
 const whole = new Set();
 
-/** `chart`'s bars past the first ten shown where `open`, hidden where not; its button says what a click does next. */
+/** `chart`'s bars past the first ten shown where `open`, hidden where not, its `[data-act="whole"]` naming what a click does next. */
 function openWhole(chart, open) {
   for (const row of chart.querySelectorAll(".r.past")) row.hidden = !open;
   const button = chart.querySelector('[data-act="whole"]');
   if (button) button.textContent = open ? button.dataset.top : button.dataset.all;
 }
 
-/** The words the metadata editors flash: `undo`, and `changed` with `{d}` books. */
+/** `metaWords`: the words the metadata editors flash, `undo` and `changed` with `{d}` books. */
 function metaWords() {
   return document.getElementById("metawords")?.dataset ?? { undo: "Undo", changed: "{d}" };
 }
 
-/** The book `at` names in its `data-book`, as the commands name one. */
+/** `bookOf`: the book `at` names in its `data-book`, as the commands name one. */
 function bookOf(at) {
   return JSON.parse(at.closest("[data-book]").dataset.book);
 }
 
-/** Close the metadata editor, the tag form, the bulk editor or Rename… open. */
+/** `closeMeta` closes the metadata editor, the bulk editor or Rename… open, every field of the head back as it was. */
 function closeMeta() {
-  for (const open of main.querySelectorAll(".metaedit, .meta .adding, .renaming")) open.hidden = true;
+  for (const open of main.querySelectorAll(".metaedit, .renaming")) open.hidden = true;
   for (const box of main.querySelectorAll(".meta input[data-was]")) {
     box.value = box.dataset.was;
     if (box.dataset.field === "language") box.dataset.code = box.dataset.held ?? "";
-    if (box.closest(".tagged")) fitTag(box);
+    if ("fit" in box.dataset) fitted(box);
   }
-  for (const gone of main.querySelectorAll(".meta .tagged.gone")) gone.classList.remove("gone");
   main.querySelector(".hero")?.classList.remove("editing");
   main.querySelector(".meta")?.classList.remove("open");
   const sheet = main.querySelector(".sheet");
@@ -443,7 +454,7 @@ function closeMeta() {
   editing = null;
 }
 
-/** Edit what `patch` changes on `books` and draw again; Undo is flashed where `offer` asks for it, or where the edit reached further than `books`. */
+/** `patched` sets what `patch` changes on `books` and draws again, flashing Undo where `offer` asks for it or the edit reached past `books`. */
 async function patched(books, patch, offer = false) {
   const undone = await call("edit_metadata", { books, patch });
   closeMeta();
@@ -451,7 +462,7 @@ async function patched(books, patch, offer = false) {
   if (undone.length && (offer || reached(undone) > books.length)) offerUndo(undone);
 }
 
-/** How many books the rows `undone` sets back are of. */
+/** `reached`: how many books the rows `undone` sets back are of. */
 function reached(undone) {
   const books = new Set();
   for (const each of undone) {
@@ -460,7 +471,7 @@ function reached(undone) {
   return books.size;
 }
 
-/** Flash how many books `undone` reaches, with Undo taking it back. */
+/** `offerUndo` flashes how many books `undone` reaches, with Undo taking it back. */
 function offerUndo(undone) {
   flash(counted(metaWords().changed, reached(undone)), false, {
     label: metaWords().undo,
@@ -471,7 +482,7 @@ function offerUndo(undone) {
   });
 }
 
-/** What the language field `box` holds as a code: the one picked, a listed language its words name, or the words as typed. */
+/** `codeOf`: what the language field `box` holds as a code, the one picked, a listed language its words name, or the words as typed. */
 function codeOf(box) {
   const typed = box.value.trim();
   if (!typed) return "";
@@ -485,29 +496,27 @@ function codeOf(box) {
   return named ? named.dataset.code : box.dataset.code && box.dataset.was === typed ? box.dataset.code : typed;
 }
 
-/** The change a field `box` asks for, against `was`: `back` where emptied, else its words, `null` where it stands as it was. */
+/** `changeOf`: the change `box` asks for against `was`, `back` where emptied, else its words, `null` where it stands as it was. */
 function changeOf(box, was, value = box.value.trim()) {
   if (value === was) return null;
   return value ? { to: value } : "back";
 }
 
-/** Save the head's editor: each field changed, the language as its code, and the tags retyped, renamed or taken off. */
+/** `saveMeta` saves the head's editor, each field changed, the language as its code. */
 async function saveMeta(meta) {
   const patch = {};
   for (const box of meta.querySelectorAll(".metaedit input[data-field]")) {
-    if (box.closest(".retag")) continue;
     const field = box.dataset.field;
     const change = field === "language"
       ? (box.value.trim() === box.dataset.was ? null : changeOf(box, null, codeOf(box)))
       : changeOf(box, box.dataset.was);
     if (change) patch[field] = change;
   }
-  Object.assign(patch, retagsOf(meta.querySelector(".metaedit")));
   if (Object.keys(patch).length === 0) return closeMeta();
   await patched([bookOf(meta)], patch);
 }
 
-/** What the tag fields in `holder` ask for: `retag`, each tag whose group's type or own words changed, and `remove`, each marked gone; a blank field stands as it was. */
+/** `retagsOf`: what the bulk editor's tag fields in `holder` ask for, `retag` each tag whose group's type or own words changed and `remove` each marked gone, a blank field standing as it was. */
 function retagsOf(holder) {
   const retag = [];
   const remove = [];
@@ -529,26 +538,51 @@ function retagsOf(holder) {
   return out;
 }
 
-/** The width of `words` in `ch`, as `screen::metadata::width` reckons it. */
-function widthOf(words) {
-  let n = 0;
-  for (const ch of words) n += ch.codePointAt(0) >= 0x2e80 ? 2 : 1;
-  return n;
+/** `ruler`: a canvas's 2D context, measuring words in a field's face; `null` where the page has none. */
+function ruler() {
+  try {
+    return document.createElement("canvas").getContext("2d") ?? null;
+  } catch {
+    return null;
+  }
 }
 
-/** The tag field `box` as wide as its words. */
-function fitTag(box) {
-  box.style.width = `calc(${Math.max(4, widthOf(box.value))}ch + 16px)`;
+/** `words`' width in `em`, reckoned by the letter's breadth as `screen::metadata::width` reckons it. */
+function reckoned(words) {
+  let em = 0;
+  for (const ch of words) {
+    if (ch.codePointAt(0) >= 0x2e80) em += 1;
+    else if ("ijlI.,:;'!|".includes(ch)) em += 0.26;
+    else if ("frt -()/".includes(ch)) em += 0.36;
+    else if ("mwMW".includes(ch)) em += 0.85;
+    else if (ch >= "A" && ch <= "Z") em += 0.68;
+    else em += 0.57;
+  }
+  return em;
 }
 
-/** The tag the form `adding` holds, `null` where either field is blank. */
+/** `fitted`: `box` as wide as its words and no narrower than its placeholder, measured in its face or `reckoned` where no `ruler` measures, a caret's room past them. */
+function fitted(box) {
+  const words = [box.value, box.placeholder ?? ""];
+  fitted.ruler ??= ruler() ?? false;
+  const style = fitted.ruler && globalThis.getComputedStyle?.(box);
+  if (style?.fontSize) {
+    fitted.ruler.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    const px = Math.max(...words.map((w) => fitted.ruler.measureText(w).width));
+    box.style.width = `${Math.ceil(px) + 2}px`;
+    return;
+  }
+  box.style.width = `calc(${Math.max(...words.map(reckoned)).toFixed(2)}em + 2px)`;
+}
+
+/** `tagOf`: the tag the form `adding` holds, `null` where either field is blank. */
 function tagOf(adding) {
   const type = adding.querySelector('input[data-field="type"]').value.trim();
   const tag = adding.querySelector('input[data-field="tag"]').value.trim();
   return type && tag ? { type, tag } : null;
 }
 
-/** The pick list a field `box` offers: its own, or the editor's list of types or tags moved under it. */
+/** `pickOf`: the pick list `box` offers, its own or the editor's list of types or tags moved under it. */
 function pickOf(box) {
   const own = box.parentElement.querySelector(".pick");
   if (own) return own;
@@ -557,18 +591,21 @@ function pickOf(box) {
   return held ?? null;
 }
 
-/** The pick list a field `box` offers, its options narrowed to its words, and to the type typed beside a tag field. */
+/** `narrowPick`: the pick list `box` offers, its options narrowed to its words, and a tag field's to the type beside it, less the tags a `.types` row holds. */
 function narrowPick(box) {
   const pick = pickOf(box);
   if (!pick) return;
   const typed = box.value.trim().toLowerCase();
+  const row = box.closest(".adding, .group, .kind");
   const type = box.dataset.field === "tag"
-    ? box.closest(".adding, .group").querySelector('input[data-field="type"]').value.trim().toLowerCase()
+    ? (row?.querySelector('input[data-field="type"]')?.value ?? "").trim().toLowerCase()
     : "";
+  const held = [...(row?.querySelectorAll(".tag input") ?? [])].map((b) => b.dataset.was.toLowerCase());
   let shown = 0;
   for (const option of pick.children) {
     if (option.classList.contains("head")) continue;
-    const fits = (!typed || option.dataset.words.includes(typed)) && (!type || option.dataset.type === type);
+    const fits = (!typed || option.dataset.words.includes(typed)) && (!type || option.dataset.type === type) &&
+      !held.includes(option.dataset.words);
     option.hidden = !fits;
     if (fits) shown++;
   }
@@ -581,10 +618,14 @@ main.addEventListener("focusin", (event) => {
   if (box) narrowPick(box);
 });
 main.addEventListener("input", (event) => {
-  const box = event.target.closest("input[data-pick]");
+  const box = event.target.closest("input");
   if (!box) return;
+  if ("fit" in box.dataset) fitted(box);
+  if (box.closest(".fresh") && box.classList.contains("name")) {
+    box.closest(".fresh").querySelector(".more input").hidden = box.value.trim() === "";
+  }
+  if (!box.dataset.pick) return;
   if (box.dataset.field === "language") box.dataset.code = "";
-  if (box.closest(".tagged")) fitTag(box);
   narrowPick(box);
 });
 main.addEventListener("focusout", (event) => {
@@ -592,7 +633,8 @@ main.addEventListener("focusout", (event) => {
   const pick = box?.parentElement.querySelector(".pick");
   if (pick) setTimeout(() => (pick.hidden = true), 120);
 });
-// `mousedown` takes an option, before its field loses the focus.
+// `mousedown` takes an option, before its field loses the focus; under a
+// `.types` row it adds the tag at once.
 main.addEventListener("mousedown", (event) => {
   const option = event.target.closest(".pick > [data-name]");
   if (!option) return;
@@ -603,50 +645,144 @@ main.addEventListener("mousedown", (event) => {
     box.dataset.code = option.dataset.code;
     box.dataset.name = option.dataset.name;
   }
-  if (box.closest(".tagged")) fitTag(box);
+  if ("fit" in box.dataset) fitted(box);
   option.parentElement.hidden = true;
-  if (box.dataset.field === "type") box.closest(".adding")?.querySelector('input[data-field="tag"]').focus();
+  if (box.closest(".types")) keepType(box, againOf(box)).catch(console.error);
+  else if (box.dataset.field === "type") box.closest(".adding")?.querySelector('input[data-field="tag"]').focus();
 });
 
-// Enter keeps the head's editor, adds a tag, or renames, never while an input
-// method composes; Escape closes.
+// `Enter` keeps the head's editor or a `.types` field, adds a tag, or renames,
+// never while `isComposing`; `Escape` closes, or puts a `.types` field back.
 main.addEventListener("keydown", async (event) => {
   const box = event.target.closest(".meta input, .sheet input, .renaming input");
   if (!box || event.isComposing || event.keyCode === 229) return;
-  if (event.key === "Escape") {
+  if (box.closest(".types")) typeKey(event, box);
+  else if (event.key === "Escape") {
     event.preventDefault();
     closeMeta();
   } else if (event.key === "Enter") {
     event.preventDefault();
-    if (box.closest(".adding")) await addTag(box.closest(".adding"));
+    if (box.closest(".adding")) addTag(box.closest(".adding"));
     else if (box.closest(".renaming")) await rename(box.closest(".renaming"));
     else if (box.closest(".metaedit")) await saveMeta(box.closest(".meta"));
   }
 });
 
-/** Add the tag `adding` holds: on the book, or pending in the bulk editor. */
-async function addTag(adding) {
-  const tag = tagOf(adding);
-  if (!tag) return;
-  const sheet = adding.closest(".sheet");
-  if (sheet) {
-    sheetTag(sheet, tag, 0, "new");
-    for (const box of adding.querySelectorAll("input")) box.value = "";
-    adding.querySelector("input").focus();
-    return;
-  }
-  await patched([bookOf(adding)], { add: [tag] });
+// `.types`: the book's tags under every type in use, each field kept on `Enter`
+// or `focusout`, a `.name` renaming its type on every book, a tag's words
+// changing it on its book, and `.more` adding a tag under its type.
+
+/** `refocus`: the `data-key` of the field `show` focuses once it has drawn the page. */
+let refocus = null;
+
+/** `box`, a field of `.types`, back as it was: its words, or empty where it held none. */
+function putBack(box) {
+  box.value = box.dataset.was ?? "";
+  if ("fit" in box.dataset) fitted(box);
 }
 
-/** The tiles picked on Books. */
+/** `askOf`: what `box`, a field of `.types`, asks for, as a command and its arguments; `null` where it asks nothing, a blank field standing as it was. */
+function askOf(box) {
+  const words = box.value.trim();
+  const row = box.closest(".kind");
+  const name = row.querySelector(".name");
+  const fresh = row.classList.contains("fresh");
+  const type = fresh ? name.value.trim() : name.dataset.was;
+  const books = [bookOf(box)];
+  if (box === name) return fresh || !words || words === type ? null : ["rename_type", { from: type, to: words }];
+  if (box.closest(".more")) return words && type ? ["edit_metadata", { books, patch: { add: [{ type, tag: words }] } }] : null;
+  if (!words || words === box.dataset.was) return null;
+  const from = { type, tag: box.dataset.was };
+  return ["edit_metadata", { books, patch: { retag: [{ from, to: { type, tag: words } }] } }];
+}
+
+/** `keepType` keeps what `box`, a field of `.types`, asks for, once, and draws again, `then` naming the field focused after, flashing Undo for a type renamed or an edit reaching other books. */
+async function keepType(box, then = null) {
+  if ("kept" in box.dataset) return;
+  const ask = askOf(box);
+  if (!ask) return putBack(box);
+  box.dataset.kept = "";
+  const [name, args] = ask;
+  refocus = then;
+  let undone;
+  try {
+    undone = await call(name, args);
+  } catch {
+    delete box.dataset.kept;
+    refocus = null;
+    return;
+  }
+  closeMeta();
+  await show();
+  if (undone.length && (name === "rename_type" || reached(undone) > 1)) offerUndo(undone);
+}
+
+/** `typeKey`: `Enter` or `Escape` in `box`, a field of `.types`, `Enter` in `.fresh`'s type going on to its tag and in `.more` keeping the focus there for another. */
+function typeKey(event, box) {
+  if (event.key !== "Enter" && event.key !== "Escape") return;
+  event.preventDefault();
+  const row = box.closest(".kind");
+  if (event.key === "Escape") {
+    putBack(box);
+    box.blur();
+  } else if (row.classList.contains("fresh") && box === row.querySelector(".name")) {
+    const tag = row.querySelector(".more input");
+    tag.hidden = box.value.trim() === "";
+    if (!tag.hidden) tag.focus();
+  } else if (!askOf(box)) {
+    putBack(box);
+    box.blur();
+  } else {
+    keepType(box, box.closest(".more") ? againOf(box) : null).catch(console.error);
+  }
+}
+
+/** `againOf`: the `data-key` of the `.more` field a tag added from `box` leaves the focus in, for another under its type. */
+function againOf(box) {
+  const row = box.closest(".kind");
+  if (!row.classList.contains("fresh")) return box.dataset.key;
+  return JSON.stringify(["more", row.querySelector(".name").value.trim()]);
+}
+
+main.addEventListener("focusin", (event) => {
+  if (event.target.closest(".types input")) editing = event.target.closest(".types");
+});
+// `focusout` keeps a field of `.types`, focusing `relatedTarget` once the page is
+// drawn again; between `.fresh`'s two fields it keeps nothing.
+main.addEventListener("focusout", (event) => {
+  const box = event.target.closest(".types input");
+  if (!box || drawing || !box.isConnected) return;
+  const into = event.relatedTarget;
+  const row = box.closest(".kind");
+  if (row.classList.contains("fresh") && into && row.contains(into)) return;
+  editing = null;
+  keepType(box, into?.closest?.(".types input")?.dataset.key ?? null).catch(console.error);
+});
+// `mousedown` on the `.off` of the `.tag` holding `document.activeElement` keeps
+// the focus there, the tag taken off as it stood.
+main.addEventListener("mousedown", (event) => {
+  const tag = event.target.closest(".types .tag");
+  if (tag && event.target.closest(".off") && tag.contains(document.activeElement)) event.preventDefault();
+});
+
+/** `addTag` adds the tag `adding` holds to the bulk editor, waiting there. */
+function addTag(adding) {
+  const tag = tagOf(adding);
+  if (!tag) return;
+  sheetTag(adding.closest(".sheet"), tag, 0, "new");
+  for (const box of adding.querySelectorAll("input")) box.value = "";
+  adding.querySelector("input").focus();
+}
+
+/** `picked`: the tiles picked on Books. */
 function picked() {
   return [...main.querySelectorAll("[data-pickable] .tile.picked")];
 }
 
-/** The tile last picked, which Shift-click picks from. */
+/** `pickedLast`: the tile last picked, which a click with `shiftKey` picks from. */
 let pickedLast = null;
 
-/** The selection's bar in place of the shelf chips, stating how many are picked. */
+/** `drawPicked` sets `.chosen` in place of the shelf chips, stating how many are picked. */
 function drawPicked() {
   const chosen = main.querySelector(".chosen");
   if (!chosen) return;
@@ -683,7 +819,7 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-/** A field of the bulk editor's tags, as `screen::metadata::group` sets one out: `field` `type` or `tag`, holding `words`. */
+/** `tagBox`: a field of the bulk editor's tags, `field` `type` or `tag`, holding `words`. */
 function tagBox(field, words) {
   const box = document.createElement("input");
   box.className = "box";
@@ -691,12 +827,13 @@ function tagBox(field, words) {
   box.dataset.pick = `${field}s`;
   box.dataset.was = words;
   box.value = words;
+  box.dataset.fit = "";
   box.autocomplete = "off";
   box.spellcheck = false;
   return box;
 }
 
-/** A tag in the bulk editor, in its type's group: held by `n` of the books picked, a field; `"new"` in `how`, one waiting to be added. */
+/** `sheetTag` sets `tag` in `sheet` under its type's `.group`, a field held by `n` of the books picked, or with `"new"` in `how` one waiting to be added. */
 function sheetTag(sheet, tag, n, how = "") {
   const list = sheet.querySelector(".retag");
   const total = picked().length;
@@ -720,7 +857,7 @@ function sheetTag(sheet, tag, n, how = "") {
   tagged.dataset.tag = tag.tag;
   const box = tagBox("tag", tag.tag);
   box.disabled = how === "new";
-  fitTag(box);
+  fitted(box);
   tagged.append(box);
   if (n && n < total) {
     const some = document.createElement("small");
@@ -736,7 +873,7 @@ function sheetTag(sheet, tag, n, how = "") {
   group.querySelector(".under").append(tagged);
 }
 
-/** The bulk editor open on the books picked: each field's books stated, their tags listed. */
+/** `openSheet` opens the bulk editor on the books picked, each field's books stated and their tags listed. */
 function openSheet() {
   const sheet = main.querySelector(".sheet");
   const tiles = picked();
@@ -782,7 +919,7 @@ function openSheet() {
   sheet.scrollIntoView({ block: "nearest" });
 }
 
-/** Apply the bulk editor to the books picked, Undo offered. */
+/** `applySheet` applies `sheet` to the books picked, Undo offered. */
 async function applySheet(sheet) {
   const patch = {};
   for (const box of sheet.querySelectorAll(":scope > .field input[data-field]")) {
@@ -805,7 +942,7 @@ async function applySheet(sheet) {
   await patched(books, patch, true);
 }
 
-/** Rename the value Books is narrowed to on every book shown, then follow it to its new name. */
+/** `rename` renames the value Books is narrowed to on every book shown, then follows it to its new name. */
 async function rename(renaming) {
   const to = renaming.querySelector("input").value.trim();
   const by = JSON.parse(renaming.dataset.by);
@@ -836,7 +973,6 @@ document.addEventListener("click", async (event) => {
       break;
     }
     case "cancel-meta":
-    case "cancel-tag":
     case "cancel-rename":
     case "cancel-bulk":
       closeMeta();
@@ -847,16 +983,8 @@ document.addEventListener("click", async (event) => {
     case "revert-field":
       await patched([bookOf(act)], { [act.dataset.field]: "back" });
       break;
-    case "add-tag": {
-      closeAny();
-      const adding = act.closest(".meta").querySelector(".adding");
-      adding.hidden = false;
-      adding.querySelector("input").focus();
-      editing = adding;
-      break;
-    }
     case "save-tag":
-      await addTag(act.closest(".adding"));
+      addTag(act.closest(".adding"));
       break;
     case "untag":
       await patched([bookOf(act)], { remove: [{ type: act.dataset.type, tag: act.dataset.tag }] });
@@ -917,10 +1045,10 @@ document.addEventListener("click", async (event) => {
   }
 });
 
-/** Whether an input method is composing text, which `show` throws away with the box it is typed in. */
+/** `composing`: whether an input method is composing text, which `show` throws away with the box it is typed in. */
 let composing = false;
 
-// `[data-search]` narrows its own route: the hash takes `q`, in place, from
+// `[data-search]` narrows its own route, `location.hash` taking `q` in place from
 // what is typed, and from what an input method commits once `compositionend`
 // says it has.
 const search = settled((box) => {
@@ -944,7 +1072,7 @@ main.addEventListener("compositionend", (event) => {
   if (box) search(box);
 });
 
-/** The observers keeping a book page's bar in step with the scroll. */
+/** `watching`: the observers keeping a book page's `.slim` bar in step with the scroll. */
 let watching = [];
 
 // `watch` shows a book page's `.slim` bar once its head scrolls away, the
@@ -1017,13 +1145,13 @@ window.addEventListener(
   }, 150),
 );
 
-/** The Kindle `sync` last ran for, while it stays plugged in. */
+/** `synced`: the Kindle `sync` last ran for, while it stays plugged in. */
 let synced = null;
 
-/** The Kindle card's line for the cut serial `serial`: `busy` while a sync runs, `wrong` once one stopped. */
+/** `card`: the Kindle card's line for the cut serial `serial`, `busy` while a sync runs, `wrong` once one stopped. */
 let card = { serial: null, line: "", busy: false, wrong: false };
 
-/** Set `card` on the Kindle card drawn for its serial; answers whether one is drawn. */
+/** `drawCard` sets `card` on the Kindle card drawn for its serial, and answers whether one is drawn. */
 function drawCard() {
   const at = [...document.querySelectorAll(".kindle[data-serial]")].find((k) =>
     k.dataset.serial === card.serial
@@ -1043,7 +1171,7 @@ function tell(serial, line, how = "") {
   if (!drawCard() && card.wrong) flash(line, true);
 }
 
-/** Sync the Kindle `serial` names, as `sync_kindle` does, its card told each half; flash what came in and draw again where it says anything, `quiet` saying nothing where nothing came in. */
+/** `sync` syncs the Kindle `serial` names as `sync_kindle` does, its card told each half, flashing what came in and drawing again where it says anything; `quiet` says nothing where nothing came in. */
 async function sync(serial, quiet = false) {
   synced = serial;
   let running = true;
@@ -1064,7 +1192,7 @@ async function sync(serial, quiet = false) {
   await show();
 }
 
-/** A quiet `sync` of the Kindle plugged in, once the window rests after a change to the notes or corrections. */
+/** `resync`: a quiet `sync` of the Kindle plugged in, once the window rests after a command of `WRITING`. */
 const resync = settled(() => {
   if (!kindle) return;
   if (composing || editing) return resync();

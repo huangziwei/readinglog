@@ -148,7 +148,6 @@ impl Route {
                         "author" => Some(By::Author(some())),
                         "publisher" => Some(By::Publisher(some())),
                         "language" => Some(By::Language(some())),
-                        "type" if !is.is_empty() => Some(By::Type(is.clone())),
                         "tag" => Some(By::Tag(asked("type"), some())),
                         _ => None,
                     }
@@ -232,7 +231,6 @@ impl Route {
                     Some(By::Author(is)) => ("author", String::new(), is.clone()),
                     Some(By::Publisher(is)) => ("publisher", String::new(), is.clone()),
                     Some(By::Language(is)) => ("language", String::new(), is.clone()),
-                    Some(By::Type(is)) => ("type", String::new(), Some(is.clone())),
                     Some(By::Tag(r#type, is)) => ("tag", r#type.clone(), is.clone()),
                 };
                 format!(

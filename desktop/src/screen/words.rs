@@ -59,8 +59,8 @@ pub struct Words {
     /// What deleting a note asks, `delete_note_said` under it.
     pub delete_note_ask: &'static str,
     pub delete_note_said: &'static str,
-    /// `title_field` … `tag_field`: the fields the book page's editor and the bulk
-    /// editor name; `add_tag`, the button adding a tag, `add` its form's own.
+    /// `title_field` … `tag_field`: the fields the book page and the bulk editor name;
+    /// `add_type`, the field adding a type to a book, and `add`, the bulk editor's Add.
     pub title_field: &'static str,
     pub authors_field: &'static str,
     pub publisher_field: &'static str,
@@ -68,7 +68,7 @@ pub struct Words {
     pub tags_field: &'static str,
     pub type_field: &'static str,
     pub tag_field: &'static str,
-    pub add_tag: &'static str,
+    pub add_type: &'static str,
     pub add: &'static str,
     /// `book_says`: under an edited title or author, the book's own words `{s}`.
     pub book_says: &'static str,
@@ -77,9 +77,11 @@ pub struct Words {
     pub others_head: &'static str,
     /// `not_set`: a field no book's rows set, wherever it is named or charted.
     pub not_set: &'static str,
-    /// `author_chip`: the filter chip's name for an author; `remove_tip`, the tooltip taking a tag off.
+    /// `author_chip`: the filter chip's name for an author; `remove_tip`, the tooltip taking a tag
+    /// off; `rename_type_tip`, a type's on the book page.
     pub author_chip: &'static str,
     pub remove_tip: &'static str,
+    pub rename_type_tip: &'static str,
     /// `rename`, `rename_ask` (`{v}` the value, `{d}` the books), `rename_do`:
     /// Rename… on a filter chip, its field's question and its button.
     pub rename: &'static str,
@@ -172,7 +174,7 @@ const ENGLISH: Words = Words {
     tags_field: "Tags",
     type_field: "Type",
     tag_field: "Tag",
-    add_tag: "+ Tag",
+    add_type: "+ Type",
     add: "Add",
     book_says: "The book says “{s}”",
     in_use_head: "IN USE",
@@ -180,6 +182,7 @@ const ENGLISH: Words = Words {
     not_set: "not set",
     author_chip: "Author",
     remove_tip: "Take off",
+    rename_type_tip: "Renames it on every book",
     rename: "Rename…",
     rename_ask: "Rename “{v}” on {d} book[s], across every Kindle, to",
     rename_do: "Rename",
@@ -261,7 +264,7 @@ const GERMAN: Words = Words {
     tags_field: "Tags",
     type_field: "Typ",
     tag_field: "Tag",
-    add_tag: "+ Tag",
+    add_type: "+ Typ",
     add: "Hinzufügen",
     book_says: "Im Buch steht „{s}“",
     in_use_head: "VERWENDET",
@@ -269,6 +272,7 @@ const GERMAN: Words = Words {
     not_set: "nicht gesetzt",
     author_chip: "Autor",
     remove_tip: "Entfernen",
+    rename_type_tip: "Benennt ihn in allen Titeln um",
     rename: "Umbenennen…",
     rename_ask: "„{v}“ in {d} Titel[n] auf allen Kindles umbenennen in",
     rename_do: "Umbenennen",
@@ -348,7 +352,7 @@ const JAPANESE: Words = Words {
     tags_field: "タグ",
     type_field: "種類",
     tag_field: "タグ",
-    add_tag: "+ タグ",
+    add_type: "+ 種類",
     add: "追加",
     book_says: "本の記載は「{s}」",
     in_use_head: "使用中",
@@ -356,6 +360,7 @@ const JAPANESE: Words = Words {
     not_set: "未設定",
     author_chip: "著者",
     remove_tip: "外す",
+    rename_type_tip: "すべての本で名前を変更します",
     rename: "名前を変更…",
     rename_ask: "{d}冊の「{v}」を、すべての Kindle で次の名前に",
     rename_do: "変更",
@@ -433,7 +438,7 @@ const SIMPLIFIED: Words = Words {
     tags_field: "标签",
     type_field: "类型",
     tag_field: "标签",
-    add_tag: "+ 标签",
+    add_type: "+ 类型",
     add: "添加",
     book_says: "书中为“{s}”",
     in_use_head: "已使用",
@@ -441,6 +446,7 @@ const SIMPLIFIED: Words = Words {
     not_set: "未设置",
     author_chip: "作者",
     remove_tip: "移除",
+    rename_type_tip: "在所有书中重命名",
     rename: "重命名…",
     rename_ask: "在所有 Kindle 上，将{d}本书的“{v}”重命名为",
     rename_do: "重命名",
@@ -518,7 +524,7 @@ const TRADITIONAL: Words = Words {
     tags_field: "標籤",
     type_field: "類型",
     tag_field: "標籤",
-    add_tag: "+ 標籤",
+    add_type: "+ 類型",
     add: "新增",
     book_says: "書中為「{s}」",
     in_use_head: "已使用",
@@ -526,6 +532,7 @@ const TRADITIONAL: Words = Words {
     not_set: "未設定",
     author_chip: "作者",
     remove_tip: "移除",
+    rename_type_tip: "在所有書中重新命名",
     rename: "重新命名…",
     rename_ask: "在所有 Kindle 上，將{d}本書的「{v}」重新命名為",
     rename_do: "重新命名",

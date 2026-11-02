@@ -48,7 +48,7 @@ impl Field {
         }
     }
 
-    /// The [`Field`] `word` names; `None` for any other word.
+    /// `from_stored`: the [`Field`] `word` names; `None` for any other word.
     fn from_stored(word: &str) -> Option<Field> {
         match word.trim() {
             "title" => Some(Field::Title),
@@ -84,8 +84,8 @@ pub struct Metadata {
 }
 
 impl Metadata {
-    /// Whether this row is of the book `key` and `extent` name: by key where
-    /// it carries one, else by extent.
+    /// `names`: whether `self` is of the book `key` and `extent` name, by `key`
+    /// where it carries one, else by `extent`.
     pub fn names(&self, key: &str, extent: i64) -> bool {
         match self.key.is_empty() {
             false => self.key == key,
@@ -93,7 +93,7 @@ impl Metadata {
         }
     }
 
-    /// What names this row among a record's: its book and its field.
+    /// `id`: what names `self` among a record's rows, its book and its field.
     fn id(&self) -> (&str, i64, Field) {
         let extent = match self.key.is_empty() {
             true => self.extent,
@@ -114,8 +114,8 @@ pub struct Set {
 }
 
 impl Set {
-    /// What `rows` set on the book `key` and `extent` name, over whatever its own
-    /// row states, then or since.
+    /// `of`: what `rows` set on the book `key` and `extent` name, over whatever
+    /// its own row states, then or since.
     pub fn of(rows: &[Metadata], key: &str, extent: i64) -> Set {
         let mut out = Set::default();
         for row in rows.iter().filter(|r| r.names(key, extent)) {
@@ -146,7 +146,7 @@ impl Set {
         }
     }
 
-    /// What this holds for `field`, as a row states it.
+    /// `value`: what `self` holds for `field`, as a row states it.
     fn value(&self, field: Field) -> Option<String> {
         match field {
             Field::Title => self.title.clone(),
@@ -165,14 +165,12 @@ pub enum By {
     Author(Option<String>),
     Publisher(Option<String>),
     Language(Option<String>),
-    /// `Type`: books holding any tag of this type.
-    Type(String),
     /// `Tag`: books holding this tag of this type; `None`, those holding no tag of it.
     Tag(String, Option<String>),
 }
 
 impl By {
-    /// Whether a book stating `values` is one this narrows to.
+    /// `holds`: whether a book stating `values` is one `self` narrows to.
     pub fn holds(&self, values: &Values) -> bool {
         let typed = |t: &Tag, r#type: &str| folded(&t.r#type) == folded(r#type);
         match self {
@@ -182,7 +180,6 @@ impl By {
                 values.publisher.as_deref().map(folded) == want.as_deref().map(folded)
             }
             By::Language(want) => values.language == *want,
-            By::Type(r#type) => values.tags.iter().any(|t| typed(t, r#type)),
             By::Tag(r#type, None) => !values.tags.iter().any(|t| typed(t, r#type)),
             By::Tag(r#type, Some(tag)) => values
                 .tags
@@ -203,7 +200,7 @@ pub struct Values {
 }
 
 impl Values {
-    /// What `set` states over the own author line `author`.
+    /// `of`: what `set` states over the own author line `author`.
     pub fn of(author: &str, set: &Set) -> Values {
         Values {
             authors: authors::split_display(set.authors.as_deref().unwrap_or(author)),
@@ -224,8 +221,8 @@ pub struct Named {
 }
 
 impl Named {
-    /// Whether `book` is the one this names: by key where this carries one,
-    /// else by extent.
+    /// `names`: whether `book` is the one `self` names, by key where `self`
+    /// carries one, else by extent.
     fn names(&self, book: &Book) -> bool {
         match self.key.is_empty() {
             false => book.cde_key == self.key,
@@ -233,7 +230,7 @@ impl Named {
         }
     }
 
-    /// Whether `other` names the book this does, on the same Kindle.
+    /// `is`: whether `other` names the book `self` does, on the same Kindle.
     fn is(&self, other: &Named) -> bool {
         self.kindle == other.kindle
             && match self.key.is_empty() {
@@ -258,8 +255,8 @@ pub struct Retag {
     pub to: Tag,
 }
 
-/// `Patch`: what one edit changes on one book or many; a field `None` stands
-/// as it is.
+/// `Patch`: what one edit changes on one book or many, each field `None`
+/// standing as it is.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Patch {
@@ -276,7 +273,7 @@ pub struct Patch {
 }
 
 impl Patch {
-    /// Whether this sets each book's tags.
+    /// `retags`: whether `self` sets each book's tags.
     fn retags(&self) -> bool {
         self.tags.is_some()
             || !self.retag.is_empty()
@@ -284,9 +281,9 @@ impl Patch {
             || !self.remove.is_empty()
     }
 
-    /// Each field this changes on `book` (its rows setting `held`) and the value
-    /// it takes; `None`, the book's own, for blank words or the title or
-    /// authors its row states.
+    /// `values`: each field `self` changes on `book` (its rows setting `held`)
+    /// and the value it takes; `None`, the book's own, for blank words or the
+    /// title or authors its row states.
     fn values(&self, book: &Book, held: &Set, spelling: &Spelling) -> Vec<(Field, Option<String>)> {
         let typed = |change: &Option<Change>| {
             change.as_ref().map(|change| match change {
@@ -359,17 +356,17 @@ pub struct Undo {
     pub rows: Vec<Metadata>,
 }
 
-/// Set `patch` on each of `books` as of `at`, in the record of each one's
-/// Kindle. Answers what [`undo`] takes back, one [`Undo`] for each record it
-/// wrote.
+/// `edit` sets `patch` on each of `books` as of `at`, in the record of each
+/// one's Kindle, and answers what [`undo`] takes back, one [`Undo`] for each
+/// record it wrote.
 pub fn edit(ws: &Workspace, books: &[Named], patch: &Patch, at: &str) -> Result<Vec<Undo>> {
     let each: Vec<(Named, Patch)> = books.iter().map(|b| (b.clone(), patch.clone())).collect();
     edit_each(ws, &each, at)
 }
 
-/// Rename `by`'s value to `to` on each of `books`, as of `at`: an author's
-/// name among each book's, a publisher, a language, a tag, or a type on
-/// every tag under it. Answers what [`undo`] takes back.
+/// `rename` renames `by`'s value to `to` on each of `books`, as of `at` (an
+/// author's name among each book's, a publisher, a language or a tag), and
+/// answers what [`undo`] takes back.
 pub fn rename(ws: &Workspace, books: &[Named], by: &By, to: &str, at: &str) -> Result<Vec<Undo>> {
     let to = clean(to);
     if to.is_empty() {
@@ -420,21 +417,6 @@ pub fn rename(ws: &Workspace, books: &[Named], by: &By, to: &str, at: &str) -> R
                     }],
                     ..Patch::default()
                 },
-                By::Type(from) => Patch {
-                    retag: values
-                        .tags
-                        .iter()
-                        .filter(|t| folded(&t.r#type) == folded(from))
-                        .map(|t| Retag {
-                            from: t.clone(),
-                            to: Tag {
-                                r#type: to.clone(),
-                                tag: t.tag.clone(),
-                            },
-                        })
-                        .collect(),
-                    ..Patch::default()
-                },
                 _ => Patch::default(),
             };
             (named, patch)
@@ -443,7 +425,66 @@ pub fn rename(ws: &Workspace, books: &[Named], by: &By, to: &str, at: &str) -> R
     edit_each(ws, &each, at)
 }
 
-/// Each of `books` with what it states, each Kindle's record read once.
+/// `rename_type` renames the type `from` to `to` on every book of `ws` holding
+/// a tag of it, as of `at`, each tag joining a type in use named `to`, and
+/// answers what [`undo`] takes back.
+pub fn rename_type(ws: &Workspace, from: &str, to: &str, at: &str) -> Result<Vec<Undo>> {
+    let to = clean(to);
+    if to.is_empty() {
+        return Err(anyhow!("nothing to rename it to"));
+    }
+    let each: Vec<(Named, Patch)> = loaded(ws, &tagged(ws))?
+        .into_iter()
+        .filter_map(|(named, values)| {
+            let retag: Vec<Retag> = values
+                .tags
+                .iter()
+                .filter(|t| folded(&t.r#type) == folded(from))
+                .map(|t| Retag {
+                    from: t.clone(),
+                    to: Tag {
+                        r#type: to.clone(),
+                        tag: t.tag.clone(),
+                    },
+                })
+                .collect();
+            (!retag.is_empty()).then(|| {
+                (
+                    named,
+                    Patch {
+                        retag,
+                        ..Patch::default()
+                    },
+                )
+            })
+        })
+        .collect();
+    edit_each(ws, &each, at)
+}
+
+/// `tagged`: each book of `ws` a `tags` row names, in the record holding the row.
+fn tagged(ws: &Workspace) -> Vec<Named> {
+    let mut out = Vec::new();
+    for source in ws.sources() {
+        let kindle = source.serial.clone().unwrap_or_default();
+        for row in read(&source.dir) {
+            if row.field != Field::Tags || row.value.is_none() {
+                continue;
+            }
+            let book = Named {
+                kindle: kindle.clone(),
+                key: row.key,
+                extent: row.extent,
+            };
+            if source.record.books.iter().any(|b| book.names(b)) {
+                out.push(book);
+            }
+        }
+    }
+    out
+}
+
+/// `loaded`: each of `books` with what it states, each Kindle's record read once.
 fn loaded(ws: &Workspace, books: &[Named]) -> Result<Vec<(Named, Values)>> {
     let mut kindles: Vec<&str> = books.iter().map(|b| b.kindle.as_str()).collect();
     kindles.sort_unstable();
@@ -472,8 +513,9 @@ fn loaded(ws: &Workspace, books: &[Named]) -> Result<Vec<(Named, Values)>> {
     Ok(out)
 }
 
-/// Each book of `ws` holding a tag `spelling` spells unlike its row, with a patch
-/// setting its tags as held; `each`'s books with a patch of their tags left out.
+/// `respelled`: each book of `ws` holding a tag `spelling` spells unlike its row,
+/// with a patch setting its tags as held, `each`'s books with a patch of their
+/// tags left out.
 fn respelled(ws: &Workspace, spelling: &Spelling, each: &[(Named, Patch)]) -> Vec<(Named, Patch)> {
     let mut out: Vec<(Named, Patch)> = Vec::new();
     for source in ws.sources() {
@@ -507,9 +549,9 @@ fn respelled(ws: &Workspace, spelling: &Spelling, each: &[(Named, Patch)]) -> Ve
     out
 }
 
-/// Set each book's own patch as of `at`, in the record of each one's Kindle;
-/// a [`Retag`] respelling a type or a tag respells it on every book of `ws`.
-/// Answers what [`undo`] takes back, one [`Undo`] for each record it wrote.
+/// `edit_each` sets each book's own patch as of `at`, in the record of each one's
+/// Kindle, a [`Retag`] respelling a type or a tag reaching every book of `ws`, and
+/// answers what [`undo`] takes back, one [`Undo`] for each record it wrote.
 pub fn edit_each(ws: &Workspace, each: &[(Named, Patch)], at: &str) -> Result<Vec<Undo>> {
     let mut spelling = Spelling::of(ws);
     let mut each = each.to_vec();
@@ -582,7 +624,7 @@ pub fn edit_each(ws: &Workspace, each: &[(Named, Patch)], at: &str) -> Result<Ve
     Ok(out)
 }
 
-/// Set back each row `undone` holds, as of `at`, over any row standing since.
+/// `undo` sets back each row `undone` holds, as of `at`, over any row standing since.
 pub fn undo(ws: &Workspace, undone: &[Undo], at: &str) -> Result<()> {
     for each in undone {
         let source = ws.source(&each.kindle)?;
@@ -634,15 +676,15 @@ pub fn suggested_authors(author: &str) -> Option<String> {
     (!turned.is_empty() && turned != author).then_some(turned)
 }
 
-/// The `d` rows of the record's file in `dir`, none where it holds none.
+/// `read`: the `d` rows of the record's file in `dir`, none where it holds none.
 pub fn read(dir: &Path) -> Vec<Metadata> {
     std::fs::read_to_string(Record::file(dir))
         .map(|text| rows(&text))
         .unwrap_or_default()
 }
 
-/// Every `d` row of `text`, a record's file, that [`read_row`] reads: one per
-/// book and field, of two copies the later `edited`.
+/// `rows`: every `d` row of `text`, a record's file, that [`read_row`] reads, one
+/// per book and field, of two copies the later `edited`.
 pub fn rows(text: &str) -> Vec<Metadata> {
     let read: Vec<Metadata> = text.lines().filter_map(read_row).collect();
     let mut out = Vec::with_capacity(read.len());
@@ -650,8 +692,8 @@ pub fn rows(text: &str) -> Vec<Metadata> {
     out
 }
 
-/// Take `fresh` into `held`: each `row` `held` lacks is added, and of two
-/// copies of one row the later `edited` stands. Answers whether anything moved.
+/// `take` takes `fresh` into `held`, adding each `row` `held` lacks and keeping
+/// the later `edited` of two copies of one row, and answers whether anything moved.
 pub fn take(held: &mut Vec<Metadata>, fresh: &[Metadata]) -> bool {
     let mut moved = false;
     for row in fresh {
@@ -688,8 +730,8 @@ pub fn splice(text: &str, from: &Record, rows: &[Metadata]) -> String {
     written::splice(&body, from)
 }
 
-/// Take `fresh` into the `d` rows of the record's file in `dir`, under
-/// [`writing`], writing the file only where a row moved; answers whether one did.
+/// `keep` takes `fresh` into the `d` rows of the record's file in `dir`, under
+/// [`writing`], writing the file only where a row moved, and answers whether one did.
 fn keep(dir: &Path, fresh: &[Metadata]) -> Result<bool> {
     let _held = writing();
     let file = Record::file(dir);
@@ -744,7 +786,7 @@ fn write_row(out: &mut String, row: &Metadata) {
     );
 }
 
-/// Each [`Tag`] a `tags` value holds.
+/// `tags_of`: each [`Tag`] `value` holds.
 fn tags_of(value: &str) -> Vec<Tag> {
     value
         .lines()
@@ -772,7 +814,7 @@ struct Spelling {
 }
 
 impl Spelling {
-    /// The [`Spelling`] of every tag `ws`'s records hold.
+    /// `of`: the [`Spelling`] of every tag `ws`'s records hold.
     fn of(ws: &Workspace) -> Self {
         let tags = ws
             .record_dirs()
@@ -806,9 +848,9 @@ impl Spelling {
         Some(Tag { r#type, tag })
     }
 
-    /// Take each of `retags` whose `to` respells its `from`'s type, or its tag under
-    /// a type folding alike, as that type's or tag's spelling wherever it is in
-    /// use. Answers whether a spelling in use moved.
+    /// `respell` takes each of `retags` whose `to` respells its `from`'s type, or its
+    /// tag under a type folding alike, as that spelling wherever it is in use, and
+    /// answers whether a spelling in use moved.
     fn respell<'a>(&mut self, retags: impl Iterator<Item = &'a Retag>) -> bool {
         let mut moved = false;
         for retag in retags {
@@ -837,7 +879,7 @@ impl Spelling {
     }
 }
 
-/// Whether `a` and `b` are one tag spelled two ways.
+/// `same`: whether `a` and `b` are one tag spelled two ways.
 fn same(a: &Tag, b: &Tag) -> bool {
     folded(&a.r#type) == folded(&b.r#type) && folded(&a.tag) == folded(&b.tag)
 }
@@ -860,8 +902,8 @@ fn folded(words: &str) -> String {
         .collect()
 }
 
-/// `at`, or a second past `held` where `at` is no later: each edit of a row
-/// stamped after the one before it.
+/// `at`, or a second past `held` where `at` is no later, stamping each edit of a
+/// row after the one before it.
 fn after(held: &str, at: &str) -> String {
     match at > held {
         true => at.to_string(),
@@ -884,7 +926,7 @@ fn escaped(text: &str) -> String {
     out
 }
 
-/// What [`escaped`] wrote; an escape it does not write stands as it is.
+/// `field` as [`escaped`] wrote it, an escape it does not write standing as it is.
 fn unescaped(field: &str) -> String {
     let mut out = String::with_capacity(field.len());
     let mut chars = field.chars();
@@ -913,7 +955,7 @@ fn optional(text: Option<&str>) -> String {
     text.map_or_else(|| NONE.to_string(), escaped)
 }
 
-/// What [`optional`] wrote.
+/// `field` as [`optional`] wrote it.
 fn read_optional(field: &str) -> Option<String> {
     (field != NONE).then(|| unescaped(field))
 }
@@ -928,7 +970,7 @@ mod tests {
     const KINDLE: &str = "G003H2-0001";
 
     /// `name`'s workspace of one Kindle's record, `B00KEY` at extent 7 and a
-    /// keyless book at 9; answers it and the record's folder.
+    /// keyless book at 9, with the record's folder.
     fn workspace(name: &str) -> (Workspace, std::path::PathBuf) {
         let dir = scratch(name);
         let ws = Workspace::create(&dir).unwrap();
@@ -1061,7 +1103,7 @@ mod tests {
         let loaded = Record::load(&at);
         assert_eq!(loaded.books.len(), 2);
         assert!(loaded.books.iter().any(|b| b.title == "A Book"));
-        // `patch` again: no row moves.
+        // `patch` again moves no row.
         assert!(
             edit(&ws, &[named("B00KEY", 7)], &patch, "2026-10-31T10:00:01")
                 .unwrap()
@@ -1127,7 +1169,7 @@ mod tests {
             "2026-10-31T10:00:00",
         )
         .unwrap();
-        // `Doe, John`: book 7's own author; book 9 holds none of it.
+        // `Doe, John`: book 7's own author, and none of book 9's.
         let by = By::Author(Some("Doe, John".into()));
         rename(&ws, &both, &by, "John Doe", "2026-10-31T10:00:01").unwrap();
         assert_eq!(authors("B00KEY", 7).as_deref(), Some("John Doe"));
@@ -1149,14 +1191,7 @@ mod tests {
         .unwrap();
         let by = By::Tag("genre".into(), Some("scifi".into()));
         rename(&ws, &both, &by, "sci-fi", "2026-10-31T10:00:04").unwrap();
-        rename(
-            &ws,
-            &both,
-            &By::Type("genre".into()),
-            "Genre",
-            "2026-10-31T10:00:05",
-        )
-        .unwrap();
+        rename_type(&ws, "genre", "Genre", "2026-10-31T10:00:05").unwrap();
         for (key, extent) in [("B00KEY", 7), ("", 9)] {
             assert_eq!(
                 Set::of(&read(&at), key, extent).tags,
@@ -1216,7 +1251,6 @@ mod tests {
         assert!(By::Publisher(None).holds(&values));
         assert!(By::Language(Some("ja".into())).holds(&values));
         assert!(!By::Language(None).holds(&values));
-        assert!(By::Type("Genre".into()).holds(&values));
         assert!(By::Tag("genre".into(), Some("sci-fi".into())).holds(&values));
         assert!(By::Tag("mood".into(), None).holds(&values));
         assert!(!By::Tag("genre".into(), None).holds(&values));
@@ -1342,5 +1376,61 @@ mod tests {
             tags("", 9),
             vec![tag("genre", "sci-fi"), tag("mood", "dark")]
         );
+    }
+
+    #[test]
+    fn a_type_renamed_reaches_every_book_holding_it_and_joins_a_type_in_use() {
+        let (ws, at) = workspace("rename-type");
+        let tags = |key: &str, extent: i64| Set::of(&read(&at), key, extent).tags;
+        let adding = |tags: Vec<Tag>| Patch {
+            add: tags,
+            ..Patch::default()
+        };
+        let each = [
+            (
+                named("B00KEY", 7),
+                adding(vec![tag("genre", "sci-fi"), tag("mood", "dark")]),
+            ),
+            (
+                named("", 9),
+                adding(vec![
+                    tag("mood", "dark"),
+                    tag("feeling", "dark"),
+                    tag("feeling", "calm"),
+                ]),
+            ),
+        ];
+        edit_each(&ws, &each, "2026-11-02T10:00:00").unwrap();
+        // `feeling`: book 9's alone, `dark` under `mood` there too.
+        let undone = rename_type(&ws, "Feeling", "mood", "2026-11-02T10:00:01").unwrap();
+        assert_eq!(undone[0].rows.len(), 1, "book 9's row alone");
+        assert_eq!(
+            tags("B00KEY", 7),
+            vec![tag("genre", "sci-fi"), tag("mood", "dark")]
+        );
+        assert_eq!(tags("", 9), vec![tag("mood", "dark"), tag("mood", "calm")]);
+        undo(&ws, &undone, "2026-11-02T10:00:02").unwrap();
+        assert_eq!(
+            tags("", 9),
+            vec![
+                tag("mood", "dark"),
+                tag("feeling", "dark"),
+                tag("feeling", "calm")
+            ]
+        );
+        rename_type(&ws, "MOOD", "Tone", "2026-11-02T10:00:03").unwrap();
+        assert_eq!(
+            tags("B00KEY", 7),
+            vec![tag("genre", "sci-fi"), tag("Tone", "dark")]
+        );
+        assert_eq!(
+            tags("", 9),
+            vec![
+                tag("Tone", "dark"),
+                tag("feeling", "dark"),
+                tag("feeling", "calm")
+            ]
+        );
+        assert!(rename_type(&ws, "Tone", " ", "2026-11-02T10:00:04").is_err());
     }
 }

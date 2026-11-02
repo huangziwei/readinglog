@@ -430,6 +430,19 @@ fn rename_metadata(
     metadata::rename(&ws, &books, &by, &to, &now()).map_err(said)
 }
 
+/// Rename the type `from` to `to` on every book holding a tag of it. Answers
+/// what `undo_metadata` takes back.
+#[tauri::command]
+fn rename_type(
+    app: AppHandle,
+    open: State<'_, Open>,
+    from: String,
+    to: String,
+) -> Answer<Vec<metadata::Undo>> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    metadata::rename_type(&ws, &from, &to, &now()).map_err(said)
+}
+
 /// Set back what one `edit_metadata` changed.
 #[tauri::command]
 fn undo_metadata(app: AppHandle, open: State<'_, Open>, undone: Vec<metadata::Undo>) -> Answer<()> {
@@ -593,6 +606,7 @@ pub fn run() {
             edit_metadata,
             edit_metadata_each,
             rename_metadata,
+            rename_type,
             undo_metadata,
             choose_folder,
             pick_backup,
