@@ -66,6 +66,8 @@ pub enum Route {
         window: Option<Window>,
         /// The value the books shown state, where Books is narrowed to one.
         by: Option<By>,
+        /// `editing`: whether the tags over the books stand as fields.
+        editing: bool,
     },
     Book {
         key: String,
@@ -147,11 +149,11 @@ impl Route {
                     match asked("by").as_str() {
                         "author" => Some(By::Author(some())),
                         "publisher" => Some(By::Publisher(some())),
-                        "language" => Some(By::Language(some())),
                         "tag" => Some(By::Tag(asked("type"), some())),
                         _ => None,
                     }
                 },
+                editing: asked("tags") == "edit",
             },
             ["book", key] => Route::Book {
                 key: unescape(key),
@@ -203,6 +205,7 @@ impl Route {
                 query: search,
                 window,
                 by,
+                editing,
             } => {
                 let shelf = match shelf {
                     Shelf::All => "",
@@ -230,7 +233,6 @@ impl Route {
                     None => ("", String::new(), None),
                     Some(By::Author(is)) => ("author", String::new(), is.clone()),
                     Some(By::Publisher(is)) => ("publisher", String::new(), is.clone()),
-                    Some(By::Language(is)) => ("language", String::new(), is.clone()),
                     Some(By::Tag(r#type, is)) => ("tag", r#type.clone(), is.clone()),
                 };
                 format!(
@@ -245,6 +247,13 @@ impl Route {
                         ("by", by.into()),
                         ("type", r#type),
                         ("is", is.unwrap_or_default()),
+                        (
+                            "tags",
+                            match editing {
+                                true => "edit".into(),
+                                false => String::new(),
+                            },
+                        ),
                     ])
                 )
             }
@@ -296,6 +305,7 @@ impl Route {
             query: String::new(),
             window,
             by: None,
+            editing: false,
         }
     }
 
@@ -594,9 +604,19 @@ pub fn render(
             query,
             window,
             by,
+            editing,
         } => (
             s.books.to_string(),
-            books::page(&cx, *shelf, *order, *way, query, *window, by.as_ref()),
+            books::page(
+                &cx,
+                *shelf,
+                *order,
+                *way,
+                query,
+                *window,
+                by.as_ref(),
+                *editing,
+            ),
         ),
         Route::Book {
             key,
@@ -963,8 +983,11 @@ mod tests {
         let patch = crate::metadata::Patch {
             title: to("Small Rivers"),
             authors: to("Roe, Jane"),
-            language: to("de"),
             publisher: to("Example Press"),
+            add: vec![crate::metadata::Tag {
+                r#type: "Sprache".into(),
+                tag: "Deutsch".into(),
+            }],
             ..crate::metadata::Patch::default()
         };
         crate::metadata::edit(&ws, &[named], &patch, "2026-10-31T10:00:00").unwrap();
@@ -1016,8 +1039,9 @@ mod tests {
                     day,
                 }),
                 by: Some(By::Tag("ジャンル".into(), Some("SF & ミステリ".into()))),
+                editing: true,
             },
-            metadata::narrowed(By::Language(None), None),
+            metadata::narrowed(By::Tag("language".into(), None), None),
             metadata::narrowed(By::Author(Some("Doe, John".into())), None),
             Route::shelf(Shelf::All, None),
             Route::Book {

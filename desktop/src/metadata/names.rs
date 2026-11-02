@@ -1,7 +1,14 @@
 //! Each language a book can be set in, named in the five interface languages
-//! and in its own: [`own`] and [`name`] by the code `lang::normalize` writes.
+//! and in its own: [`own`] and [`name`] by the code `lang::normalize` writes,
+//! [`code_of`] the code a tag of a [`TYPES`] type names.
 
 use readinglog_native::lang::Lang;
+
+use super::{Tag, folded, lang};
+
+/// `TYPES`: the type a language is a tag of, in English, German, Simplified
+/// Chinese, Traditional Chinese and Japanese.
+pub const TYPES: [&str; 5] = ["language", "Sprache", "语言", "語言", "言語"];
 
 /// A language: its code, its own name, then its name in English, German,
 /// Simplified Chinese, Traditional Chinese and Japanese.
@@ -243,6 +250,46 @@ fn column(lang: Lang) -> usize {
     }
 }
 
+/// `type_word`: the word of [`TYPES`] `lang` names the type in.
+pub fn type_word(lang: Lang) -> &'static str {
+    TYPES[column(lang)]
+}
+
+/// `is_type`: whether `words` name a type of [`TYPES`], case and width aside.
+pub fn is_type(words: &str) -> bool {
+    TYPES.iter().any(|t| folded(t) == folded(words))
+}
+
+/// `code_of`: the code `words` name, as its own name, a name in an interface
+/// language or a code `lang::normalize` reads, case and width aside; `None`
+/// for words naming no language listed.
+pub fn code_of(words: &str) -> Option<&'static str> {
+    let wanted = folded(words);
+    let normal = lang::normalize(words);
+    LANGUAGES
+        .iter()
+        .find(|(code, own, names)| {
+            *code == normal
+                || folded(own) == wanted
+                || names.iter().any(|name| folded(name) == wanted)
+        })
+        .map(|(code, ..)| *code)
+}
+
+/// `codes`: the code each of `tags` under a type of [`TYPES`] names, in their
+/// order, once each.
+pub fn codes(tags: &[Tag]) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    for tag in tags.iter().filter(|t| is_type(&t.r#type)) {
+        if let Some(code) = code_of(&tag.tag)
+            && !out.contains(&code)
+        {
+            out.push(code);
+        }
+    }
+    out
+}
+
 /// The language `code` names, in its own words; `None` for a code not listed.
 pub fn own(code: &str) -> Option<&'static str> {
     LANGUAGES
@@ -284,5 +331,27 @@ mod tests {
         assert_eq!(name("de", Lang::Japanese), Some("ドイツ語"));
         assert_eq!(name("zh-Hant", Lang::SimplifiedChinese), Some("繁体中文"));
         assert_eq!(name("tlh", Lang::English), None);
+    }
+
+    #[test]
+    fn a_tag_of_the_language_type_names_its_code_in_any_interface_language() {
+        let tag = |r#type: &str, tag: &str| Tag {
+            r#type: r#type.into(),
+            tag: tag.into(),
+        };
+        assert!(is_type("Language") && is_type("ｓｐｒａｃｈｅ") && is_type("言語"));
+        assert!(!is_type("genre"));
+        assert_eq!(code_of("japanese"), Some("ja"));
+        assert_eq!(code_of("日本語"), Some("ja"));
+        assert_eq!(code_of("Japanisch"), Some("ja"));
+        assert_eq!(code_of("en-US"), Some("en"));
+        assert_eq!(code_of("Klingon"), None);
+        let tags = [
+            tag("genre", "English"),
+            tag("言語", "Deutsch"),
+            tag("language", "English"),
+            tag("language", "german"),
+        ];
+        assert_eq!(codes(&tags), vec!["de", "en"]);
     }
 }

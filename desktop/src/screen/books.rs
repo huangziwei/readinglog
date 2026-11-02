@@ -1,6 +1,6 @@
-//! Books: every book as its cover, on the shelves `view::books::shelves` offers, in an order and
-//! its way, narrowed to a span's window, a value [`By`] names and a search over titles, authors,
-//! publishers and tags; [`page`]'s tiles are picked for the bulk editor.
+//! [`page`]: Books, every book as its cover on the shelves `books_view::shelves` offers, in an
+//! order and its way, narrowed to a span's window, a value [`By`] names and a search over titles,
+//! authors, publishers and tags, the tags in use over the grid; its tiles feed the bulk editor.
 
 use std::fmt::Write as _;
 
@@ -15,6 +15,7 @@ use super::words::Words;
 use super::{Ctx, Route, chip, esc, metadata, tile};
 use crate::metadata::By;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn page(
     cx: &Ctx,
     shelf: Shelf,
@@ -23,10 +24,16 @@ pub(super) fn page(
     query: &str,
     window: Option<Window>,
     by: Option<&By>,
+    editing: bool,
 ) -> String {
     let s = cx.s;
     let w = Words::of(cx.lang);
-    let route = |shelf: Shelf, order: Sort, way: Way, window: Option<Window>, by: Option<&By>| {
+    let route = |shelf: Shelf,
+                 order: Sort,
+                 way: Way,
+                 window: Option<Window>,
+                 by: Option<&By>,
+                 editing: bool| {
         Route::Books {
             shelf,
             order,
@@ -34,11 +41,12 @@ pub(super) fn page(
             query: query.to_string(),
             window,
             by: by.cloned(),
+            editing,
         }
         .link()
     };
     let to = |shelf: Shelf, order: Sort, way: Way, window: Option<Window>| {
-        route(shelf, order, way, window, by)
+        route(shelf, order, way, window, by, editing)
     };
     let mut out = format!(
         "<header class=\"head\"><h1>{}</h1><input class=\"search\" type=\"search\" data-search=\"books\" \
@@ -63,11 +71,11 @@ pub(super) fn page(
             esc(&window.name(cx.week, s))
         );
     }
-    if let Some(by) = by {
+    if let Some(by) = by.filter(|by| !matches!(by, By::Tag(..))) {
         out.push_str(&metadata::chip(
             cx,
             by,
-            &route(shelf, order, way, window, None),
+            &route(shelf, order, way, window, None, editing),
         ));
     }
     let named = searched(cx, query);
@@ -98,11 +106,16 @@ pub(super) fn page(
         to(shelf, order, way.flipped(), window),
         way.caret()
     );
+    out.push_str(&metadata::listed(cx, by, editing, |by, editing| {
+        route(shelf, order, way, window, by.as_ref(), editing)
+    }));
     if let Some(by) = by {
-        out.push_str(&metadata::renaming(cx, by, drawn.len()));
+        if !matches!(by, By::Tag(..)) {
+            out.push_str(&metadata::renaming(cx, by, drawn.len()));
+        }
         let not_set = matches!(
             by,
-            By::Author(None) | By::Publisher(None) | By::Language(None) | By::Tag(_, None)
+            By::Author(None) | By::Publisher(None) | By::Tag(_, None)
         );
         if not_set {
             out.push_str(&metadata::suggestions(cx, &drawn));
@@ -130,8 +143,8 @@ pub(super) fn page(
     out
 }
 
-/// The books `query` finds: the Kindle's own search over titles and authors,
-/// and the books whose publisher or a tag holds it.
+/// `searched`: the books `query` finds, `search::listed`'s over titles and authors
+/// and each book whose publisher or a tag holds it.
 fn searched(cx: &Ctx, query: &str) -> Vec<usize> {
     let mut out = search::listed(cx.stats, query, cx.uncovered);
     let wanted = hanfold::fold(&query.trim().to_lowercase()).into_owned();

@@ -443,6 +443,19 @@ fn rename_type(
     metadata::rename_type(&ws, &from, &to, &now()).map_err(said)
 }
 
+/// Set `to` in the place of the tag `from` on every book holding it, or take it
+/// off each where `to` is none.
+#[tauri::command]
+fn retag_every(
+    app: AppHandle,
+    open: State<'_, Open>,
+    from: metadata::Tag,
+    to: Option<metadata::Tag>,
+) -> Answer<Vec<metadata::Undo>> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    metadata::retag_every(&ws, &from, to.as_ref(), &now()).map_err(said)
+}
+
 /// Set back what one `edit_metadata` changed.
 #[tauri::command]
 fn undo_metadata(app: AppHandle, open: State<'_, Open>, undone: Vec<metadata::Undo>) -> Answer<()> {
@@ -607,6 +620,7 @@ pub fn run() {
             edit_metadata_each,
             rename_metadata,
             rename_type,
+            retag_every,
             undo_metadata,
             choose_folder,
             pick_backup,

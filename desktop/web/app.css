@@ -1208,8 +1208,8 @@ section h2 .said .search {
   color: var(--ink);
 }
 
-/* `.types`: a row for each type in use, its `.name` beside the book's tags of
-   it and `.more`; each field reads as words until it takes the focus. */
+/* `.types`: a row for each type in use, its `.name` beside its tags and, on a
+   book page, `.more`; each field reads as words until it takes the focus. */
 .types {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
@@ -1219,6 +1219,12 @@ section h2 .said .search {
 }
 .types .kind {
   display: contents;
+}
+.types .kind > .name {
+  grid-column: 1;
+}
+.types .kind > .held {
+  grid-column: 2;
 }
 .types input {
   box-sizing: content-box;
@@ -1240,7 +1246,7 @@ section h2 .said .search {
   font-size: 12px;
   color: var(--soft);
 }
-.types .name:hover {
+.types input.name:hover {
   background: var(--shade);
 }
 .types .held {
@@ -1263,8 +1269,12 @@ section h2 .said .search {
 .types .tag:focus-within {
   box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft);
 }
-.types .tag input {
+.types .tag input,
+.types .tag a {
   padding: 3px 0;
+}
+.types .tag a:hover {
+  color: var(--accent);
 }
 .types .off {
   border: none;
@@ -1318,6 +1328,59 @@ section h2 .said .search {
 .types .pick {
   right: auto;
   min-width: 220px;
+}
+/* `.types.all`: over Books, each tag a link filling its pill, `.on` the one
+   the books are narrowed to, `.unset` the books holding no tag of its type in
+   a dashed rule; `.editing`, every × shown; `.edit` ends the first row. */
+.bar + .types.all {
+  margin: -8px 0 24px;
+}
+.types.all {
+  grid-template-columns: max-content minmax(0, 1fr) auto;
+}
+.types.all .tag {
+  padding: 0;
+}
+.types.all .tag a {
+  padding: 3px 10px;
+}
+.types.all .tag.on {
+  background: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
+  color: var(--paper);
+}
+.types.all .tag.on a:hover {
+  color: var(--paper);
+}
+.types.all .tag.unset {
+  background: none;
+  box-shadow: none;
+  border: 1px dashed var(--faint);
+  color: var(--soft);
+}
+.types.all .tag.unset a {
+  padding: 2px 9px;
+}
+.types.all .tag.unset.on {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+.types.all.editing .tag {
+  padding: 0 6px 0 10px;
+}
+.types.all.editing .off {
+  visibility: visible;
+}
+.types .edit {
+  grid-column: 3;
+  grid-row: 1;
+  font-size: 12px;
+  color: var(--soft);
+  white-space: nowrap;
+}
+.types .edit:hover {
+  color: var(--ink);
 }
 .hero.editing {
   align-items: flex-start;
@@ -1390,11 +1453,6 @@ section h2 .said .search {
   border-radius: 999px;
   padding: 0 8px;
 }
-.pair {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
 .pick {
   position: absolute;
   left: 0;
@@ -1419,15 +1477,6 @@ section h2 .said .search {
 }
 .pick > div:hover {
   background: var(--accent-soft);
-}
-.pick > .head {
-  font-size: 11px;
-  color: var(--faint);
-  letter-spacing: 0.04em;
-  padding: 4px 12px 2px;
-}
-.pick > .head:hover {
-  background: none;
 }
 .pick small {
   color: var(--faint);

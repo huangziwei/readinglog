@@ -50,6 +50,7 @@ const WRITING = new Set([
   "edit_metadata_each",
   "rename_metadata",
   "rename_type",
+  "retag_every",
   "undo_metadata",
 ]);
 
@@ -440,7 +441,6 @@ function closeMeta() {
   for (const open of main.querySelectorAll(".metaedit, .renaming")) open.hidden = true;
   for (const box of main.querySelectorAll(".meta input[data-was]")) {
     box.value = box.dataset.was;
-    if (box.dataset.field === "language") box.dataset.code = box.dataset.held ?? "";
     if ("fit" in box.dataset) fitted(box);
   }
   main.querySelector(".hero")?.classList.remove("editing");
@@ -482,35 +482,19 @@ function offerUndo(undone) {
   });
 }
 
-/** `codeOf`: what the language field `box` holds as a code, the one picked, a listed language its words name, or the words as typed. */
-function codeOf(box) {
-  const typed = box.value.trim();
-  if (!typed) return "";
-  if (box.dataset.code && box.dataset.name === typed) return box.dataset.code;
-  const pick = box.parentElement.querySelector(".pick");
-  const named = [...(pick?.querySelectorAll("[data-code]") ?? [])].find((o) =>
-    o.dataset.name.toLowerCase() === typed.toLowerCase() ||
-    o.dataset.code.toLowerCase() === typed.toLowerCase() ||
-    o.dataset.words.split(" ")[0] === typed.toLowerCase()
-  );
-  return named ? named.dataset.code : box.dataset.code && box.dataset.was === typed ? box.dataset.code : typed;
-}
-
 /** `changeOf`: the change `box` asks for against `was`, `back` where emptied, else its words, `null` where it stands as it was. */
-function changeOf(box, was, value = box.value.trim()) {
+function changeOf(box, was) {
+  const value = box.value.trim();
   if (value === was) return null;
   return value ? { to: value } : "back";
 }
 
-/** `saveMeta` saves the head's editor, each field changed, the language as its code. */
+/** `saveMeta` saves the head's editor, each field changed. */
 async function saveMeta(meta) {
   const patch = {};
   for (const box of meta.querySelectorAll(".metaedit input[data-field]")) {
-    const field = box.dataset.field;
-    const change = field === "language"
-      ? (box.value.trim() === box.dataset.was ? null : changeOf(box, null, codeOf(box)))
-      : changeOf(box, box.dataset.was);
-    if (change) patch[field] = change;
+    const change = changeOf(box, box.dataset.was);
+    if (change) patch[box.dataset.field] = change;
   }
   if (Object.keys(patch).length === 0) return closeMeta();
   await patched([bookOf(meta)], patch);
@@ -591,7 +575,7 @@ function pickOf(box) {
   return held ?? null;
 }
 
-/** `narrowPick`: the pick list `box` offers, its options narrowed to its words, and a tag field's to the type beside it, less the tags a `.types` row holds. */
+/** `narrowPick`: the pick list `box` offers, its options narrowed to its words, and a tag field's to the type beside it (the languages too under a type `data-languages` names), less the tags a `.types` row holds. */
 function narrowPick(box) {
   const pick = pickOf(box);
   if (!pick) return;
@@ -600,16 +584,16 @@ function narrowPick(box) {
   const type = box.dataset.field === "tag"
     ? (row?.querySelector('input[data-field="type"]')?.value ?? "").trim().toLowerCase()
     : "";
-  const held = [...(row?.querySelectorAll(".tag input") ?? [])].map((b) => b.dataset.was.toLowerCase());
+  const spoken = type !== "" && (pick.dataset.languages ?? "").split("|").includes(type);
+  const held = [...(row?.querySelectorAll(".tag[data-tag]") ?? [])].map((t) => t.dataset.tag.toLowerCase());
   let shown = 0;
   for (const option of pick.children) {
-    if (option.classList.contains("head")) continue;
-    const fits = (!typed || option.dataset.words.includes(typed)) && (!type || option.dataset.type === type) &&
-      !held.includes(option.dataset.words);
+    const typeFits = !type || option.dataset.type === type || (spoken && option.dataset.lang !== undefined);
+    const fits = (!typed || option.dataset.words.includes(typed)) && typeFits &&
+      !held.includes(option.dataset.name.toLowerCase());
     option.hidden = !fits;
     if (fits) shown++;
   }
-  for (const head of pick.querySelectorAll(".head")) head.hidden = typed !== "";
   pick.hidden = shown === 0;
 }
 
@@ -625,7 +609,6 @@ main.addEventListener("input", (event) => {
     box.closest(".fresh").querySelector(".more input").hidden = box.value.trim() === "";
   }
   if (!box.dataset.pick) return;
-  if (box.dataset.field === "language") box.dataset.code = "";
   narrowPick(box);
 });
 main.addEventListener("focusout", (event) => {
@@ -641,10 +624,6 @@ main.addEventListener("mousedown", (event) => {
   event.preventDefault();
   const box = option.parentElement.parentElement.querySelector("input");
   box.value = option.dataset.name;
-  if (option.dataset.code !== undefined) {
-    box.dataset.code = option.dataset.code;
-    box.dataset.name = option.dataset.name;
-  }
   if ("fit" in box.dataset) fitted(box);
   option.parentElement.hidden = true;
   if (box.closest(".types")) keepType(box, againOf(box)).catch(console.error);
@@ -654,7 +633,7 @@ main.addEventListener("mousedown", (event) => {
 // `Enter` keeps the head's editor or a `.types` field, adds a tag, or renames,
 // never while `isComposing`; `Escape` closes, or puts a `.types` field back.
 main.addEventListener("keydown", async (event) => {
-  const box = event.target.closest(".meta input, .sheet input, .renaming input");
+  const box = event.target.closest(".meta input, .sheet input, .renaming input, .types input");
   if (!box || event.isComposing || event.keyCode === 229) return;
   if (box.closest(".types")) typeKey(event, box);
   else if (event.key === "Escape") {
@@ -668,9 +647,9 @@ main.addEventListener("keydown", async (event) => {
   }
 });
 
-// `.types`: the book's tags under every type in use, each field kept on `Enter`
-// or `focusout`, a `.name` renaming its type on every book, a tag's words
-// changing it on its book, and `.more` adding a tag under its type.
+// `.types`: a book page's tags under every type in use, each opening Books narrowed to it,
+// `.more` adding one; over Books as `.editing`, every tag a field. Each field is kept on
+// `Enter` or `focusout`, a `.name` renaming its type on every book, a tag field its tag.
 
 /** `refocus`: the `data-key` of the field `show` focuses once it has drawn the page. */
 let refocus = null;
@@ -688,15 +667,32 @@ function askOf(box) {
   const name = row.querySelector(".name");
   const fresh = row.classList.contains("fresh");
   const type = fresh ? name.value.trim() : name.dataset.was;
-  const books = [bookOf(box)];
   if (box === name) return fresh || !words || words === type ? null : ["rename_type", { from: type, to: words }];
-  if (box.closest(".more")) return words && type ? ["edit_metadata", { books, patch: { add: [{ type, tag: words }] } }] : null;
+  if (box.closest(".more")) {
+    return words && type ? ["edit_metadata", { books: [bookOf(box)], patch: { add: [{ type, tag: words }] } }] : null;
+  }
   if (!words || words === box.dataset.was) return null;
-  const from = { type, tag: box.dataset.was };
-  return ["edit_metadata", { books, patch: { retag: [{ from, to: { type, tag: words } }] } }];
+  return ["retag_every", { from: { type, tag: box.dataset.was }, to: { type, tag: words } }];
 }
 
-/** `keepType` keeps what `box`, a field of `.types`, asks for, once, and draws again, `then` naming the field focused after, flashing Undo for a type renamed or an edit reaching other books. */
+/** `follow` sets in place the tag the route narrows Books to, `from` (a type, or a type and a tag), as `to`, the filter dropped where `to` is `null`. */
+function follow(from, to) {
+  const [path, query] = (location.hash.slice(1) || "/").split("?");
+  const params = new URLSearchParams(query ?? "");
+  const named = (held, words) => (held ?? "").toLowerCase() === words.toLowerCase();
+  if (params.get("by") !== "tag" || !named(params.get("type"), from.type)) return;
+  if (from.tag !== undefined && !named(params.get("is"), from.tag)) return;
+  if (to === null) {
+    for (const key of ["by", "type", "is"]) params.delete(key);
+  } else {
+    params.set("type", to.type);
+    if (to.tag !== undefined) params.set("is", to.tag);
+  }
+  const said = params.toString();
+  history.replaceState(null, "", `#${path}${said ? `?${said}` : ""}`);
+}
+
+/** `keepType` keeps what `box`, a field of `.types`, asks for, once, and draws again, `then` naming the field focused after, flashing Undo for a type or a tag renamed on every book or an edit reaching other books. */
 async function keepType(box, then = null) {
   if ("kept" in box.dataset) return;
   const ask = askOf(box);
@@ -712,9 +708,11 @@ async function keepType(box, then = null) {
     refocus = null;
     return;
   }
+  if (name === "rename_type") follow({ type: args.from }, { type: args.to });
+  if (name === "retag_every") follow(args.from, args.to);
   closeMeta();
   await show();
-  if (undone.length && (name === "rename_type" || reached(undone) > 1)) offerUndo(undone);
+  if (undone.length && (name !== "edit_metadata" || reached(undone) > 1)) offerUndo(undone);
 }
 
 /** `typeKey`: `Enter` or `Escape` in `box`, a field of `.types`, `Enter` in `.fresh`'s type going on to its tag and in `.more` keeping the focus there for another. */
@@ -886,13 +884,11 @@ function openSheet() {
   const fields = {
     authors: values.map((v) => v.authors.join(" & ")),
     publisher: values.map((v) => v.publisher ?? ""),
-    language: values.map((v) => v.language ?? ""),
   };
   for (const [field, held] of Object.entries(fields)) {
     const box = sheet.querySelector(`input[data-field="${field}"]`);
     box.value = "";
     box.disabled = false;
-    box.dataset.code = "";
     const distinct = [...new Set(held.filter((v) => v))];
     box.placeholder = distinct.length === 0
       ? said.none
@@ -926,7 +922,7 @@ async function applySheet(sheet) {
     if (box.closest(".retag")) continue;
     const field = box.dataset.field;
     const back = sheet.querySelector(`[data-act="bulk-back"][data-field="${field}"]`).classList.contains("on");
-    const value = field === "language" ? codeOf(box) : box.value.trim();
+    const value = box.value.trim();
     if (back) patch[field] = "back";
     else if (value) patch[field] = { to: value };
   }
@@ -989,6 +985,14 @@ document.addEventListener("click", async (event) => {
     case "untag":
       await patched([bookOf(act)], { remove: [{ type: act.dataset.type, tag: act.dataset.tag }] });
       break;
+    case "untag-every": {
+      const from = { type: act.dataset.type, tag: act.dataset.tag };
+      const undone = await call("retag_every", { from, to: null });
+      follow(from, null);
+      await show();
+      if (undone.length) offerUndo(undone);
+      break;
+    }
     case "unpick":
       for (const tile of picked()) tile.classList.remove("picked");
       drawPicked();

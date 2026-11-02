@@ -1,5 +1,6 @@
-//! [`head`], [`chip`], [`renaming`], [`chosen`], [`sheet`], [`suggestions`] and [`charts`]: a
-//! book's metadata on its head, on Books narrowed and picked, and charted.
+//! [`head`], [`listed`], [`chip`], [`renaming`], [`chosen`], [`sheet`], [`suggestions`] and
+//! [`charts`]: a book's metadata on its head, the tags over Books, Books narrowed and picked,
+//! and the charts.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
@@ -41,7 +42,7 @@ pub(super) fn named(cx: &Ctx, at: usize) -> Named {
     }
 }
 
-/// [`Route::Books`] narrowed to `by`, under `window`.
+/// `narrowed`: [`Route::Books`] narrowed to `by`, under `window`.
 pub(super) fn narrowed(by: By, window: Option<Window>) -> Route {
     Route::Books {
         shelf: Shelf::All,
@@ -50,6 +51,7 @@ pub(super) fn narrowed(by: By, window: Option<Window>) -> Route {
         query: String::new(),
         window,
         by: Some(by),
+        editing: false,
     }
 }
 
@@ -95,25 +97,20 @@ pub(super) fn head(cx: &Ctx, at: usize) -> String {
             names.join(joint)
         );
     }
-    let mut facts = Vec::new();
-    if let Some(publisher) = &values.publisher {
-        facts.push(format!(
-            "<a href=\"{}\">{}</a>",
-            narrowed(By::Publisher(Some(publisher.clone())), None).link(),
-            esc(publisher)
-        ));
-    }
-    if let Some(code) = &values.language {
-        facts.push(format!(
-            "<a href=\"{}\">{}</a>",
-            narrowed(By::Language(Some(code.clone())), None).link(),
-            esc(&language_name(cx, code))
-        ));
-    }
+    let publisher = values
+        .publisher
+        .as_ref()
+        .map(|publisher| {
+            format!(
+                "<a href=\"{}\">{}</a>",
+                narrowed(By::Publisher(Some(publisher.clone())), None).link(),
+                esc(publisher)
+            )
+        })
+        .unwrap_or_default();
     let _ = write!(
         out,
-        "<p class=\"facts\">{}<button class=\"edit\" data-act=\"edit-meta\">{}</button></p>",
-        facts.join("<span class=\"dot\">·</span>"),
+        "<p class=\"facts\">{publisher}<button class=\"edit\" data-act=\"edit-meta\">{}</button></p>",
         esc(w.edit)
     );
     out.push_str(&types(cx, &values));
@@ -144,42 +141,50 @@ fn fit(words: &str) -> String {
     format!("calc({:.2}em + 2px)", width(words))
 }
 
-/// `.types`: each type [`in_use`] beside the tags of it `values` holds, the
-/// type a field renaming it on every book, each tag a field with ×, and a
+/// `field`: a field `which` holding `words`, as wide as they are, named in
+/// `app.js` by `key`, `more` its other attributes.
+fn field(which: &str, words: &str, key: &[&str], more: &str) -> String {
+    format!(
+        "<input data-field=\"{which}\" value=\"{0}\" data-was=\"{0}\" data-key=\"{1}\" \
+         data-fit style=\"width: {2}\"{more} autocomplete=\"off\" spellcheck=\"false\">",
+        esc(words),
+        json(&key),
+        fit(words)
+    )
+}
+
+/// `named_type`: the `.name` field of `r#type`, renaming it on every book.
+fn named_type(cx: &Ctx, r#type: &str) -> String {
+    let w = Words::of(cx.lang);
+    field(
+        "type",
+        r#type,
+        &["type", r#type],
+        &format!(" class=\"name\" data-tip=\"{}\"", esc(w.rename_every_tip)),
+    )
+}
+
+/// `.types`: each type [`in_use`] beside the tags of it `values` holds, the type a field
+/// renaming it on every book, each tag opening Books narrowed to it with × beside it, and a
 /// `.more` field adding one; under them, `.fresh`, a type and its first tag.
 fn types(cx: &Ctx, values: &Values) -> String {
     let w = Words::of(cx.lang);
-    // `field`: a field holding `words`, as wide as they are, named in `app.js` by `key`.
-    let field = |which: &str, words: &str, key: &[&str], more: &str| {
-        format!(
-            "<input data-field=\"{which}\" value=\"{0}\" data-was=\"{0}\" data-key=\"{1}\" \
-             data-fit style=\"width: {2}\"{more} autocomplete=\"off\" spellcheck=\"false\">",
-            esc(words),
-            json(&key),
-            fit(words)
-        )
-    };
     let (in_use, _) = in_use(cx);
     let mut out = String::from("<div class=\"types\">");
     for (r#type, _) in &in_use {
         let _ = write!(
             out,
             "<div class=\"kind\">{}<span class=\"held\">",
-            field(
-                "type",
-                r#type,
-                &["type", r#type],
-                &format!(" class=\"name\" data-tip=\"{}\"", esc(w.rename_type_tip))
-            )
+            named_type(cx, r#type)
         );
         for tag in values.tags.iter().filter(|t| t.r#type == *r#type) {
             let _ = write!(
                 out,
-                "<span class=\"tag\">{}<button class=\"off\" data-act=\"untag\" data-type=\"{}\" \
-                 data-tag=\"{}\" data-tip=\"{}\">×</button></span>",
-                field("tag", &tag.tag, &["tag", r#type, &tag.tag], ""),
-                esc(r#type),
+                "<span class=\"tag\" data-tag=\"{1}\"><a href=\"{0}\">{1}</a><button class=\"off\" \
+                 data-act=\"untag\" data-type=\"{2}\" data-tag=\"{1}\" data-tip=\"{3}\">×</button></span>",
+                narrowed(By::Tag(r#type.clone(), Some(tag.tag.clone())), None).link(),
                 esc(&tag.tag),
+                esc(r#type),
                 esc(w.remove_tip)
             );
         }
@@ -205,9 +210,103 @@ fn types(cx: &Ctx, values: &Values) -> String {
     out
 }
 
-/// `at`'s editor: its title, authors, publisher and language, each field
-/// holding what `values` states; under a title or authors `cx.metadata` sets,
-/// the book's own words with Revert.
+/// `.types.all`: over Books, each type [`in_use`] with its tags and `not set`, each opening
+/// Books narrowed to it by `to`, the one `by` names lit and going back; `editing`, each a
+/// field renaming it on every book, × taking a tag off every book; `.edit` between the two.
+pub(super) fn listed(
+    cx: &Ctx,
+    by: Option<&By>,
+    editing: bool,
+    to: impl Fn(Option<By>, bool) -> String,
+) -> String {
+    let w = Words::of(cx.lang);
+    let (types, tags) = in_use(cx);
+    if types.is_empty() {
+        return String::new();
+    }
+    let lit = |r#type: &str, tag: Option<&str>| match by {
+        Some(By::Tag(t, held)) if metadata::alike(t, r#type) => match (held, tag) {
+            (Some(held), Some(tag)) => metadata::alike(held, tag),
+            (None, None) => true,
+            _ => false,
+        },
+        _ => false,
+    };
+    let (class, edit) = match editing {
+        true => (" editing", w.done),
+        false => ("", w.edit_tags),
+    };
+    let mut out = format!("<div class=\"types all{class}\">");
+    for (r#type, _) in &types {
+        let mut under: Vec<&str> = tags
+            .iter()
+            .filter(|(t, ..)| t == r#type)
+            .map(|(_, tag, _)| tag.as_str())
+            .collect();
+        if under.iter().all(|tag| tag.parse::<i64>().is_ok()) {
+            under.sort_by_key(|tag| tag.parse::<i64>().unwrap_or(0));
+        }
+        let name = match editing {
+            true => named_type(cx, r#type),
+            false => format!("<span class=\"name\">{}</span>", esc(r#type)),
+        };
+        let _ = write!(out, "<div class=\"kind\">{name}<span class=\"held\">");
+        for tag in under {
+            if editing {
+                let _ = write!(
+                    out,
+                    "<span class=\"tag\" data-tag=\"{0}\">{1}<button class=\"off\" data-act=\"untag-every\" \
+                     data-type=\"{2}\" data-tag=\"{0}\" data-tip=\"{3}\">×</button></span>",
+                    esc(tag),
+                    field(
+                        "tag",
+                        tag,
+                        &["tag", r#type, tag],
+                        &format!(" data-tip=\"{}\"", esc(w.rename_every_tip))
+                    ),
+                    esc(r#type),
+                    esc(w.remove_every_tip)
+                );
+                continue;
+            }
+            let (on, link) = match lit(r#type, Some(tag)) {
+                true => (" on", to(None, false)),
+                false => (
+                    "",
+                    to(Some(By::Tag(r#type.clone(), Some(tag.to_string()))), false),
+                ),
+            };
+            let _ = write!(
+                out,
+                "<span class=\"tag{on}\"><a href=\"{link}\">{}</a></span>",
+                esc(tag)
+            );
+        }
+        if !editing {
+            let (on, link) = match lit(r#type, None) {
+                true => (" on", to(None, false)),
+                false => ("", to(Some(By::Tag(r#type.clone(), None)), false)),
+            };
+            let _ = write!(
+                out,
+                "<span class=\"tag unset{on}\"><a href=\"{link}\">{}</a></span>",
+                esc(w.not_set)
+            );
+        }
+        out.push_str("</span></div>");
+    }
+    let _ = write!(
+        out,
+        "<a class=\"edit\" href=\"{}\">{}</a></div>",
+        to(by.cloned(), !editing),
+        esc(edit)
+    );
+    out
+}
+
+/// `at`'s editor: its title, authors and publisher, each field holding what
+/// `values` states; under a title or authors `cx.metadata` sets, the book's own
+/// words with Revert.
 fn editor(cx: &Ctx, at: usize, values: &Values) -> String {
     let w = Words::of(cx.lang);
     let book = &cx.stats.books[at];
@@ -230,11 +329,6 @@ fn editor(cx: &Ctx, at: usize, values: &Values) -> String {
         )
     };
     let authors = metadata::joined(&values.authors);
-    let language = values
-        .language
-        .as_deref()
-        .map(|code| language_name(cx, code))
-        .unwrap_or_default();
     let mut out = String::from("<div class=\"metaedit\" hidden>");
     out.push_str(&field(w.title_field, "title", &book.title, " title", ""));
     if set.title.is_some() {
@@ -244,7 +338,6 @@ fn editor(cx: &Ctx, at: usize, values: &Values) -> String {
     if set.authors.is_some() {
         out.push_str(&says(own_author, "authors"));
     }
-    out.push_str("<div class=\"pair\">");
     out.push_str(&field(
         w.publisher_field,
         "publisher",
@@ -252,19 +345,6 @@ fn editor(cx: &Ctx, at: usize, values: &Values) -> String {
         "",
         "",
     ));
-    let code = values.language.clone().unwrap_or_default();
-    let _ = write!(
-        out,
-        "<div class=\"field\"><span>{}</span><input class=\"box\" data-field=\"language\" value=\"{}\" \
-         data-was=\"{}\" data-code=\"{}\" data-held=\"{}\" data-pick=\"languages\" autocomplete=\"off\" spellcheck=\"false\">{}</div>",
-        esc(w.language_field),
-        esc(&language),
-        esc(&language),
-        esc(&code),
-        esc(&code),
-        languages(cx)
-    );
-    out.push_str("</div>");
     let _ = write!(
         out,
         "<p class=\"acts\"><button data-act=\"cancel-meta\">{}</button>\
@@ -275,50 +355,33 @@ fn editor(cx: &Ctx, at: usize, values: &Values) -> String {
     out
 }
 
-/// [`names::LANGUAGES`] as a language field lists them: those `cx.metadata` sets
-/// first, each named in `cx.lang` and its own.
-fn languages(cx: &Ctx) -> String {
-    let w = Words::of(cx.lang);
-    let mut used: Vec<(String, usize)> = Vec::new();
-    for set in cx.metadata {
-        if let Some(code) = &set.language {
-            match used.iter_mut().find(|(c, _)| c == code) {
-                Some((_, n)) => *n += 1,
-                None => used.push((code.clone(), 1)),
-            }
-        }
-    }
-    used.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-    let option = |code: &str| {
+/// [`names::LANGUAGES`] as a tag field under a type of [`names::TYPES`] offers
+/// them past the tags in use, each named in `cx.lang` and its own; those a tag
+/// of `tags` names left out.
+fn languages(cx: &Ctx, tags: &Tags) -> String {
+    let held: Vec<&str> = tags
+        .iter()
+        .filter(|(r#type, ..)| names::is_type(r#type))
+        .filter_map(|(_, tag, _)| names::code_of(tag))
+        .collect();
+    let mut out = String::new();
+    for (code, ..) in names::LANGUAGES.iter().filter(|(c, ..)| !held.contains(c)) {
         let name = language_name(cx, code);
         let own = names::own(code).unwrap_or(code);
         let shown = match own == name {
             true => name.clone(),
             false => format!("{own} · {name}"),
         };
-        format!(
-            "<div data-code=\"{}\" data-name=\"{}\" data-words=\"{}\"><span>{}</span><small>{}</small></div>",
+        let _ = write!(
+            out,
+            "<div data-lang=\"{}\" data-name=\"{}\" data-words=\"{}\"><span>{}</span><small>{}</small></div>",
             esc(code),
             esc(&name),
-            esc(&format!("{} {} {}", own, name, code).to_lowercase()),
+            esc(&format!("{own} {name} {code}").to_lowercase()),
             esc(&shown),
             esc(code)
-        )
-    };
-    let mut out = String::from("<div class=\"pick\" hidden>");
-    if !used.is_empty() {
-        let _ = write!(out, "<div class=\"head\">{}</div>", esc(w.in_use_head));
-        for (code, _) in &used {
-            out.push_str(&option(code));
-        }
-        let _ = write!(out, "<div class=\"head\">{}</div>", esc(w.others_head));
+        );
     }
-    for (code, ..) in names::LANGUAGES {
-        if !used.iter().any(|(c, _)| c == code) {
-            out.push_str(&option(code));
-        }
-    }
-    out.push_str("</div>");
     out
 }
 
@@ -357,7 +420,8 @@ fn in_use(cx: &Ctx) -> (Types, Tags) {
 }
 
 /// [`in_use`]'s types and tags as the lists a type or tag field offers, held once
-/// beside the fields for `app.js` to move under the one focused.
+/// beside the fields for `app.js` to move under the one focused; under a type of
+/// [`names::TYPES`], `data-languages`, a tag's list offers [`languages`] too.
 fn picks(cx: &Ctx) -> String {
     let (types, tags) = in_use(cx);
     let books = |n: usize| counted(cx.s.n_books, n as i64);
@@ -372,7 +436,12 @@ fn picks(cx: &Ctx) -> String {
             esc(&books(*n))
         );
     }
-    out.push_str("</div><div class=\"pick\" data-for=\"tags\" hidden>");
+    let types_of_language: Vec<String> = names::TYPES.iter().map(|t| t.to_lowercase()).collect();
+    let _ = write!(
+        out,
+        "</div><div class=\"pick\" data-for=\"tags\" data-languages=\"{}\" hidden>",
+        esc(&types_of_language.join("|"))
+    );
     for (r#type, tag, n) in &tags {
         let _ = write!(
             out,
@@ -384,6 +453,7 @@ fn picks(cx: &Ctx) -> String {
             esc(&books(*n))
         );
     }
+    out.push_str(&languages(cx, &tags));
     out.push_str("</div>");
     out
 }
@@ -410,10 +480,6 @@ pub(super) fn chip(cx: &Ctx, by: &By, back: &str) -> String {
     let (what, value) = match by {
         By::Author(v) => (w.author_chip.to_string(), v.clone()),
         By::Publisher(v) => (w.publisher_field.to_string(), v.clone()),
-        By::Language(v) => (
-            w.language_field.to_string(),
-            v.as_deref().map(|code| language_name(cx, code)),
-        ),
         By::Tag(t, v) => (t.clone(), v.clone()),
     };
     let mut out = format!(
@@ -421,7 +487,7 @@ pub(super) fn chip(cx: &Ctx, by: &By, back: &str) -> String {
         esc(&what),
         esc(value.as_deref().unwrap_or(w.not_set))
     );
-    if value.is_some() && !matches!(by, By::Language(_)) {
+    if value.is_some() {
         let _ = write!(
             out,
             "<button class=\"chip act\" data-act=\"rename\">{}</button>",
@@ -436,13 +502,12 @@ pub(super) fn renaming(cx: &Ctx, by: &By, count: usize) -> String {
     let w = Words::of(cx.lang);
     if matches!(
         by,
-        By::Author(None) | By::Publisher(None) | By::Language(_) | By::Tag(_, None)
+        By::Author(None) | By::Publisher(None) | By::Tag(_, None)
     ) {
         return String::new();
     }
     let value = match by {
         By::Author(v) | By::Publisher(v) | By::Tag(_, v) => v.clone(),
-        By::Language(v) => v.clone(),
     }
     .unwrap_or_default();
     let ask = counted(w.rename_ask, count as i64).replace("{v}", &value);
@@ -477,22 +542,18 @@ pub(super) fn chosen(cx: &Ctx, total: usize) -> String {
 /// field's books and their tags set out by `app.js`'s `openSheet`.
 pub(super) fn sheet(cx: &Ctx) -> String {
     let w = Words::of(cx.lang);
-    let field = |name: &str, field: &str, back: &str, more: &str| {
+    let field = |name: &str, field: &str, back: &str| {
         format!(
             "<div class=\"field\"><span>{}<button class=\"clear\" data-act=\"bulk-back\" \
-             data-field=\"{field}\">{}</button></span><input class=\"box\" data-field=\"{field}\"{more} \
-             autocomplete=\"off\" spellcheck=\"false\">{}</div>",
+             data-field=\"{field}\">{}</button></span><input class=\"box\" data-field=\"{field}\" \
+             autocomplete=\"off\" spellcheck=\"false\"></div>",
             esc(name),
-            esc(back),
-            match field {
-                "language" => languages(cx),
-                _ => String::new(),
-            }
+            esc(back)
         )
     };
     format!(
         "<div class=\"sheet\" hidden data-head=\"{}\" data-leave=\"{}\" data-values=\"{}\" \
-         data-none=\"{}\" data-some=\"{}\" data-apply=\"{}\"><h3></h3><p class=\"lede\">{}</p>{}{}{}\
+         data-none=\"{}\" data-some=\"{}\" data-apply=\"{}\"><h3></h3><p class=\"lede\">{}</p>{}{}\
          <div class=\"field retag\" data-off=\"{}\"><span>{}</span></div>{}{}\
          <p class=\"acts\"><button data-act=\"cancel-bulk\">{}</button>\
          <button class=\"save\" data-act=\"apply-bulk\"></button></p></div>",
@@ -503,14 +564,8 @@ pub(super) fn sheet(cx: &Ctx) -> String {
         esc(w.of_some),
         esc(w.apply_to),
         esc(w.leave_note),
-        field(w.authors_field, "authors", w.each_own, ""),
-        field(w.publisher_field, "publisher", w.empty, ""),
-        field(
-            w.language_field,
-            "language",
-            w.empty,
-            " data-pick=\"languages\" data-code=\"\""
-        ),
+        field(w.authors_field, "authors", w.each_own),
+        field(w.publisher_field, "publisher", w.empty),
         esc(w.remove_tip),
         esc(w.tags_field),
         adder(cx),
@@ -535,18 +590,25 @@ struct One<'a> {
     patch: &'a Patch,
 }
 
-/// `.suggest` over the books `shown`: a language their characters settle where
-/// `cx.metadata` sets none, and authors written surname first turned round.
+/// `.suggest` over the books `shown`: a language tag their characters settle where
+/// `cx.metadata` holds none, and authors written surname first turned round.
 pub(super) fn suggestions(cx: &Ctx, shown: &[usize]) -> String {
     let w = Words::of(cx.lang);
+    let (types, tags) = in_use(cx);
+    // `kind`: the type of `names::TYPES` most held, else the one `cx.lang` names.
+    let kind = types
+        .iter()
+        .find(|(t, _)| names::is_type(t))
+        .map_or_else(|| names::type_word(cx.lang).to_string(), |(t, _)| t.clone());
     let mut by_language: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     let mut turned: Vec<(usize, String)> = Vec::new();
     for &at in shown {
         let book = &cx.stats.books[at];
-        let set = &cx.metadata[at];
-        if set.language.is_none()
-            && let Some(code) = metadata::suggested_language(&book.title, &book.author)
-        {
+        let spoken = cx.metadata[at]
+            .tags
+            .iter()
+            .any(|t| names::is_type(&t.r#type));
+        if !spoken && let Some(code) = metadata::suggested_language(&book.title, &book.author) {
             by_language.entry(code).or_default().push(at);
         }
         if let Some(authors) = metadata::suggested_authors(&book.author) {
@@ -559,9 +621,16 @@ pub(super) fn suggestions(cx: &Ctx, shown: &[usize]) -> String {
             .iter()
             .map(|at| cx.stats.books[*at].title.clone())
             .collect();
-        let name = language_name(cx, code);
+        // `name`: the tag in use naming `code`, else its name in `cx.lang`.
+        let name = tags
+            .iter()
+            .find(|(t, tag, _)| names::is_type(t) && names::code_of(tag) == Some(*code))
+            .map_or_else(|| language_name(cx, code), |(_, tag, _)| tag.clone());
         let patch = Patch {
-            language: Some(metadata::Change::To((*code).to_string())),
+            add: vec![Tag {
+                r#type: kind.clone(),
+                tag: name.clone(),
+            }],
             ..Patch::default()
         };
         let each: Vec<One> = books
@@ -633,7 +702,7 @@ pub(super) fn charts(
     window: Option<Window>,
 ) -> String {
     let w = Words::of(cx.lang);
-    // `over`: each book's seconds over `days` as `Stats::book_seconds_over` sums them, in one pass.
+    // `over`: each book's seconds over `days`, summed in one pass over `cx.stats.sittings`.
     let mut over: HashMap<usize, i64> = HashMap::new();
     if let Some(days) = &days {
         for sitting in &cx.stats.sittings {
@@ -746,7 +815,7 @@ pub(super) fn charts(
             }
         }
     }
-    for r#type in types {
+    for r#type in types.into_iter().filter(|t| !names::is_type(t)) {
         let mut bars = Vec::new();
         let mut unset = Vec::new();
         let mut doubled = false;
@@ -953,8 +1022,28 @@ fn columns(cx: &Ctx, head: &str, bars: Vec<Bar>, unset: Vec<Bar>, note: Option<S
     out
 }
 
-/// `read`'s languages card: each language's share of the time read, its legend,
-/// and the months split by language where `days` holds more than one.
+/// `spoken`: the languages `tags` holds, each tag under a type of
+/// [`names::TYPES`], its words once.
+fn spoken(tags: &[Tag]) -> Vec<&Tag> {
+    let mut out: Vec<&Tag> = Vec::new();
+    for tag in tags.iter().filter(|t| names::is_type(&t.r#type)) {
+        if !out.iter().any(|t| t.tag == tag.tag) {
+            out.push(tag);
+        }
+    }
+    out
+}
+
+/// `part`: the `n`th of `of` even parts of `secs`, the first `secs % of` of them
+/// a second longer, the parts summing to `secs`.
+fn part(secs: i64, n: usize, of: usize) -> i64 {
+    let of = of.max(1) as i64;
+    secs / of + i64::from((n as i64) < secs % of)
+}
+
+/// `read`'s languages card under the type of [`names::TYPES`] most held: each language's
+/// share of the time read, a book's split evenly among its languages, its legend, and
+/// the months split by language where `days` holds more than one.
 fn languages_chart(
     cx: &Ctx,
     read: &[(usize, i64, Values)],
@@ -963,73 +1052,90 @@ fn languages_chart(
     total: i64,
 ) -> String {
     let w = Words::of(cx.lang);
-    if read.iter().all(|(_, _, v)| v.language.is_none()) {
+    let books: Vec<(usize, Vec<&Tag>)> = read
+        .iter()
+        .map(|(at, _, values)| (*at, spoken(&values.tags)))
+        .collect();
+    let (types, _) = in_use(cx);
+    let Some((kind, _)) = types.iter().find(|(t, _)| names::is_type(t)) else {
+        return String::new();
+    };
+    if books.iter().all(|(_, these)| these.is_empty()) {
         return String::new();
     }
     let hue = hues(cx);
-    let mut langs: Vec<(Option<String>, i64)> = Vec::new();
-    for (_, secs, values) in read {
-        match langs.iter_mut().find(|(code, _)| *code == values.language) {
-            Some((_, s)) => *s += secs,
-            None => langs.push((values.language.clone(), *secs)),
+    // `langs`: each language's tag, `None` for a book holding none, and its seconds.
+    let mut langs: Vec<(Option<Tag>, i64)> = Vec::new();
+    let mut split = false;
+    for ((_, secs, _), (_, these)) in read.iter().zip(&books) {
+        split |= these.len() > 1;
+        let parts: Vec<(Option<&Tag>, i64)> = match these.is_empty() {
+            true => vec![(None, *secs)],
+            false => these
+                .iter()
+                .enumerate()
+                .map(|(n, tag)| (Some(*tag), part(*secs, n, these.len())))
+                .collect(),
+        };
+        for (tag, secs) in parts {
+            let words = tag.map(|t| t.tag.as_str());
+            match langs
+                .iter_mut()
+                .find(|(t, _)| t.as_ref().map(|t| t.tag.as_str()) == words)
+            {
+                Some((_, s)) => *s += secs,
+                None => langs.push((tag.cloned(), secs)),
+            }
         }
     }
     langs.sort_by(|a, b| (a.0.is_none(), b.1).cmp(&(b.0.is_none(), a.1)));
-    let colour = |code: &Option<String>| match code {
+    let colour = |tag: &Option<Tag>| match tag {
         None => UNSET.to_string(),
-        Some(code) => hue(code),
+        Some(tag) => hue(&tag.tag),
     };
     let top = langs
         .iter()
-        .find(|(code, _)| code.is_some())
-        .and_then(|(code, _)| code.as_deref())
-        .map(|code| language_name(cx, code))
+        .find_map(|(tag, _)| tag.as_ref().map(|t| t.tag.clone()))
         .unwrap_or_default();
     let mut out = format!(
         "<div><h2>{}<span class=\"said\">{} · {} {}</span></h2><div class=\"card\"><div class=\"share\">",
-        esc(w.languages_head),
+        esc(kind),
         esc(&date::duration(total, cx.s)),
         esc(cx.s.most),
         esc(&top)
     );
     let shares = shares(&langs.iter().map(|(_, s)| *s).collect::<Vec<i64>>());
-    for (code, secs) in &langs {
+    for (tag, secs) in &langs {
         let _ = write!(
             out,
             "<i style=\"flex: {secs}; background: {}\"></i>",
-            colour(code)
+            colour(tag)
         );
     }
     out.push_str("</div><div class=\"legend\">");
-    for ((code, secs), share) in langs.iter().zip(&shares) {
-        let name = match code {
-            Some(code) => {
-                let name = language_name(cx, code);
-                match names::own(code) {
-                    Some(own) if own != name => format!("{own} · {name}"),
-                    _ => name,
-                }
-            }
-            None => w.not_set.to_string(),
+    for ((tag, secs), share) in langs.iter().zip(&shares) {
+        let (class, name, by) = match tag {
+            Some(tag) => (
+                "",
+                tag.tag.as_str(),
+                By::Tag(tag.r#type.clone(), Some(tag.tag.clone())),
+            ),
+            None => (" unset", w.not_set, By::Tag(kind.clone(), None)),
         };
         let _ = write!(
             out,
-            "<a class=\"r{}\" href=\"{}\"><i style=\"background: {}\"></i><span>{}</span>\
+            "<a class=\"r{class}\" href=\"{}\"><i style=\"background: {}\"></i><span>{}</span>\
              <span class=\"h\">{}</span><span class=\"p\">{share}%</span></a>",
-            match code {
-                None => " unset",
-                Some(_) => "",
-            },
-            narrowed(By::Language(code.clone()), window).link(),
-            colour(code),
-            esc(&name),
+            narrowed(by, window).link(),
+            colour(tag),
+            esc(name),
             esc(&date::duration(*secs, cx.s))
         );
     }
     out.push_str("</div>");
     let months = months(cx, days);
     if months.len() > 1 {
-        // `by_book`: each book's seconds in each month as `Stats::book_seconds_over` sums them.
+        // `by_book`: each book's seconds in each of `months`, off `cx.stats.sittings`.
         let mut by_book: HashMap<usize, Vec<i64>> = HashMap::new();
         for sitting in &cx.stats.sittings {
             let Some(book) = sitting.book else { continue };
@@ -1041,32 +1147,41 @@ fn languages_chart(
             };
             by_book.entry(book).or_insert_with(|| vec![0; months.len()])[month] += sitting.seconds;
         }
-        let split: Vec<Split> = months
+        let split_by: Vec<Split> = months
             .into_iter()
             .enumerate()
             .map(|(month, (name, _))| {
                 let parts = langs
                     .iter()
-                    .map(|(code, _)| {
-                        let secs = read
+                    .map(|(lang, _)| {
+                        let secs = books
                             .iter()
-                            .filter(|(_, _, v)| v.language == *code)
-                            .map(|(at, ..)| by_book.get(at).map_or(0, |secs| secs[month]))
+                            .map(|(at, these)| {
+                                let secs = by_book.get(at).map_or(0, |secs| secs[month]);
+                                match lang {
+                                    None if these.is_empty() => secs,
+                                    None => 0,
+                                    Some(lang) => these
+                                        .iter()
+                                        .position(|t| t.tag == lang.tag)
+                                        .map_or(0, |n| part(secs, n, these.len())),
+                                }
+                            })
                             .sum();
-                        (code.clone(), secs)
+                        (lang.clone(), secs)
                     })
                     .collect();
                 (name, parts)
             })
             .collect();
-        let tallest = split
+        let tallest = split_by
             .iter()
             .map(|(_, parts)| parts.iter().map(|(_, s)| s).sum::<i64>())
             .max()
             .unwrap_or(0)
             .max(1);
         out.push_str("<div class=\"months\">");
-        for (name, parts) in &split {
+        for (name, parts) in &split_by {
             let sum: i64 = parts.iter().map(|(_, s)| s).sum();
             let _ = write!(
                 out,
@@ -1076,43 +1191,49 @@ fn languages_chart(
                     _ => esc(&date::duration(sum, cx.s)),
                 }
             );
-            for (code, secs) in parts.iter().rev().filter(|(_, s)| *s > 0) {
+            for (lang, secs) in parts.iter().rev().filter(|(_, s)| *s > 0) {
                 let _ = write!(
                     out,
                     "<i style=\"height: {:.1}px; background: {}\"></i>",
                     *secs as f64 / tallest as f64 * 120.0,
-                    colour(code)
+                    colour(lang)
                 );
             }
             let _ = write!(out, "<span>{}</span></div>", esc(name));
         }
         out.push_str("</div>");
     }
+    if split {
+        let _ = write!(out, "<p class=\"note\">{}</p>", esc(w.split_each));
+    }
     out.push_str("</div></div>");
     out
 }
 
 /// `Split`: a month's name and each language's time read in it.
-type Split = (String, Vec<(Option<String>, i64)>);
+type Split = (String, Vec<(Option<Tag>, i64)>);
 
-/// [`HUES`] by language, in the order the whole record's languages take by time
-/// read, the same on every span.
+/// [`HUES`] by a language's words, in the order the whole record's languages take
+/// by time read, each book's split as [`languages_chart`] splits it, the same on
+/// every span.
 fn hues<'a>(cx: &'a Ctx) -> impl Fn(&str) -> String + 'a {
     let mut order: Vec<(String, i64)> = Vec::new();
     for at in 0..cx.stats.books.len() {
-        if let Some(code) = &cx.metadata[at].language {
-            let secs = cx.stats.books[at].read_seconds(cx.from);
-            match order.iter_mut().find(|(c, _)| c == code) {
+        let these = spoken(&cx.metadata[at].tags);
+        let secs = cx.stats.books[at].read_seconds(cx.from);
+        for (n, tag) in these.iter().enumerate() {
+            let secs = part(secs, n, these.len());
+            match order.iter_mut().find(|(words, _)| *words == tag.tag) {
                 Some((_, s)) => *s += secs,
-                None => order.push((code.clone(), secs)),
+                None => order.push((tag.tag.clone(), secs)),
             }
         }
     }
     order.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-    move |code: &str| {
+    move |words: &str| {
         order
             .iter()
-            .position(|(c, _)| c == code)
+            .position(|(held, _)| held == words)
             .and_then(|n| HUES.get(n))
             .unwrap_or(&OTHER)
             .to_string()

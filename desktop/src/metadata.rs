@@ -13,6 +13,7 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 use readinglog_native::font::Script;
+use readinglog_native::lang::Lang;
 use readinglog_native::record::{Book, Record};
 use readinglog_native::stats::BookStat;
 use readinglog_native::written::{self, later};
@@ -25,7 +26,8 @@ const ROW: &str = "d";
 /// `NONE`: a row's field for a value it holds none of.
 const NONE: &str = "\\N";
 
-/// `Field`: one field of a book's metadata.
+/// `Field`: one field of a book's metadata; a `Language` row states a code, read
+/// as a tag of [`names::TYPES`]' type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Field {
@@ -109,8 +111,11 @@ pub struct Set {
     pub title: Option<String>,
     pub authors: Option<String>,
     pub publisher: Option<String>,
+    /// `language`: the code a `language` row states; `tags` holds it as `stated`.
     pub language: Option<String>,
     pub tags: Vec<Tag>,
+    /// `stated`: the tag `tags` holds for `language` and the `tags` row lacks.
+    stated: Option<Tag>,
 }
 
 impl Set {
@@ -130,10 +135,29 @@ impl Set {
                 Field::Tags => out.tags = tags_of(&value),
             }
         }
+        if let Some(code) = &out.language
+            && !names::codes(&out.tags).contains(&code.as_str())
+        {
+            let r#type = out
+                .tags
+                .iter()
+                .find(|t| names::is_type(&t.r#type))
+                .map_or_else(
+                    || names::type_word(Lang::English).to_string(),
+                    |t| t.r#type.clone(),
+                );
+            let tag = Tag {
+                r#type,
+                tag: names::name(code, Lang::English).unwrap_or(code).to_string(),
+            };
+            out.tags.push(tag.clone());
+            out.stated = Some(tag);
+        }
         out
     }
 
-    /// `book` drawn in the title, authors and language this sets over its own.
+    /// `lay_over` draws `book` in the title and authors `self` sets over its own, and in
+    /// the language the first of `tags` under a [`names::TYPES`] type names.
     pub fn lay_over(&self, book: &mut BookStat) {
         if let Some(title) = &self.title {
             book.title.clone_from(title);
@@ -141,8 +165,8 @@ impl Set {
         if let Some(authors) = &self.authors {
             book.author.clone_from(authors);
         }
-        if let Some(language) = &self.language {
-            book.language.clone_from(language);
+        if let Some(code) = names::codes(&self.tags).first() {
+            book.language = (*code).to_string();
         }
     }
 
@@ -153,7 +177,15 @@ impl Set {
             Field::Authors => self.authors.clone(),
             Field::Publisher => self.publisher.clone(),
             Field::Language => self.language.clone(),
-            Field::Tags => (!self.tags.is_empty()).then(|| tags_value(&self.tags)),
+            Field::Tags => {
+                let row: Vec<Tag> = self
+                    .tags
+                    .iter()
+                    .filter(|t| Some(*t) != self.stated.as_ref())
+                    .cloned()
+                    .collect();
+                (!row.is_empty()).then(|| tags_value(&row))
+            }
         }
     }
 }
@@ -164,7 +196,6 @@ impl Set {
 pub enum By {
     Author(Option<String>),
     Publisher(Option<String>),
-    Language(Option<String>),
     /// `Tag`: books holding this tag of this type; `None`, those holding no tag of it.
     Tag(String, Option<String>),
 }
@@ -179,7 +210,6 @@ impl By {
             By::Publisher(want) => {
                 values.publisher.as_deref().map(folded) == want.as_deref().map(folded)
             }
-            By::Language(want) => values.language == *want,
             By::Tag(r#type, None) => !values.tags.iter().any(|t| typed(t, r#type)),
             By::Tag(r#type, Some(tag)) => values
                 .tags
@@ -189,13 +219,12 @@ impl By {
     }
 }
 
-/// `Values`: a book's authors, publisher, language and tags, as Books narrows
-/// and the charts count by them.
+/// `Values`: a book's authors, publisher and tags, its languages among them, as
+/// Books narrows and the charts count by them.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
 pub struct Values {
     pub authors: Vec<String>,
     pub publisher: Option<String>,
-    pub language: Option<String>,
     pub tags: Vec<Tag>,
 }
 
@@ -205,7 +234,6 @@ impl Values {
         Values {
             authors: authors::split_display(set.authors.as_deref().unwrap_or(author)),
             publisher: set.publisher.clone(),
-            language: set.language.clone(),
             tags: set.tags.clone(),
         }
     }
@@ -263,7 +291,6 @@ pub struct Patch {
     pub title: Option<Change>,
     pub authors: Option<Change>,
     pub publisher: Option<Change>,
-    pub language: Option<Change>,
     /// `tags`: each book's tags whole where given; `retag`, `remove` and `add` apply over them.
     pub tags: Option<Vec<Tag>>,
     /// `retag`: a tag held folding as a `from` becomes its `to`, in its place.
@@ -281,9 +308,9 @@ impl Patch {
             || !self.remove.is_empty()
     }
 
-    /// `values`: each field `self` changes on `book` (its rows setting `held`)
-    /// and the value it takes; `None`, the book's own, for blank words or the
-    /// title or authors its row states.
+    /// `values`: each field `self` changes on `book` (its rows setting `held`) and the value it
+    /// takes; `None`, the book's own, for blank words, the title or authors its row states, and
+    /// `held.language` once the tags holding it are set.
     fn values(&self, book: &Book, held: &Set, spelling: &Spelling) -> Vec<(Field, Option<String>)> {
         let typed = |change: &Option<Change>| {
             change.as_ref().map(|change| match change {
@@ -313,10 +340,6 @@ impl Patch {
                 (!publisher.is_empty()).then_some(publisher),
             ));
         }
-        if let Some(words) = typed(&self.language) {
-            let language = lang::normalize(&words);
-            out.push((Field::Language, (!language.is_empty()).then_some(language)));
-        }
         if self.retags() {
             let mut tags: Vec<Tag> = Vec::new();
             for held in self.tags.as_ref().unwrap_or(&held.tags) {
@@ -343,6 +366,9 @@ impl Patch {
                 }
             }
             out.push((Field::Tags, (!tags.is_empty()).then(|| tags_value(&tags))));
+            if held.language.is_some() {
+                out.push((Field::Language, None));
+            }
         }
         out
     }
@@ -365,8 +391,8 @@ pub fn edit(ws: &Workspace, books: &[Named], patch: &Patch, at: &str) -> Result<
 }
 
 /// `rename` renames `by`'s value to `to` on each of `books`, as of `at` (an
-/// author's name among each book's, a publisher, a language or a tag), and
-/// answers what [`undo`] takes back.
+/// author's name among each book's, a publisher or a tag), and answers what
+/// [`undo`] takes back.
 pub fn rename(ws: &Workspace, books: &[Named], by: &By, to: &str, at: &str) -> Result<Vec<Undo>> {
     let to = clean(to);
     if to.is_empty() {
@@ -374,7 +400,7 @@ pub fn rename(ws: &Workspace, books: &[Named], by: &By, to: &str, at: &str) -> R
     }
     if matches!(
         by,
-        By::Author(None) | By::Publisher(None) | By::Language(None) | By::Tag(_, None)
+        By::Author(None) | By::Publisher(None) | By::Tag(_, None)
     ) {
         return Err(anyhow!("a value not set has no name to change"));
     }
@@ -398,10 +424,6 @@ pub fn rename(ws: &Workspace, books: &[Named], by: &By, to: &str, at: &str) -> R
                 },
                 By::Publisher(Some(_)) => Patch {
                     publisher: Some(Change::To(to.clone())),
-                    ..Patch::default()
-                },
-                By::Language(Some(_)) => Patch {
-                    language: Some(Change::To(to.clone())),
                     ..Patch::default()
                 },
                 By::Tag(r#type, Some(from)) => Patch {
@@ -462,13 +484,49 @@ pub fn rename_type(ws: &Workspace, from: &str, to: &str, at: &str) -> Result<Vec
     edit_each(ws, &each, at)
 }
 
-/// `tagged`: each book of `ws` a `tags` row names, in the record holding the row.
+/// `retag_every` sets `to` in the place of the tag `from` on every book of `ws`
+/// holding it, as of `at`, or takes it off each where `to` is `None`, and
+/// answers what [`undo`] takes back.
+pub fn retag_every(ws: &Workspace, from: &Tag, to: Option<&Tag>, at: &str) -> Result<Vec<Undo>> {
+    let patch = match to {
+        Some(to) => {
+            let to = Tag {
+                r#type: clean(&to.r#type),
+                tag: clean(&to.tag),
+            };
+            if to.r#type.is_empty() || to.tag.is_empty() {
+                return Err(anyhow!("nothing to rename it to"));
+            }
+            Patch {
+                retag: vec![Retag {
+                    from: from.clone(),
+                    to,
+                }],
+                ..Patch::default()
+            }
+        }
+        None => Patch {
+            remove: vec![from.clone()],
+            ..Patch::default()
+        },
+    };
+    let each: Vec<(Named, Patch)> = loaded(ws, &tagged(ws))?
+        .into_iter()
+        .filter(|(_, values)| values.tags.iter().any(|t| same(t, from)))
+        .map(|(named, _)| (named, patch.clone()))
+        .collect();
+    edit_each(ws, &each, at)
+}
+
+/// `tagged`: each book of `ws` a `tags` or `language` row names, once, in the
+/// record holding the row.
 fn tagged(ws: &Workspace) -> Vec<Named> {
-    let mut out = Vec::new();
+    let mut out: Vec<Named> = Vec::new();
     for source in ws.sources() {
         let kindle = source.serial.clone().unwrap_or_default();
         for row in read(&source.dir) {
-            if row.field != Field::Tags || row.value.is_none() {
+            let holds = matches!(row.field, Field::Tags | Field::Language);
+            if !holds || row.value.is_none() {
                 continue;
             }
             let book = Named {
@@ -476,7 +534,8 @@ fn tagged(ws: &Workspace) -> Vec<Named> {
                 key: row.key,
                 extent: row.extent,
             };
-            if source.record.books.iter().any(|b| book.names(b)) {
+            if source.record.books.iter().any(|b| book.names(b)) && !out.iter().any(|b| b.is(&book))
+            {
                 out.push(book);
             }
         }
@@ -520,17 +579,18 @@ fn respelled(ws: &Workspace, spelling: &Spelling, each: &[(Named, Patch)]) -> Ve
     let mut out: Vec<(Named, Patch)> = Vec::new();
     for source in ws.sources() {
         let kindle = source.serial.clone().unwrap_or_default();
-        for row in read(&source.dir) {
-            let Some(value) = row.value.filter(|_| row.field == Field::Tags) else {
-                continue;
-            };
-            let tags = tags_of(&value);
+        let rows = read(&source.dir);
+        for row in rows
+            .iter()
+            .filter(|r| r.field == Field::Tags && r.value.is_some())
+        {
+            let tags = Set::of(&rows, &row.key, row.extent).tags;
             if tags.iter().all(|t| spelling.spell(t).as_ref() == Some(t)) {
                 continue;
             }
             let book = Named {
                 kindle: kindle.clone(),
-                key: row.key,
+                key: row.key.clone(),
                 extent: row.extent,
             };
             let named = each.iter().any(|(b, patch)| b.is(&book) && patch.retags());
@@ -881,7 +941,12 @@ impl Spelling {
 
 /// `same`: whether `a` and `b` are one tag spelled two ways.
 fn same(a: &Tag, b: &Tag) -> bool {
-    folded(&a.r#type) == folded(&b.r#type) && folded(&a.tag) == folded(&b.tag)
+    alike(&a.r#type, &b.r#type) && alike(&a.tag, &b.tag)
+}
+
+/// `alike`: whether `a` and `b` are one word spelled two ways, case and width aside.
+pub fn alike(a: &str, b: &str) -> bool {
+    folded(a) == folded(b)
 }
 
 /// `words` trimmed, every run of white space inside them one space.
@@ -1084,7 +1149,6 @@ mod tests {
             title: to("A Better Title"),
             authors: to("Doe, John & Jane Roe"),
             publisher: to("  Example   Press "),
-            language: to("en-US"),
             tags: Some(vec![tag("genre", "sci-fi")]),
             ..Patch::default()
         };
@@ -1094,7 +1158,6 @@ mod tests {
         assert_eq!(set.title.as_deref(), Some("A Better Title"));
         assert_eq!(set.authors.as_deref(), Some("John Doe & Jane Roe"));
         assert_eq!(set.publisher.as_deref(), Some("Example Press"));
-        assert_eq!(set.language.as_deref(), Some("en"));
         assert_eq!(set.tags, vec![tag("genre", "sci-fi")]);
         let title = rows.iter().find(|r| r.field == Field::Title).unwrap();
         assert_eq!(title.was.as_deref(), Some("A Book"));
@@ -1123,7 +1186,7 @@ mod tests {
         assert_eq!(Set::of(&read(&at), "B00KEY", 7).title, None);
         undo(&ws, &undone, "2026-10-31T10:00:03").unwrap();
         assert_eq!(Set::of(&read(&at), "B00KEY", 7), Set::default());
-        assert_eq!(read(&at).len(), 5, "every row kept, each taken back");
+        assert_eq!(read(&at).len(), 4, "every row kept, each taken back");
         assert!(
             edit(&ws, &[named("NONE", 1)], &patch, "2026-10-31T10:00:04").is_err(),
             "a book the record does not hold"
@@ -1198,13 +1261,13 @@ mod tests {
                 vec![tag("Genre", "sci-fi"), tag("mood", "dark")]
             );
         }
-        assert!(rename(&ws, &both, &By::Language(None), "en", "2026-10-31T10:00:06").is_err());
+        assert!(rename(&ws, &both, &By::Publisher(None), "P", "2026-10-31T10:00:06").is_err());
     }
 
     #[test]
     fn the_json_app_js_sends_reads_as_the_commands_take_it() {
         let patch: Patch = serde_json::from_str(
-            r#"{"publisher":{"to":"Example Press"},"language":"back",
+            r#"{"publisher":{"to":"Example Press"},
                 "retag":[{"from":{"type":"genre","tag":"scifi"},"to":{"type":"genre","tag":"sci-fi"}}],
                 "add":[{"type":"pace","tag":"slow"}],"remove":[{"type":"genre","tag":"sci-fi"}]}"#,
         )
@@ -1213,7 +1276,6 @@ mod tests {
             patch,
             Patch {
                 publisher: to("Example Press"),
-                language: Some(Change::Back),
                 retag: vec![Retag {
                     from: tag("genre", "scifi"),
                     to: tag("genre", "sci-fi"),
@@ -1228,14 +1290,15 @@ mod tests {
         let by: By = serde_json::from_str(r#"{"tag":["genre",null]}"#).unwrap();
         assert_eq!(by, By::Tag("genre".into(), None));
         assert_eq!(
-            serde_json::to_string(&By::Language(None)).unwrap(),
-            r#"{"language":null}"#
+            serde_json::to_string(&By::Tag("language".into(), None)).unwrap(),
+            r#"{"tag":["language",null]}"#
         );
         let one: One = serde_json::from_str(
-            r#"{"book":{"kindle":"G0K1-0001","key":"B1","extent":7},"patch":{"language":{"to":"ja"}}}"#,
+            r#"{"book":{"kindle":"G0K1-0001","key":"B1","extent":7},
+                "patch":{"add":[{"type":"language","tag":"Japanese"}]}}"#,
         )
         .unwrap();
-        assert_eq!(one.patch.language, to("ja"));
+        assert_eq!(one.patch.add, vec![tag("language", "Japanese")]);
     }
 
     #[test]
@@ -1243,14 +1306,12 @@ mod tests {
         let values = Values {
             authors: vec!["John Doe".into(), "Jane Roe".into()],
             publisher: None,
-            language: Some("ja".into()),
-            tags: vec![tag("genre", "Sci-Fi")],
+            tags: vec![tag("genre", "Sci-Fi"), tag("language", "Japanese")],
         };
         assert!(By::Author(Some("jane roe".into())).holds(&values));
         assert!(!By::Author(None).holds(&values));
         assert!(By::Publisher(None).holds(&values));
-        assert!(By::Language(Some("ja".into())).holds(&values));
-        assert!(!By::Language(None).holds(&values));
+        assert!(By::Tag("Language".into(), Some("japanese".into())).holds(&values));
         assert!(By::Tag("genre".into(), Some("sci-fi".into())).holds(&values));
         assert!(By::Tag("mood".into(), None).holds(&values));
         assert!(!By::Tag("genre".into(), None).holds(&values));
@@ -1432,5 +1493,132 @@ mod tests {
             ]
         );
         assert!(rename_type(&ws, "Tone", " ", "2026-11-02T10:00:04").is_err());
+    }
+
+    #[test]
+    fn a_tag_renamed_or_taken_off_every_book_reaches_each_holding_it() {
+        let (ws, at) = workspace("retag-every");
+        let tags = |key: &str, extent: i64| Set::of(&read(&at), key, extent).tags;
+        let each = [
+            (
+                named("B00KEY", 7),
+                Patch {
+                    add: vec![tag("genre", "scifi")],
+                    ..Patch::default()
+                },
+            ),
+            (
+                named("", 9),
+                Patch {
+                    add: vec![tag("genre", "scifi"), tag("mood", "dark")],
+                    ..Patch::default()
+                },
+            ),
+        ];
+        edit_each(&ws, &each, "2026-11-02T11:00:00").unwrap();
+        let scifi = tag("GENRE", "SciFi");
+        retag_every(
+            &ws,
+            &scifi,
+            Some(&tag("genre", "sci-fi")),
+            "2026-11-02T11:00:01",
+        )
+        .unwrap();
+        assert_eq!(tags("B00KEY", 7), vec![tag("genre", "sci-fi")]);
+        assert_eq!(
+            tags("", 9),
+            vec![tag("genre", "sci-fi"), tag("mood", "dark")]
+        );
+        // `mood`, `dark`: in use on book 9, which holds it once.
+        let to_dark = tag("mood", "Dark");
+        retag_every(
+            &ws,
+            &tag("genre", "sci-fi"),
+            Some(&to_dark),
+            "2026-11-02T11:00:02",
+        )
+        .unwrap();
+        assert_eq!(tags("B00KEY", 7), vec![tag("mood", "dark")]);
+        assert_eq!(tags("", 9), vec![tag("mood", "dark")]);
+        let undone = retag_every(&ws, &tag("mood", "dark"), None, "2026-11-02T11:00:03").unwrap();
+        assert_eq!(tags("B00KEY", 7), vec![]);
+        assert_eq!(tags("", 9), vec![]);
+        undo(&ws, &undone, "2026-11-02T11:00:04").unwrap();
+        assert_eq!(tags("", 9), vec![tag("mood", "dark")]);
+        assert!(
+            retag_every(
+                &ws,
+                &to_dark,
+                Some(&tag("mood", " ")),
+                "2026-11-02T11:00:05"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_language_row_reads_as_a_tag_and_moves_into_the_tags_once_they_are_set() {
+        let (ws, at) = workspace("language-row");
+        let stated = Metadata {
+            edited: "2026-11-01T10:00:00".into(),
+            key: "B00KEY".into(),
+            extent: 7,
+            field: Field::Language,
+            value: Some("ja".into()),
+            was: None,
+        };
+        keep(&at, std::slice::from_ref(&stated)).unwrap();
+        let set = Set::of(&read(&at), "B00KEY", 7);
+        assert_eq!(set.tags, vec![tag("language", "Japanese")]);
+        let mut book = BookStat::default();
+        set.lay_over(&mut book);
+        assert_eq!(book.language, "ja");
+        // `Japanese`, renamed on every book: the `language` row's book among them.
+        let japanese = tag("language", "Japanese");
+        let undone = retag_every(
+            &ws,
+            &japanese,
+            Some(&tag("language", "日本語")),
+            "2026-11-02T12:00:00",
+        )
+        .unwrap();
+        let set = Set::of(&read(&at), "B00KEY", 7);
+        assert_eq!(set.tags, vec![tag("language", "日本語")]);
+        assert_eq!(set.language, None, "the row taken back");
+        undo(&ws, &undone, "2026-11-02T12:00:01").unwrap();
+        assert_eq!(
+            Set::of(&read(&at), "B00KEY", 7).tags,
+            vec![japanese.clone()]
+        );
+        // `genre`, added beside it: the tags row takes `Japanese` in.
+        let add = Patch {
+            add: vec![tag("genre", "sci-fi")],
+            ..Patch::default()
+        };
+        edit(&ws, &[named("B00KEY", 7)], &add, "2026-11-02T12:00:02").unwrap();
+        let set = Set::of(&read(&at), "B00KEY", 7);
+        assert_eq!(set.tags, vec![japanese.clone(), tag("genre", "sci-fi")]);
+        assert_eq!(set.language, None);
+        // `Japanese` taken off stays off.
+        retag_every(&ws, &japanese, None, "2026-11-02T12:00:03").unwrap();
+        assert_eq!(
+            Set::of(&read(&at), "B00KEY", 7).tags,
+            vec![tag("genre", "sci-fi")]
+        );
+        // `ja` stated again, beside a tag naming it: one tag.
+        let again = Metadata {
+            edited: "2026-11-02T12:00:04".into(),
+            ..stated
+        };
+        let named_ja = Patch {
+            add: vec![tag("Language", "日本語")],
+            ..Patch::default()
+        };
+        edit(&ws, &[named("B00KEY", 7)], &named_ja, "2026-11-02T12:00:05").unwrap();
+        keep(&at, &[again]).unwrap();
+        assert_eq!(
+            Set::of(&read(&at), "B00KEY", 7).tags,
+            vec![tag("genre", "sci-fi"), tag("Language", "日本語")]
+        );
     }
 }
