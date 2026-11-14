@@ -375,6 +375,8 @@ pub struct Shown {
     pub metadata: Vec<crate::metadata::Set>,
     /// Each book's title and author as its Kindle states them, by its place in `stats.books`.
     pub own: Vec<(String, String)>,
+    /// The values the workspace's `l` rows and its books' metadata make.
+    pub linked: crate::metadata::links::Links,
 }
 
 impl Shown {
@@ -479,6 +481,12 @@ impl Shown {
             .iter()
             .map(|b| (b.title.clone(), b.author.clone()))
             .collect();
+        let values: Vec<crate::metadata::Values> = sets
+            .iter()
+            .zip(&own)
+            .map(|(set, (_, author))| crate::metadata::Values::of(author, set))
+            .collect();
+        let linked = crate::metadata::links::Links::new(&crate::metadata::links::of(ws), &values);
         // `tones` come off the Kindle's own titles; `lay_over` sets the words alone.
         for (book, set) in stats.books.iter_mut().zip(&sets) {
             set.lay_over(book);
@@ -498,6 +506,7 @@ impl Shown {
             written,
             metadata: sets,
             own,
+            linked,
         })
     }
 
@@ -581,6 +590,7 @@ pub fn render(
         written: &shown.written,
         metadata: &shown.metadata,
         own: &shown.own,
+        linked: &shown.linked,
         links,
         uncovered: shown.settings.show_uncovered,
         width: (width - 120.0).max(320.0),
@@ -692,9 +702,10 @@ struct Ctx<'a> {
     serials: &'a [String],
     corrected: &'a HashSet<(String, HighlightId)>,
     written: &'a HashMap<(String, HighlightId), Laid>,
-    /// [`Shown::metadata`] and [`Shown::own`].
+    /// [`Shown::metadata`], [`Shown::own`] and [`Shown::linked`].
     metadata: &'a [crate::metadata::Set],
     own: &'a [(String, String)],
+    linked: &'a crate::metadata::links::Links,
     links: Covers,
     /// `Settings::show_uncovered`, which `view::books::listed` takes.
     uncovered: bool,

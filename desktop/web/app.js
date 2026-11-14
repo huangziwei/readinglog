@@ -51,6 +51,8 @@ const WRITING = new Set([
   "rename_metadata",
   "rename_type",
   "retag_every",
+  "link_names",
+  "unlink_names",
   "undo_metadata",
 ]);
 
@@ -169,7 +171,7 @@ function template(id) {
 /** `closeAny` closes whatever `editing` holds open. */
 function closeAny() {
   if (!editing) return;
-  if (editing.closest(".meta, .sheet, .renaming")) {
+  if (editing.closest(".meta, .sheet, .renaming, .linking")) {
     closeMeta();
     return;
   }
@@ -436,9 +438,9 @@ function bookOf(at) {
   return JSON.parse(at.closest("[data-book]").dataset.book);
 }
 
-/** `closeMeta` closes the metadata editor, the bulk editor or Rename… open, every field of the head back as it was. */
+/** `closeMeta` closes the metadata editor, the bulk editor, Rename… or Same as… open, every field of the head back as it was. */
 function closeMeta() {
-  for (const open of main.querySelectorAll(".metaedit, .renaming")) open.hidden = true;
+  for (const open of main.querySelectorAll(".metaedit, .renaming, .linking")) open.hidden = true;
   for (const box of main.querySelectorAll(".meta input[data-was]")) {
     box.value = box.dataset.was;
     if ("fit" in box.dataset) fitted(box);
@@ -480,6 +482,47 @@ function offerUndo(undone) {
       await show();
     },
   });
+}
+
+/** `offerSaid` flashes `said` with Undo taking `undone` back. */
+function offerSaid(said, undone) {
+  flash(said, false, {
+    label: metaWords().undo,
+    run: async () => {
+      await call("undo_metadata", { undone });
+      await show();
+    },
+  });
+}
+
+/** `link` counts the value `linking` sets out as one with the name its field holds, and draws again, Undo flashed. */
+async function link(linking) {
+  const word = linking.querySelector("input.box").value.trim();
+  if (!word) return;
+  const asked = JSON.parse(linking.dataset.linking);
+  asked.names = [...asked.names, word];
+  const undone = await call("link_names", { linking: asked });
+  closeMeta();
+  await show();
+  if (undone.length) offerSaid(linking.dataset.said, undone);
+}
+
+/** `setOut` sets `.linking` out as the *Same as…* `act` asks, and opens it. */
+function setOut(act) {
+  closeAny();
+  const linking = main.querySelector(".linking");
+  if (!linking) return;
+  for (const key of ["linking", "not"]) linking.dataset[key] = act.dataset[key] ?? "[]";
+  linking.querySelector(".field > span").textContent = act.dataset.ask ?? "";
+  linking.querySelector('input[data-field="type"]').value = act.dataset.type ?? "";
+  const box = linking.querySelector("input.box");
+  box.dataset.pick = act.dataset.pick ?? "";
+  if (act.dataset.pick === "tags") box.dataset.field = "tag";
+  else delete box.dataset.field;
+  box.value = "";
+  linking.hidden = false;
+  box.focus();
+  editing = linking;
 }
 
 /** `changeOf`: the change `box` asks for against `was`, `back` where emptied, else its words, `null` where it stands as it was. */
@@ -568,24 +611,35 @@ function tagOf(adding) {
 
 /** `pickOf`: the pick list `box` offers, its own or the editor's list of types or tags moved under it. */
 function pickOf(box) {
-  const own = box.parentElement.querySelector(".pick");
+  const named = `:scope > .pick[data-for="${box.dataset.pick}"]`;
+  const own = box.parentElement.querySelector(named);
   if (own) return own;
-  const held = box.closest(".meta, .sheet")?.querySelector(`.pick[data-for="${box.dataset.pick}"]`);
+  const wanted = `.pick[data-for="${box.dataset.pick}"]`;
+  const held = box.closest(".meta, .sheet")?.querySelector(wanted) ?? main.querySelector(wanted);
   if (held) box.parentElement.append(held);
   return held ?? null;
 }
 
-/** `narrowPick`: the pick list `box` offers, its options narrowed to its words, and a tag field's to the type beside it (the languages too under a type `data-languages` names), less the tags a `.types` row holds. */
+/** `shownType`: the type `words` name as its tags are listed under, the one a type drawn among another's names is drawn by. */
+function shownType(words) {
+  const option = [...main.querySelectorAll('.pick[data-for="types"] > [data-name]')]
+    .find((o) => o.dataset.name.toLowerCase() === words);
+  return option?.dataset.shown ?? words;
+}
+
+/** `narrowPick`: the pick list `box` offers, its options narrowed to its words, and a tag field's to the type beside it (the languages too under a type `data-languages` names), less the tags a `.types` row holds and the names its row's `data-not` leaves out. */
 function narrowPick(box) {
   const pick = pickOf(box);
   if (!pick) return;
   const typed = box.value.trim().toLowerCase();
   const row = box.closest(".adding, .group, .kind");
+  const field = row?.querySelector('input[data-field="type"]');
   const type = box.dataset.field === "tag"
-    ? (row?.querySelector('input[data-field="type"]')?.value ?? "").trim().toLowerCase()
+    ? (field?.dataset.shown ?? shownType((field?.value ?? "").trim().toLowerCase()))
     : "";
   const spoken = type !== "" && (pick.dataset.languages ?? "").split("|").includes(type);
   const held = [...(row?.querySelectorAll(".tag[data-tag]") ?? [])].map((t) => t.dataset.tag.toLowerCase());
+  held.push(...JSON.parse(row?.dataset.not ?? "[]"));
   let shown = 0;
   for (const option of pick.children) {
     const typeFits = !type || option.dataset.type === type || (spoken && option.dataset.lang !== undefined);
@@ -613,7 +667,7 @@ main.addEventListener("input", (event) => {
 });
 main.addEventListener("focusout", (event) => {
   const box = event.target.closest("input[data-pick]");
-  const pick = box?.parentElement.querySelector(".pick");
+  const pick = box?.parentElement.querySelector(`:scope > .pick[data-for="${box.dataset.pick}"]`);
   if (pick) setTimeout(() => (pick.hidden = true), 120);
 });
 // `mousedown` takes an option, before its field loses the focus; under a
@@ -627,13 +681,15 @@ main.addEventListener("mousedown", (event) => {
   if ("fit" in box.dataset) fitted(box);
   option.parentElement.hidden = true;
   if (box.closest(".types")) keepType(box, againOf(box)).catch(console.error);
+  else if (box.closest(".linking")) link(box.closest(".linking")).catch(console.error);
   else if (box.dataset.field === "type") box.closest(".adding")?.querySelector('input[data-field="tag"]').focus();
 });
 
-// `Enter` keeps the head's editor or a `.types` field, adds a tag, or renames,
-// never while `isComposing`; `Escape` closes, or puts a `.types` field back.
+// `Enter` keeps the head's editor or a `.types` field, renames, counts a value as
+// one with another, or adds a tag, never while `isComposing`; `Escape` closes, or
+// puts a `.types` field back.
 main.addEventListener("keydown", async (event) => {
-  const box = event.target.closest(".meta input, .sheet input, .renaming input, .types input");
+  const box = event.target.closest(".meta input, .sheet input, .renaming input, .linking input, .types input");
   if (!box || event.isComposing || event.keyCode === 229) return;
   if (box.closest(".types")) typeKey(event, box);
   else if (event.key === "Escape") {
@@ -641,8 +697,9 @@ main.addEventListener("keydown", async (event) => {
     closeMeta();
   } else if (event.key === "Enter") {
     event.preventDefault();
-    if (box.closest(".adding")) addTag(box.closest(".adding"));
-    else if (box.closest(".renaming")) await rename(box.closest(".renaming"));
+    if (box.closest(".renaming")) await rename(box.closest(".renaming"), box);
+    else if (box.closest(".linking")) await link(box.closest(".linking"));
+    else if (box.closest(".adding")) addTag(box.closest(".adding"));
     else if (box.closest(".metaedit")) await saveMeta(box.closest(".meta"));
   }
 });
@@ -666,8 +723,11 @@ function askOf(box) {
   const row = box.closest(".kind");
   const name = row.querySelector(".name");
   const fresh = row.classList.contains("fresh");
-  const type = fresh ? name.value.trim() : name.dataset.was;
-  if (box === name) return fresh || !words || words === type ? null : ["rename_type", { from: type, to: words }];
+  if (box.classList.contains("name")) {
+    const was = box.dataset.was;
+    return fresh || !words || words === was ? null : ["rename_type", { from: was, to: words }];
+  }
+  const type = box.dataset.type ?? (fresh ? name.value.trim() : name.dataset.was);
   if (box.closest(".more")) {
     return words && type ? ["edit_metadata", { books: [bookOf(box)], patch: { add: [{ type, tag: words }] } }] : null;
   }
@@ -938,17 +998,25 @@ async function applySheet(sheet) {
   await patched(books, patch, true);
 }
 
-/** `rename` renames the value Books is narrowed to on every book shown, then follows it to its new name. */
-async function rename(renaming) {
-  const to = renaming.querySelector("input").value.trim();
-  const by = JSON.parse(renaming.dataset.by);
-  if (!to) return;
+/** `rename` renames the name `box`, a field of `renaming`, holds, every field changed where `box` is none, on every book shown holding it, then follows the name Books is narrowed to where that was one renamed. */
+async function rename(renaming, box = null) {
+  const boxes = box
+    ? [box]
+    : [...renaming.querySelectorAll("input")].filter((b) => b.dataset.was === undefined || b.value.trim() !== b.dataset.was);
   const books = [...main.querySelectorAll("[data-pickable] .tile")].map((t) => JSON.parse(t.dataset.book));
-  const undone = await call("rename_metadata", { books, by, to });
-  closeMeta();
   const [path, query] = (location.hash.slice(1) || "/").split("?");
   const params = new URLSearchParams(query ?? "");
-  params.set("is", to);
+  const undone = [];
+  for (const each of boxes) {
+    const to = each.value.trim();
+    if (!to || to === each.dataset.was) continue;
+    const by = JSON.parse(each.closest("[data-by]").dataset.by);
+    undone.push(...(await call("rename_metadata", { books, by, to })));
+    const was = by.author ?? by.publisher ?? by.tag?.[1] ?? "";
+    if (was.toLowerCase() === (params.get("is") ?? "").toLowerCase()) params.set("is", to);
+  }
+  if (!undone.length && !boxes.some((b) => b.value.trim())) return;
+  closeMeta();
   history.replaceState(null, "", `#${path}?${params.toString()}`);
   await show();
   if (undone.length) offerUndo(undone);
@@ -970,9 +1038,22 @@ document.addEventListener("click", async (event) => {
     }
     case "cancel-meta":
     case "cancel-rename":
+    case "cancel-link":
     case "cancel-bulk":
       closeMeta();
       break;
+    case "same-as":
+      setOut(act);
+      break;
+    case "save-link":
+      await link(act.closest(".linking"));
+      break;
+    case "separate": {
+      const undone = await call("unlink_names", { linking: JSON.parse(act.dataset.linking) });
+      await show();
+      if (undone.length) offerSaid(act.dataset.said, undone);
+      break;
+    }
     case "save-meta":
       await saveMeta(act.closest(".meta"));
       break;

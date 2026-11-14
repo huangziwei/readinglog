@@ -13,6 +13,7 @@ use serde::Serialize;
 
 use super::words::Words;
 use super::{Ctx, Route, esc, lang, language_of};
+use crate::metadata::links::{Linked, Linking, Name};
 use crate::metadata::{self, By, Named, Patch, Tag, Values, names};
 
 /// `HUES`: each language's hue, by the record's languages in time read; `OTHER` past the fourth.
@@ -65,6 +66,61 @@ fn json(value: &impl Serialize) -> String {
     esc(&serde_json::to_string(value).unwrap_or_default())
 }
 
+/// `others`, a value's other names, as its tooltip says them.
+fn said_also(cx: &Ctx, others: &[&str]) -> String {
+    Words::of(cx.lang)
+        .also
+        .replace("{names}", &others.join(" / "))
+}
+
+/// A ` data-tip` saying `others`, a value's other names; nothing where it has none.
+fn tip_of(cx: &Ctx, others: &[&str]) -> String {
+    match others.is_empty() {
+        true => String::new(),
+        false => format!(" data-tip=\"{}\"", esc(&said_also(cx, others))),
+    }
+}
+
+/// `line`, an author line, as the book holds it, each of `names` in it opening Books
+/// narrowed to it, the other names of its value in its tooltip; joined by `、` where
+/// `line` holds one, else by ` & `, where `line` is no more than the names so joined.
+fn author_line(cx: &Ctx, line: &str, names: &[String]) -> String {
+    let link = |name: &str| {
+        format!(
+            "<a href=\"{}\"{}>{}</a>",
+            narrowed(By::Author(Some(name.to_string())), None).link(),
+            tip_of(cx, &cx.linked.others(Name::Author(name), name)),
+            esc(name)
+        )
+    };
+    let joint = match line.contains('、') {
+        true => "、",
+        false => " & ",
+    };
+    let joined = || {
+        names
+            .iter()
+            .map(|n| link(n))
+            .collect::<Vec<String>>()
+            .join(joint)
+    };
+    if names.join(joint) == line {
+        return joined();
+    }
+    let mut out = String::new();
+    let mut rest = line;
+    for name in names {
+        let Some(at) = rest.find(name.as_str()) else {
+            return joined();
+        };
+        out.push_str(&esc(&rest[..at]));
+        out.push_str(&link(name));
+        rest = &rest[at + name.len()..];
+    }
+    out.push_str(&esc(rest));
+    out
+}
+
 /// `at`'s head under its title: its authors (each opening the books by them),
 /// the facts line with Edit, [`types`], and the editor Edit opens, hidden
 /// until `app.js` shows it.
@@ -75,26 +131,11 @@ pub(super) fn head(cx: &Ctx, at: usize) -> String {
     let named = named(cx, at);
     let mut out = format!("<div class=\"meta\" data-book=\"{}\">", json(&named));
     if !values.authors.is_empty() {
-        let joint = match book.author.contains('、') {
-            true => "、",
-            false => " & ",
-        };
-        let names: Vec<String> = values
-            .authors
-            .iter()
-            .map(|name| {
-                format!(
-                    "<a href=\"{}\">{}</a>",
-                    narrowed(By::Author(Some(name.clone())), None).link(),
-                    esc(name)
-                )
-            })
-            .collect();
         let _ = write!(
             out,
             "<p class=\"author\"{}>{}</p>",
             lang(&book.language, &book.author),
-            names.join(joint)
+            author_line(cx, &book.author, &values.authors)
         );
     }
     let publisher = values
@@ -102,8 +143,9 @@ pub(super) fn head(cx: &Ctx, at: usize) -> String {
         .as_ref()
         .map(|publisher| {
             format!(
-                "<a href=\"{}\">{}</a>",
+                "<a href=\"{}\"{}>{}</a>",
                 narrowed(By::Publisher(Some(publisher.clone())), None).link(),
+                tip_of(cx, &cx.linked.others(Name::Publisher(publisher), publisher)),
                 esc(publisher)
             )
         })
@@ -153,46 +195,80 @@ fn field(which: &str, words: &str, key: &[&str], more: &str) -> String {
     )
 }
 
-/// `named_type`: the `.name` field of `r#type`, renaming it on every book.
-fn named_type(cx: &Ctx, r#type: &str) -> String {
+/// `named_type`: the `.name` field of `r#type`, renaming it on every book, `data-shown`
+/// naming the type `shown` it is drawn among where that is another name.
+fn named_type(cx: &Ctx, r#type: &str, shown: &str) -> String {
     let w = Words::of(cx.lang);
+    let among = match shown.to_lowercase() == r#type.to_lowercase() {
+        true => String::new(),
+        false => format!(" data-shown=\"{}\"", esc(&shown.to_lowercase())),
+    };
     field(
         "type",
         r#type,
         &["type", r#type],
-        &format!(" class=\"name\" data-tip=\"{}\"", esc(w.rename_every_tip)),
+        &format!(
+            " class=\"name\" data-tip=\"{}\"{among}",
+            esc(w.rename_every_tip)
+        ),
     )
+}
+
+/// `most_held`: of `names`, a field's, the one the most books hold, the first on a tie.
+fn most_held<'a>(cx: &Ctx, names: impl Iterator<Item = Name<'a>>) -> Option<&'a str> {
+    let mut best: Option<(&'a str, usize)> = None;
+    for name in names {
+        let books = cx.linked.books(name);
+        if best.is_none_or(|(_, most)| books > most) {
+            best = Some((name.words(), books));
+        }
+    }
+    best.map(|(words, _)| words)
 }
 
 /// `.types`: each type [`in_use`] beside the tags of it `values` holds, the type a field
 /// renaming it on every book, each tag opening Books narrowed to it with × beside it, and a
-/// `.more` field adding one; under them, `.fresh`, a type and its first tag.
+/// `.more` field adding one; under them, `.fresh`, a type and its first tag. A type is
+/// drawn by the name the book's tags hold, the most held of two, else by the one it is
+/// drawn by where many books meet.
 fn types(cx: &Ctx, values: &Values) -> String {
     let w = Words::of(cx.lang);
     let (in_use, _) = in_use(cx);
     let mut out = String::from("<div class=\"types\">");
-    for (r#type, _) in &in_use {
+    for (shown, _) in &in_use {
+        let held: Vec<&Tag> = values
+            .tags
+            .iter()
+            .filter(|t| cx.linked.same(Name::Type(&t.r#type), Name::Type(shown)))
+            .collect();
+        let drawn = most_held(cx, held.iter().map(|t| Name::Type(&t.r#type)))
+            .unwrap_or(shown)
+            .to_string();
         let _ = write!(
             out,
             "<div class=\"kind\">{}<span class=\"held\">",
-            named_type(cx, r#type)
+            named_type(cx, &drawn, shown)
         );
-        for tag in values.tags.iter().filter(|t| t.r#type == *r#type) {
+        for tag in held {
             let _ = write!(
                 out,
-                "<span class=\"tag\" data-tag=\"{1}\"><a href=\"{0}\">{1}</a><button class=\"off\" \
+                "<span class=\"tag\" data-tag=\"{1}\"><a href=\"{0}\"{4}>{1}</a><button class=\"off\" \
                  data-act=\"untag\" data-type=\"{2}\" data-tag=\"{1}\" data-tip=\"{3}\">×</button></span>",
-                narrowed(By::Tag(r#type.clone(), Some(tag.tag.clone())), None).link(),
+                narrowed(By::Tag(tag.r#type.clone(), Some(tag.tag.clone())), None).link(),
                 esc(&tag.tag),
-                esc(r#type),
-                esc(w.remove_tip)
+                esc(&tag.r#type),
+                esc(w.remove_tip),
+                tip_of(
+                    cx,
+                    &cx.linked.others(Name::Tag(&tag.r#type, &tag.tag), &tag.tag)
+                )
             );
         }
         let _ = write!(
             out,
             "<span class=\"more\"><input data-field=\"tag\" data-pick=\"tags\" placeholder=\"+\" \
              data-key=\"{}\" autocomplete=\"off\" spellcheck=\"false\"></span></span></div>",
-            json(&["more", r#type])
+            json(&["more", &drawn])
         );
     }
     let _ = write!(
@@ -211,8 +287,10 @@ fn types(cx: &Ctx, values: &Values) -> String {
 }
 
 /// `.types.all`: over Books, each type [`in_use`] with its tags and `not set`, each opening
-/// Books narrowed to it by `to`, the one `by` names lit and going back; `editing`, each a
-/// field renaming it on every book, × taking a tag off every book; `.edit` between the two.
+/// Books narrowed to it by `to`, the one `by` names lit and going back, a value of several
+/// names drawn by its most held and the others in its tooltip; `editing`, each name a field
+/// renaming it on every book, × taking a tag off every book, a linked value's names together
+/// with *Separate* and *Same as…* beside each value; `.edit` between the two.
 pub(super) fn listed(
     cx: &Ctx,
     by: Option<&By>,
@@ -224,12 +302,17 @@ pub(super) fn listed(
     if types.is_empty() {
         return String::new();
     }
+    let spelled = spelled(cx);
     let lit = |r#type: &str, tag: Option<&str>| match by {
-        Some(By::Tag(t, held)) if metadata::alike(t, r#type) => match (held, tag) {
-            (Some(held), Some(tag)) => metadata::alike(held, tag),
-            (None, None) => true,
-            _ => false,
-        },
+        Some(By::Tag(t, held)) if cx.linked.same(Name::Type(t), Name::Type(r#type)) => {
+            match (held, tag) {
+                (Some(held), Some(tag)) => {
+                    cx.linked.same(Name::Tag(t, held), Name::Tag(r#type, tag))
+                }
+                (None, None) => true,
+                _ => false,
+            }
+        }
         _ => false,
     };
     let (class, edit) = match editing {
@@ -247,26 +330,17 @@ pub(super) fn listed(
             under.sort_by_key(|tag| tag.parse::<i64>().unwrap_or(0));
         }
         let name = match editing {
-            true => named_type(cx, r#type),
-            false => format!("<span class=\"name\">{}</span>", esc(r#type)),
+            true => type_fields(cx, r#type, &spelled),
+            false => format!(
+                "<span class=\"name\"{}>{}</span>",
+                tip_of(cx, &cx.linked.also(Name::Type(r#type))),
+                esc(r#type)
+            ),
         };
         let _ = write!(out, "<div class=\"kind\">{name}<span class=\"held\">");
         for tag in under {
             if editing {
-                let _ = write!(
-                    out,
-                    "<span class=\"tag\" data-tag=\"{0}\">{1}<button class=\"off\" data-act=\"untag-every\" \
-                     data-type=\"{2}\" data-tag=\"{0}\" data-tip=\"{3}\">×</button></span>",
-                    esc(tag),
-                    field(
-                        "tag",
-                        tag,
-                        &["tag", r#type, tag],
-                        &format!(" data-tip=\"{}\"", esc(w.rename_every_tip))
-                    ),
-                    esc(r#type),
-                    esc(w.remove_every_tip)
-                );
+                out.push_str(&tag_fields(cx, r#type, tag, &spelled));
                 continue;
             }
             let (on, link) = match lit(r#type, Some(tag)) {
@@ -278,7 +352,8 @@ pub(super) fn listed(
             };
             let _ = write!(
                 out,
-                "<span class=\"tag{on}\"><a href=\"{link}\">{}</a></span>",
+                "<span class=\"tag{on}\"><a href=\"{link}\"{}>{}</a></span>",
+                tip_of(cx, &cx.linked.also(Name::Tag(r#type, tag))),
                 esc(tag)
             );
         }
@@ -302,6 +377,157 @@ pub(super) fn listed(
         esc(edit)
     );
     out
+}
+
+/// `.names`: the `.name` fields of the type `shown` and of its other names in use, together
+/// in a `.linked` group with *Separate* where an `l` row joins them; *Same as…* after them
+/// but for a type of [`names::TYPES`], which links no other.
+fn type_fields(cx: &Ctx, shown: &str, spelled: &Spelled) -> String {
+    let named: Vec<&str> = spelled
+        .types
+        .iter()
+        .map(|(t, _)| t.as_str())
+        .filter(|t| cx.linked.same(Name::Type(t), Name::Type(shown)))
+        .collect();
+    let named = match named.is_empty() {
+        true => vec![shown],
+        false => named,
+    };
+    let fields: String = named.iter().map(|t| named_type(cx, t, shown)).collect();
+    let asked = |names: Vec<String>| Linking {
+        linked: Linked::Type,
+        r#type: String::new(),
+        names,
+    };
+    let mut out = match cx.linked.linked(Name::Type(shown)) {
+        true => format!(
+            "<span class=\"linked\">{fields}{}</span>",
+            separate(cx, &asked(owned(&named)), "apart")
+        ),
+        false => fields,
+    };
+    if !names::is_type(shown) {
+        let mut not: Vec<&str> = named.clone();
+        not.extend(names::TYPES);
+        out.push_str(&same_as(
+            cx,
+            &asked(vec![shown.to_string()]),
+            "types",
+            shown,
+            &not,
+        ));
+    }
+    format!("<span class=\"names\">{out}</span>")
+}
+
+/// The fields of the tag `shown` of the type `r#type` and of its other names in use, each
+/// with × taking it off every book; together in a `.linked` group with *Separate* where an
+/// `l` row joins them, *Same as…* beside them but under a type of [`names::TYPES`], whose
+/// tags are linked by their codes.
+fn tag_fields(cx: &Ctx, r#type: &str, shown: &str, spelled: &Spelled) -> String {
+    let w = Words::of(cx.lang);
+    let named: Vec<(&str, &str)> = spelled
+        .tags
+        .iter()
+        .map(|(t, g, _)| (t.as_str(), g.as_str()))
+        .filter(|(t, g)| cx.linked.same(Name::Tag(t, g), Name::Tag(r#type, shown)))
+        .collect();
+    let named = match named.is_empty() {
+        true => vec![(r#type, shown)],
+        false => named,
+    };
+    let asked = |names: Vec<String>| Linking {
+        linked: Linked::Tag,
+        r#type: r#type.to_string(),
+        names,
+    };
+    let same = match names::is_type(r#type) {
+        true => String::new(),
+        false => {
+            let not: Vec<&str> = named.iter().map(|(_, g)| *g).collect();
+            same_as(cx, &asked(vec![shown.to_string()]), "tags", shown, &not)
+        }
+    };
+    let linked = cx.linked.linked(Name::Tag(r#type, shown));
+    let mut pills = String::new();
+    for (own, tag) in &named {
+        let _ = write!(
+            pills,
+            "<span class=\"tag\" data-tag=\"{0}\">{1}{4}<button class=\"off\" data-act=\"untag-every\" \
+             data-type=\"{2}\" data-tag=\"{0}\" data-tip=\"{3}\">×</button></span>",
+            esc(tag),
+            field(
+                "tag",
+                tag,
+                &["tag", own, tag],
+                &format!(
+                    " data-tip=\"{}\" data-type=\"{}\"",
+                    esc(w.rename_every_tip),
+                    esc(own)
+                )
+            ),
+            esc(own),
+            esc(w.remove_every_tip),
+            match linked {
+                true => "",
+                false => same.as_str(),
+            }
+        );
+    }
+    match linked {
+        true => {
+            let names: Vec<&str> = named.iter().map(|(_, g)| *g).collect();
+            format!(
+                "<span class=\"linked\">{pills}{same}{}</span>",
+                separate(cx, &asked(owned(&names)), "apart")
+            )
+        }
+        false => pills,
+    }
+}
+
+/// `names` owned.
+fn owned(names: &[&str]) -> Vec<String> {
+    names.iter().map(|n| n.to_string()).collect()
+}
+
+/// `=`: the button opening `.linking` to count `asked`'s value, drawn as `shown`, as one
+/// with a name of the pick list `pick`, `not` left out of it.
+fn same_as(cx: &Ctx, asked: &Linking, pick: &str, shown: &str, not: &[&str]) -> String {
+    let w = Words::of(cx.lang);
+    format!(
+        "<button class=\"same\" {}data-tip=\"{}\">=</button>",
+        same_as_data(cx, asked, pick, shown, not),
+        esc(w.same_as)
+    )
+}
+
+/// The attributes a *Same as…* button sets `.linking` out by: `asked`, the question naming
+/// `shown`, the pick list `pick`, the type it offers tags of, and `not`, lower case.
+fn same_as_data(cx: &Ctx, asked: &Linking, pick: &str, shown: &str, not: &[&str]) -> String {
+    let w = Words::of(cx.lang);
+    let not: Vec<String> = not.iter().map(|n| n.to_lowercase()).collect();
+    format!(
+        "data-act=\"same-as\" data-linking=\"{}\" data-ask=\"{}\" data-pick=\"{pick}\" \
+         data-type=\"{}\" data-not=\"{}\" ",
+        json(asked),
+        esc(&w.same_as_ask.replace("{v}", shown)),
+        esc(&asked.r#type.to_lowercase()),
+        json(&not)
+    )
+}
+
+/// *Separate*, of the class `class`: the button counting `asked`'s names apart again.
+fn separate(cx: &Ctx, asked: &Linking, class: &str) -> String {
+    let w = Words::of(cx.lang);
+    format!(
+        "<button class=\"{class}\" data-act=\"separate\" data-linking=\"{}\" data-said=\"{}\" \
+         data-tip=\"{}\">{}</button>",
+        json(asked),
+        esc(w.counted_apart),
+        esc(w.separate_tip),
+        esc(w.separate)
+    )
 }
 
 /// `at`'s editor: its title, authors and publisher, each field holding what
@@ -391,8 +617,15 @@ type Types = Vec<(String, usize)>;
 /// `Tags`: each tag in use, its type and the books holding it.
 type Tags = Vec<(String, String, usize)>;
 
-/// [`Types`] and [`Tags`] across `cx.metadata`, most held first.
-fn in_use(cx: &Ctx) -> (Types, Tags) {
+/// `Spelled`: each type and each tag in use as the books hold them, a value of several
+/// names under each name apart.
+struct Spelled {
+    types: Types,
+    tags: Tags,
+}
+
+/// [`Spelled`] across `cx.metadata`, most held first.
+fn spelled(cx: &Ctx) -> Spelled {
     let mut types: Types = Vec::new();
     let mut tags: Tags = Vec::new();
     for set in cx.metadata {
@@ -416,20 +649,59 @@ fn in_use(cx: &Ctx) -> (Types, Tags) {
     }
     types.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     tags.sort_by(|a, b| b.2.cmp(&a.2).then(a.1.cmp(&b.1)));
+    Spelled { types, tags }
+}
+
+/// [`Types`] and [`Tags`] across `cx.metadata`, a value of several names once under the
+/// name it is drawn by, a book holding two of its names counted once; most held first.
+fn in_use(cx: &Ctx) -> (Types, Tags) {
+    let mut types: Types = Vec::new();
+    let mut tags: Tags = Vec::new();
+    for set in cx.metadata {
+        let mut seen: Vec<&str> = Vec::new();
+        let mut had: Vec<(&str, &str)> = Vec::new();
+        for tag in &set.tags {
+            let r#type = cx.linked.shown(Name::Type(&tag.r#type));
+            if !seen.contains(&r#type) {
+                seen.push(r#type);
+                match types.iter_mut().find(|(t, _)| t == r#type) {
+                    Some((_, n)) => *n += 1,
+                    None => types.push((r#type.to_string(), 1)),
+                }
+            }
+            let shown = cx.linked.shown(Name::Tag(&tag.r#type, &tag.tag));
+            if had.contains(&(r#type, shown)) {
+                continue;
+            }
+            had.push((r#type, shown));
+            match tags.iter_mut().find(|(t, g, _)| t == r#type && g == shown) {
+                Some((.., n)) => *n += 1,
+                None => tags.push((r#type.to_string(), shown.to_string(), 1)),
+            }
+        }
+    }
+    types.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    tags.sort_by(|a, b| b.2.cmp(&a.2).then(a.1.cmp(&b.1)));
     (types, tags)
 }
 
-/// [`in_use`]'s types and tags as the lists a type or tag field offers, held once
-/// beside the fields for `app.js` to move under the one focused; under a type of
-/// [`names::TYPES`], `data-languages`, a tag's list offers [`languages`] too.
+/// [`spelled`]'s types and tags as the lists a type or tag field offers, held once
+/// beside the fields for `app.js` to move under the one focused, each tag under the
+/// name its type is drawn by and a type drawn among another's naming it `data-shown`;
+/// under a type of [`names::TYPES`], `data-languages`, a tag's list offers [`languages`] too.
 fn picks(cx: &Ctx) -> String {
-    let (types, tags) = in_use(cx);
+    let Spelled { types, tags } = spelled(cx);
     let books = |n: usize| counted(cx.s.n_books, n as i64);
     let mut out = String::from("<div class=\"pick\" data-for=\"types\" hidden>");
     for (r#type, n) in &types {
+        let shown = cx.linked.shown(Name::Type(r#type)).to_lowercase();
+        let among = match shown == r#type.to_lowercase() {
+            true => String::new(),
+            false => format!(" data-shown=\"{}\"", esc(&shown)),
+        };
         let _ = write!(
             out,
-            "<div data-name=\"{}\" data-words=\"{}\"><span>{}</span><small>{}</small></div>",
+            "<div data-name=\"{}\" data-words=\"{}\"{among}><span>{}</span><small>{}</small></div>",
             esc(r#type),
             esc(&r#type.to_lowercase()),
             esc(r#type),
@@ -446,7 +718,7 @@ fn picks(cx: &Ctx) -> String {
         let _ = write!(
             out,
             "<div data-type=\"{}\" data-name=\"{}\" data-words=\"{}\"><span>{}</span><small>{}</small></div>",
-            esc(&r#type.to_lowercase()),
+            esc(&cx.linked.shown(Name::Type(r#type)).to_lowercase()),
             esc(tag),
             esc(&tag.to_lowercase()),
             esc(tag),
@@ -473,54 +745,161 @@ fn adder(cx: &Ctx) -> String {
     )
 }
 
-/// `by`'s chip on Books, its × going back to `back`, and Rename… where `by`
-/// names a value.
+/// `by`'s name and field: the [`Name`] its value is, and the field it links in.
+fn name_of(by: &By) -> Option<(Name<'_>, Linked)> {
+    match by {
+        By::Author(Some(v)) => Some((Name::Author(v), Linked::Author)),
+        By::Publisher(Some(v)) => Some((Name::Publisher(v), Linked::Publisher)),
+        By::Tag(t, Some(v)) => Some((Name::Tag(t, v), Linked::Tag)),
+        _ => None,
+    }
+}
+
+/// `by`'s chip on Books, its value drawn by its most held name with the others in its
+/// tooltip, its × going back to `back`; Rename… where `by` names a value, and for an
+/// author or a publisher *Same as…*, and *Separate* where an `l` row joins its names.
 pub(super) fn chip(cx: &Ctx, by: &By, back: &str) -> String {
     let w = Words::of(cx.lang);
-    let (what, value) = match by {
-        By::Author(v) => (w.author_chip.to_string(), v.clone()),
-        By::Publisher(v) => (w.publisher_field.to_string(), v.clone()),
-        By::Tag(t, v) => (t.clone(), v.clone()),
+    let what = match by {
+        By::Author(_) => w.author_chip.to_string(),
+        By::Publisher(_) => w.publisher_field.to_string(),
+        By::Tag(t, _) => t.clone(),
     };
+    let named = name_of(by);
     let mut out = format!(
-        "<span class=\"chip filter\"><small>{}</small>{}<a class=\"off\" href=\"{back}\">×</a></span>",
+        "<span class=\"chip filter\"{}><small>{}</small>{}<a class=\"off\" href=\"{back}\">×</a></span>",
+        named
+            .map(|(name, _)| tip_of(cx, &cx.linked.also(name)))
+            .unwrap_or_default(),
         esc(&what),
-        esc(value.as_deref().unwrap_or(w.not_set))
+        esc(named.map_or(w.not_set, |(name, _)| cx.linked.shown(name)))
     );
-    if value.is_some() {
-        let _ = write!(
-            out,
-            "<button class=\"chip act\" data-act=\"rename\">{}</button>",
-            esc(w.rename)
-        );
+    let Some((name, linked)) = named else {
+        return out;
+    };
+    let _ = write!(
+        out,
+        "<button class=\"chip act\" data-act=\"rename\">{}</button>",
+        esc(w.rename)
+    );
+    if linked == Linked::Tag {
+        return out;
+    }
+    let shown = cx.linked.shown(name);
+    let every = cx.linked.every(name);
+    let asked = |names: Vec<String>| Linking {
+        linked,
+        r#type: String::new(),
+        names,
+    };
+    let _ = write!(
+        out,
+        "<button class=\"chip act\" {}>{}</button>",
+        same_as_data(cx, &asked(vec![shown.to_string()]), "names", shown, &every),
+        esc(w.same_as)
+    );
+    if cx.linked.linked(name) {
+        out.push_str(&separate(cx, &asked(owned(&every)), "chip act"));
     }
     out
 }
 
-/// `.renaming`: the field renaming `by` on `count` books, hidden until Rename… opens it.
-pub(super) fn renaming(cx: &Ctx, by: &By, count: usize) -> String {
+/// `.renaming`: the field renaming `by` on the books `shown` holding it, hidden until
+/// Rename… opens it; for a value of several names, a field for each name the books shown
+/// hold, renaming that name alone.
+pub(super) fn renaming(cx: &Ctx, by: &By, shown: &[usize]) -> String {
     let w = Words::of(cx.lang);
-    if matches!(
-        by,
-        By::Author(None) | By::Publisher(None) | By::Tag(_, None)
-    ) {
+    let Some((name, _)) = name_of(by) else {
         return String::new();
-    }
-    let value = match by {
-        By::Author(v) | By::Publisher(v) | By::Tag(_, v) => v.clone(),
-    }
-    .unwrap_or_default();
-    let ask = counted(w.rename_ask, count as i64).replace("{v}", &value);
+    };
+    let field = |value: &str, count: usize, own: &str| {
+        format!(
+            "<label class=\"field\"{own}><span>{}</span><input class=\"box\" value=\"{}\"{} \
+             autocomplete=\"off\" spellcheck=\"false\"></label>",
+            esc(&counted(w.rename_ask, count as i64).replace("{v}", value)),
+            esc(value),
+            match own.is_empty() {
+                true => String::new(),
+                false => format!(" data-was=\"{}\"", esc(value)),
+            }
+        )
+    };
+    let fields = match cx.linked.linked(name) {
+        false => field(name.words(), shown.len(), ""),
+        true => cx
+            .linked
+            .every(name)
+            .into_iter()
+            .filter_map(|each| {
+                let one = match by {
+                    By::Author(_) => By::Author(Some(each.to_string())),
+                    By::Publisher(_) => By::Publisher(Some(each.to_string())),
+                    By::Tag(t, _) => By::Tag(t.clone(), Some(each.to_string())),
+                };
+                let count = shown
+                    .iter()
+                    .filter(|at| one.holds(&values(cx, **at), &Default::default()))
+                    .count();
+                (count > 0).then(|| field(each, count, &format!(" data-by=\"{}\"", json(&one))))
+            })
+            .collect(),
+    };
     format!(
-        "<div class=\"renaming adding\" hidden data-by=\"{}\"><label class=\"field\"><span>{}</span>\
-         <input class=\"box\" value=\"{}\" autocomplete=\"off\" spellcheck=\"false\"></label>\
+        "<div class=\"renaming adding\" hidden data-by=\"{}\">{fields}\
          <p class=\"acts\"><button data-act=\"cancel-rename\">{}</button>\
          <button class=\"save\" data-act=\"save-rename\">{}</button></p></div>",
         json(by),
-        esc(&ask),
-        esc(&value),
         esc(cx.s.cancel),
         esc(w.rename_do)
+    )
+}
+
+/// `.linking`: the field counting a value as one with another, hidden until a *Same as…*
+/// sets it out and opens it; Books narrowed to an author or a publisher holds that
+/// field's names in use as its pick list, each apart, most held first.
+pub(super) fn linking(cx: &Ctx, by: Option<&By>) -> String {
+    let w = Words::of(cx.lang);
+    let named = |at: usize| -> Vec<String> {
+        let values = values(cx, at);
+        match by {
+            Some(By::Author(Some(_))) => values.authors,
+            Some(By::Publisher(Some(_))) => values.publisher.into_iter().collect(),
+            _ => Vec::new(),
+        }
+    };
+    let mut held: Vec<(String, usize)> = Vec::new();
+    for at in 0..cx.stats.books.len() {
+        for name in named(at) {
+            match held.iter_mut().find(|(n, _)| *n == name) {
+                Some((_, books)) => *books += 1,
+                None => held.push((name, 1)),
+            }
+        }
+    }
+    held.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let mut pick = String::new();
+    if !held.is_empty() {
+        pick.push_str("<div class=\"pick\" data-for=\"names\" hidden>");
+        for (name, books) in &held {
+            let _ = write!(
+                pick,
+                "<div data-name=\"{}\" data-words=\"{}\"><span>{}</span><small>{}</small></div>",
+                esc(name),
+                esc(&name.to_lowercase()),
+                esc(name),
+                esc(&counted(cx.s.n_books, *books as i64))
+            );
+        }
+        pick.push_str("</div>");
+    }
+    format!(
+        "<div class=\"linking adding\" hidden data-said=\"{}\"><label class=\"field\"><span></span>\
+         <input class=\"box\" autocomplete=\"off\" spellcheck=\"false\"><input data-field=\"type\" \
+         hidden>{pick}</label><p class=\"acts\"><button data-act=\"cancel-link\">{}</button>\
+         <button class=\"save\" data-act=\"save-link\">{}</button></p></div>",
+        esc(w.counted_one),
+        esc(cx.s.cancel),
+        esc(w.same_as_do)
     )
 }
 
@@ -684,13 +1063,34 @@ pub(super) fn suggestions(cx: &Ctx, shown: &[usize]) -> String {
     }
 }
 
-/// `Bar`: one value's bar, its name, time and books, and the Books it opens.
+/// `Bar`: one value's bar, its name, time and books, the Books it opens, and the
+/// value's other names its tooltip says.
 struct Bar {
     name: String,
     lang: Option<String>,
     secs: i64,
     books: usize,
     to: Route,
+    also: String,
+}
+
+/// `bar`'s tooltip: its name, the value's other names, then `figures`.
+fn bar_tip(bar: &Bar, figures: &[&str]) -> String {
+    let mut parts: Vec<&str> = vec![bar.name.as_str()];
+    if !bar.also.is_empty() {
+        parts.push(&bar.also);
+    }
+    parts.extend(figures);
+    parts.join(" · ")
+}
+
+/// `head`, a card's head naming a type drawn among other names, escaped, its other names
+/// in a tooltip.
+fn headed(cx: &Ctx, head: &str, others: &[&str]) -> String {
+    match others.is_empty() {
+        true => esc(head),
+        false => format!("<span{}>{}</span>", tip_of(cx, others), esc(head)),
+    }
 }
 
 /// `days`' charts, the whole record's where `None`: authors, publishers, languages and each
@@ -726,54 +1126,59 @@ pub(super) fn charts(
     }
     let total: i64 = read.iter().map(|(_, secs, _)| secs).sum();
     let to = |by: By| narrowed(by, window);
+    // `tally` counts a book's `secs` on the bar of the value `name` is in, drawn by the
+    // name the value is drawn by and opening `by`; `None`, the bar of a value not set.
     let tally =
-        |name: &str, lang: Option<String>, by: By, bars: &mut Vec<Bar>, secs: i64| match bars
-            .iter_mut()
-            .find(|b| b.name == name)
-        {
-            Some(bar) => {
-                bar.secs += secs;
-                bar.books += 1;
+        |name: Option<Name>, by: By, lang: Option<String>, bars: &mut Vec<Bar>, secs: i64| {
+            let shown = name.map_or(w.not_set, |name| cx.linked.shown(name));
+            match bars.iter_mut().find(|b| b.name == shown) {
+                Some(bar) => {
+                    bar.secs += secs;
+                    bar.books += 1;
+                }
+                None => bars.push(Bar {
+                    name: shown.to_string(),
+                    lang,
+                    secs,
+                    books: 1,
+                    to: to(by),
+                    also: name
+                        .map(|name| cx.linked.also(name))
+                        .filter(|also| !also.is_empty())
+                        .map(|also| said_also(cx, &also))
+                        .unwrap_or_default(),
+                }),
             }
-            None => bars.push(Bar {
-                name: name.to_string(),
-                lang,
-                secs,
-                books: 1,
-                to: to(by),
-            }),
         };
     let mut authors = Vec::new();
     let mut publishers = Vec::new();
     let (mut authors_unset, mut publishers_unset) = (Vec::new(), Vec::new());
     for (at, secs, values) in &read {
         let book = &cx.stats.books[*at];
+        let mut once: Vec<&str> = Vec::new();
         for name in &values.authors {
-            let named = language_of(&book.language, name);
+            let shown = cx.linked.shown(Name::Author(name));
+            if once.contains(&shown) {
+                continue;
+            }
+            once.push(shown);
+            let named = language_of(&book.language, shown);
             let lang = (!named.is_empty()).then_some(named);
-            tally(
-                name,
-                lang,
-                By::Author(Some(name.clone())),
-                &mut authors,
-                *secs,
-            );
+            let by = By::Author(Some(shown.to_string()));
+            tally(Some(Name::Author(name)), by, lang, &mut authors, *secs);
         }
         if values.authors.is_empty() {
-            tally(w.not_set, None, By::Author(None), &mut authors_unset, *secs);
+            tally(None, By::Author(None), None, &mut authors_unset, *secs);
         }
         match &values.publisher {
-            Some(p) => tally(
-                p,
-                None,
-                By::Publisher(Some(p.clone())),
-                &mut publishers,
-                *secs,
-            ),
+            Some(p) => {
+                let by = By::Publisher(Some(cx.linked.shown(Name::Publisher(p)).to_string()));
+                tally(Some(Name::Publisher(p)), by, None, &mut publishers, *secs);
+            }
             None => tally(
-                w.not_set,
                 None,
                 By::Publisher(None),
+                None,
                 &mut publishers_unset,
                 *secs,
             ),
@@ -785,7 +1190,7 @@ pub(super) fn charts(
         cards.push(ranked(
             cx,
             "authors",
-            w.authors_head,
+            &esc(w.authors_head),
             total,
             authors,
             authors_unset,
@@ -796,7 +1201,7 @@ pub(super) fn charts(
         cards.push(ranked(
             cx,
             "publishers",
-            w.publishers_head,
+            &esc(w.publishers_head),
             total,
             publishers,
             publishers_unset,
@@ -807,11 +1212,13 @@ pub(super) fn charts(
     if !languages.is_empty() {
         cards.push(languages);
     }
-    let mut types: Vec<String> = Vec::new();
+    // `types`: each type in use, by the name it is drawn by, a linked type once.
+    let mut types: Vec<&str> = Vec::new();
     for (_, _, values) in &read {
         for tag in &values.tags {
-            if !types.contains(&tag.r#type) {
-                types.push(tag.r#type.clone());
+            let shown = cx.linked.shown(Name::Type(&tag.r#type));
+            if !types.contains(&shown) {
+                types.push(shown);
             }
         }
     }
@@ -820,35 +1227,42 @@ pub(super) fn charts(
         let mut unset = Vec::new();
         let mut doubled = false;
         for (_, secs, values) in &read {
-            let under: Vec<&Tag> = values.tags.iter().filter(|t| t.r#type == r#type).collect();
+            let mut under: Vec<(&Tag, &str)> = Vec::new();
+            for tag in values
+                .tags
+                .iter()
+                .filter(|t| cx.linked.same(Name::Type(&t.r#type), Name::Type(r#type)))
+            {
+                let shown = cx.linked.shown(Name::Tag(&tag.r#type, &tag.tag));
+                if !under.iter().any(|(_, s)| *s == shown) {
+                    under.push((tag, shown));
+                }
+            }
             doubled |= under.len() > 1;
-            for tag in &under {
+            for (tag, shown) in &under {
+                let by = By::Tag(r#type.to_string(), Some(shown.to_string()));
                 tally(
-                    &tag.tag,
+                    Some(Name::Tag(&tag.r#type, &tag.tag)),
+                    by,
                     None,
-                    By::Tag(r#type.clone(), Some(tag.tag.clone())),
                     &mut bars,
                     *secs,
                 );
             }
             if under.is_empty() {
-                tally(
-                    w.not_set,
-                    None,
-                    By::Tag(r#type.clone(), None),
-                    &mut unset,
-                    *secs,
-                );
+                let by = By::Tag(r#type.to_string(), None);
+                tally(None, by, None, &mut unset, *secs);
             }
         }
         let note = doubled.then(|| w.counts_each.replace("{t}", &date::duration(total, cx.s)));
         let numbers = bars.iter().all(|b| b.name.parse::<i64>().is_ok());
+        let head = headed(cx, r#type, &cx.linked.also(Name::Type(r#type)));
         cards.push(match numbers {
-            true => columns(cx, &r#type, bars, unset, note),
+            true => columns(cx, &head, bars, unset, note),
             false => ranked(
                 cx,
                 &format!("type {}", r#type),
-                &r#type,
+                &head,
                 total,
                 bars,
                 unset,
@@ -864,7 +1278,7 @@ pub(super) fn charts(
 
 /// `chart`'s card of ranked bars headed `head`: `bars` by time, the most read in the mark's
 /// colour, the first [`TOP`] shown and the rest behind Show all, then `unset` and `note`;
-/// `head` states `total` and the most.
+/// `head`, escaped, states `total` and the most.
 fn ranked(
     cx: &Ctx,
     chart: &str,
@@ -887,7 +1301,7 @@ fn ranked(
     let mut out = format!(
         "<div data-chart=\"{}\"><h2>{}<span class=\"said\">{} · {} {}</span></h2><div class=\"card\"><div class=\"ranked\">",
         esc(chart),
-        esc(head),
+        head,
         esc(&date::duration(total, cx.s)),
         esc(cx.s.most),
         esc(bars.first().map(|b| b.name.as_str()).unwrap_or_default())
@@ -907,7 +1321,7 @@ fn ranked(
         let time = date::duration(bar.secs, cx.s);
         let _ = write!(
             out,
-            "<a class=\"r{}\" href=\"{}\" data-tip=\"{} · {} · {}\"{}><span class=\"who\"{}>{}</span>\
+            "<a class=\"r{}\" href=\"{}\" data-tip=\"{}\"{}><span class=\"who\"{}>{}</span>\
              <span class=\"bar\"><i style=\"width: {width:.1}%; background: {colour}\"></i></span>\
              <b>{}</b><span class=\"n\">{}</span></a>",
             match (colour, past) {
@@ -916,9 +1330,7 @@ fn ranked(
                 _ => "",
             },
             bar.to.link(),
-            esc(&bar.name),
-            esc(&time),
-            esc(&books(bar.books)),
+            esc(&bar_tip(bar, &[&time, &books(bar.books)])),
             match past {
                 true => " hidden",
                 false => "",
@@ -950,7 +1362,7 @@ fn ranked(
     out
 }
 
-/// `bars` as columns under `head`, for a type whose tags are all numbers: one a
+/// `bars` as columns under `head`, escaped, for a type whose tags are all numbers: one a
 /// number, in their order, every whole number between standing; `unset` stated
 /// under them.
 fn columns(cx: &Ctx, head: &str, bars: Vec<Bar>, unset: Vec<Bar>, note: Option<String>) -> String {
@@ -974,7 +1386,7 @@ fn columns(cx: &Ctx, head: &str, bars: Vec<Bar>, unset: Vec<Bar>, note: Option<S
         .unwrap_or_default();
     let mut out = format!(
         "<div><h2>{}<span class=\"said\">{} {}</span></h2><div class=\"card\"><div class=\"cols\">",
-        esc(head),
+        head,
         esc(cx.s.most),
         esc(&top)
     );
@@ -987,11 +1399,10 @@ fn columns(cx: &Ctx, head: &str, bars: Vec<Bar>, unset: Vec<Bar>, note: Option<S
                 };
                 let _ = write!(
                     out,
-                    "<a class=\"c\" href=\"{}\" data-tip=\"{} · {}\"><b>{}</b>\
+                    "<a class=\"c\" href=\"{}\" data-tip=\"{}\"><b>{}</b>\
                      <i style=\"height: {:.0}px; background: {colour}\"></i><span>{n}</span></a>",
                     bar.to.link(),
-                    esc(&bar.name),
-                    esc(&counted(cx.s.n_books, bar.books as i64)),
+                    esc(&bar_tip(bar, &[&counted(cx.s.n_books, bar.books as i64)])),
                     esc(&date::duration(bar.secs, cx.s)),
                     bar.secs as f64 / most as f64 * 130.0
                 );
@@ -1022,13 +1433,20 @@ fn columns(cx: &Ctx, head: &str, bars: Vec<Bar>, unset: Vec<Bar>, note: Option<S
     out
 }
 
-/// `spoken`: the languages `tags` holds, each tag under a type of
-/// [`names::TYPES`], its words once.
-fn spoken(tags: &[Tag]) -> Vec<&Tag> {
-    let mut out: Vec<&Tag> = Vec::new();
+/// `spoken`: the languages `tags` holds, each tag under a type of [`names::TYPES`],
+/// once each, as the type and the tag are drawn where many books meet.
+fn spoken(cx: &Ctx, tags: &[Tag]) -> Vec<Tag> {
+    let mut out: Vec<Tag> = Vec::new();
     for tag in tags.iter().filter(|t| names::is_type(&t.r#type)) {
-        if !out.iter().any(|t| t.tag == tag.tag) {
-            out.push(tag);
+        let shown = Tag {
+            r#type: cx.linked.shown(Name::Type(&tag.r#type)).to_string(),
+            tag: cx
+                .linked
+                .shown(Name::Tag(&tag.r#type, &tag.tag))
+                .to_string(),
+        };
+        if !out.iter().any(|t| t.tag == shown.tag) {
+            out.push(shown);
         }
     }
     out
@@ -1052,9 +1470,9 @@ fn languages_chart(
     total: i64,
 ) -> String {
     let w = Words::of(cx.lang);
-    let books: Vec<(usize, Vec<&Tag>)> = read
+    let books: Vec<(usize, Vec<Tag>)> = read
         .iter()
-        .map(|(at, _, values)| (*at, spoken(&values.tags)))
+        .map(|(at, _, values)| (*at, spoken(cx, &values.tags)))
         .collect();
     let (types, _) = in_use(cx);
     let Some((kind, _)) = types.iter().find(|(t, _)| names::is_type(t)) else {
@@ -1074,7 +1492,7 @@ fn languages_chart(
             false => these
                 .iter()
                 .enumerate()
-                .map(|(n, tag)| (Some(*tag), part(*secs, n, these.len())))
+                .map(|(n, tag)| (Some(tag), part(*secs, n, these.len())))
                 .collect(),
         };
         for (tag, secs) in parts {
@@ -1099,7 +1517,7 @@ fn languages_chart(
         .unwrap_or_default();
     let mut out = format!(
         "<div><h2>{}<span class=\"said\">{} · {} {}</span></h2><div class=\"card\"><div class=\"share\">",
-        esc(kind),
+        headed(cx, kind, &cx.linked.also(Name::Type(kind))),
         esc(&date::duration(total, cx.s)),
         esc(cx.s.most),
         esc(&top)
@@ -1122,9 +1540,13 @@ fn languages_chart(
             ),
             None => (" unset", w.not_set, By::Tag(kind.clone(), None)),
         };
+        let also = tag
+            .as_ref()
+            .map(|t| tip_of(cx, &cx.linked.also(Name::Tag(&t.r#type, &t.tag))))
+            .unwrap_or_default();
         let _ = write!(
             out,
-            "<a class=\"r{class}\" href=\"{}\"><i style=\"background: {}\"></i><span>{}</span>\
+            "<a class=\"r{class}\" href=\"{}\"{also}><i style=\"background: {}\"></i><span>{}</span>\
              <span class=\"h\">{}</span><span class=\"p\">{share}%</span></a>",
             narrowed(by, window).link(),
             colour(tag),
@@ -1219,7 +1641,7 @@ type Split = (String, Vec<(Option<Tag>, i64)>);
 fn hues<'a>(cx: &'a Ctx) -> impl Fn(&str) -> String + 'a {
     let mut order: Vec<(String, i64)> = Vec::new();
     for at in 0..cx.stats.books.len() {
-        let these = spoken(&cx.metadata[at].tags);
+        let these = spoken(cx, &cx.metadata[at].tags);
         let secs = cx.stats.books[at].read_seconds(cx.from);
         for (n, tag) in these.iter().enumerate() {
             let secs = part(secs, n, these.len());

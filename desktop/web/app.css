@@ -1226,6 +1226,15 @@ section h2 .said .search {
 .types .kind > .held {
   grid-column: 2;
 }
+/* `.names`: Edit tags' fields for a type's names, with its buttons, in the name's column. */
+.types .kind > .names {
+  grid-column: 1;
+  justify-self: start;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
 .types input {
   box-sizing: content-box;
   margin: 0;
@@ -1371,6 +1380,37 @@ section h2 .said .search {
 }
 .types.all.editing .off {
   visibility: visible;
+}
+/* `.same`, *Same as…* beside a tag or a type's name, set as `.off` is; `.linked`, the
+   names of one value in a dashed rule, `.apart` (*Separate*) ending it. */
+.types .same {
+  border: none;
+  background: none;
+  padding: 0 2px;
+  color: var(--faint);
+  font-size: 12px;
+  line-height: 1;
+}
+.types .same:hover {
+  color: var(--accent);
+}
+.types .linked {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 2px;
+  border: 1px dashed var(--faint);
+  border-radius: 999px;
+}
+.types .apart {
+  border: none;
+  background: none;
+  padding: 0 4px;
+  color: var(--soft);
+  font-size: 12px;
+}
+.types .apart:hover {
+  color: var(--ink);
 }
 .types .edit {
   grid-column: 3;
@@ -1520,8 +1560,18 @@ section h2 .said .search {
   padding-top: 19px;
   margin: 0;
 }
-.renaming {
+.renaming,
+.linking {
   grid-template-columns: minmax(0, 420px) auto;
+}
+/* A value of several names sets out a field for each, one under another, its
+   buttons beside the first. */
+.renaming > .field {
+  grid-column: 1;
+}
+.renaming > .acts {
+  grid-column: 2;
+  grid-row: 1;
 }
 
 /* `.retag`: the bulk editor's tags, each type's `.group` a field for the type

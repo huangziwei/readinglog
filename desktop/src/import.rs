@@ -9,7 +9,7 @@ use anyhow::{Context, Result, anyhow};
 
 use crate::device::mass_storage::transport::MassStorageTransport;
 use crate::device::{DeviceInfo, TPath, Transport};
-use crate::metadata;
+use crate::metadata::{self, links};
 use crate::workspace::{BACKUPS, RECORD, Workspace, write_file, writing};
 use readinglog_native::backup::{self, About, Kind};
 use readinglog_native::record::{self, PARTIAL_FILE, Record};
@@ -102,10 +102,10 @@ pub fn kindle(ws: &Workspace, device: &DeviceInfo, putting: impl FnOnce()) -> Re
     Ok(Synced { imported, put })
 }
 
-/// Write the workspace copy's `w`, `r` and `d` rows for `serial` into the
-/// Kindle's `sessions.tsv` as [`record_on`] reads it, every other line as it
-/// stands, where a row moves or `record_on` reads the partial. Answers whether
-/// it wrote.
+/// Write the workspace copy's `w`, `r` and `d` rows for `serial`, and the
+/// workspace's `l` rows, into the Kindle's `sessions.tsv` as [`record_on`] reads
+/// it, every other line as it stands, where a row moves or `record_on` reads the
+/// partial. Answers whether it wrote.
 fn put_back(ws: &Workspace, serial: &str, transport: &dyn Transport) -> Result<bool> {
     let app = app_folder(transport)?;
     let (bytes, in_place) = record_on(transport, &app)?;
@@ -113,10 +113,12 @@ fn put_back(ws: &Workspace, serial: &str, transport: &dyn Transport) -> Result<b
     let ours = ws.kindle_dir(serial).join(RECORD);
     let mut merged = Record::from_text(&held);
     let mut rows = metadata::rows(&held);
+    let mut linked = links::rows(&held);
     let notes_moved = merged.take_written(&Record::load(&ours));
     let rows_moved = metadata::take(&mut rows, &metadata::read(&ours));
-    let text = match notes_moved || rows_moved {
-        true => metadata::splice(&held, &merged, &rows),
+    let links_moved = links::take(&mut linked, &links::of(ws));
+    let text = match notes_moved || rows_moved || links_moved {
+        true => metadata::splice(&held, &merged, &rows, &linked),
         false if in_place => return Ok(false),
         false => held,
     };
@@ -255,14 +257,16 @@ fn settle(
             let mut record = Record::load(&dir);
             let was = record.text();
             let mut rows = metadata::read(&dir);
+            let mut linked = links::read(&dir);
             let carried = inside(&kept)
-                .map(|bytes| metadata::rows(&String::from_utf8_lossy(&bytes)))
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
                 .unwrap_or_default();
-            let rows_moved = metadata::take(&mut rows, &carried);
+            let rows_moved = metadata::take(&mut rows, &metadata::rows(&carried));
+            let links_moved = links::take(&mut linked, &links::rows(&carried));
             backup::restore(&dir, &kept, &mut record, &mut |_, _| {})
                 .with_context(|| format!("folding in {}", kept.display()))?;
-            if record.text() != was || rows_moved {
-                let text = metadata::splice(&record.text(), &record, &rows);
+            if record.text() != was || rows_moved || links_moved {
+                let text = metadata::splice(&record.text(), &record, &rows, &linked);
                 write_file(&Record::file(&dir), text.as_bytes())
                     .with_context(|| format!("saving the record in {}", dir.display()))?;
             }
@@ -275,7 +279,9 @@ fn settle(
             fresh.take_written(&Record::load(&dir));
             let mut rows = metadata::rows(&text);
             metadata::take(&mut rows, &metadata::read(&dir));
-            let merged = metadata::splice(&text, &fresh, &rows);
+            let mut linked = links::rows(&text);
+            links::take(&mut linked, &links::read(&dir));
+            let merged = metadata::splice(&text, &fresh, &rows, &linked);
             let file = Record::file(&dir);
             if std::fs::read_to_string(&file).ok().as_deref() != Some(merged.as_str()) {
                 write_file(&file, merged.as_bytes())
@@ -284,6 +290,7 @@ fn settle(
             keep_latest(group, &picked, &fresh);
         }
     }
+    links::spread(ws)?;
     let after = ws.record();
     Ok(Imported {
         about,

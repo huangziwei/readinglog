@@ -456,6 +456,30 @@ fn retag_every(
     metadata::retag_every(&ws, &from, to.as_ref(), &now()).map_err(said)
 }
 
+/// Count `linking`'s names as one value, with every name already linked to any of
+/// them, in every record. Answers what `undo_metadata` takes back.
+#[tauri::command]
+fn link_names(
+    app: AppHandle,
+    open: State<'_, Open>,
+    linking: metadata::links::Linking,
+) -> Answer<Vec<metadata::Undo>> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    metadata::links::link(&ws, &linking, &now()).map_err(said)
+}
+
+/// Count the names of every link holding one of `linking`'s names apart again, in
+/// every record. Answers what `undo_metadata` takes back.
+#[tauri::command]
+fn unlink_names(
+    app: AppHandle,
+    open: State<'_, Open>,
+    linking: metadata::links::Linking,
+) -> Answer<Vec<metadata::Undo>> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    metadata::links::separate(&ws, &linking, &now()).map_err(said)
+}
+
 /// Set back what one `edit_metadata` changed.
 #[tauri::command]
 fn undo_metadata(app: AppHandle, open: State<'_, Open>, undone: Vec<metadata::Undo>) -> Answer<()> {
@@ -621,6 +645,8 @@ pub fn run() {
             rename_metadata,
             rename_type,
             retag_every,
+            link_names,
+            unlink_names,
             undo_metadata,
             choose_folder,
             pick_backup,

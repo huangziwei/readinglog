@@ -14,6 +14,7 @@ use readinglog_native::view::{Shelf, Sort, Way, Window};
 use super::words::Words;
 use super::{Ctx, Route, chip, esc, metadata, tile};
 use crate::metadata::By;
+use crate::metadata::links::Name;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn page(
@@ -84,7 +85,7 @@ pub(super) fn page(
         books_view::listed(cx.stats, shelf, order, way, over, cx.uncovered)
             .into_iter()
             .filter(|at| named.contains(at))
-            .filter(|at| by.is_none_or(|by| by.holds(&metadata::values(cx, *at))))
+            .filter(|at| by.is_none_or(|by| by.holds(&metadata::values(cx, *at), cx.linked)))
             .partition(|at| {
                 let book = &cx.stats.books[*at];
                 !book.title.is_empty() || book.has_cover()
@@ -109,9 +110,13 @@ pub(super) fn page(
     out.push_str(&metadata::listed(cx, by, editing, |by, editing| {
         route(shelf, order, way, window, by.as_ref(), editing)
     }));
+    let named = by.filter(|by| matches!(by, By::Author(Some(_)) | By::Publisher(Some(_))));
+    if named.is_some() || editing {
+        out.push_str(&metadata::linking(cx, named));
+    }
     if let Some(by) = by {
         if !matches!(by, By::Tag(..)) {
-            out.push_str(&metadata::renaming(cx, by, drawn.len()));
+            out.push_str(&metadata::renaming(cx, by, &drawn));
         }
         let not_set = matches!(
             by,
@@ -144,7 +149,7 @@ pub(super) fn page(
 }
 
 /// `searched`: the books `query` finds, `search::listed`'s over titles and authors
-/// and each book whose publisher or a tag holds it.
+/// and each book whose publisher or a tag holds it, or another name of a value it holds.
 fn searched(cx: &Ctx, query: &str) -> Vec<usize> {
     let mut out = search::listed(cx.stats, query, cx.uncovered);
     let wanted = hanfold::fold(&query.trim().to_lowercase()).into_owned();
@@ -152,16 +157,24 @@ fn searched(cx: &Ctx, query: &str) -> Vec<usize> {
         return out;
     }
     let holds = |text: &str| hanfold::fold(&text.to_lowercase()).contains(&wanted);
+    let any = |name: Name| cx.linked.every(name).into_iter().any(holds);
     for at in 0..cx.stats.books.len() {
         if out.contains(&at) {
             continue;
         }
         let values = metadata::values(cx, at);
-        let found = values.publisher.as_deref().is_some_and(holds)
+        let found = values
+            .authors
+            .iter()
+            .any(|a| cx.linked.others(Name::Author(a), a).into_iter().any(holds))
+            || values
+                .publisher
+                .as_deref()
+                .is_some_and(|p| any(Name::Publisher(p)))
             || values
                 .tags
                 .iter()
-                .any(|t| holds(&t.tag) || holds(&t.r#type));
+                .any(|t| any(Name::Tag(&t.r#type, &t.tag)) || any(Name::Type(&t.r#type)));
         if found {
             out.push(at);
         }

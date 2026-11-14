@@ -1,9 +1,10 @@
 //! [`Metadata`]: a `d` row of a Kindle's record, one field of one book. [`rows`] reads them off
 //! a record's text, [`splice`] writes them into it, [`edit`] sets a [`Patch`] on books, and
-//! [`Set::of`] is what one book's rows set.
+//! [`Set::of`] is what one book's rows set; [`links`], names counted as one value.
 
 mod authors;
 mod lang;
+pub mod links;
 pub mod names;
 
 use std::fmt::Write as _;
@@ -19,6 +20,7 @@ use readinglog_native::stats::BookStat;
 use readinglog_native::written::{self, later};
 
 use crate::workspace::{Workspace, write_file, writing};
+use links::{Linked, Links, Name};
 
 /// `ROW`: the first field of a `d` row.
 const ROW: &str = "d";
@@ -201,20 +203,28 @@ pub enum By {
 }
 
 impl By {
-    /// `holds`: whether a book stating `values` is one `self` narrows to.
-    pub fn holds(&self, values: &Values) -> bool {
-        let typed = |t: &Tag, r#type: &str| folded(&t.r#type) == folded(r#type);
+    /// `holds`: whether a book stating `values` is one `self` narrows to, a name
+    /// standing for every name `links` counts as one value with it.
+    pub fn holds(&self, values: &Values, links: &Links) -> bool {
         match self {
             By::Author(None) => values.authors.is_empty(),
-            By::Author(Some(name)) => values.authors.iter().any(|a| folded(a) == folded(name)),
-            By::Publisher(want) => {
-                values.publisher.as_deref().map(folded) == want.as_deref().map(folded)
-            }
-            By::Tag(r#type, None) => !values.tags.iter().any(|t| typed(t, r#type)),
+            By::Author(Some(name)) => values
+                .authors
+                .iter()
+                .any(|a| links.same(Name::Author(a), Name::Author(name))),
+            By::Publisher(None) => values.publisher.is_none(),
+            By::Publisher(Some(name)) => values
+                .publisher
+                .as_deref()
+                .is_some_and(|p| links.same(Name::Publisher(p), Name::Publisher(name))),
+            By::Tag(r#type, None) => !values
+                .tags
+                .iter()
+                .any(|t| links.same(Name::Type(&t.r#type), Name::Type(r#type))),
             By::Tag(r#type, Some(tag)) => values
                 .tags
                 .iter()
-                .any(|t| typed(t, r#type) && folded(&t.tag) == folded(tag)),
+                .any(|t| links.same(Name::Tag(&t.r#type, &t.tag), Name::Tag(r#type, tag))),
         }
     }
 }
@@ -375,11 +385,14 @@ impl Patch {
 }
 
 /// `Undo`: the rows one edit replaced in one Kindle's record as they stood, a
-/// row stating no value for none; [`undo`] sets them back.
+/// row stating no value for none and a link taken back for none; [`undo`] sets
+/// them back.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Undo {
     pub kindle: String,
     pub rows: Vec<Metadata>,
+    #[serde(default)]
+    pub links: Vec<links::Link>,
 }
 
 /// `edit` sets `patch` on each of `books` as of `at`, in the record of each
@@ -406,7 +419,7 @@ pub fn rename(ws: &Workspace, books: &[Named], by: &By, to: &str, at: &str) -> R
     }
     let each: Vec<(Named, Patch)> = loaded(ws, books)?
         .into_iter()
-        .filter(|(_, values)| by.holds(values))
+        .filter(|(_, values)| by.holds(values, &Links::default()))
         .map(|(named, values)| {
             let patch = match by {
                 By::Author(Some(from)) => Patch {
@@ -444,7 +457,17 @@ pub fn rename(ws: &Workspace, books: &[Named], by: &By, to: &str, at: &str) -> R
             (named, patch)
         })
         .collect();
-    edit_each(ws, &each, at)
+    let mut out = edit_each(ws, &each, at)?;
+    out.extend(match by {
+        By::Author(Some(from)) => match authors::parse_input(&to).as_slice() {
+            [one] => links::renamed(ws, Linked::Author, "", from, one, at)?,
+            _ => Vec::new(),
+        },
+        By::Publisher(Some(from)) => links::renamed(ws, Linked::Publisher, "", from, &to, at)?,
+        By::Tag(r#type, Some(from)) => links::renamed(ws, Linked::Tag, r#type, from, &to, at)?,
+        _ => Vec::new(),
+    });
+    Ok(out)
 }
 
 /// `rename_type` renames the type `from` to `to` on every book of `ws` holding
@@ -481,7 +504,10 @@ pub fn rename_type(ws: &Workspace, from: &str, to: &str, at: &str) -> Result<Vec
             })
         })
         .collect();
-    edit_each(ws, &each, at)
+    let mut out = edit_each(ws, &each, at)?;
+    out.extend(links::renamed(ws, Linked::Type, "", from, &to, at)?);
+    out.extend(links::refiled(ws, from, &to, at)?);
+    Ok(out)
 }
 
 /// `retag_every` sets `to` in the place of the tag `from` on every book of `ws`
@@ -515,7 +541,20 @@ pub fn retag_every(ws: &Workspace, from: &Tag, to: Option<&Tag>, at: &str) -> Re
         .filter(|(_, values)| values.tags.iter().any(|t| same(t, from)))
         .map(|(named, _)| (named, patch.clone()))
         .collect();
-    edit_each(ws, &each, at)
+    let mut out = edit_each(ws, &each, at)?;
+    if let Some(to) = to
+        && alike(&to.r#type, &from.r#type)
+    {
+        out.extend(links::renamed(
+            ws,
+            Linked::Tag,
+            &from.r#type,
+            &from.tag,
+            &to.tag,
+            at,
+        )?);
+    }
+    Ok(out)
 }
 
 /// `tagged`: each book of `ws` a `tags` or `language` row names, once, in the
@@ -678,31 +717,37 @@ pub fn edit_each(ws: &Workspace, each: &[(Named, Patch)], at: &str) -> Result<Ve
             out.push(Undo {
                 kindle: kindle.to_string(),
                 rows: replaced,
+                links: Vec::new(),
             });
         }
     }
     Ok(out)
 }
 
-/// `undo` sets back each row `undone` holds, as of `at`, over any row standing since.
+/// `undo` sets back each row and link `undone` holds, as of `at`, over any standing since.
 pub fn undo(ws: &Workspace, undone: &[Undo], at: &str) -> Result<()> {
     for each in undone {
         let source = ws.source(&each.kindle)?;
-        let held = read(&source.dir);
-        let rows: Vec<Metadata> = each
-            .rows
-            .iter()
-            .map(|row| Metadata {
-                edited: after(
-                    held.iter()
-                        .find(|h| h.id() == row.id())
-                        .map_or("", |h| h.edited.as_str()),
-                    at,
-                ),
-                ..row.clone()
-            })
-            .collect();
-        keep(&source.dir, &rows)?;
+        if !each.rows.is_empty() {
+            let held = read(&source.dir);
+            let rows: Vec<Metadata> = each
+                .rows
+                .iter()
+                .map(|row| Metadata {
+                    edited: after(
+                        held.iter()
+                            .find(|h| h.id() == row.id())
+                            .map_or("", |h| h.edited.as_str()),
+                        at,
+                    ),
+                    ..row.clone()
+                })
+                .collect();
+            keep(&source.dir, &rows)?;
+        }
+        if !each.links.is_empty() {
+            links::put_back(&source.dir, &each.links, at)?;
+        }
     }
     Ok(())
 }
@@ -775,17 +820,24 @@ pub fn take(held: &mut Vec<Metadata>, fresh: &[Metadata]) -> bool {
     moved
 }
 
-/// `text`, a record's file, with its `d` rows replaced by `rows` and its `w`
-/// and `r` rows by `from`'s, closed again by `written::splice`; every other line,
-/// a `d` row [`read_row`] cannot read among them, as `text` holds it.
-pub fn splice(text: &str, from: &Record, rows: &[Metadata]) -> String {
+/// `text`, a record's file, with its `d` rows replaced by `rows`, its `l` rows by
+/// `linked` and its `w` and `r` rows by `from`'s, closed again by `written::splice`;
+/// every other line, a `d` or `l` row this build cannot read among them, as `text`
+/// holds it.
+pub fn splice(text: &str, from: &Record, rows: &[Metadata], linked: &[links::Link]) -> String {
     let mut body = String::with_capacity(text.len());
-    for line in text.lines().filter(|line| read_row(line).is_none()) {
+    for line in text
+        .lines()
+        .filter(|line| read_row(line).is_none() && links::read_row(line).is_none())
+    {
         body.push_str(line);
         body.push('\n');
     }
     for row in rows {
         write_row(&mut body, row);
+    }
+    for link in linked {
+        links::write_row(&mut body, link);
     }
     written::splice(&body, from)
 }
@@ -801,10 +853,8 @@ fn keep(dir: &Path, fresh: &[Metadata]) -> Result<bool> {
     if !take(&mut rows, fresh) {
         return Ok(false);
     }
-    write_file(
-        &file,
-        splice(&text, &Record::from_text(&text), &rows).as_bytes(),
-    )?;
+    let spliced = splice(&text, &Record::from_text(&text), &rows, &links::rows(&text));
+    write_file(&file, spliced.as_bytes())?;
     Ok(true)
 }
 
@@ -1102,11 +1152,22 @@ mod tests {
                 was: None,
             },
         ];
-        // `stray` names a field `Field::from_stored` does not know.
+        let linked = vec![links::Link {
+            edited: "2026-11-14T10:00:00".into(),
+            linked: Linked::Tag,
+            r#type: "genre".into(),
+            first: "mystery".into(),
+            names: Some(vec!["ミステリー".into()]),
+        }];
+        // `stray` names a field `Field::from_stored` does not know, `wild` one
+        // `Linked` does not.
         let stray = "d\t2026-10-31T10:00:02\tB00KEY\t7\tseries\tA Series\t\\N";
-        let spliced = splice(&format!("{text}{stray}\n"), &record, &held);
+        let wild = "l\t2026-11-14T10:00:01\tseries\t\\N\tA Series\tA Saga";
+        let spliced = splice(&format!("{text}{stray}\n{wild}\n"), &record, &held, &linked);
         assert!(closed(&spliced));
         assert!(spliced.lines().any(|line| line == stray));
+        assert!(spliced.lines().any(|line| line == wild));
+        assert_eq!(links::rows(&spliced), linked);
         held.sort_by(|a, b| a.id().cmp(&b.id()));
         assert_eq!(rows(&spliced), held);
         assert_eq!(
@@ -1308,13 +1369,33 @@ mod tests {
             publisher: None,
             tags: vec![tag("genre", "Sci-Fi"), tag("language", "Japanese")],
         };
-        assert!(By::Author(Some("jane roe".into())).holds(&values));
-        assert!(!By::Author(None).holds(&values));
-        assert!(By::Publisher(None).holds(&values));
-        assert!(By::Tag("Language".into(), Some("japanese".into())).holds(&values));
-        assert!(By::Tag("genre".into(), Some("sci-fi".into())).holds(&values));
-        assert!(By::Tag("mood".into(), None).holds(&values));
-        assert!(!By::Tag("genre".into(), None).holds(&values));
+        let none = Links::default();
+        assert!(By::Author(Some("jane roe".into())).holds(&values, &none));
+        assert!(!By::Author(None).holds(&values, &none));
+        assert!(By::Publisher(None).holds(&values, &none));
+        assert!(By::Tag("Language".into(), Some("japanese".into())).holds(&values, &none));
+        assert!(By::Tag("genre".into(), Some("sci-fi".into())).holds(&values, &none));
+        assert!(By::Tag("mood".into(), None).holds(&values, &none));
+        assert!(!By::Tag("genre".into(), None).holds(&values, &none));
+    }
+
+    #[test]
+    fn a_name_narrows_to_every_book_holding_a_name_linked_with_it() {
+        let rows = [links::Link {
+            edited: "2026-11-14T10:00:00".into(),
+            linked: Linked::Author,
+            r#type: String::new(),
+            first: "Ann Writer".into(),
+            names: Some(vec!["アン・ライター".into()]),
+        }];
+        let japanese = Values {
+            authors: vec!["アン・ライター".into()],
+            ..Values::default()
+        };
+        let links = Links::new(&rows, std::slice::from_ref(&japanese));
+        let by = By::Author(Some("Ann Writer".into()));
+        assert!(by.holds(&japanese, &links));
+        assert!(!by.holds(&japanese, &Links::default()));
     }
 
     #[test]

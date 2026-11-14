@@ -19,6 +19,36 @@ fn is_cjk(c: char) -> bool {
     )
 }
 
+/// Whether `name` holds a Han ideograph or a Hangul syllable.
+fn is_han_or_hangul_name(name: &str) -> bool {
+    name.chars().any(|c| {
+        matches!(c as u32,
+            0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF | 0x20000..=0x2FA1F |
+            0xAC00..=0xD7AF
+        )
+    })
+}
+
+/// The names `packed` holds: split on `、`, and on an ASCII or full-width comma when
+/// every part holds Han or Hangul (`春野一郎, 秋山次郎` splits, `スミス，ジョン` stays one).
+fn unpack(packed: &str) -> Vec<&str> {
+    packed
+        .split('、')
+        .flat_map(|part| {
+            let names: Vec<&str> = part
+                .split([',', '，'])
+                .map(str::trim)
+                .filter(|n| !n.is_empty())
+                .collect();
+            if names.iter().all(|n| is_han_or_hangul_name(n)) {
+                names
+            } else {
+                vec![part]
+            }
+        })
+        .collect()
+}
+
 /// `name` as `Given Surname` where it reads `Surname, Given` (one ASCII comma,
 /// no CJK, no suffix after it); else `name`, its spaces collapsed.
 fn normalize_display(name: &str) -> String {
@@ -46,15 +76,18 @@ fn canonicalize<'a>(parts: impl Iterator<Item = &'a str>) -> Vec<String> {
         .collect()
 }
 
-/// `s`, as typed, as names: split at `&` and `、`, each through [`canonicalize`].
+/// `s`, as typed, as names: split at `&` and `、`, and at a comma between Han or Hangul
+/// names (see [`unpack`]), each through [`canonicalize`].
 pub fn parse_input(s: &str) -> Vec<String> {
-    canonicalize(s.split(['&', '、']))
+    canonicalize(s.split('&').flat_map(unpack))
 }
 
-/// `author`, a stored line, as names: split at `&` and `、`, each trimmed, none flipped.
+/// `author`, a stored line, as names: split at `&` and `、`, and at a comma between Han or
+/// Hangul names (see [`unpack`]), each trimmed, none flipped.
 pub fn split_display(author: &str) -> Vec<String> {
     author
-        .split(['&', '、'])
+        .split('&')
+        .flat_map(unpack)
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
@@ -112,6 +145,32 @@ mod tests {
             vec!["山田太郎", "佐藤花子"]
         );
         assert!(parse_input("   ").is_empty());
+    }
+
+    #[test]
+    fn a_comma_between_han_or_hangul_names_separates_them() {
+        for packed in ["春野一郎, 秋山次郎", "春野一郎，秋山次郎"] {
+            assert_eq!(
+                parse_input(packed),
+                vec!["春野一郎", "秋山次郎"],
+                "{packed}"
+            );
+            assert_eq!(
+                split_display(packed),
+                vec!["春野一郎", "秋山次郎"],
+                "{packed}"
+            );
+        }
+        // A comma beside a Latin name is not a list, nor between the halves of a
+        // Western name written in katakana.
+        for one in ["Ann Writer, 春野一郎", "スミス，ジョン", "スミス, ジョン"] {
+            assert_eq!(parse_input(one), vec![one], "{one}");
+            assert_eq!(split_display(one), vec![one], "{one}");
+        }
+        assert_eq!(
+            parse_input("春野一郎, 秋山次郎 & Ann Writer"),
+            vec!["春野一郎", "秋山次郎", "Ann Writer"]
+        );
     }
 
     #[test]
