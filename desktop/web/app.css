@@ -1208,12 +1208,13 @@ section h2 .said .search {
   color: var(--ink);
 }
 
-/* `.types`: a row for each type in use, its `.name` beside its tags and, on a
-   book page, `.more`; each field reads as words until it takes the focus. */
+/* `.types`: a row for each type in use, its `.name` on the baseline of its first
+   row of tags and, on a book page, `.more`; each field reads as words until it
+   takes the focus. */
 .types {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
-  align-items: center;
+  align-items: baseline;
   gap: 6px 14px;
   margin: 0 0 16px;
 }
@@ -1338,7 +1339,7 @@ section h2 .said .search {
   right: auto;
   min-width: 220px;
 }
-/* `.types.all`: over Books, each tag a link filling its pill, `.on` the one
+/* `.types.all`: over Books, each tag a link filling its pill, `.on` each one
    the books are narrowed to, `.unset` the books holding no tag of its type in
    a dashed rule; `.editing`, every × shown; `.edit` ends the first row. */
 .bar + .types.all {
@@ -1352,6 +1353,8 @@ section h2 .said .search {
 }
 .types.all .tag a {
   padding: 3px 10px;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .types.all .tag.on {
   background: var(--ink);

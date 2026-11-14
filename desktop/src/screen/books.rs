@@ -1,6 +1,6 @@
 //! [`page`]: Books, every book as its cover on the shelves `books_view::shelves` offers, in an
-//! order and its way, narrowed to a span's window, a value [`By`] names and a search over titles,
-//! authors, publishers and tags, the tags in use over the grid; its tiles feed the bulk editor.
+//! order and its way, narrowed to a span's window, the values [`narrows`] holds and a search over
+//! titles, authors, publishers and tags, the tags in use over the grid; its tiles feed the bulk editor.
 
 use std::fmt::Write as _;
 
@@ -13,8 +13,8 @@ use readinglog_native::view::{Shelf, Sort, Way, Window};
 
 use super::words::Words;
 use super::{Ctx, Route, chip, esc, metadata, tile};
-use crate::metadata::By;
 use crate::metadata::links::Name;
+use crate::metadata::{By, narrows};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn page(
@@ -24,7 +24,7 @@ pub(super) fn page(
     way: Way,
     query: &str,
     window: Option<Window>,
-    by: Option<&By>,
+    by: &[By],
     editing: bool,
 ) -> String {
     let s = cx.s;
@@ -33,7 +33,7 @@ pub(super) fn page(
                  order: Sort,
                  way: Way,
                  window: Option<Window>,
-                 by: Option<&By>,
+                 by: Vec<By>,
                  editing: bool| {
         Route::Books {
             shelf,
@@ -41,14 +41,21 @@ pub(super) fn page(
             way,
             query: query.to_string(),
             window,
-            by: by.cloned(),
+            by,
             editing,
         }
         .link()
     };
     let to = |shelf: Shelf, order: Sort, way: Way, window: Option<Window>| {
-        route(shelf, order, way, window, by, editing)
+        route(shelf, order, way, window, by.to_vec(), editing)
     };
+    // `named`: the author or publisher Books is narrowed to, drawn as a chip; `tags`, the rest.
+    let named = by.iter().find(|by| !matches!(by, By::Tag(..)));
+    let tags: Vec<By> = by
+        .iter()
+        .filter(|by| matches!(by, By::Tag(..)))
+        .cloned()
+        .collect();
     let mut out = format!(
         "<header class=\"head\"><h1>{}</h1><input class=\"search\" type=\"search\" data-search=\"books\" \
          value=\"{}\" placeholder=\"{}\"></header><div class=\"bar\"><div class=\"chips\">",
@@ -72,20 +79,20 @@ pub(super) fn page(
             esc(&window.name(cx.week, s))
         );
     }
-    if let Some(by) = by.filter(|by| !matches!(by, By::Tag(..))) {
+    if let Some(named) = named {
         out.push_str(&metadata::chip(
             cx,
-            by,
-            &route(shelf, order, way, window, None, editing),
+            named,
+            &route(shelf, order, way, window, tags.clone(), editing),
         ));
     }
-    let named = searched(cx, query);
+    let found = searched(cx, query);
     let over = window.map(|window| window.days(cx.week));
     let (drawn, nameless): (Vec<usize>, Vec<usize>) =
         books_view::listed(cx.stats, shelf, order, way, over, cx.uncovered)
             .into_iter()
-            .filter(|at| named.contains(at))
-            .filter(|at| by.is_none_or(|by| by.holds(&metadata::values(cx, *at), cx.linked)))
+            .filter(|at| found.contains(at))
+            .filter(|at| narrows(by, &metadata::values(cx, *at), cx.linked))
             .partition(|at| {
                 let book = &cx.stats.books[*at];
                 !book.title.is_empty() || book.has_cover()
@@ -108,23 +115,23 @@ pub(super) fn page(
         way.caret()
     );
     out.push_str(&metadata::listed(cx, by, editing, |by, editing| {
-        route(shelf, order, way, window, by.as_ref(), editing)
+        route(shelf, order, way, window, by, editing)
     }));
-    let named = by.filter(|by| matches!(by, By::Author(Some(_)) | By::Publisher(Some(_))));
-    if named.is_some() || editing {
-        out.push_str(&metadata::linking(cx, named));
+    let valued = named.filter(|by| matches!(by, By::Author(Some(_)) | By::Publisher(Some(_))));
+    if valued.is_some() || editing {
+        out.push_str(&metadata::linking(cx, valued));
     }
-    if let Some(by) = by {
-        if !matches!(by, By::Tag(..)) {
-            out.push_str(&metadata::renaming(cx, by, &drawn));
-        }
-        let not_set = matches!(
+    if let Some(named) = named {
+        out.push_str(&metadata::renaming(cx, named, &drawn));
+    }
+    let not_set = by.iter().any(|by| {
+        matches!(
             by,
             By::Author(None) | By::Publisher(None) | By::Tag(_, None)
-        );
-        if not_set {
-            out.push_str(&metadata::suggestions(cx, &drawn));
-        }
+        )
+    });
+    if not_set {
+        out.push_str(&metadata::suggestions(cx, &drawn));
     }
     if drawn.is_empty() && nameless.is_empty() {
         let _ = write!(out, "<p class=\"lede\">{}</p>", esc(s.nothing_on_the_shelf));

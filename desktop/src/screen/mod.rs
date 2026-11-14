@@ -64,8 +64,8 @@ pub enum Route {
         way: Way,
         query: String,
         window: Option<Window>,
-        /// The value the books shown state, where Books is narrowed to one.
-        by: Option<By>,
+        /// `by`: the values Books is narrowed to, as `metadata::narrows` holds them.
+        by: Vec<By>,
         /// `editing`: whether the tags over the books stand as fields.
         editing: bool,
     },
@@ -143,16 +143,7 @@ impl Route {
                     span.zip(day(&asked("day")))
                         .map(|(span, day)| Window { span, day })
                 },
-                by: {
-                    let is = asked("is");
-                    let some = || (!is.is_empty()).then(|| is.clone());
-                    match asked("by").as_str() {
-                        "author" => Some(By::Author(some())),
-                        "publisher" => Some(By::Publisher(some())),
-                        "tag" => Some(By::Tag(asked("type"), some())),
-                        _ => None,
-                    }
-                },
+                by: filters(query),
                 editing: asked("tags") == "edit",
             },
             ["book", key] => Route::Book {
@@ -229,33 +220,30 @@ impl Route {
                     ),
                     None => ("", String::new()),
                 };
-                let (by, r#type, is) = match by {
-                    None => ("", String::new(), None),
-                    Some(By::Author(is)) => ("author", String::new(), is.clone()),
-                    Some(By::Publisher(is)) => ("publisher", String::new(), is.clone()),
-                    Some(By::Tag(r#type, is)) => ("tag", r#type.clone(), is.clone()),
+                let mut pairs: Vec<(&str, String)> = vec![
+                    ("shelf", shelf.into()),
+                    ("order", order.into()),
+                    ("way", way(turned)),
+                    ("q", search.clone()),
+                    ("span", span.into()),
+                    ("day", day),
+                ];
+                for each in by {
+                    let (by, r#type, is) = match each {
+                        By::Author(is) => ("author", String::new(), is.clone()),
+                        By::Publisher(is) => ("publisher", String::new(), is.clone()),
+                        By::Tag(r#type, is) => ("tag", r#type.clone(), is.clone()),
+                    };
+                    pairs.push(("by", by.into()));
+                    pairs.push(("type", r#type));
+                    pairs.push(("is", is.unwrap_or_default()));
+                }
+                let editing = match editing {
+                    true => "edit".into(),
+                    false => String::new(),
                 };
-                format!(
-                    "#/books{}",
-                    query(&[
-                        ("shelf", shelf.into()),
-                        ("order", order.into()),
-                        ("way", way(turned)),
-                        ("q", search.clone()),
-                        ("span", span.into()),
-                        ("day", day),
-                        ("by", by.into()),
-                        ("type", r#type),
-                        ("is", is.unwrap_or_default()),
-                        (
-                            "tags",
-                            match editing {
-                                true => "edit".into(),
-                                false => String::new(),
-                            },
-                        ),
-                    ])
-                )
+                pairs.push(("tags", editing));
+                format!("#/books{}", query(&pairs))
             }
             Route::Book {
                 key,
@@ -304,7 +292,7 @@ impl Route {
             way: Way::Down,
             query: String::new(),
             window,
-            by: None,
+            by: Vec::new(),
             editing: false,
         }
     }
@@ -617,16 +605,7 @@ pub fn render(
             editing,
         } => (
             s.books.to_string(),
-            books::page(
-                &cx,
-                *shelf,
-                *order,
-                *way,
-                query,
-                *window,
-                by.as_ref(),
-                *editing,
-            ),
+            books::page(&cx, *shelf, *order, *way, query, *window, by, *editing),
         ),
         Route::Book {
             key,
@@ -921,6 +900,40 @@ fn escape(text: &str) -> String {
     out
 }
 
+/// `filters`: the values a Books `query` narrows to, in its order; each `by` opens
+/// one, the `type` and `is` that follow it up to the next `by` its own.
+fn filters(query: &str) -> Vec<By> {
+    let mut out: Vec<By> = Vec::new();
+    let mut open = false;
+    for (key, value) in query.split('&').filter_map(|pair| pair.split_once('=')) {
+        let value = unescape(value);
+        match key {
+            "by" => {
+                let one = match value.as_str() {
+                    "author" => Some(By::Author(None)),
+                    "publisher" => Some(By::Publisher(None)),
+                    "tag" => Some(By::Tag(String::new(), None)),
+                    _ => None,
+                };
+                open = one.is_some();
+                out.extend(one);
+            }
+            "type" if open => {
+                if let Some(By::Tag(r#type, _)) = out.last_mut() {
+                    *r#type = value;
+                }
+            }
+            "is" if open && !value.is_empty() => {
+                if let Some(By::Author(is) | By::Publisher(is) | By::Tag(_, is)) = out.last_mut() {
+                    *is = Some(value);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 /// [`escape`] read back, and `+` as a space; a `%` with no two hex digits
 /// after it stands as itself.
 fn unescape(text: &str) -> String {
@@ -1049,7 +1062,13 @@ mod tests {
                     span: Span::Month,
                     day,
                 }),
-                by: Some(By::Tag("ジャンル".into(), Some("SF & ミステリ".into()))),
+                by: vec![
+                    By::Author(Some("Doe, John".into())),
+                    By::Tag("ジャンル".into(), Some("SF & ミステリ".into())),
+                    By::Tag("Form".into(), None),
+                    By::Tag("Language".into(), Some("a=b".into())),
+                    By::Publisher(None),
+                ],
                 editing: true,
             },
             metadata::narrowed(By::Tag("language".into(), None), None),

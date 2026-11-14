@@ -227,6 +227,26 @@ impl By {
                 .any(|t| links.same(Name::Tag(&t.r#type, &t.tag), Name::Tag(r#type, tag))),
         }
     }
+
+    /// `alike`: whether `self` and `other` narrow by one field, two tags by one
+    /// type, a type of several names counting as one by `links`.
+    fn alike(&self, other: &By, links: &Links) -> bool {
+        match (self, other) {
+            (By::Author(_), By::Author(_)) | (By::Publisher(_), By::Publisher(_)) => true,
+            (By::Tag(a, _), By::Tag(b, _)) => links.same(Name::Type(a), Name::Type(b)),
+            _ => false,
+        }
+    }
+}
+
+/// `narrows`: whether a book stating `values` is one `by` narrows to: of the values
+/// `by` names in one field or of one type, any one; of its fields and types, each.
+pub fn narrows(by: &[By], values: &Values, links: &Links) -> bool {
+    by.iter().all(|one| {
+        by.iter()
+            .filter(|other| one.alike(other, links))
+            .any(|other| other.holds(values, links))
+    })
 }
 
 /// `Values`: a book's authors, publisher and tags, its languages among them, as
@@ -1377,6 +1397,45 @@ mod tests {
         assert!(By::Tag("genre".into(), Some("sci-fi".into())).holds(&values, &none));
         assert!(By::Tag("mood".into(), None).holds(&values, &none));
         assert!(!By::Tag("genre".into(), None).holds(&values, &none));
+    }
+
+    #[test]
+    fn values_of_one_type_narrow_to_any_and_of_two_types_to_both() {
+        let book = |tags: &[(&str, &str)]| Values {
+            tags: tags.iter().map(|(t, v)| tag(t, v)).collect(),
+            ..Values::default()
+        };
+        let fiction_ja = book(&[("Form", "Fiction"), ("Language", "Japanese")]);
+        let fiction_en = book(&[("Form", "Fiction"), ("Language", "English")]);
+        let essays_ja = book(&[("Form", "Essays"), ("Language", "Japanese")]);
+        let by = |pairs: &[(&str, Option<&str>)]| -> Vec<By> {
+            pairs
+                .iter()
+                .map(|(t, v)| By::Tag(t.to_string(), v.map(str::to_string)))
+                .collect()
+        };
+        let none = Links::default();
+        let both = by(&[("Form", Some("Fiction")), ("Language", Some("Japanese"))]);
+        assert!(narrows(&both, &fiction_ja, &none));
+        assert!(!narrows(&both, &fiction_en, &none));
+        assert!(!narrows(&both, &essays_ja, &none));
+        let either = by(&[
+            ("Language", Some("English")),
+            ("language", Some("Japanese")),
+        ]);
+        assert!(narrows(&either, &fiction_en, &none));
+        assert!(narrows(&either, &essays_ja, &none));
+        let unset = by(&[("Genre", None), ("Form", Some("Essays"))]);
+        assert!(narrows(&unset, &essays_ja, &none));
+        assert!(!narrows(&unset, &fiction_ja, &none));
+        let author = [By::Author(Some("Ann".into())), By::Tag("Form".into(), None)];
+        let ann = Values {
+            authors: vec!["Ann".into()],
+            ..Values::default()
+        };
+        assert!(narrows(&author, &ann, &none));
+        assert!(!narrows(&author, &fiction_ja, &none));
+        assert!(narrows(&[], &fiction_ja, &none));
     }
 
     #[test]

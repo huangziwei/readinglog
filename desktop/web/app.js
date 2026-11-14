@@ -735,21 +735,43 @@ function askOf(box) {
   return ["retag_every", { from: { type, tag: box.dataset.was }, to: { type, tag: words } }];
 }
 
-/** `follow` sets in place the tag the route narrows Books to, `from` (a type, or a type and a tag), as `to`, the filter dropped where `to` is `null`. */
-function follow(from, to) {
+/** `refilter` sets in place each value the route narrows Books to, its `by` and the `type` and `is` after it (`undefined` where it states none), as `change` answers: the three again, or `null` dropping it. */
+function refilter(change) {
   const [path, query] = (location.hash.slice(1) || "/").split("?");
-  const params = new URLSearchParams(query ?? "");
-  const named = (held, words) => (held ?? "").toLowerCase() === words.toLowerCase();
-  if (params.get("by") !== "tag" || !named(params.get("type"), from.type)) return;
-  if (from.tag !== undefined && !named(params.get("is"), from.tag)) return;
-  if (to === null) {
-    for (const key of ["by", "type", "is"]) params.delete(key);
-  } else {
-    params.set("type", to.type);
-    if (to.tag !== undefined) params.set("is", to.tag);
+  const entries = [...new URLSearchParams(query ?? "")];
+  const out = [];
+  for (let at = 0; at < entries.length; at++) {
+    if (entries[at][0] !== "by") {
+      out.push(entries[at]);
+      continue;
+    }
+    const by = entries[at][1];
+    let type;
+    let is;
+    while (["type", "is"].includes(entries[at + 1]?.[0])) {
+      const [key, value] = entries[++at];
+      if (key === "type") type = value;
+      else is = value || undefined;
+    }
+    const next = change(by, type, is);
+    if (!next) continue;
+    out.push(["by", next[0]]);
+    if (next[1] !== undefined) out.push(["type", next[1]]);
+    if (next[2] !== undefined) out.push(["is", next[2]]);
   }
-  const said = params.toString();
+  const said = new URLSearchParams(out).toString();
   history.replaceState(null, "", `#${path}${said ? `?${said}` : ""}`);
+}
+
+/** `follow` sets in place each tag the route narrows Books to that `from` (a type, or a type and a tag) names, as `to`, the filter dropped where `to` is `null`. */
+function follow(from, to) {
+  const named = (held, words) => (held ?? "").toLowerCase() === words.toLowerCase();
+  refilter((by, type, is) => {
+    const held = by === "tag" && named(type, from.type) && (from.tag === undefined || named(is, from.tag));
+    if (!held) return [by, type, is];
+    if (to === null) return null;
+    return [by, to.type, to.tag !== undefined ? to.tag : is];
+  });
 }
 
 /** `keepType` keeps what `box`, a field of `.types`, asks for, once, and draws again, `then` naming the field focused after, flashing Undo for a type or a tag renamed on every book or an edit reaching other books. */
@@ -1004,20 +1026,23 @@ async function rename(renaming, box = null) {
     ? [box]
     : [...renaming.querySelectorAll("input")].filter((b) => b.dataset.was === undefined || b.value.trim() !== b.dataset.was);
   const books = [...main.querySelectorAll("[data-pickable] .tile")].map((t) => JSON.parse(t.dataset.book));
-  const [path, query] = (location.hash.slice(1) || "/").split("?");
-  const params = new URLSearchParams(query ?? "");
   const undone = [];
+  const renamed = [];
   for (const each of boxes) {
     const to = each.value.trim();
     if (!to || to === each.dataset.was) continue;
     const by = JSON.parse(each.closest("[data-by]").dataset.by);
     undone.push(...(await call("rename_metadata", { books, by, to })));
     const was = by.author ?? by.publisher ?? by.tag?.[1] ?? "";
-    if (was.toLowerCase() === (params.get("is") ?? "").toLowerCase()) params.set("is", to);
+    renamed.push({ by: Object.keys(by)[0], type: by.tag?.[0], was: was.toLowerCase(), to });
   }
   if (!undone.length && !boxes.some((b) => b.value.trim())) return;
   closeMeta();
-  history.replaceState(null, "", `#${path}?${params.toString()}`);
+  refilter((by, type, is) => {
+    const same = (a, b) => (a ?? "").toLowerCase() === (b ?? "").toLowerCase();
+    const one = renamed.find((r) => r.by === by && same(is, r.was) && (r.type === undefined || same(type, r.type)));
+    return [by, type, one ? one.to : is];
+  });
   await show();
   if (undone.length) offerUndo(undone);
 }
@@ -1218,6 +1243,14 @@ document.addEventListener("keydown", (event) => {
   if (!arrow) return;
   event.preventDefault();
   location.hash = arrow.getAttribute("href");
+});
+
+// `dblclick` on a tag lit over Books leaves it out of the values Books is narrowed to.
+main.addEventListener("dblclick", (event) => {
+  const lit = event.target.closest(".types.all .tag.on a[data-off]");
+  if (!lit) return;
+  event.preventDefault();
+  location.hash = lit.dataset.off;
 });
 
 window.addEventListener("hashchange", () => show().catch(console.error));

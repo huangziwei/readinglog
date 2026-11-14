@@ -51,7 +51,7 @@ pub(super) fn narrowed(by: By, window: Option<Window>) -> Route {
         way: Way::Down,
         query: String::new(),
         window,
-        by: Some(by),
+        by: vec![by],
         editing: false,
     }
 }
@@ -286,16 +286,14 @@ fn types(cx: &Ctx, values: &Values) -> String {
     out
 }
 
-/// `.types.all`: over Books, each type [`in_use`] with its tags and `not set`, each opening
-/// Books narrowed to it by `to`, the one `by` names lit and going back, a value of several
-/// names drawn by its most held and the others in its tooltip; `editing`, each name a field
-/// renaming it on every book, × taking a tag off every book, a linked value's names together
-/// with *Separate* and *Same as…* beside each value; `.edit` between the two.
+/// `.types.all`: over Books, each type [`in_use`] with its tags and `not set`, each joining `by`
+/// through `to`, one `by` holds lit with a `data-off` link leaving it out; `editing`, each name a
+/// field renaming it on every book, × and *Same as…* beside it; `.edit` between the two.
 pub(super) fn listed(
     cx: &Ctx,
-    by: Option<&By>,
+    by: &[By],
     editing: bool,
-    to: impl Fn(Option<By>, bool) -> String,
+    to: impl Fn(Vec<By>, bool) -> String,
 ) -> String {
     let w = Words::of(cx.lang);
     let (types, tags) = in_use(cx);
@@ -303,8 +301,8 @@ pub(super) fn listed(
         return String::new();
     }
     let spelled = spelled(cx);
-    let lit = |r#type: &str, tag: Option<&str>| match by {
-        Some(By::Tag(t, held)) if cx.linked.same(Name::Type(t), Name::Type(r#type)) => {
+    let names = |held: &By, r#type: &str, tag: Option<&str>| match held {
+        By::Tag(t, held) if cx.linked.same(Name::Type(t), Name::Type(r#type)) => {
             match (held, tag) {
                 (Some(held), Some(tag)) => {
                     cx.linked.same(Name::Tag(t, held), Name::Tag(r#type, tag))
@@ -314,6 +312,25 @@ pub(super) fn listed(
             }
         }
         _ => false,
+    };
+    // `pill`: whether `r#type`'s `tag` (`None`, not set) is lit, its link, and its `data-off`.
+    let pill = |r#type: &str, tag: Option<&str>| {
+        let lit = by.iter().any(|held| names(held, r#type, tag));
+        if !lit {
+            let mut more = by.to_vec();
+            more.push(By::Tag(r#type.to_string(), tag.map(str::to_string)));
+            return ("", to(more, false), String::new());
+        }
+        let rest: Vec<By> = by
+            .iter()
+            .filter(|held| !names(held, r#type, tag))
+            .cloned()
+            .collect();
+        (
+            " on",
+            to(by.to_vec(), false),
+            format!(" data-off=\"{}\"", to(rest, false)),
+        )
     };
     let (class, edit) = match editing {
         true => (" editing", w.done),
@@ -343,28 +360,19 @@ pub(super) fn listed(
                 out.push_str(&tag_fields(cx, r#type, tag, &spelled));
                 continue;
             }
-            let (on, link) = match lit(r#type, Some(tag)) {
-                true => (" on", to(None, false)),
-                false => (
-                    "",
-                    to(Some(By::Tag(r#type.clone(), Some(tag.to_string()))), false),
-                ),
-            };
+            let (on, link, off) = pill(r#type, Some(tag));
             let _ = write!(
                 out,
-                "<span class=\"tag{on}\"><a href=\"{link}\"{}>{}</a></span>",
+                "<span class=\"tag{on}\"><a href=\"{link}\"{off}{}>{}</a></span>",
                 tip_of(cx, &cx.linked.also(Name::Tag(r#type, tag))),
                 esc(tag)
             );
         }
         if !editing {
-            let (on, link) = match lit(r#type, None) {
-                true => (" on", to(None, false)),
-                false => ("", to(Some(By::Tag(r#type.clone(), None)), false)),
-            };
+            let (on, link, off) = pill(r#type, None);
             let _ = write!(
                 out,
-                "<span class=\"tag unset{on}\"><a href=\"{link}\">{}</a></span>",
+                "<span class=\"tag unset{on}\"><a href=\"{link}\"{off}>{}</a></span>",
                 esc(w.not_set)
             );
         }
@@ -373,7 +381,7 @@ pub(super) fn listed(
     let _ = write!(
         out,
         "<a class=\"edit\" href=\"{}\">{}</a></div>",
-        to(by.cloned(), !editing),
+        to(by.to_vec(), !editing),
         esc(edit)
     );
     out
