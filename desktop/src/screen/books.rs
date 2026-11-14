@@ -114,7 +114,8 @@ pub(super) fn page(
         to(shelf, order, way.flipped(), window),
         way.caret()
     );
-    out.push_str(&metadata::listed(cx, by, editing, |by, editing| {
+    let shown: Vec<usize> = drawn.iter().chain(&nameless).copied().collect();
+    out.push_str(&metadata::listed(cx, by, &shown, editing, |by, editing| {
         route(shelf, order, way, window, by, editing)
     }));
     let valued = named.filter(|by| matches!(by, By::Author(Some(_)) | By::Publisher(Some(_))));

@@ -227,26 +227,12 @@ impl By {
                 .any(|t| links.same(Name::Tag(&t.r#type, &t.tag), Name::Tag(r#type, tag))),
         }
     }
-
-    /// `alike`: whether `self` and `other` narrow by one field, two tags by one
-    /// type, a type of several names counting as one by `links`.
-    fn alike(&self, other: &By, links: &Links) -> bool {
-        match (self, other) {
-            (By::Author(_), By::Author(_)) | (By::Publisher(_), By::Publisher(_)) => true,
-            (By::Tag(a, _), By::Tag(b, _)) => links.same(Name::Type(a), Name::Type(b)),
-            _ => false,
-        }
-    }
 }
 
-/// `narrows`: whether a book stating `values` is one `by` narrows to: of the values
-/// `by` names in one field or of one type, any one; of its fields and types, each.
+/// `narrows`: whether a book stating `values` is one every value of `by` narrows to,
+/// two tags of one type both held.
 pub fn narrows(by: &[By], values: &Values, links: &Links) -> bool {
-    by.iter().all(|one| {
-        by.iter()
-            .filter(|other| one.alike(other, links))
-            .any(|other| other.holds(values, links))
-    })
+    by.iter().all(|one| one.holds(values, links))
 }
 
 /// `Values`: a book's authors, publisher and tags, its languages among them, as
@@ -840,10 +826,9 @@ pub fn take(held: &mut Vec<Metadata>, fresh: &[Metadata]) -> bool {
     moved
 }
 
-/// `text`, a record's file, with its `d` rows replaced by `rows`, its `l` rows by
-/// `linked` and its `w` and `r` rows by `from`'s, closed again by `written::splice`;
-/// every other line, a `d` or `l` row this build cannot read among them, as `text`
-/// holds it.
+/// `text`, a record's file, its `d` rows replaced by `rows`, its `l` rows by `linked`, its `w`
+/// and `r` rows by `from`'s, closed by `written::splice`; every other line, a `d` or `l` row
+/// this build cannot read among them, as `text` holds it.
 pub fn splice(text: &str, from: &Record, rows: &[Metadata], linked: &[links::Link]) -> String {
     let mut body = String::with_capacity(text.len());
     for line in text
@@ -1400,14 +1385,14 @@ mod tests {
     }
 
     #[test]
-    fn values_of_one_type_narrow_to_any_and_of_two_types_to_both() {
+    fn a_book_stands_when_it_holds_every_value_narrowed_to() {
         let book = |tags: &[(&str, &str)]| Values {
             tags: tags.iter().map(|(t, v)| tag(t, v)).collect(),
             ..Values::default()
         };
         let fiction_ja = book(&[("Form", "Fiction"), ("Language", "Japanese")]);
         let fiction_en = book(&[("Form", "Fiction"), ("Language", "English")]);
-        let essays_ja = book(&[("Form", "Essays"), ("Language", "Japanese")]);
+        let both_tongues = book(&[("Language", "English"), ("Language", "Japanese")]);
         let by = |pairs: &[(&str, Option<&str>)]| -> Vec<By> {
             pairs
                 .iter()
@@ -1415,19 +1400,18 @@ mod tests {
                 .collect()
         };
         let none = Links::default();
-        let both = by(&[("Form", Some("Fiction")), ("Language", Some("Japanese"))]);
-        assert!(narrows(&both, &fiction_ja, &none));
-        assert!(!narrows(&both, &fiction_en, &none));
-        assert!(!narrows(&both, &essays_ja, &none));
-        let either = by(&[
+        let two_types = by(&[("Form", Some("Fiction")), ("Language", Some("Japanese"))]);
+        assert!(narrows(&two_types, &fiction_ja, &none));
+        assert!(!narrows(&two_types, &fiction_en, &none));
+        let one_type = by(&[
             ("Language", Some("English")),
             ("language", Some("Japanese")),
         ]);
-        assert!(narrows(&either, &fiction_en, &none));
-        assert!(narrows(&either, &essays_ja, &none));
-        let unset = by(&[("Genre", None), ("Form", Some("Essays"))]);
-        assert!(narrows(&unset, &essays_ja, &none));
-        assert!(!narrows(&unset, &fiction_ja, &none));
+        assert!(narrows(&one_type, &both_tongues, &none));
+        assert!(!narrows(&one_type, &fiction_en, &none));
+        assert!(!narrows(&one_type, &fiction_ja, &none));
+        let unset = by(&[("Genre", None), ("Form", Some("Fiction"))]);
+        assert!(narrows(&unset, &fiction_ja, &none));
         let author = [By::Author(Some("Ann".into())), By::Tag("Form".into(), None)];
         let ann = Values {
             authors: vec!["Ann".into()],

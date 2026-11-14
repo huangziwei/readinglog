@@ -1378,6 +1378,122 @@ mod tests {
     }
 
     #[test]
+    fn the_tags_over_books_offer_what_the_books_shown_hold_each_click_adding_or_taking_off() {
+        let ws = Workspace::create(&scratch("screen-filters")).unwrap();
+        let record = record_of(
+            vec![
+                book(100, "B1", "A Map of Small Rivers"),
+                book(200, "B2", "Field Notes"),
+                book(300, "B3", "The Quiet Harbour"),
+            ],
+            vec![
+                sitting("2026-09-01T09:00:00", 100, 600),
+                sitting("2026-09-02T09:00:00", 200, 600),
+                sitting("2026-09-03T09:00:00", 300, 600),
+            ],
+        );
+        record.save(&ws.record_dir()).unwrap();
+        let tag = |r#type: &str, tag: &str| crate::metadata::Tag {
+            r#type: r#type.into(),
+            tag: tag.into(),
+        };
+        for (key, extent, tags) in [
+            (
+                "B1",
+                100,
+                vec![
+                    tag("Form", "Fiction"),
+                    tag("Language", "English"),
+                    tag("Language", "Japanese"),
+                ],
+            ),
+            (
+                "B2",
+                200,
+                vec![tag("Form", "Fiction"), tag("Language", "English")],
+            ),
+            (
+                "B3",
+                300,
+                vec![tag("Form", "Essays"), tag("Language", "German")],
+            ),
+        ] {
+            let named = crate::metadata::Named {
+                kindle: String::new(),
+                key: key.into(),
+                extent,
+            };
+            let patch = crate::metadata::Patch {
+                tags: Some(tags),
+                ..crate::metadata::Patch::default()
+            };
+            crate::metadata::edit(&ws, &[named], &patch, "2026-10-31T10:00:00").unwrap();
+        }
+        let shown = Shown::of(&ws, clock()).unwrap();
+        let books = |route: &str| {
+            let page = render(
+                Some(&shown),
+                &ws,
+                &Route::parse(route),
+                1072.0,
+                Covers::Files,
+                None,
+            );
+            let tags = page
+                .main
+                .split("<div class=\"types all\">")
+                .nth(1)
+                .and_then(|after| after.split("class=\"edit\"").next())
+                .unwrap()
+                .to_string();
+            (page.main, tags)
+        };
+        let pill = |lit: bool, words: &str, n: usize, to: &str| {
+            let on = if lit { " on" } else { "" };
+            format!(
+                "<span class=\"tag{on}\"><a href=\"#/books{to}\">{words}<sup>{n}</sup></a></span>"
+            )
+        };
+
+        let (_, all) = books("/books");
+        assert!(all.contains(&pill(
+            false,
+            "English",
+            2,
+            "?by=tag&type=Language&is=English"
+        )));
+        assert!(all.contains(&pill(false, "German", 1, "?by=tag&type=Language&is=German")));
+
+        let fiction = "?by=tag&type=Form&is=Fiction";
+        let (main, tags) = books(&format!("/books{fiction}"));
+        assert!(main.contains("Field Notes") && !main.contains("The Quiet Harbour"));
+        assert!(tags.contains(&pill(true, "Fiction", 2, "")), "{tags}");
+        let both = format!("{fiction}&by=tag&type=Language&is=English");
+        assert!(tags.contains(&pill(false, "English", 2, &both)), "{tags}");
+        assert!(
+            !tags.contains(">German<") && !tags.contains(">Essays<"),
+            "{tags}"
+        );
+        assert!(
+            !tags.contains("not set"),
+            "every book shown holds a form and a language"
+        );
+
+        let (main, tags) = books(&format!("/books{both}"));
+        assert!(tags.contains(&pill(true, "English", 2, fiction)), "{tags}");
+        assert!(main.contains("Field Notes"));
+
+        let tongues = "?by=tag&type=Language&is=English&by=tag&type=Language&is=Japanese";
+        let (main, tags) = books(&format!("/books{tongues}"));
+        assert!(main.contains("A Map of Small Rivers") && !main.contains("Field Notes"));
+        let japanese_off = "?by=tag&type=Language&is=English";
+        assert!(
+            tags.contains(&pill(true, "Japanese", 1, japanese_off)),
+            "{tags}"
+        );
+    }
+
+    #[test]
     fn a_book_no_route_names_draws_today() {
         let ws = read("screen-lost");
         let shown = Shown::of(&ws, clock()).unwrap();

@@ -1353,8 +1353,18 @@ section h2 .said .search {
 }
 .types.all .tag a {
   padding: 3px 10px;
-  -webkit-user-select: none;
-  user-select: none;
+}
+/* `sup`: how many of the books shown hold the tag, set small and faint after its words. */
+.types.all .tag sup {
+  margin-left: 3px;
+  font-size: 9px;
+  line-height: 0;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.types.all .tag.on sup {
+  color: inherit;
+  opacity: 0.6;
 }
 .types.all .tag.on {
   background: var(--ink);
@@ -1567,8 +1577,8 @@ section h2 .said .search {
 .linking {
   grid-template-columns: minmax(0, 420px) auto;
 }
-/* A value of several names sets out a field for each, one under another, its
-   buttons beside the first. */
+/* `.renaming > .field`: a field for each name of a value, one under another,
+   `.acts` beside the first. */
 .renaming > .field {
   grid-column: 1;
 }

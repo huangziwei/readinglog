@@ -1245,14 +1245,6 @@ document.addEventListener("keydown", (event) => {
   location.hash = arrow.getAttribute("href");
 });
 
-// `dblclick` on a tag lit over Books leaves it out of the values Books is narrowed to.
-main.addEventListener("dblclick", (event) => {
-  const lit = event.target.closest(".types.all .tag.on a[data-off]");
-  if (!lit) return;
-  event.preventDefault();
-  location.hash = lit.dataset.off;
-});
-
 window.addEventListener("hashchange", () => show().catch(console.error));
 window.addEventListener(
   "resize",
