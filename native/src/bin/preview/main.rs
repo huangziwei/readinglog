@@ -1,6 +1,6 @@
-//! Every screen drawn to a PNG, with no display behind it. A shot names a
-//! screen and, after a colon, what it is showing: `rhythm:year`, `book:3`.
-//! `--list` names them all, `--sheet` sheets a run, `--crop` cuts each shot.
+//! `preview` draws every screen to a PNG with no display behind it; a shot names a screen and,
+//! after a colon, what it shows (`rhythm:year`, `book:3`), `--list` naming them all, `--sheet`
+//! sheeting a run and `--crop` cutting each shot.
 
 mod fixture;
 mod sheet;
@@ -14,6 +14,7 @@ use readinglog_native::app::App;
 use readinglog_native::date;
 use readinglog_native::eink::fb::Framebuffer;
 use readinglog_native::lang::Lang;
+use readinglog_native::metadata::By;
 use readinglog_native::record::Record;
 use readinglog_native::settings::{
     ColorScheme, Scope, SittingFloor, StatsFrom, TextSize, WeekStart,
@@ -25,37 +26,37 @@ use readinglog_native::ui::splash;
 use readinglog_native::ui::text::TextRenderer;
 use readinglog_native::ui::theme::Theme;
 use readinglog_native::update::{Doing, Failure, Outcome};
+use readinglog_native::view::breakdown::Whole;
 use readinglog_native::view::{Act, Ask, BookTab, Search, Shelf, Sort, Span, Way, Window};
 
-/// The day the preview is set to, and the second of it.
+/// `DAY`: the day the preview is set to, and the second of it.
 const DAY: (i64, i64, i64) = (2026, 9, 16);
 const NOW: i64 = 20 * 3600 + 15 * 60;
 
-/// The panels, by the name `--panel` takes: the first drawn where a run names
-/// none and untagged by `panel_tag`, each at `ui::scale`'s density; `--panel
-/// WxH` draws any other size.
+/// `PANELS`: the panels, by the name `--panel` takes: the first drawn where a run names none and
+/// untagged by `panel_tag`, each at `ui::scale`'s density; `--panel WxH` draws any other size.
 const PANELS: &[(&str, u32, u32)] = &[
-    // Colorsoft, Oasis 2-3.
+    // `pw`: Colorsoft, Oasis 2-3.
     ("pw", 1264, 1680),
     ("scribe", 1860, 2480),
-    // Paperwhite 5-6.
+    // `pw5`: Paperwhite 5-6.
     ("pw5", 1236, 1648),
-    // Voyage, Paperwhite 3-4, Basic 4.
+    // `voyage`: Voyage, Paperwhite 3-4, Basic 4.
     ("voyage", 1072, 1448),
-    // Paperwhite 1-2, at 212 ppi.
+    // `pw2`: Paperwhite 1-2, at 212 ppi.
     ("pw2", 758, 1024),
-    // Kindle Touch, Basic 1-2, at 167 ppi.
+    // `basic`: Kindle Touch, Basic 1-2, at 167 ppi.
     ("basic", 600, 800),
 ];
 
-/// Where the PNGs land under `--out`.
+/// `OUT`: where the PNGs land under `--out`.
 const OUT: &str = "artifacts/preview";
 
-/// Where the fixture's covers are drawn, under `--covers`, apart from [`OUT`].
+/// `COVERS`: where the fixture's covers are drawn, under `--covers`, apart from [`OUT`].
 const COVERS: &str = "artifacts/preview/art";
 
-/// The update banner a shot can name, and what it is saying. The one screen
-/// with no tab under it, drawn over the whole panel.
+/// `BANNERS`: the update banner a shot can name, and what it is saying; the one screen with no tab
+/// under it, drawn over the whole panel.
 const BANNERS: &[(&str, Said)] = &[
     ("asking", || Banner::Doing(Doing::Asking)),
     ("downloading", || {
@@ -75,23 +76,23 @@ const BANNERS: &[(&str, Said)] = &[
     }),
 ];
 
-/// The banner over a running act, by the name an `act:<of>` shot takes.
+/// `ACTS`: the banner over a running act, by the name an `act:<of>` shot takes.
 const ACTS: &[(&str, Act)] = &[
     ("reset", Act::Reset(true)),
     ("restore", Act::Restore(0)),
     ("rebuild", Act::Rebuild),
 ];
 
-/// What one of [`BANNERS`] is saying, made when a shot names it.
+/// `Said`: what one of [`BANNERS`] is saying, made when a shot names it.
 type Said = fn() -> Banner;
 
-/// Either half of the banner's life: running, or over.
+/// `Banner`: either half of the banner's life: running, or over.
 enum Banner {
     Doing(Doing),
     Ended(Outcome),
 }
 
-/// The screens a shot can name, and the tab each sits under.
+/// `SCREENS`: the screens a shot can name, and the tab each sits under.
 const SCREENS: &[(&str, Tab)] = &[
     ("config", Tab::Config),
     ("today", Tab::Home),
@@ -102,7 +103,7 @@ const SCREENS: &[(&str, Tab)] = &[
     ("journal", Tab::Books),
 ];
 
-/// One picture to draw: a screen or a sketch, and what it is showing.
+/// `Shot`: one picture to draw: a screen or a sketch, and what it is showing.
 struct Shot {
     name: String,
     of: Option<String>,
@@ -122,7 +123,7 @@ impl Shot {
         }
     }
 
-    /// What the file is called, and what the sheet captions it.
+    /// `label`: what the file is called, and what the sheet captions it.
     fn label(&self) -> String {
         match &self.of {
             Some(of) => format!("{}-{of}", self.name),
@@ -131,7 +132,7 @@ impl Shot {
     }
 }
 
-/// What the run was asked for.
+/// `Opts`: what the run was asked for.
 struct Opts {
     shots: Vec<Shot>,
     panels: Vec<(u32, u32)>,
@@ -141,27 +142,29 @@ struct Opts {
     day: i64,
     out: PathBuf,
     covers: PathBuf,
-    /// A record to draw in place of the fixture, by the directory holding it.
+    /// `record`: a record to draw in place of the fixture, by the directory holding it.
     record: Option<PathBuf>,
     sheet: Option<String>,
     scale: u32,
     crop: Option<sheet::Crop>,
-    /// Whether every hit box is outlined over the frame.
+    /// `hits`: whether every hit box is outlined over the frame.
     hits: bool,
-    /// The scheme drawn in.
+    /// `scheme`: the scheme drawn in.
     scheme: ColorScheme,
-    /// What `eink::fb::has_cfa` is drawn as answering.
+    /// `colour`: what `eink::fb::has_cfa` is drawn as answering.
     colour: bool,
-    /// Whether a total counts the sittings on unidentified books.
+    /// `unidentified`: whether a total counts the sittings on unidentified books.
     unidentified: bool,
-    /// The shortest sitting a total counts as reading.
+    /// `floor`: the shortest sitting a total counts as reading.
     floor: SittingFloor,
-    /// Which of the two sources the stats are taken from.
+    /// `stats_from`: which of the two sources the stats are taken from.
     stats_from: StatsFrom,
-    /// Whether a list holds the books no cover can be drawn for.
+    /// `uncovered`: whether a list holds the books no cover can be drawn for.
     uncovered: bool,
-    /// Whether every shot draws `fixture::written`, notes written on the desktop.
+    /// `written`: whether every shot draws `fixture::written`, its `w` rows.
     written: bool,
+    /// `tagged`: whether the fixture's books hold `fixture::tagged`, its `d` and `l` rows.
+    tagged: bool,
 }
 
 impl Default for Opts {
@@ -187,6 +190,7 @@ impl Default for Opts {
             stats_from: StatsFrom::default(),
             uncovered: true,
             written: false,
+            tagged: false,
         }
     }
 }
@@ -213,13 +217,22 @@ fn run() -> Result<()> {
         Some(dir) => Record::load(dir),
         None => fixture::library(opts.day, &opts.covers),
     };
+    let library = match opts.tagged {
+        true => fixture::tagged(library),
+        false => library,
+    };
     let mut tiles: Vec<sheet::Tile> = Vec::new();
     let mut wrote: Vec<PathBuf> = Vec::new();
     for (w, h) in opts.panels.iter().copied() {
         for lang in opts.langs.iter().copied() {
             for size in opts.sizes.iter().copied() {
                 for shot in &opts.shots {
-                    let record = thinned_for(shot, &opts, &opts.covers, lang);
+                    let record = thinned_for(shot, &opts, &opts.covers, lang).map(|record| {
+                        match opts.tagged {
+                            true => fixture::tagged(record),
+                            false => record,
+                        }
+                    });
                     let record = record.as_ref().unwrap_or(&library);
                     let mut fb = Framebuffer::offscreen(w, h);
                     let mut app = open(record, &opts, w, h, lang, size)?;
@@ -272,7 +285,7 @@ fn run() -> Result<()> {
         started.elapsed().as_secs_f32(),
         opts.out.display()
     );
-    // The PNGs `standing` held that `wrote` names none of.
+    // `stale`: the PNGs `standing` held that `wrote` names none of.
     let stale = standing.iter().filter(|p| !wrote.contains(p)).count();
     if stale > 0 {
         eprintln!(
@@ -284,7 +297,7 @@ fn run() -> Result<()> {
     Ok(())
 }
 
-/// The PNGs `dir` holds when the run opens.
+/// `shots_in`: the PNGs `dir` holds when the run opens.
 fn shots_in(dir: &Path) -> Vec<PathBuf> {
     std::fs::read_dir(dir)
         .into_iter()
@@ -295,12 +308,12 @@ fn shots_in(dir: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// What to say when no face was found.
+/// `FONTS`: what to say when no face was found.
 const FONTS: &str = "no font — point READINGLOG_FONTS at the Kindle's font directory";
 
-/// An [`App`] over `record`, at the panel and the settings the run names.
+/// `open`: an [`App`] over `record`, at the panel and the settings the run names.
 fn open(record: &Record, opts: &Opts, w: u32, h: u32, lang: Lang, size: TextSize) -> Result<App> {
-    // The fixture identifies a book; `opts.record` may name an empty record.
+    // `opts.record` may name an empty record; the fixture identifies a book.
     if opts.record.is_none()
         && Stats::build(
             record,
@@ -330,10 +343,10 @@ fn open(record: &Record, opts: &Opts, w: u32, h: u32, lang: Lang, size: TextSize
     Ok(app)
 }
 
-/// The record a shot wants, where it wants one of its own, drawn in `lang`.
+/// `thinned_for`: the record a shot wants, where it wants one of its own, drawn in `lang`.
 fn thinned_for(shot: &Shot, opts: &Opts, covers: &Path, lang: Lang) -> Option<Record> {
     let keep = match (shot.name.as_str(), shot.of.as_deref()) {
-        // Notes written on the desktop, in the language the shot is drawn in.
+        // `opts.written`: `fixture::written`'s rows, in the language the shot is drawn in.
         (name, of)
             if opts.written || (name == "book" && of.is_some_and(|of| of.contains(":written"))) =>
         {
@@ -342,7 +355,7 @@ fn thinned_for(shot: &Shot, opts: &Opts, covers: &Path, lang: Lang) -> Option<Re
         ("today", Some("quiet")) => 1,
         ("today", Some("empty")) => 0,
         ("today", Some("busy")) => return Some(fixture::crowded(opts.day, covers)),
-        // A record that was reset, which is what offers the rebuild from the logs.
+        // `config`: a record that was reset, which offers the rebuild from the logs.
         (
             "config",
             Some("restore" | "rebuild" | "many" | "many2" | "backups" | "backups2" | "gone"),
@@ -351,8 +364,8 @@ fn thinned_for(shot: &Shot, opts: &Opts, covers: &Path, lang: Lang) -> Option<Re
             record.reset_at = "260810:120000".into();
             return Some(record);
         }
-        // The book listed last, cleared and kept, sorting last either way and
-        // leaving every other index where it stands.
+        // `cleared`: the book listed last, cleared and kept, sorting last either way and leaving
+        // every other index where it stands.
         ("book" | "books", Some(of)) if of.ends_with("cleared") => {
             let mut record = fixture::library(opts.day, covers);
             let last = Stats::build(
@@ -375,8 +388,8 @@ fn thinned_for(shot: &Shot, opts: &Opts, covers: &Path, lang: Lang) -> Option<Re
     Some(fixture::thinned(opts.day, covers, keep))
 }
 
-/// A directory of backups for the shots that draw them, under `out`, each
-/// written by `backup::keep_record`.
+/// `backups_for`: a directory of backups for the shots that draw them, under `out`, each written by
+/// `backup::keep_record`.
 fn backups_for(shot: &Shot, record: &Record, out: &Path) -> Result<Option<PathBuf>> {
     let stamps: &[&str] = match (shot.name.as_str(), shot.of.as_deref()) {
         ("config", Some("restore")) => &["260906:010231", "260830:184500"],
@@ -400,7 +413,7 @@ fn backups_for(shot: &Shot, record: &Record, out: &Path) -> Result<Option<PathBu
     Ok(Some(dir))
 }
 
-/// Set `app` to what `shot` names and draw it into `fb`.
+/// `draw` sets `app` to what `shot` names and draw it into `fb`.
 fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Result<()> {
     if let Some(sketch) = sketch::ALL.iter().find(|s| s.name == shot.name) {
         app.show(sketch.tab, None);
@@ -423,7 +436,7 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
     let (book, asking, page, from, find) = match shot.name.as_str() {
         "book" => {
             let of = shot.of.as_deref().unwrap_or("0");
-            // `<shot>:open:<n>` opens the row `n` down on its own page, `:open:<n>:<k>` at page `k`.
+            // `<shot>:open:<n>` opens row `n` on its own page, `:open:<n>:<k>` at its page `k`.
             let of = of.split_once(":open:").map_or(of, |(of, _)| of);
             let (at, asking, page, from, find) = match of.split_once(':') {
                 Some((at, "cleared")) => (at, None, BookTab::Statistics, 0, None),
@@ -510,14 +523,14 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
     app.draw(fb)
 }
 
-/// What a `search:<of>` shot is showing. `of` is the query, but for `empty`,
-/// `none`, `down` and `preedit`.
+/// `searching`: what a `search:<of>` shot is showing. `of` is the query, but for `empty`, `none`,
+/// `down` and `preedit`.
 fn searching(of: Option<&str>) -> Search {
     let (query, preedit, keyboard) = match of.unwrap_or("the") {
         "empty" => ("", "", true),
         "none" => ("zzzz", "", true),
         "down" => ("the", "", false),
-        // A pinyin run part way to a character, under its own rule.
+        // `preedit`: a pinyin run part way to a character, under its own rule.
         "preedit" => ("夢", "youzheng", true),
         said => (said, "", true),
     };
@@ -529,7 +542,7 @@ fn searching(of: Option<&str>) -> Search {
     }
 }
 
-/// The question a `book:<index>:<name>` shot puts up over the book.
+/// `question`: the question a `book:<index>:<name>` shot puts up over the book.
 fn question(name: &str) -> Result<Ask> {
     match name {
         "restart" => Ok(Ask::Restart),
@@ -542,7 +555,7 @@ fn question(name: &str) -> Result<Ask> {
     }
 }
 
-/// The update banner, at whichever of its lines `of` names.
+/// `banner`: the update banner, at whichever of its lines `of` names.
 fn banner(app: &mut App, fb: &mut Framebuffer, of: &str) -> Result<()> {
     let Some((_, said)) = BANNERS.iter().find(|(name, _)| *name == of) else {
         return Err(anyhow!("no update banner called {of}"));
@@ -561,8 +574,8 @@ fn banner(app: &mut App, fb: &mut Framebuffer, of: &str) -> Result<()> {
     app.banner(fb, &headline, &note, step, true)
 }
 
-/// The banner over an act while it runs, at whichever of them `of` names,
-/// drawn a quarter of the way through the files it counts.
+/// `acting`: the banner over an act while it runs, at whichever of them `of` names, drawn a quarter
+/// of the way through the files it counts.
 fn acting(app: &mut App, fb: &mut Framebuffer, of: &str) -> Result<()> {
     let Some((_, about)) = ACTS.iter().find(|(name, _)| *name == of) else {
         return Err(anyhow!("no act banner called {of}"));
@@ -577,15 +590,15 @@ fn acting(app: &mut App, fb: &mut Framebuffer, of: &str) -> Result<()> {
     app.banner(fb, &headline, &note, &step, true)
 }
 
-/// Every hit box the frame recorded, outlined over it.
+/// `outline_hits`: every hit box the frame recorded, outlined over it.
 fn outline_hits(app: &App, fb: &mut Framebuffer) {
     for (_, area) in app.hits() {
         paint::stroke(fb, *area, paint::INK, 2);
     }
 }
 
-/// The last day the record holds a book read through on, and the day showing
-/// where it holds none.
+/// `last_finished`: the last day the record holds a book read through on, and the day showing where
+/// it holds none.
 fn last_finished(app: &App) -> i64 {
     app.stats()
         .books
@@ -596,7 +609,7 @@ fn last_finished(app: &App) -> i64 {
         .unwrap_or(app.state().day)
 }
 
-/// Rhythm's zoom, where the shot names one.
+/// `set_span`: Rhythm's zoom, where the shot names one.
 fn set_span(app: &mut App, shot: &Shot, week: WeekStart) -> Result<()> {
     let Some(of) = shot.of.as_deref() else {
         return Ok(());
@@ -607,14 +620,40 @@ fn set_span(app: &mut App, shot: &Shot, week: WeekStart) -> Result<()> {
             app.set_span(Span::AllTime);
             app.set_alltime_page(1);
         }
+        // `breakdown`, `breakdown<n>`: Breakdown's first and `n`th pages, where the record holds a
+        // `d` or `l` row; `whole`, `whole<n>`: its first card opened whole, at its first and `n`th
+        // pages.
+        paged if paged.starts_with("breakdown") || paged.starts_with("whole") => {
+            let (whole, n) = match paged.strip_prefix("whole") {
+                Some(n) => (true, n),
+                None => (false, &paged["breakdown".len()..]),
+            };
+            let at = n.parse::<usize>().unwrap_or(1).max(1) - 1;
+            app.set_span(Span::AllTime);
+            app.set_alltime_page(match whole {
+                true => 2,
+                false => 2 + at,
+            });
+            app.set_whole(whole.then_some(Whole { card: 0, page: at }));
+        }
+        // `tag:<type>:<tag>`: the Books list narrowed to that tag; `unset:<type>`, to the books
+        // holding no tag of that type.
+        tagged if tagged.starts_with("tag:") => {
+            let (r#type, tag) = tagged["tag:".len()..].split_once(':').unwrap_or(("", ""));
+            app.set_narrowed(Some(By::Tag(r#type.into(), Some(tag.into()))));
+        }
+        unset if unset.starts_with("unset:") => {
+            let r#type = &unset["unset:".len()..];
+            app.set_narrowed(Some(By::Tag(r#type.into(), None)));
+        }
         "finished" => app.set_shelf(Shelf::Finished),
         "unfinished" => app.set_shelf(Shelf::Unfinished),
         "unfinished-progress" => {
             app.set_shelf(Shelf::Unfinished);
             app.set_sort(Sort::Progress);
         }
-        // The list a span's own Finished figure opens: what was read through
-        // inside one year, under the chip that drops the window.
+        // `window`: the list a span's own Finished figure opens, what was read through inside one
+        // year, under the chip that drops the window.
         "window" => {
             app.set_shelf(Shelf::Finished);
             let day = app.state().day;
@@ -623,8 +662,8 @@ fn set_span(app: &mut App, shot: &Shot, week: WeekStart) -> Result<()> {
                 day,
             }));
         }
-        // The same list under the tightest span, whose name is the longest a
-        // chip carries: the week a book was last read through in.
+        // `windowweek`: the same list under the tightest span, whose name is the longest a chip
+        // carries: the week a book was last read through in.
         "windowweek" => {
             app.set_shelf(Shelf::Finished);
             let day = last_finished(app);
@@ -644,8 +683,8 @@ fn set_span(app: &mut App, shot: &Shot, week: WeekStart) -> Result<()> {
             }));
             app.set_sort(Sort::Progress);
         }
-        // A window the record holds no reading inside, which no figure opens
-        // and a shelf tap can reach.
+        // `windowempty`: a window the record holds no reading inside, which no figure opens and a
+        // shelf tap can reach.
         "windowempty" => {
             let day = Span::Year.step(app.state().day, -3);
             app.set_window(Some(Window {
@@ -657,11 +696,11 @@ fn set_span(app: &mut App, shot: &Shot, week: WeekStart) -> Result<()> {
         "progress" => app.set_sort(Sort::Progress),
         "up" => app.set_sort_way(Way::Up),
         "last" => app.open_books(usize::MAX),
-        // A page with a list either side of it, where both jump marks stand.
+        // `mid`: a page with a list either side of it, where both jump marks stand.
         "mid" => app.open_books(5),
         "week" => app.set_span(Span::Week),
-        // A span stepped off the one holding today, where the way back to it is
-        // drawn; `weekback` the week, its name the longest, the chip beside it.
+        // `back`: a span stepped off the one holding today, where the way back to it is drawn;
+        // `weekback` the week, its name the longest, the chip beside it.
         "back" | "weekback" => {
             let span = match of {
                 "weekback" => Span::Week,
@@ -674,28 +713,27 @@ fn set_span(app: &mut App, shot: &Shot, week: WeekStart) -> Result<()> {
         "month" => app.set_span(Span::Month),
         "year" => app.set_span(Span::Year),
         "day" => app.open_day(app.state().day),
-        // The day a book was read through on, where a row carries the chip.
+        // `dayfinished`: the day a book was read through on, where a row carries the chip.
         "dayfinished" => app.open_day(last_finished(app)),
-        // The year with a day picked off its heatmap, which narrows the
-        // covers to that day and offers the way into it.
+        // `picked`: the year with a day picked off its heatmap, narrowing the covers to that day
+        // and offering the way into it.
         "picked" => {
             app.set_span(Span::Year);
             app.open_day(app.state().day);
         }
-        // The binge day picked off the year's heatmap: a cover grid deeper
-        // than one page, where the count and the chip share the heading.
+        // `yearbusy`: the binge day picked off the year's heatmap, a cover grid deeper than one
+        // page, where the count and the chip share the heading.
         "yearbusy" => {
             app.set_span(Span::Year);
             busy(app, 0);
         }
-        // The same day picked off its own week's bars, where the grid runs to
-        // more than one row.
+        // `weekbusy`: the same day picked off its own week's bars, the grid running past one row.
         "weekbusy" => {
             app.set_span(Span::Week);
             busy(app, 0);
         }
-        // A day with nothing on it picked off the week's tappable columns, in
-        // the week the record ends part way through.
+        // `weekempty`: a day with nothing on it picked off the week's columns, in the week the
+        // record ends part way through.
         "weekempty" => {
             app.set_span(Span::Week);
             let day = app.state().day;
@@ -710,14 +748,14 @@ fn set_span(app: &mut App, shot: &Shot, week: WeekStart) -> Result<()> {
     Ok(())
 }
 
-/// The fixture's fullest day, its book list opened at `from`.
+/// `busy`: the fixture's fullest day, its book list opened at `from`.
 fn busy(app: &mut App, from: usize) {
     let day = fixture::binge_day(app.state().day);
     app.open_day(day);
     app.open_list(from);
 }
 
-/// The part of a filename naming the panel, where the run draws more than one.
+/// `panel_tag`: the part of a filename naming the panel, where the run draws more than one.
 fn panel_tag(w: u32, h: u32) -> String {
     match PANELS.iter().find(|(_, pw, ph)| *pw == w && *ph == h) {
         Some((name, _, _)) if *name == PANELS[0].0 => String::new(),
@@ -748,13 +786,13 @@ fn size_name(size: TextSize) -> &'static str {
     }
 }
 
-/// Every shot the run can be asked for.
+/// `list`: every shot the run can be asked for.
 fn list() {
     println!("screens:");
     for (name, _) in SCREENS {
         let of = match *name {
             "rhythm" => {
-                "  (:all :trends :week :month :year :back :weekback :picked :day\n   :dayfinished :yearbusy :weekbusy :weekempty :busy :busy2 :busyend)"
+                "  (:all :trends :breakdown :breakdown<n> :whole :whole<n> :week :month :year\n   :back :weekback :picked :day :dayfinished :yearbusy :weekbusy :weekempty\n   :busy :busy2 :busyend)"
             }
             "today" => "  (:quiet :empty :busy)",
             "book" => {
@@ -765,7 +803,7 @@ fn list() {
             }
             "search" | "journal" => "  (:<query> :empty :none :down :preedit)",
             "books" => {
-                "  (:finished :unfinished :unfinished-progress :time :progress :up\n   :mid :last :window :windowweek :windowprogress :windowempty)"
+                "  (:finished :unfinished :unfinished-progress :time :progress :up\n   :mid :last :window :windowweek :windowprogress :windowempty\n   :tag:<type>:<tag> :unset:<type>)"
             }
             _ => "",
         };
@@ -791,7 +829,7 @@ fn list() {
     }
 }
 
-/// Read the command line.
+/// `read_args` reads the command line.
 fn read_args(args: impl Iterator<Item = String>) -> Result<Opts> {
     let mut opts = Opts::default();
     let (mut panels, mut langs, mut sizes) = (Vec::new(), Vec::new(), Vec::new());
@@ -815,6 +853,7 @@ fn read_args(args: impl Iterator<Item = String>) -> Result<Opts> {
             "--hide-uncovered" => opts.uncovered = false,
             "--hits" => opts.hits = true,
             "--written" => opts.written = true,
+            "--tagged" => opts.tagged = true,
             "--out" => opts.out = PathBuf::from(value()?),
             "--covers" => opts.covers = PathBuf::from(value()?),
             "--record" => opts.record = Some(PathBuf::from(value()?)),
@@ -845,7 +884,7 @@ fn read_args(args: impl Iterator<Item = String>) -> Result<Opts> {
     Ok(opts)
 }
 
-/// Every shot `--all` draws, in the order the tab strip names their screens.
+/// `everything`: every shot `--all` draws, in the order the tab strip names their screens.
 fn everything() -> Vec<Shot> {
     [
         "today",

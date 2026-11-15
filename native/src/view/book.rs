@@ -1,14 +1,13 @@
-//! One book: its cover, how far through it, how long it has taken, and what is
-//! left.
+//! [`draw`]: one book, its cover, how far through it, how long it has taken, and what is left.
 
 use crate::date;
 use crate::font::Script;
 use crate::lang::{Lang, Strings};
 use crate::settings::StatsFrom;
-use crate::stats::BookStat;
+use crate::stats::{BookStat, Stats};
 use crate::ui::chrome;
 use crate::ui::cover;
-use crate::ui::paint::{self, INK, LIGHT, Rect};
+use crate::ui::paint::{self, DARK, INK, LIGHT, Rect};
 use crate::ui::text::TextRenderer;
 use crate::ui::theme::Theme;
 
@@ -16,11 +15,17 @@ use super::{
     Ask, BookTab, Ctx, Hit, Search, State, Way, band, book_graphs, books, journal, search,
 };
 
-/// Lines a title takes before the rest of it is ellipsized.
+/// `TITLE_LINES`: lines a title takes before the rest of it is ellipsized.
 const TITLE_LINES: usize = 2;
 
-/// The [`Strings`] pair a book's count and rate are stated in: by the character
-/// for Han and kana, by the word for every other script.
+/// `TAG_LINES`: the most lines one type's tags take on the book's page.
+const TAG_LINES: i32 = 2;
+
+/// `TAG_JOIN`: what stands between two tags of one type.
+const TAG_JOIN: &str = " · ";
+
+/// `unit`: the [`Strings`] pair a book's count and rate are stated in: by the character for Han and
+/// kana, by the word for every other script.
 pub fn unit(book: &BookStat, s: &Strings) -> (&'static str, &'static str) {
     match Script::resolve(Script::of_language(&book.language), &book.title) {
         Script::Japanese | Script::SimplifiedChinese | Script::TraditionalChinese => {
@@ -30,15 +35,15 @@ pub fn unit(book: &BookStat, s: &Strings) -> (&'static str, &'static str) {
     }
 }
 
-/// What a row states in place of a figure it has none of.
+/// `DASH`: what a row states in place of a figure it has none of.
 pub const DASH: &str = "—";
 
-/// The cover's height: four rows.
+/// `cover_height`: the cover's height: four rows.
 fn cover_height(theme: &Theme) -> i32 {
     theme.row_h * 4
 }
 
-/// The labels of the two controls that hand the book over, both under
+/// `control_labels`: the labels of the two controls that hand the book over, both under
 /// [`BookStat::can_open`], the first shorter where the second joins it.
 fn control_labels(book: &BookStat, s: &Strings) -> [Option<&'static str>; 2] {
     let open = book.can_open();
@@ -52,7 +57,7 @@ fn control_labels(book: &BookStat, s: &Strings) -> [Option<&'static str>; 2] {
     ]
 }
 
-/// Where the controls land across `width`, from the left edge.
+/// `controls_split`: where the controls land across `width`, from the left edge.
 fn controls_split(
     text: &mut TextRenderer,
     theme: &Theme,
@@ -89,14 +94,14 @@ fn split_from(theme: &Theme, width: i32, read: &[i32]) -> Vec<Rect> {
     boxes
 }
 
-/// The foot of the lowest control [`split_from`] placed, and 0 where it placed
+/// `controls_bottom`: the foot of the lowest control [`split_from`] placed, and 0 where it placed
 /// none.
 fn controls_bottom(read: &[Rect]) -> i32 {
     read.iter().map(Rect::bottom).max().unwrap_or(0)
 }
 
-/// The band the controls take, the gap above them included, and 0 where this
-/// book offers none; the reset control alone opens it.
+/// `open_height`: the band the controls take, the gap above them included, and 0 where this book
+/// offers none; the reset control alone opens it.
 fn open_height(
     text: &mut TextRenderer,
     theme: &Theme,
@@ -110,8 +115,8 @@ fn open_height(
     theme.gap * 2 + foot
 }
 
-/// Where the reset control sits: against the right edge of the last row the
-/// reading controls took.
+/// `reset_box`: where the reset control sits: against the right edge of the last row the reading
+/// controls took.
 fn reset_box(
     text: &mut TextRenderer,
     theme: &Theme,
@@ -129,15 +134,15 @@ fn reset_box(
     Rect::new(band.right() - w, y, w, h)
 }
 
-/// Where the controls sit inside the band [`open_height`] took: their own
-/// height at the foot, the air above them.
+/// `open_box`: where the controls sit inside the band [`open_height`] took: their own height at the
+/// foot, the air above them.
 fn open_box(theme: &Theme, band: Rect) -> Rect {
     band.split_bottom((band.h - theme.gap * 2).max(1)).0
 }
 
-/// The box the cover is drawn in and the column of words beside it: `cover_box`
-/// `placed`'s width at `top`'s left edge and height, the words' box from two
-/// gaps past it to `top`'s right edge, over `top`'s own depth.
+/// `cover_and_words`: the box the cover is drawn in and the column of words beside it: `cover_box`
+/// `placed`'s width at `top`'s left edge and height, the words' box from two gaps past it to
+/// `top`'s right edge, over `top`'s own depth.
 fn cover_and_words(theme: &Theme, top: Rect, placed: Rect) -> (Rect, Rect) {
     let cover_box = Rect::new(top.x, top.y, placed.w, top.h);
     let x = cover_box.right() + theme.gap * 2;
@@ -147,8 +152,8 @@ fn cover_and_words(theme: &Theme, top: Rect, placed: Rect) -> (Rect, Rect) {
     )
 }
 
-/// The height the heading draws into: the cover, the progress under it, and
-/// the controls under that.
+/// `heading_height`: the height the heading draws into: the cover, the progress under it, and the
+/// controls under that.
 fn heading_height(
     text: &mut TextRenderer,
     theme: &Theme,
@@ -162,20 +167,20 @@ fn heading_height(
         + open_height(text, theme, script, book, s)
 }
 
-/// The height of the strip the book's pages are picked off, its air included.
+/// `picker_height`: the height of the strip the book's pages are picked off, its air included.
 pub fn picker_height(theme: &Theme) -> i32 {
     chrome::chip_height(theme) + theme.gap * 2
 }
 
-/// The box the book's pages take: the head row less the search's own square
-/// and the air after it.
+/// `pages_box`: the box the book's pages take: the head row less the search's own square and the
+/// air after it.
 fn pages_box(theme: &Theme, head: Rect) -> Rect {
     let opens = books::search_box(theme, head).right() + chrome::chip_gap(theme);
     Rect::new(opens, head.y, (head.right() - opens).max(1), head.h)
 }
 
-/// The search at the head of the row, in the square and the outline the Books
-/// list gives it. Answers [`pages_box`].
+/// `search_button`: the search at the head of the row, in the square and the outline the Books list
+/// gives it. `search_button` answers [`pages_box`].
 fn search_button(cx: &mut Ctx, area: Rect) -> Rect {
     let theme: &Theme = cx.theme;
     let box_ = books::search_box(theme, area);
@@ -185,7 +190,7 @@ fn search_button(cx: &mut Ctx, area: Rect) -> Rect {
     pages_box(theme, area)
 }
 
-/// What one tab reads. An `order` puts the caret on `BookTab::Journal`.
+/// `tab_label`: what one tab reads; an `order` puts the caret on `BookTab::Journal`.
 fn tab_label(tab: BookTab, lang: Lang, highlights: usize, order: Option<Way>) -> String {
     let name = tab.label(lang);
     match (tab, order) {
@@ -195,9 +200,8 @@ fn tab_label(tab: BookTab, lang: Lang, highlights: usize, order: Option<Way>) ->
     }
 }
 
-/// The book's three pages as a segmented control, each its own hit box and an
-/// equal cell, in the shape `rhythm::picker` gives the spans, every label at
-/// the one size that fits its cell.
+/// `picker`: the book's three pages as a segmented control, each its own hit box and an equal cell,
+/// in the shape `rhythm::picker` gives the spans, every label at the one size that fits its cell.
 fn picker(cx: &mut Ctx, area: Rect, on: BookTab, highlights: usize, order: Way) {
     let theme: &Theme = cx.theme;
     let cells = area.columns(BookTab::ALL.len() as i32, 0);
@@ -304,6 +308,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
         &book,
         index,
     );
+    let rest = tags(cx, rest, index);
 
     let inner = chrome::section(cx.fb, cx.text, theme, rest, s.the_reading);
 
@@ -319,15 +324,120 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
     }
 }
 
-/// The query over one book's passages, across the whole head row, the
-/// magnifier in the square `search_button` drew it in.
+/// `field`: the query over one book's passages, across the whole head row, the magnifier in the
+/// square `search_button` drew it in.
 fn field(cx: &mut Ctx, head: Rect, open: &Search) {
     let hint = cx.s().search_hint_journal;
     search::field(cx, head, &open.query, &open.preedit, hint);
 }
 
-/// The cover, the title beside it, the progress bar under both, and the
-/// controls under that, [`Hit::Finished`] on the bar's own band.
+/// `kinds`: the book at `index`'s tags by type, in the order its tags hold them, each tag by
+/// its place in `Set::tags`.
+fn kinds(stats: &Stats, index: usize) -> Vec<(&str, Vec<(usize, &str)>)> {
+    let mut out: Vec<(&str, Vec<(usize, &str)>)> = Vec::new();
+    let Some(set) = stats.sets.get(index) else {
+        return out;
+    };
+    for (at, tag) in set.tags.iter().enumerate() {
+        match out.iter_mut().find(|(t, _)| *t == tag.r#type) {
+            Some((_, held)) => held.push((at, tag.tag.as_str())),
+            None => out.push((tag.r#type.as_str(), vec![(at, tag.tag.as_str())])),
+        }
+    }
+    out
+}
+
+/// `tags`: the book at `index`'s tags over the head of `area`, a line per type, the type's
+/// name in [`DARK`] capitals level with its first line and its tags after it; answers the box
+/// left under them, all of `area` where the book holds no tag.
+fn tags(cx: &mut Ctx, area: Rect, index: usize) -> Rect {
+    let stats: &Stats = cx.stats;
+    let kinds = kinds(stats, index);
+    if kinds.is_empty() {
+        return area;
+    }
+    let theme: &Theme = cx.theme;
+    let ui = cx.ui_script();
+    cx.text.set_px(theme.small_px);
+    let named: Vec<(String, Script)> = kinds
+        .iter()
+        .map(|(r#type, _)| (r#type.to_uppercase(), Script::resolve(ui, r#type)))
+        .collect();
+    let type_w = named
+        .iter()
+        .map(|(said, _)| cx.text.measure_width_in(ui, said) as i32)
+        .max()
+        .unwrap_or(0)
+        + theme.gap * 3;
+    let room = (area.w - type_w).max(1);
+    let mut y = area.y;
+    for ((_, held), (said, script)) in kinds.iter().zip(&named) {
+        cx.text.set_px(theme.body_px);
+        let line = cx.text.line_height() as i32;
+        let baseline = y + cx.text.cap_height() as i32;
+        let first = Rect::new(area.x + type_w, y, room, line);
+        let lines = tag_lines(cx, first, baseline, index, held);
+        cx.text.set_px(theme.small_px);
+        cx.text
+            .draw_inked(*script, cx.fb, area.x, baseline, said, DARK);
+        y += line * lines + theme.gap;
+    }
+    let top = y + theme.gap;
+    Rect::new(area.x, top, area.w, (area.bottom() - top).max(0))
+}
+
+/// `tag_lines` sets `held`, one type's tags, from `first`'s left on `baseline`, each after
+/// [`TAG_JOIN`] and a [`Hit::Tagged`], a tag the line cannot hold opening the next, at most
+/// [`TAG_LINES`] lines closed by `…` where tags are left; answers the lines taken.
+fn tag_lines(
+    cx: &mut Ctx,
+    first: Rect,
+    baseline: i32,
+    index: usize,
+    held: &[(usize, &str)],
+) -> i32 {
+    let theme: &Theme = cx.theme;
+    let ui = cx.ui_script();
+    cx.text.set_px(theme.body_px);
+    let join = cx.text.measure_width_in(ui, TAG_JOIN) as i32;
+    let (mut x, mut n) = (0, 0);
+    for (at, tag) in held {
+        let script = Script::resolve(ui, tag);
+        let cut = cx.text.wrap_and_clamp_in(script, tag, first.w as u32, 1);
+        let said = cut.first().map(String::as_str).unwrap_or_default();
+        let w = cx.text.measure_width_in(script, said) as i32;
+        let mut lead = match x {
+            0 => 0,
+            _ => join,
+        };
+        if x > 0 && x + lead + w > first.w {
+            if n + 1 == TAG_LINES {
+                let rest = format!("{TAG_JOIN}…");
+                let rest_w = cx.text.measure_width_in(ui, &rest) as i32;
+                if x + rest_w <= first.w {
+                    let at_y = baseline + n * first.h;
+                    cx.text.draw_in(ui, cx.fb, first.x + x, at_y, &rest, false);
+                }
+                break;
+            }
+            (x, n, lead) = (0, n + 1, 0);
+        }
+        let at_y = baseline + n * first.h;
+        if lead > 0 {
+            cx.text
+                .draw_in(ui, cx.fb, first.x + x, at_y, TAG_JOIN, false);
+        }
+        let tag_x = first.x + x + lead;
+        cx.text.draw_in(script, cx.fb, tag_x, at_y, said, false);
+        let box_ = Rect::new(tag_x, first.y + n * first.h, w, first.h);
+        cx.hit(Hit::Tagged(index, *at), box_);
+        x += lead + w;
+    }
+    n + 1
+}
+
+/// `heading`: the cover, the title beside it, the progress bar under both, and the controls under
+/// that, [`Hit::Finished`] on the bar's own band.
 fn heading(cx: &mut Ctx, area: Rect, book: &BookStat, index: usize) {
     let theme: &Theme = cx.theme;
     let script = Script::of_language(&book.language);
@@ -348,7 +458,23 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat, index: usize) {
         cover::note(cx, cover_box);
     }
 
-    let deep = title_lines(cx.text, theme, words.h, !book.author.is_empty());
+    let publisher = cx
+        .stats
+        .sets
+        .get(index)
+        .and_then(|set| set.publisher.as_deref());
+    let (named, named_in) = match publisher {
+        Some(publisher) => {
+            let named = match book.author.is_empty() {
+                true => publisher.to_string(),
+                false => format!("{} · {publisher}", book.author),
+            };
+            let named_in = Script::resolve(script, &named);
+            (named, named_in)
+        }
+        None => (book.author.clone(), script),
+    };
+    let deep = title_lines(cx.text, theme, words.h, !named.is_empty());
     cx.text.set_px(theme.head_px);
     let lines = cx
         .text
@@ -358,14 +484,14 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat, index: usize) {
         cx.text.draw_in(script, cx.fb, words.x, y, line, false);
         y += cx.text.line_height() as i32;
     }
-    if !book.author.is_empty() {
+    if !named.is_empty() {
         cx.text.set_px(theme.small_px);
         let author = cx
             .text
-            .wrap_and_clamp_in(script, &book.author, words.w as u32, 1);
+            .wrap_and_clamp_in(named_in, &named, words.w as u32, 1);
         y += theme.gap;
         cx.text.draw_in(
-            script,
+            named_in,
             cx.fb,
             words.x,
             y,
@@ -382,9 +508,8 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat, index: usize) {
     }
 }
 
-/// The controls under the progress bar: the reading pair from the left at the
-/// places [`controls_split`] put them, and the reset control against the right
-/// edge.
+/// `controls`: the controls under the progress bar: the reading pair from the left at the places
+/// [`controls_split`] put them, and the reset control against the right edge.
 fn controls(cx: &mut Ctx, band: Rect, book: &BookStat, index: usize) {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
@@ -406,14 +531,13 @@ fn controls(cx: &mut Ctx, band: Rect, book: &BookStat, index: usize) {
     cx.hit(Hit::Clear(index), box_);
 }
 
-/// A box [`split_from`] placed, moved onto `band`.
+/// `onto`: a box [`split_from`] placed, moved onto `band`.
 fn onto(band: Rect, box_: Rect) -> Rect {
     Rect::new(band.x + box_.x, band.y + box_.y, box_.w, box_.h)
 }
 
-/// What `ask` puts up: the headline, what it states, and the label on the
-/// answer. [`Ask::Clear`] states figures and has two answers; [`asking`]
-/// draws that one itself.
+/// `question`: what `ask` puts up: the headline, what it states, and the label on the answer.
+/// [`Ask::Clear`] states figures and has two answers; [`asking`] draws that one itself.
 fn question(ask: Ask, s: &Strings) -> (&'static str, &'static str, &'static str) {
     match ask {
         Ask::Restart => (s.restart_ask, s.restart_note, s.restart),
@@ -423,7 +547,7 @@ fn question(ask: Ask, s: &Strings) -> (&'static str, &'static str, &'static str)
     }
 }
 
-/// What [`Ask::Clear`] states: the reading that goes, and the streak where
+/// `clearing_note`: what [`Ask::Clear`] states: the reading that goes, and the streak where
 /// clearing this book moves it.
 pub fn clearing_note(stats: &crate::stats::Stats, index: usize, s: &Strings) -> String {
     let Some(book) = stats.books.get(index) else {
@@ -447,7 +571,7 @@ pub fn clearing_note(stats: &crate::stats::Stats, index: usize, s: &Strings) -> 
     out
 }
 
-/// A question drawn over the book's own screen, through [`crate::ui::dialog`].
+/// `asking`: a question drawn over the book's own screen, through [`crate::ui::dialog`].
 pub fn asking(cx: &mut Ctx, area: Rect, ask: Ask, index: usize) {
     let s = cx.s();
     if ask == Ask::Clear {
@@ -479,7 +603,7 @@ pub fn asking(cx: &mut Ctx, area: Rect, ask: Ask, index: usize) {
     );
 }
 
-/// Lines the title takes in a column `high` tall: [`TITLE_LINES`], fewer where
+/// `title_lines`: lines the title takes in a column `high` tall: [`TITLE_LINES`], fewer where
 /// `author` and [`figures`] leave room for fewer, and never none.
 fn title_lines(text: &mut TextRenderer, theme: &Theme, high: i32, author: bool) -> usize {
     let stood = chrome::figure_height(text, theme);
@@ -494,8 +618,8 @@ fn title_lines(text: &mut TextRenderer, theme: &Theme, high: i32, author: bool) 
     room.clamp(1, TITLE_LINES as i32) as usize
 }
 
-/// The rows the reading section states, each its name and its figure: every
-/// one but the file's own.
+/// `reading_rows`: the rows the reading section states, each its name and its figure: every one but
+/// the file's own.
 pub fn reading_rows(book: &BookStat, from: StatsFrom, s: &Strings) -> Vec<(&'static str, String)> {
     let (count, rate) = unit(book, s);
     let mut lines: Vec<(&str, String)> = vec![
@@ -524,7 +648,7 @@ pub fn reading_rows(book: &BookStat, from: StatsFrom, s: &Strings) -> Vec<(&'sta
     lines
 }
 
-/// The book's three headline figures, each with its name.
+/// `headline`: the book's three headline figures, each with its name.
 pub fn headline(book: &BookStat, from: StatsFrom, s: &Strings) -> [(String, &'static str); 3] {
     [
         (date::duration(book.read_seconds(from), s), s.read),
@@ -537,7 +661,7 @@ pub fn headline(book: &BookStat, from: StatsFrom, s: &Strings) -> [(String, &'st
     ]
 }
 
-/// The book's three headline figures, along the foot of the words column.
+/// `figures`: the book's three headline figures, along the foot of the words column.
 fn figures(cx: &mut Ctx, words: Rect, book: &BookStat) {
     let theme: &Theme = cx.theme;
     let stated = headline(book, cx.stats_from, cx.s());
@@ -554,8 +678,8 @@ pub fn where_note(book: &BookStat, s: &Strings) -> String {
     }
 }
 
-/// The day a book read through was last put down, empty for one short of the
-/// end or with no reading.
+/// `finished_note`: the day a book read through was last put down, empty for one short of the end
+/// or with no reading.
 pub fn finished_note(book: &BookStat, s: &Strings) -> String {
     match book.is_finished() {
         true => day_note(book.last_day, book, s),
@@ -571,7 +695,7 @@ pub fn day_note(day: i64, book: &BookStat, s: &Strings) -> String {
     }
 }
 
-/// The days read of the days between the first and the last.
+/// `days_note`: the days read of the days between the first and the last.
 pub fn days_note(book: &BookStat, s: &Strings) -> String {
     match book.sittings {
         0 => DASH.into(),
@@ -589,8 +713,8 @@ mod tests {
         Lang::English.strings()
     }
 
-    /// A label's width as a share of the size it is set at, standing in for a
-    /// font: every character 0.62 em.
+    /// `stub_width`: a label's width as a share of the size it is set at, standing in for a font:
+    /// every character 0.62 em.
     fn stub_width(px: f32, said: &str) -> i32 {
         (said.chars().count() as f32 * px * 0.62).round() as i32
     }
@@ -620,8 +744,8 @@ mod tests {
                     .columns(BookTab::ALL.len() as i32, 0);
                 let room = (cells[0].w - chrome::chip_pad(&theme)).max(1);
                 for lang in Lang::ALL {
-                    // The longest count the strip ever carries, and the
-                    // caret that stands beside it whichever way it points.
+                    // `said`: the longest count the strip ever carries, and the caret that stands
+                    // beside it whichever way it points.
                     let said: Vec<String> = BookTab::ALL
                         .iter()
                         .map(|tab| tab_label(*tab, lang, 999, Some(Way::Down)))
@@ -701,9 +825,9 @@ mod tests {
             unit(&set_in("zh-hant", "請把門鎖好"), ja),
             ("文字数", "文字/分")
         );
-        // A romanised title under the tag its library row states.
+        // `Kokoro`: a romanised title under the tag its library row states.
         assert_eq!(unit(&set_in("ja", "Kokoro"), ja), ("文字数", "文字/分"));
-        // No tag: `unit` reads the title.
+        // `""`, no tag: `unit` reads the title.
         assert_eq!(unit(&set_in("", "毛澤東選集"), ja), ("文字数", "文字/分"));
         assert_eq!(unit(&set_in("", "Neuromancer"), ja), ("語数", "語/分"));
         assert_eq!(unit(&set_in("en", "Post Office"), en()), ("Words", "wpm"));
@@ -722,8 +846,7 @@ mod tests {
 
     #[test]
     fn only_a_book_the_reader_can_be_handed_takes_the_reading_controls() {
-        // Three `location` values: a path, a book carrying none, and an
-        // empty one.
+        // `on_kindle`: three `location` values: a path, a book carrying none, and an empty one.
         let on_kindle = held("/mnt/us/documents/a.kfx");
         assert_eq!(
             control_labels(&on_kindle, en()),
@@ -782,7 +905,7 @@ mod tests {
             [Some("Continue"), Some("Restart")],
             "and reading it again is the way out of the mark"
         );
-        // Short of [`FINISHED_PERCENT`], `can_mark` holds.
+        // `back`: Short of [`FINISHED_PERCENT`], `can_mark` holds.
         let back = BookStat {
             percent: 96.0,
             ..done
@@ -816,7 +939,7 @@ mod tests {
         for (w, h) in PANELS {
             let theme = Theme::for_screen(w, h);
             let width = chrome::content_box(&theme).w;
-            // Two that fit one row, and two that cannot.
+            // `read`: two that fit one row, and two that cannot.
             for read in [vec![300, 260], vec![width * 3 / 5, width * 3 / 5]] {
                 let boxes = split_from(&theme, width, &read);
                 assert_eq!(boxes.len(), read.len());
@@ -832,7 +955,7 @@ mod tests {
                     "{w}x{h}: the two reading controls overlap"
                 );
             }
-            // With no control, `controls_bottom` is 0: the band takes no height.
+            // `controls_bottom` is 0 with no control: the band takes no height.
             assert_eq!(controls_bottom(&split_from(&theme, width, &[])), 0);
         }
     }
@@ -912,7 +1035,7 @@ mod tests {
         let theme = Theme::for_screen(PANELS[0].0, PANELS[0].1);
         let box_ = chrome::content_box(&theme);
         let top = Rect::new(box_.x, box_.y, box_.w, cover_height(&theme));
-        // What `Covers::box_in` answers for a path naming no cover.
+        // `slot`: what `Covers::box_in` answers for a path naming no cover.
         let slot = top.split_left(cover::width_for(top.h)).0;
         let (cover_box, words) = cover_and_words(&theme, top, slot);
         assert_eq!(

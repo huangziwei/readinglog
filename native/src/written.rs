@@ -1,6 +1,6 @@
-//! `w` rows, notes, and `r` rows, corrections of a highlight's or a note's
-//! words, beside the rows a Kindle derives: a deleted one keeps its row, and
-//! [`Record::take_written`] makes two copies of a record one.
+//! `w` rows, notes, and `r` rows, corrections of a highlight's or a note's words, beside
+//! the rows a Kindle derives: a deleted one keeps its row, and [`Record::take_written`]
+//! makes two copies of a record one, their `d` and `l` rows ([`crate::metadata`]) too.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
@@ -13,11 +13,11 @@ use crate::date;
 use crate::highlights::{Highlight, State};
 use crate::record::{Book, Record};
 
-/// What names one highlight across passes: [`Highlight::identity`], owned.
+/// `HighlightId`: what names one highlight across passes: [`Highlight::identity`], owned.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct HighlightId {
     pub at: String,
-    /// The kind's stored word, [`Kind::as_str`].
+    /// `kind`: the kind's stored word, [`Kind::as_str`].
     pub kind: String,
     pub title: String,
     pub location: i64,
@@ -36,7 +36,7 @@ impl HighlightId {
         }
     }
 
-    /// Whether `highlight` is the one this names.
+    /// `names`: whether `highlight` is the one this names.
     pub fn names(&self, highlight: &Highlight) -> bool {
         let (at, kind, title, location, start) = highlight.identity();
         self.at == at
@@ -46,7 +46,7 @@ impl HighlightId {
             && self.start == start
     }
 
-    /// A highlight answering to this identity, stating nothing past it.
+    /// `highlight`: a highlight answering to this identity, stating nothing past it.
     pub fn highlight(&self) -> Result<Highlight> {
         let kind = Kind::from_stored(&self.kind)
             .ok_or_else(|| anyhow!("{} is no kind of highlight", self.kind))?;
@@ -64,7 +64,7 @@ impl HighlightId {
     }
 }
 
-/// The passage a note is written on: its identity, its range then, and its words.
+/// `Passage`: the passage a note is written on: its identity, its range then, and its words.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Passage {
     pub id: HighlightId,
@@ -74,26 +74,26 @@ pub struct Passage {
     pub words: String,
 }
 
-/// A `w` row: one note, named in its record by the moment it was written.
+/// `Note`: a `w` row: one note, named in its record by the moment it was written.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Note {
     /// `YYYY-MM-DDTHH:MM:SS` on the clock that wrote it.
     pub written: String,
-    /// When its words last changed or it was deleted: of two copies, the later stands.
+    /// `edited`: when its words last changed or it was deleted: of two copies, the later stands.
     pub edited: String,
-    /// The book's `cde_key`, empty where it carries none, and its `extent`.
+    /// `key`: the book's `cde_key`, empty where it carries none, and its `extent`.
     pub key: String,
     pub extent: i64,
     /// `None` for a note on the book alone.
     pub on: Option<Passage>,
-    /// Markdown.
+    /// `text`: Markdown.
     pub text: String,
     /// `true` keeps the row with no words, drawn nowhere.
     pub deleted: bool,
 }
 
 impl Note {
-    /// Whether `book` is this note's: by key where it carries one, else by extent.
+    /// `names`: whether `book` is this note's: by key where it carries one, else by extent.
     pub fn names(&self, book: &Book) -> bool {
         match self.key.is_empty() {
             false => book.cde_key == self.key,
@@ -102,21 +102,21 @@ impl Note {
     }
 }
 
-/// An `r` row: words set in place of a highlight's or a note's own.
+/// `Correction`: an `r` row: words set in place of a highlight's or a note's own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Correction {
     pub id: HighlightId,
-    /// When it was set or taken back: of two copies, the later stands.
+    /// `edited`: when it was set or taken back: of two copies, the later stands.
     pub edited: String,
-    /// The words set; `None` once taken back.
+    /// `text`: the words set; `None` once taken back.
     pub text: Option<String>,
-    /// The words the record stated when `text` was set; `None` stands it over any.
+    /// `was`: the words the record stated when `text` was set; `None` stands it over any.
     pub was: Option<String>,
 }
 
 impl Correction {
-    /// The words this sets in place of `highlight`'s, where it sets any and the
-    /// record states the words they were set over.
+    /// `corrects`: the words this sets in place of `highlight`'s, where it sets any and the record
+    /// states the words they were set over.
     fn corrects(&self, highlight: &Highlight) -> Option<&str> {
         let text = self.text.as_deref()?;
         match &self.was {
@@ -126,8 +126,8 @@ impl Correction {
     }
 }
 
-/// What a note laid into the highlights is there: the moment that names it, the
-/// passage it was written on, and that passage's words where it is gone.
+/// `Laid`: what a note laid into the highlights is there: the moment that names it, the passage it
+/// was written on, and that passage's words where it is gone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Laid {
     pub written: String,
@@ -135,23 +135,24 @@ pub struct Laid {
     pub gone: Option<String>,
 }
 
-/// A record as it is drawn: each highlight in the words a correction sets, and
-/// each note laid in as a highlight of [`Kind::Note`].
+/// `Drawn`: a record as it is drawn: each highlight in the words a correction sets, and each note
+/// laid in as a highlight of [`Kind::Note`].
 #[derive(Debug, Clone, Default)]
 pub struct Drawn {
     pub record: Record,
-    /// The highlights a correction set the words of.
+    /// `corrected`: the highlights a correction set the words of.
     pub corrected: HashSet<HighlightId>,
-    /// The notes laid in, by the identity each takes there.
+    /// `written`: the notes laid in, by the identity each takes there.
     pub written: HashMap<HighlightId, Laid>,
 }
 
 impl Record {
-    /// Take `other`'s notes and corrections: each one this record holds none of
-    /// is added, and of two copies of one the later `edited` stands. Answers
-    /// whether anything moved.
+    /// `take_written` takes `other`'s notes, corrections, `d` rows and links: each one this record
+    /// holds none of is added, and of two copies of one the later `edited` stands. `take_written`
+    /// answers whether anything moved.
     pub fn take_written(&mut self, other: &Record) -> bool {
-        let mut moved = false;
+        let mut moved = crate::metadata::take(&mut self.metadata, &other.metadata);
+        moved |= crate::metadata::links::take(&mut self.links, &other.links);
         for fresh in &other.notes {
             match self.notes.iter_mut().find(|n| n.written == fresh.written) {
                 Some(held) if fresh.edited > held.edited => {
@@ -184,8 +185,8 @@ impl Record {
         moved
     }
 
-    /// Orders `notes` by when they were written and `corrections` by identity,
-    /// one row each.
+    /// `sort_written` orders `notes` by when they were written and `corrections` by identity, one
+    /// row each.
     pub(crate) fn sort_written(&mut self) {
         self.notes.sort_by(|a, b| a.written.cmp(&b.written));
         self.notes.dedup_by(|a, b| a.written == b.written);
@@ -193,9 +194,8 @@ impl Record {
         self.corrections.dedup_by(|a, b| a.id == b.id);
     }
 
-    /// This record as it is drawn: a copy with each correction set and each
-    /// note laid in at its passage's start, else at the range it was written
-    /// on, and a note alone at none.
+    /// `drawn`: this record as it is drawn: a copy with each correction set and each note laid in
+    /// at its passage's start, else at the range it was written on, and a note alone at none.
     pub fn drawn(&self) -> Drawn {
         let mut record = self.clone();
         let mut corrected = HashSet::new();
@@ -264,8 +264,8 @@ impl Record {
         }
     }
 
-    /// Hold `note`, its `written` moved a second on while another note holds the
-    /// same; answers the moment that names it.
+    /// `add_note` holds `note`, its `written` moved a second on while another note holds the same;
+    /// answers the moment that names it.
     pub fn add_note(&mut self, mut note: Note) -> String {
         while self.notes.iter().any(|n| n.written == note.written) {
             note.written = later(&note.written);
@@ -279,7 +279,7 @@ impl Record {
         written
     }
 
-    /// Set the words of the note written at `written`, as of `now`.
+    /// `reword_note` sets the words of the note written at `written`, as of `now`.
     pub fn reword_note(&mut self, written: &str, text: &str, now: &str) -> Result<()> {
         if text.trim().is_empty() {
             return Err(anyhow!("a note holds no words"));
@@ -290,7 +290,7 @@ impl Record {
         Ok(())
     }
 
-    /// Delete the note written at `written`, as of `now`: its row stands with no
+    /// `delete_note` deletes the note written at `written`, as of `now`: its row stands with no
     /// words and no passage, drawn nowhere.
     pub fn delete_note(&mut self, written: &str, now: &str) -> Result<()> {
         let note = self.live_note(written)?;
@@ -301,7 +301,7 @@ impl Record {
         Ok(())
     }
 
-    /// The note written at `written`, where it is not deleted.
+    /// `live_note`: the note written at `written`, where it is not deleted.
     fn live_note(&mut self, written: &str) -> Result<&mut Note> {
         self.notes
             .iter_mut()
@@ -309,9 +309,8 @@ impl Record {
             .ok_or_else(|| anyhow!("no note written at {written}"))
     }
 
-    /// Set `text` as the words of the highlight `id` names, as of `now`, beside
-    /// the words the record states. `None`, blank words or the record's own take
-    /// the correction back.
+    /// `set_words` sets `text` as the words of the highlight `id` names, as of `now`, beside the
+    /// words the record states. `None`, blank words or the record's own take the correction back.
     pub fn set_words(&mut self, id: &HighlightId, text: Option<String>, now: &str) -> Result<()> {
         let held = self
             .highlights
@@ -360,11 +359,11 @@ pub fn later(at: &str) -> String {
     date::stamp(day + secs.div_euclid(86_400), secs)
 }
 
-/// The field a row states for a value it holds none of.
+/// `NONE`: the field a row states for a value it holds none of.
 const NONE: &str = "\\N";
 
 /// `text` as one field of a row: `\`, tab, newline and return escaped.
-fn escaped(text: &str) -> String {
+pub fn escaped(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
         match c {
@@ -378,8 +377,8 @@ fn escaped(text: &str) -> String {
     out
 }
 
-/// What [`escaped`] wrote; an escape it does not write stands as it is.
-fn unescaped(field: &str) -> String {
+/// `unescaped`: what [`escaped`] wrote; an escape it does not write stands as it is.
+pub fn unescaped(field: &str) -> String {
     let mut out = String::with_capacity(field.len());
     let mut chars = field.chars();
     while let Some(c) = chars.next() {
@@ -403,16 +402,16 @@ fn unescaped(field: &str) -> String {
 }
 
 /// `text` as a field, [`NONE`] for none.
-fn optional(text: Option<&str>) -> String {
+pub fn optional(text: Option<&str>) -> String {
     text.map_or_else(|| NONE.to_string(), escaped)
 }
 
-/// What [`optional`] wrote.
-fn read_optional(field: &str) -> Option<String> {
+/// `read_optional`: what [`optional`] wrote.
+pub fn read_optional(field: &str) -> Option<String> {
     (field != NONE).then(|| unescaped(field))
 }
 
-/// A `w` row.
+/// `write_note`: a `w` row.
 pub(crate) fn write_note(out: &mut String, n: &Note) {
     let state = match n.deleted {
         true => "deleted",
@@ -447,7 +446,7 @@ pub(crate) fn write_note(out: &mut String, n: &Note) {
     out.push('\n');
 }
 
-/// A `w` row as a [`Note`], `None` where it states no moment.
+/// `read_note`: a `w` row as a [`Note`], `None` where it states no moment.
 pub(crate) fn read_note<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Note> {
     let mut next = || f.next().unwrap_or_default();
     let written = next().trim().to_string();
@@ -496,7 +495,7 @@ pub(crate) fn read_note<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Not
     })
 }
 
-/// An `r` row.
+/// `write_correction`: an `r` row.
 pub(crate) fn write_correction(out: &mut String, c: &Correction) {
     let _ = writeln!(
         out,
@@ -512,7 +511,7 @@ pub(crate) fn write_correction(out: &mut String, c: &Correction) {
     );
 }
 
-/// An `r` row as a [`Correction`], `None` where it names no kind.
+/// `read_correction`: an `r` row as a [`Correction`], `None` where it names no kind.
 pub(crate) fn read_correction<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Correction> {
     let mut next = || f.next().unwrap_or_default();
     let edited = next().trim().to_string();
@@ -538,19 +537,29 @@ pub(crate) fn read_correction<'a>(f: &mut impl Iterator<Item = &'a str>) -> Opti
     })
 }
 
-/// `text`, a record's file, with its `w`, `r` and closing rows replaced by
-/// `written`'s: every other line as `text` holds it, whatever build wrote it.
+/// `text`, a record's file, with its `d`, `l`, `w`, `r` and closing rows replaced
+/// by `written`'s: every other line as `text` holds it, whatever build wrote it, a
+/// `d` or `l` row naming a field no build here reads among them.
 pub fn splice(text: &str, written: &Record) -> String {
     let mut out = String::with_capacity(text.len());
     for line in text.lines() {
-        if matches!(
-            line.split('\t').next(),
-            Some("w" | "r" | crate::record::END)
-        ) {
+        let owned = match line.split('\t').next() {
+            Some("w" | "r" | crate::record::END) => true,
+            Some("d") => crate::metadata::read_row(line).is_some(),
+            Some("l") => crate::metadata::links::read_row(line).is_some(),
+            _ => false,
+        };
+        if owned {
             continue;
         }
         out.push_str(line);
         out.push('\n');
+    }
+    for row in &written.metadata {
+        crate::metadata::write_row(&mut out, row);
+    }
+    for link in &written.links {
+        crate::metadata::links::write_row(&mut out, link);
     }
     for n in &written.notes {
         write_note(&mut out, n);

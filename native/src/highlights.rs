@@ -1,6 +1,6 @@
-//! The two highlight sources joined: the `.sdr` rare sidecar is the roster of
-//! the highlights a book carries, `My Clippings.txt` a clipping for every write ever.
-//! Neither is a superset, and their union holds deleted highlights.
+//! [`fold`] joins the two highlight sources: the `.sdr` rare sidecar, the roster of the highlights
+//! a book carries, and `My Clippings.txt`, a clipping for every write ever; neither holds the
+//! other, and their union holds deleted highlights.
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -12,26 +12,26 @@ use crate::record::{self, Record};
 use crate::sidecar::{Roster, Sidecars, Survey};
 use crate::written::HighlightId;
 
-/// Characters kept of a passage's words; a note's are kept whole.
+/// `EXCERPT`: Characters kept of a passage's words; a note's are kept whole.
 pub const EXCERPT: usize = 600;
 
-/// What the ellipsis on a cut body is.
+/// `CUT`: what the ellipsis on a cut body is.
 const CUT: char = '…';
 
-/// What the two sources together say about one highlight.
+/// `State`: what the two sources together say about one highlight.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum State {
-    /// A sidecar annotation carries this stamp: the highlight is in the book.
+    /// `Live`: a sidecar annotation carries this stamp: the highlight is in the book.
     Live,
-    /// A sidecar in a position to carry this highlight does not.
+    /// `Retired`: a sidecar in a position to carry this highlight does not.
     Retired,
-    /// No sidecar could say either way.
+    /// `Unconfirmed`: no sidecar could say either way.
     #[default]
     Unconfirmed,
 }
 
 impl State {
-    /// The word a stored row carries.
+    /// `as_str`: the word a stored row carries.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Live => "live",
@@ -40,8 +40,8 @@ impl State {
         }
     }
 
-    /// What [`Self::as_str`] wrote. Any other word reads as
-    /// [`State::Unconfirmed`], which is what claims the least.
+    /// `from_stored`: what [`Self::as_str`] wrote; any other word reads as [`State::Unconfirmed`],
+    /// which is what claims the least.
     pub fn from_stored(text: &str) -> Self {
         match text.trim() {
             "live" => Self::Live,
@@ -50,52 +50,52 @@ impl State {
         }
     }
 
-    /// Whether the book carries this highlight, which is what [`fold`] stores.
+    /// `is_in_the_book`: whether the book carries this highlight, which is what [`fold`] stores.
     pub fn is_in_the_book(self) -> bool {
         self != Self::Retired
     }
 }
 
-/// One highlight in one book, as the record holds it.
+/// `Highlight`: one highlight in one book, as the record holds it.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Highlight {
-    /// The book's `p_contentSize`, 0 until a pass identifies the book.
+    /// `extent`: the book's `p_contentSize`, 0 until a pass identifies the book.
     pub extent: i64,
-    /// The title as the source stated it: what a re-read joins on, outliving `extent`.
+    /// `title`: the title as the source stated it: what a re-read joins on, outliving `extent`.
     pub title: String,
     pub kind: Kind,
     /// `YYYY-MM-DDTHH:MM:SS`, Kindle-local, as a sitting stores its own.
     pub at: String,
     pub state: State,
-    /// The sidecar's start on the `p_contentSize` axis, -1 where none; never a location.
+    /// `start`: the sidecar's start on the `p_contentSize` axis, -1 where none; never a location.
     pub start: i64,
-    /// The sidecar's end position, -1 where none.
+    /// `end`: the sidecar's end position, -1 where none.
     pub end: i64,
-    /// The display location the clipping stated, -1 where none, on no axis of `start`'s.
+    /// `location`: the clipping's display location, -1 where none, on no axis of `start`'s.
     pub location: i64,
-    /// The publisher's page label the clipping carried, empty where none.
+    /// `page`: the publisher's page label the clipping carried, empty where none.
     pub page: String,
-    /// One of the eleven colour names a sidecar states, empty where none.
+    /// `colour`: one of the eleven colour names a sidecar states, empty where none.
     pub colour: String,
-    /// A note's whole text, or [`EXCERPT`] characters of a passage's.
+    /// `body`: a note's whole text, or [`EXCERPT`] characters of a passage's.
     pub body: String,
 }
 
 impl Highlight {
-    /// Where this highlight falls through the book. `None` without a sidecar
-    /// position or a stated extent: a display location does not convert.
+    /// `through`: where this highlight falls through the book. `None` without a sidecar position or
+    /// a stated extent: a display location does not convert.
     pub fn through(&self, extent: i64) -> Option<f64> {
         (self.start >= 0 && extent > 0).then(|| self.start as f64 / extent as f64)
     }
 
-    /// The day this highlight was made, as a day count.
+    /// `day`: the day this highlight was made, as a day count.
     pub fn day(&self) -> Option<i64> {
         date::parse_day(date::day_of(&self.at))
     }
 
-    /// What identifies this highlight across passes: the fields a clipping states,
-    /// and, where no clipping placed it, the sidecar's position: highlights a
-    /// sidecar alone states can share a stamp, a kind and a title.
+    /// `identity`: what identifies this highlight across passes: the fields a clipping states, and,
+    /// where no clipping placed it, the sidecar's position: highlights a sidecar alone states can
+    /// share a stamp, a kind and a title.
     pub fn identity(&self) -> (&str, Kind, &str, i64, i64) {
         let start = match self.location < 0 {
             true => self.start,
@@ -104,9 +104,8 @@ impl Highlight {
         (&self.at, self.kind, &self.title, self.location, start)
     }
 
-    /// Take from `held` every sidecar field this highlight states none of:
-    /// `start`, `end`, `colour`, `page`, `extent` and a state over
-    /// [`State::Unconfirmed`].
+    /// `keep_from` takes from `held` every sidecar field this highlight states none of: `start`,
+    /// `end`, `colour`, `page`, `extent` and a state over [`State::Unconfirmed`].
     pub fn keep_from(&mut self, held: &Highlight) {
         if self.start < 0 && held.start >= 0 {
             self.start = held.start;
@@ -141,12 +140,12 @@ impl Highlight {
         }
     }
 
-    /// Whether a sidecar stated these words: a [`State::Live`] note.
+    /// `states_its_own_words`: whether a sidecar stated these words: a [`State::Live`] note.
     fn states_its_own_words(&self) -> bool {
         self.state == State::Live && self.kind == Kind::Note
     }
 
-    /// How far apart in stamp this highlight and `other` are, for choosing between
+    /// `created_near`: how far apart in stamp this highlight and `other` are, for choosing between
     /// two passages that cover one note equally well.
     fn created_near(&self, other: &Highlight) -> usize {
         self.at
@@ -158,13 +157,13 @@ impl Highlight {
     }
 }
 
-/// One row of a book's highlights: a passage and the notes written on it. A
-/// Kindle's note carries no link to its passage, an overlap of their ranges the
-/// only link there is; a `w` row names its own. A note with neither stands alone.
+/// `Paired`: one row of a book's highlights: a passage and the notes written on it; a Kindle's note
+/// carries no link to its passage, an overlap of their ranges the only link there is; a `w` row
+/// names its own; a note with neither stands alone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Paired<'a> {
     pub highlight: &'a Highlight,
-    /// Every note whose range the passage covers, in the order given.
+    /// `notes`: every note whose range the passage covers, in the order given.
     pub notes: Vec<&'a Highlight>,
 }
 
@@ -175,8 +174,8 @@ pub fn paired<'a>(
     highlights: &[&'a Highlight],
     own: impl Fn(&Highlight) -> Option<HighlightId>,
 ) -> Vec<Paired<'a>> {
-    // Which passage each note belongs under, and `None` for one that belongs
-    // under nothing.
+    // `under`: which passage each note belongs under, and `None` for one that belongs under
+    // nothing.
     let under: Vec<Option<usize>> = highlights
         .iter()
         .map(|note| match note.kind == Kind::Note {
@@ -206,9 +205,9 @@ pub fn paired<'a>(
         .collect()
 }
 
-/// The passage `note` sits inside, as an index into `highlights`. The narrowest
-/// range that covers it wins: a note inside two nested passages goes under the
-/// closer one; a tie goes to the passage made nearest in time.
+/// `covering`: the passage `note` sits inside, as an index into `highlights`; the narrowest range
+/// that covers it wins: a note inside two nested passages goes under the closer one; a tie goes to
+/// the passage made nearest in time.
 fn covering(highlights: &[&Highlight], note: &Highlight) -> Option<usize> {
     if note.start < 0 {
         return None;
@@ -227,46 +226,45 @@ fn covering(highlights: &[&Highlight], note: &Highlight) -> Option<usize> {
         .map(|(at, _)| at)
 }
 
-/// What one pass over the two sources came to.
+/// `Merge`: what one pass over the two sources came to.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Merge {
-    /// Whether the pass read anything at all, or [`gate`] held it back.
+    /// `read`: whether the pass read anything at all, or [`gate`] held it back.
     pub read: bool,
-    /// Clippings in `My Clippings.txt`.
+    /// `clippings`: Clippings in `My Clippings.txt`.
     pub clippings: usize,
-    /// Annotations across every rare sidecar.
+    /// `sidecars`: Annotations across every rare sidecar.
     pub sidecars: usize,
-    /// Rare sidecars parsed by the walk, the kept rosters answering for the rest.
+    /// `parsed`: Rare sidecars parsed by the walk, the kept rosters answering for the rest.
     pub parsed: usize,
-    /// Books whose rare sidecar was in a position to say what exists.
+    /// `trusted`: books whose rare sidecar was in a position to say what exists.
     pub trusted: usize,
     pub live: usize,
     pub retired: usize,
     pub unconfirmed: usize,
-    /// Rows the record holds after the pass.
+    /// `held`: rows the record holds after the pass.
     pub held: usize,
 }
 
-/// The join's version: a [`Gate`] stating a lower one joins the sources again.
+/// `RULES`: the join's version: a [`Gate`] stating a lower one joins the sources again.
 const RULES: u32 = 7;
 
-/// What a pass must have seen for the rows it wrote to stand: figures a walk
-/// states with no sidecar parsed.
+/// `Gate`: what a pass must have seen for the rows it wrote to stand: figures a walk states with no
+/// sidecar parsed.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Gate {
     /// `My Clippings.txt`'s length in bytes.
     pub len: u64,
-    /// Its modification time, epoch seconds.
+    /// `mtime`: its modification time, epoch seconds.
     pub mtime: i64,
-    /// [`crate::sidecar::Survey::rare`], which is what says a highlight was made,
-    /// edited or deleted since, and [`crate::sidecar::Survey::dirs`] beside it.
+    /// `sidecars`, `dirs`: [`crate::sidecar::Survey::rare`] and [`crate::sidecar::Survey::dirs`].
     pub sidecars: u64,
     pub dirs: usize,
     /// [`RULES`] at the pass that wrote the rows; a lower number merges them again.
     pub rules: u32,
 }
 
-/// The gate `clips` and `survey` stand at.
+/// `gate`: the gate `clips` and `survey` stand at.
 pub fn gate(clips: &Path, survey: &Survey) -> Gate {
     let stated = std::fs::metadata(clips).ok();
     Gate {
@@ -282,15 +280,14 @@ pub fn gate(clips: &Path, survey: &Survey) -> Gate {
     }
 }
 
-/// Whether [`fold`] reads anything, answered before [`crate::sidecar::read`]
-/// is paid for.
+/// `wants`: whether [`fold`] reads anything, answered before [`crate::sidecar::read`] is paid for.
 pub fn wants(record: &Record, clips: &Path, survey: &Survey) -> bool {
     record.gate != Some(gate(clips, survey))
 }
 
-/// Join the two sources into `record` through [`Record::take_highlights`],
-/// `clippings` the parsed `My Clippings.txt` that
-/// [`crate::identify::from_sources_at`] reads too. Nothing is read while [`gate`] holds.
+/// `fold` joins the two sources into `record` through [`Record::take_highlights`], `clippings` the
+/// parsed `My Clippings.txt` that [`crate::identify::from_sources_at`] reads too; nothing is read
+/// while [`gate`] holds.
 pub fn fold(
     record: &mut Record,
     clips: &Path,
@@ -319,7 +316,7 @@ pub fn fold(
             State::Unconfirmed => out.unconfirmed += 1,
         }
     }
-    // A `State::Retired` row is counted here and stored nowhere.
+    // `held`: a `State::Retired` row is counted here and stored nowhere.
     let held: Vec<Highlight> = highlights
         .into_iter()
         .filter(|m| m.state.is_in_the_book())
@@ -329,8 +326,8 @@ pub fn fold(
     out
 }
 
-/// The books one pass read a trusted roster for: by extent, and by title for a
-/// row naming no extent.
+/// `Spoken`: the books one pass read a trusted roster for: by extent, and by title for a row naming
+/// no extent.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Spoken {
     extents: HashSet<i64>,
@@ -338,7 +335,7 @@ pub struct Spoken {
 }
 
 impl Spoken {
-    /// Whether a roster this pass read spoke for `highlight`'s book.
+    /// `for_book_of`: whether a roster this pass read spoke for `highlight`'s book.
     pub fn for_book_of(&self, highlight: &Highlight) -> bool {
         match highlight.extent {
             0 => self.titles.contains(&normalise(&highlight.title)),
@@ -355,8 +352,8 @@ pub fn over(held: &[Highlight], fresh: Vec<Highlight>, spoken: &Spoken) -> Vec<H
         HashMap::with_capacity(held.len());
     let mut by_place: HashMap<(i64, Kind, i64, i64), &Highlight> = HashMap::new();
     let mut by_book: HashMap<(i64, String, Kind), Vec<&Highlight>> = HashMap::new();
-    // A held row a clipping placed, by the second and kind it was made at:
-    // `None` where two share one.
+    // `by_stamp`: a held row a clipping placed, by the second and kind it was made at: `None` where
+    // two share one.
     let mut by_stamp: HashMap<(&str, Kind), Option<&Highlight>> = HashMap::new();
     for row in held {
         by_identity.entry(row.identity()).or_insert(row);
@@ -373,12 +370,12 @@ pub fn over(held: &[Highlight], fresh: Vec<Highlight>, spoken: &Spoken) -> Vec<H
         }
         by_book.entry(book_of(row)).or_default().push(row);
     }
-    // The fresh rows only a sidecar placed, counted by the same.
+    // `unplaced`: the fresh rows only a sidecar placed, counted by the same.
     let mut unplaced: HashMap<(String, Kind), usize> = HashMap::new();
     for row in fresh.iter().filter(|row| row.location < 0) {
         *unplaced.entry((row.at.clone(), row.kind)).or_default() += 1;
     }
-    // The held rows a fresh one stands in place of, in a book no roster spoke for.
+    // `replaced`: the held rows a fresh one stands in place of, in a book no roster spoke for.
     let mut replaced: HashSet<(&str, Kind, &str, i64, i64)> = HashSet::new();
     let mut out = Vec::with_capacity(fresh.len().max(held.len()));
     for mut row in fresh {
@@ -429,8 +426,8 @@ pub fn over(held: &[Highlight], fresh: Vec<Highlight>, spoken: &Spoken) -> Vec<H
     out
 }
 
-/// What [`over`] groups a row's book and kind by: the extent, and the title
-/// for a row naming none.
+/// `book_of`: what [`over`] groups a row's book and kind by: the extent, and the title for a row
+/// naming none.
 fn book_of(highlight: &Highlight) -> (i64, String, Kind) {
     let title = match highlight.extent {
         0 => normalise(&highlight.title),
@@ -439,34 +436,33 @@ fn book_of(highlight: &Highlight) -> (i64, String, Kind) {
     (highlight.extent, title, highlight.kind)
 }
 
-/// One roster, with the book it belongs to and which of its annotations a clipping
-/// has claimed.
+/// `Held`: one roster, with the book it belongs to and which of its annotations a clipping has
+/// claimed.
 struct Held<'a> {
     roster: &'a Roster,
-    /// The [`record::Book`] this roster belongs to, where a `p_location` names it.
+    /// `book`: the [`record::Book`] this roster belongs to, where a `p_location` names it.
     book: Option<&'a record::Book>,
     /// `created` as epoch seconds per annotation, placed on a clock to meet a clipping.
     created: Vec<i64>,
-    /// The offset each annotation's pair settled on, `None` where no clipping claimed it.
+    /// `offset`: the offset each annotation's pair settled on, `None` where no clipping claimed it.
     offset: Vec<Option<i64>>,
     claimed: Vec<bool>,
 }
 
 impl Held<'_> {
-    /// The wall clock annotation `i` is read on: the offset its own pair settled
-    /// on, else the best the record and the zone file can offer.
+    /// `at`: the wall clock annotation `i` is read on: the offset its own pair settled on, else the
+    /// record's clock, else the zone file's offset at its instant.
     fn at(&self, i: usize, clock: &Clock, offsets: &[i64]) -> String {
         let epoch = self.created[i];
-        match self.offset[i] {
-            Some(offset) => date::local_at(epoch, Some(offset))
+        let zoned = crate::zone::offset_at(epoch).or_else(|| offsets.first().copied());
+        match (self.offset[i], zoned) {
+            (Some(offset), _) => date::local_at(epoch, Some(offset))
                 .map(|(d, s)| date::stamp(d, s))
                 .unwrap_or_default(),
-            None => match offsets.first() {
-                Some(offset) if clock.is_empty() => date::local_at(epoch, Some(*offset))
-                    .map(|(d, s)| date::stamp(d, s))
-                    .unwrap_or_default(),
-                _ => clock::stamp(clock, epoch),
-            },
+            (None, Some(offset)) if clock.is_empty() => date::local_at(epoch, Some(offset))
+                .map(|(d, s)| date::stamp(d, s))
+                .unwrap_or_default(),
+            _ => clock::stamp(clock, epoch),
         }
     }
 }
@@ -479,7 +475,7 @@ fn merged(
     books: &[record::Book],
     clock: &Clock,
 ) -> (Vec<Highlight>, Spoken) {
-    // Both ways into `books`, built once.
+    // `by_stem`: both ways into `books`, built once.
     let by_stem = stems(books);
     let by_title = titles(books);
     let mut held: Vec<Held> = sidecars
@@ -498,16 +494,19 @@ fn merged(
         })
         .collect();
 
-    // The record's own clocks first, then the zone file's offset for this instant,
-    // all a Kindle with no annotations to measure has.
+    // `offsets`: the record's own clocks first, then the zone file's offset at this
+    // instant and at each annotation's own, all a Kindle with no clock to measure has.
     let mut offsets = clock.offsets();
-    if let Some(now) = crate::zone::offset_at(date::epoch_now())
-        && !offsets.contains(&now)
-    {
-        offsets.push(now);
+    let zoned = std::iter::once(date::epoch_now())
+        .chain(held.iter().flat_map(|h| h.created.iter().copied()))
+        .filter_map(crate::zone::offset_at);
+    for offset in zoned {
+        if !offsets.contains(&offset) {
+            offsets.push(offset);
+        }
     }
 
-    // The book each clipping names, read once for both joins.
+    // `named`: the book each clipping names, read once for both joins.
     let named: Vec<Option<&record::Book>> = clippings
         .iter()
         .map(|clip| match clip.title.is_empty() {
@@ -520,7 +519,7 @@ fn merged(
         })
         .collect();
 
-    // The stamp first, which is exact wherever it holds.
+    // `paired`: the stamp first, which is exact wherever it holds.
     let mut paired: Vec<Option<(usize, usize)>> = Vec::with_capacity(clippings.len());
     for (clip, named) in clippings.iter().zip(&named) {
         let found = matching(clip, &held, *named, &offsets);
@@ -536,9 +535,8 @@ fn merged(
     for ((clip, named), found) in clippings.iter().zip(&named).zip(&paired) {
         out.push(one(clip, *named, *found, &held));
     }
-    // Every sidecar annotation no clipping speaks for is a highlight the file cannot
-    // reach — handwriting, which the file never holds, or an emptied
-    // `My Clippings.txt`. It is stored without words.
+    // `at`: each annotation no clipping speaks for is a highlight the file cannot reach
+    // (handwriting, or an emptied `My Clippings.txt`), stored without words.
     for at in &held {
         for (i, annotation) in at.roster.annotations.iter().enumerate() {
             if at.claimed[i] {
@@ -576,8 +574,8 @@ fn merged(
             }
         }
     }
-    // The bodies are compared whole and cut after: two passages differing
-    // past [`EXCERPT`] are two highlights.
+    // `settled`: the bodies are compared whole and cut after: two passages differing past
+    // [`EXCERPT`] are two highlights.
     let settled = settle(out)
         .into_iter()
         .map(|mut highlight| {
@@ -588,9 +586,9 @@ fn merged(
     (settled, spoken)
 }
 
-/// The second join, for a sidecar written anew whose restamped annotations miss the
-/// clippings: within one book and one kind, equal counts of leftovers
-/// pair k-th to k-th in reading order, and unequal counts pair nothing.
+/// `in_order`: the second join, for a sidecar written anew whose restamped annotations miss the
+/// clippings: within one book and one kind, equal counts of leftovers pair k-th to k-th in reading
+/// order, and unequal counts pair nothing.
 fn in_order(
     clippings: &[Clipping],
     named: &[Option<&record::Book>],
@@ -602,14 +600,14 @@ fn in_order(
             continue;
         };
         for kind in Kind::ALL {
-            // The sidecar's leftovers, up the book.
+            // `mine`: the sidecar's leftovers, up the book.
             let mut mine: Vec<usize> = (0..one.roster.annotations.len())
                 .filter(|i| !one.claimed[*i] && one.roster.annotations[*i].kind == kind)
                 .collect();
             if mine.is_empty() {
                 continue;
             }
-            // The file's leftovers for the same book and kind, up the book.
+            // `theirs`: the file's leftovers for the same book and kind, up the book.
             let mut theirs: Vec<usize> = (0..clippings.len())
                 .filter(|c| {
                     paired[*c].is_none()
@@ -636,8 +634,8 @@ fn in_order(
     }
 }
 
-/// One clipping as a [`Highlight`], taking the positions, the colour and a
-/// note's words from the sidecar annotation `found` names, where it names one.
+/// `one`: one clipping as a [`Highlight`], taking the positions, the colour and a note's words from
+/// the sidecar annotation `found` names, where it names one.
 fn one(
     clip: &Clipping,
     named: Option<&record::Book>,
@@ -668,7 +666,7 @@ fn one(
             if !annotation.body.is_empty() {
                 highlight.body = annotation.body.clone();
             }
-            // The roster names the book the clipping only described.
+            // `book`: the roster names the book the clipping only described.
             if let Some(book) = held[at].book {
                 highlight.extent = book.extent;
             }
@@ -687,9 +685,9 @@ fn one(
     highlight
 }
 
-/// The sidecar annotation carrying `clip`'s kind and instant, and which of
-/// `offsets` placed it there. A stamp is unique down the file: one match
-/// settles it; a tie the named book cannot break is left unmatched.
+/// `matching`: the sidecar annotation carrying `clip`'s kind and instant, and which of `offsets`
+/// placed it there; a stamp is unique down the file: one match settles it; a tie the named book
+/// cannot break is left unmatched.
 fn matching(
     clip: &Clipping,
     held: &[Held],
@@ -729,19 +727,17 @@ fn matching(
     None
 }
 
-/// A `YYYY-MM-DDTHH:MM:SS` as seconds, the axis a wall clock and a placed
-/// epoch are compared on.
+/// `instant`: a `YYYY-MM-DDTHH:MM:SS` as seconds, the axis a wall clock and a placed epoch are
+/// compared on.
 fn instant(at: &str) -> Option<i64> {
     let day = date::parse_day(date::day_of(at))?;
     Some(day * 86_400 + date::secs_of(at))
 }
 
-/// The offsets measured off the one instant written twice: `My Clippings.txt`
-/// in wall clock, the sidecar in epoch milliseconds. Best-supported first, and
-/// never below [`SUPPORT`].
+/// `offsets_seen`: the offsets measured off the one instant written twice, `My Clippings.txt` in
+/// wall clock and the sidecar in epoch milliseconds, best supported first, none below [`SUPPORT`].
 fn offsets_seen(clippings: &[Clipping], sidecars: &Sidecars) -> Vec<i64> {
-    // The file's instants by kind, ascending: one annotation reads only the
-    // clippings a clock could reach — never the whole file.
+    // `by_kind`: the file's instants by kind, ascending, each annotation reading those near it.
     let mut by_kind: HashMap<Kind, Vec<i64>> = HashMap::new();
     for clip in clippings {
         if let Some(at) = instant(&clip.at) {
@@ -769,22 +765,22 @@ fn offsets_seen(clippings: &[Clipping], sidecars: &Sidecars) -> Vec<i64> {
         }
     }
     let mut out: Vec<(i64, usize)> = count.into_iter().filter(|(_, n)| *n >= SUPPORT).collect();
-    // Most-supported first, the larger offset first on a tie: one order every time.
+    // `out`: most supported first, the larger offset first on a tie.
     out.sort_by(|a, b| b.1.cmp(&a.1).then(b.0.cmp(&a.0)));
     out.into_iter().map(|(offset, _)| offset).collect()
 }
 
-/// How many annotations a difference must stand for before it is read as a clock.
+/// `SUPPORT`: how many annotations a difference must stand for before it is read as a clock.
 const SUPPORT: usize = 2;
 
-/// `(instant, offset)` per annotation the two files agree about. Must run before
-/// any pass placing a true epoch on [`Clock`], [`merged`] included.
+/// `clocks_seen`: `(instant, offset)` per annotation the two files agree about, read before any
+/// pass placing a true epoch on [`Clock`], [`merged`] included.
 pub fn clocks_seen(clippings: &[Clipping], sidecars: &Sidecars) -> Vec<(i64, i64)> {
     let offsets = offsets_seen(clippings, sidecars);
     if offsets.is_empty() {
         return Vec::new();
     }
-    // A second holds one clipping: the file is appended from one thread.
+    // `by_instant`: a second holds one clipping: the file is appended from one thread.
     let mut by_instant: HashMap<(Kind, i64), ()> = HashMap::new();
     for clip in clippings {
         if let Some(at) = instant(&clip.at) {
@@ -795,8 +791,8 @@ pub fn clocks_seen(clippings: &[Clipping], sidecars: &Sidecars) -> Vec<(i64, i64
     for roster in &sidecars.rosters {
         for annotation in &roster.annotations {
             let created = annotation.created.div_euclid(1_000);
-            // The best-supported clock that lands this annotation on a write the
-            // file holds. An annotation no clock places states nothing.
+            // `offset`: the best supported clock landing this annotation on a write the file holds;
+            // an annotation no clock places states nothing.
             if let Some(offset) = offsets
                 .iter()
                 .find(|offset| by_instant.contains_key(&(annotation.kind, created + *offset)))
@@ -808,8 +804,8 @@ pub fn clocks_seen(clippings: &[Clipping], sidecars: &Sidecars) -> Vec<(i64, i64
     out
 }
 
-/// Each book's `.sdr` name — its path, directory and last suffix cut — to
-/// its slot, first of a run winning.
+/// `stems`: each book's `.sdr` name — its path, directory and last suffix cut — to its slot,
+/// first of a run winning.
 fn stems(books: &[record::Book]) -> HashMap<&str, usize> {
     let mut out = HashMap::with_capacity(books.len());
     for (at, book) in books.iter().enumerate() {
@@ -820,9 +816,9 @@ fn stems(books: &[record::Book]) -> HashMap<&str, usize> {
     out
 }
 
-/// Each book's title to its slot, matched the way two claims on one end position
-/// are compared, and to `None` where more than one book carries it: a title
-/// two books answer to names neither.
+/// `titles`: each book's title to its slot, matched the way two claims on one end position are
+/// compared, and to `None` where more than one book carries it: a title two books answer to names
+/// neither.
 fn titles(books: &[record::Book]) -> HashMap<String, Option<usize>> {
     let mut out: HashMap<String, Option<usize>> = HashMap::with_capacity(books.len());
     for (at, book) in books.iter().enumerate() {
@@ -833,7 +829,7 @@ fn titles(books: &[record::Book]) -> HashMap<String, Option<usize>> {
     out
 }
 
-/// A book file's path with its directory and its last suffix cut.
+/// `stem_of`: a book file's path with its directory and its last suffix cut.
 fn stem_of(location: &str) -> &str {
     let name = location.rsplit('/').next().unwrap_or(location);
     match name.rsplit_once('.') {
@@ -853,19 +849,18 @@ fn bounded(kind: Kind, body: &str) -> String {
     out
 }
 
-/// The rows one merge came to, deduplicated by the sidecar's `(start, end)`
-/// where it stated one, and by `(title, kind, body)` without.
+/// `settle`: the rows one merge came to, deduplicated by the sidecar's `(start, end)` where it
+/// stated one, and by `(title, kind, body)` without.
 fn settle(mut highlights: Vec<Highlight>) -> Vec<Highlight> {
-    // Earliest first: the row kept is the one stating when the highlight was
-    // made, and the bodies that follow are the later words.
+    // `highlights`: earliest first, the row kept stating when the highlight was made and the
+    // bodies that follow the later words.
     highlights.sort_by(|a, b| {
         (&a.at, &a.title, a.kind, a.start).cmp(&(&b.at, &b.title, b.kind, b.start))
     });
 
     let mut out: Vec<Highlight> = Vec::new();
-    // Two ways back into `out`, neither arm scanning it. `standing` is the
-    // exact arm's whole test; `under` is the only pair `words_hold` can be
-    // asked about.
+    // `standing`: two ways back into `out`, neither arm scanning it. `standing` is the exact arm's
+    // whole test; `under` is the only pair `words_hold` can be asked about.
     let mut standing: HashMap<(i64, Kind, i64, i64), usize> = HashMap::new();
     let mut under: HashMap<(String, Kind), Vec<usize>> = HashMap::new();
     for highlight in highlights {
@@ -890,8 +885,8 @@ fn settle(mut highlights: Vec<Highlight>) -> Vec<Highlight> {
                 .find(|&held| words_hold(&out[held], &highlight)),
         };
         match at {
-            // The held row opened the highlight; the later one restates its
-            // words, but for a note whose words a sidecar states.
+            // `out[at]`: the held row, opening the highlight; the later one restates its words, but
+            // for a note whose words a sidecar states.
             Some(at) if !highlight.body.is_empty() && !out[at].states_its_own_words() => {
                 out[at].body = highlight.body
             }
@@ -913,8 +908,8 @@ fn settle(mut highlights: Vec<Highlight>) -> Vec<Highlight> {
             }
         }
     }
-    // A row under `State::Retired` or `State::Unconfirmed` whose words
-    // a sidecar holds is an earlier write, and `under` names it.
+    // `keep`: a row under `State::Retired` or `State::Unconfirmed` whose words a sidecar holds is
+    // an earlier write, and `under` names it.
     let keep: Vec<bool> = out
         .iter()
         .map(|m| {
@@ -936,8 +931,7 @@ fn settle(mut highlights: Vec<Highlight>) -> Vec<Highlight> {
     out
 }
 
-/// Whether either passage holds the other, the book and kind being the
-/// caller's.
+/// `words_hold`: whether either passage holds the other, the book and kind being the caller's.
 fn words_hold(a: &Highlight, b: &Highlight) -> bool {
     if a.body.is_empty() || b.body.is_empty() {
         return false;
@@ -966,7 +960,7 @@ mod tests {
 
     use crate::sidecar::Annotation;
 
-    /// A [`record::Book`] carrying `p_location`.
+    /// `book`: a [`record::Book`] carrying `p_location`.
     fn book(extent: i64, title: &str, file: &str) -> record::Book {
         record::Book {
             extent,
@@ -980,7 +974,7 @@ mod tests {
         }
     }
 
-    /// A highlight over a known range, for the pairing below.
+    /// `highlight`: a highlight over a known range, for the pairing below.
     fn highlight(state: State, start: i64, end: i64) -> Highlight {
         Highlight {
             extent: 1_000,
@@ -997,7 +991,7 @@ mod tests {
         }
     }
 
-    /// A clipping stating everything one carries.
+    /// `clip`: a clipping stating everything one carries.
     fn clip(title: &str, kind: Kind, at: &str, location: i64, body: &str) -> Clipping {
         Clipping {
             title: title.into(),
@@ -1011,12 +1005,12 @@ mod tests {
         }
     }
 
-    /// The epoch milliseconds whose wall clock is `at`, for writing a sidecar annotation
+    /// `created`: the epoch milliseconds whose wall clock is `at`, for writing a sidecar annotation
     /// and a clipping that meet.
     fn created(at: &str) -> i64 {
         let day = date::parse_day(date::day_of(at)).expect("a day");
         let local = day * 86_400 + date::secs_of(at);
-        // The merge measures the offset back off this same difference.
+        // `offset`: the merge measures the offset back off this same difference.
         let offset = crate::zone::offset_at(local).unwrap_or_else(|| {
             let (d, s) = date::local_of(0).unwrap_or((0, 0));
             d * 86_400 + s
@@ -1079,8 +1073,7 @@ mod tests {
         );
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].state, State::Live);
-        // The words come from the file, the position and the colour from the
-        // sidecar, and neither source holds both.
+        // `got[0]`: the words off the file, the position and the colour off the sidecar.
         assert_eq!(got[0].body, "a line");
         assert_eq!((got[0].start, got[0].end), (500, 560));
         assert_eq!(got[0].colour, "orange");
@@ -1109,8 +1102,8 @@ mod tests {
         assert_eq!(got[0].state, State::Retired);
     }
 
-    /// A note saved with a typo and corrected on the Kindle: the sidecar
-    /// holds the correction, and the clippings file both versions.
+    /// `corrected_note`: a note saved with a typo and corrected on the Kindle: the sidecar holds
+    /// the correction, and the clippings file both versions.
     fn corrected_note() -> (Vec<record::Book>, Sidecars, Vec<Clipping>) {
         let title = "A Therapeutic Journey: Lessons from The School of Life";
         let typo = "Do I need to \"imagine\" letting everyone done? Or did I already?";
@@ -1150,7 +1143,7 @@ mod tests {
             note.body,
             "Do I need to \"imagine\" letting everyone down? Or did I already?"
         );
-        // The note keeps the stamp it was made at, which is what names it.
+        // `note.at`: the stamp the note was made at, which names it.
         assert_eq!(note.at, "2026-10-07T09:46:44");
         assert_eq!(
             (note.state, note.start, note.end),
@@ -1159,8 +1152,8 @@ mod tests {
         assert_eq!(note.location, 42);
     }
 
-    /// One launch's [`fold`] of `clippings` and `sidecars` into `record`, its
-    /// gate opened by `launch`.
+    /// `launch`: one launch's [`fold`] of `clippings` and `sidecars` into `record`, its gate opened
+    /// by `launch`.
     fn launch(record: &mut Record, clippings: &[Clipping], sidecars: &Sidecars, launch: u64) {
         record.clock.observe(clocks_seen(clippings, sidecars));
         let survey = Survey {
@@ -1187,7 +1180,7 @@ mod tests {
         launch(&mut record, &clippings, &sidecars, 1);
         let before = record.highlights.clone();
         assert_eq!(before.len(), 2, "{before:#?}");
-        // The book and its `.sdr` deleted: the clippings file alone speaks.
+        // `sidecars_of(Vec::new())`: the book and its `.sdr` deleted, the clippings file alone.
         launch(&mut record, &clippings, &sidecars_of(Vec::new()), 2);
         assert_eq!(record.highlights, before, "{:#?}", record.highlights);
     }
@@ -1207,8 +1200,8 @@ mod tests {
 
     #[test]
     fn a_book_gone_from_the_kindle_keeps_its_words_once_the_clippings_file_goes() {
-        // The library names no file for the book, and its `.sdr` stays: no
-        // roster reaches the book by the path.
+        // `books`: the library names no file for the book, and its `.sdr` stays: no roster reaches
+        // the book by the path.
         let books = vec![record::Book {
             location: String::new(),
             on_kindle: false,
@@ -1288,8 +1281,8 @@ mod tests {
     #[test]
     fn a_book_whose_sidecar_is_gone_says_nothing_either_way() {
         let books = [book(1000, "A Book", "A Book")];
-        // The `.sdr` is there and holds nothing that parses: it was in no
-        // position to state a roster.
+        // `sidecars`: the `.sdr` is there and holds nothing that parses: it was in no position to
+        // state a roster.
         let sidecars = sidecars_of(vec![roster("A Book", false, Vec::new())]);
         let got = merge(
             &[clip(
@@ -1304,7 +1297,7 @@ mod tests {
         );
         assert_eq!(got[0].state, State::Unconfirmed);
 
-        // And a book with no `.sdr` at all is the same answer.
+        // `got`: And a book with no `.sdr` at all is the same answer.
         let got = merge(
             &[clip(
                 "A Book",
@@ -1321,8 +1314,8 @@ mod tests {
 
     #[test]
     fn three_highlights_at_one_location_are_three_rows() {
-        // Six clippings, three distinct bodies, every one at Location 69, on the
-        // book whose sidecar is gone.
+        // `said`: Six clippings, three distinct bodies, every one at Location 69, on the book whose
+        // sidecar is gone.
         let said = [
             "窓辺には花が飾られていた。",
             "太い茎がすっと伸び、",
@@ -1343,16 +1336,16 @@ mod tests {
             .collect();
         let got = merge(&clippings, &sidecars_of(Vec::new()), &[]);
         assert_eq!(got.len(), 3, "{got:#?}");
-        // Each row opens at the first of its pair: that is when the highlight was
-        // made, and the second clipping is the same write appended again.
+        // `stamps`: each row opens at the first of its pair: that is when the highlight was made,
+        // and the second clipping is the same write appended again.
         let stamps: Vec<&str> = got.iter().map(|m| m.at.as_str()).collect();
         assert_eq!(stamps, [at[0], at[2], at[4]]);
     }
 
     #[test]
     fn an_extended_selection_is_one_highlight_at_the_words_it_became() {
-        // A dragged handle files the passage twice, the shorter inside
-        // the longer. One highlight stands, at the sidecar's own words.
+        // `books`: a dragged handle files the passage twice, the shorter inside the longer; one
+        // highlight stands, at the sidecar's own words.
         let books = [book(1000, "觀念史研究", "觀念史研究")];
         let sidecars = sidecars_of(vec![roster(
             "觀念史研究",
@@ -1392,9 +1385,8 @@ mod tests {
 
     #[test]
     fn a_passage_widened_with_no_sidecar_to_say_so_is_still_one_highlight() {
-        // No `.sdr` says which of the three the book holds; containment
-        // does: each inside the next is one passage widened twice, opened when
-        // the first was made.
+        // `said`: no `.sdr` says which of the three the book holds; containment does: each inside
+        // the next is one passage widened twice, opened when the first was made.
         let said = [
             "The AI\u{2019}s primary job is to decrease the wage",
             "The AI\u{2019}s primary job is to decrease the wage bill",
@@ -1424,9 +1416,9 @@ mod tests {
 
     #[test]
     fn two_passages_that_hold_neither_other_stay_two_highlights() {
-        // Distinct highlights a few seconds apart at one display location: the
-        // stamps cannot tell them from a revision and the location is wide
-        // enough for both: only the words can, and these share none.
+        // `got`: Distinct highlights a few seconds apart at one display location: the stamps cannot
+        // tell them from a revision and the location is wide enough for both: only the words can,
+        // and these share none.
         let got = merge(
             &[
                 clip(
@@ -1459,8 +1451,8 @@ mod tests {
 
     #[test]
     fn an_update_writing_the_same_words_again_is_one_highlight() {
-        // An update appends a whole second clipping:
-        // the file carries the words twice and the sidecar carries one.
+        // `books`: an update appends a whole second clipping: the file carries the words twice and
+        // the sidecar carries one.
         let books = [book(1000, "A Book", "A Book")];
         let sidecars = sidecars_of(vec![roster(
             "A Book",
@@ -1499,8 +1491,8 @@ mod tests {
 
     #[test]
     fn a_book_re_downloaded_keeps_the_words_its_new_sidecar_lost() {
-        // A new `.sdr` restamps `created` past the clipping appended
-        // first. One leftover each side of one book and kind.
+        // `books`: a new `.sdr` restamps `created` past the clipping appended first; one leftover
+        // each side of one book and kind.
         let books = [book(1000, "A Book", "A Book")];
         let sidecars = sidecars_of(vec![roster(
             "A Book",
@@ -1526,8 +1518,8 @@ mod tests {
         );
         assert_eq!(got.len(), 1, "{got:#?}");
         assert_eq!(got[0].state, State::Live);
-        // The words off the file, the position off the sidecar, and the display
-        // location the clipping stated kept beside it.
+        // `got[0]`: the words off the file, the position off the sidecar, and the display location
+        // the clipping stated kept beside it.
         assert_eq!(
             got[0].body,
             "no one today remembered why the war had come about"
@@ -1535,14 +1527,14 @@ mod tests {
         assert_eq!((got[0].start, got[0].end), (21_336, 21_413));
         assert_eq!(got[0].location, 179);
         assert_eq!(got[0].colour, "orange");
-        // The stamp kept is the clipping's: that is when the highlight was made.
+        // `got[0].at`: the clipping's stamp, when the highlight was made.
         assert_eq!(got[0].at, "2026-07-29T21:37:19");
     }
 
     #[test]
     fn leftovers_that_do_not_answer_one_for_one_are_left_alone() {
-        // Two annotations and one clipping: which of the two the words belong to
-        // is a choice, and there is no ground to make it on.
+        // `books`: two annotations and one clipping: which of the two the words belong to is a
+        // choice, and there is no ground to make it on.
         let books = [book(1000, "A Book", "A Book")];
         let sidecars = sidecars_of(vec![roster(
             "A Book",
@@ -1563,7 +1555,7 @@ mod tests {
             &sidecars,
             &books,
         );
-        // The clipping stands alone and both annotations stand alone.
+        // `3`: the clipping and both annotations, each alone.
         assert_eq!(got.len(), 3, "{got:#?}");
         assert_eq!(
             got.iter().filter(|m| m.body.is_empty()).count(),
@@ -1574,8 +1566,8 @@ mod tests {
 
     #[test]
     fn leftovers_pair_up_the_book_and_never_by_their_stamps() {
-        // Three of each, the sidecar's stamps in the opposite order: the
-        // pairing is by position in the book, not by stamp.
+        // `books`: three of each, the sidecar's stamps in the opposite order: the pairing is by
+        // position in the book, not by stamp.
         let books = [book(1000, "A Book", "A Book")];
         let sidecars = sidecars_of(vec![roster(
             "A Book",
@@ -1621,8 +1613,7 @@ mod tests {
 
     #[test]
     fn a_sidecar_annotation_no_clipping_speaks_for_is_still_a_highlight() {
-        // Ink is in the sidecar and nowhere else: the file never holds
-        // handwriting.
+        // `books`: Ink is in the sidecar and nowhere else: the file never holds handwriting.
         let books = [book(1000, "A Book", "A Book")];
         let sidecars = sidecars_of(vec![roster(
             "A Book",
@@ -1644,16 +1635,16 @@ mod tests {
 
     #[test]
     fn a_sdr_names_its_book_by_the_path_the_library_states() {
-        // A `.sdr` directory is the book's own file with its last suffix cut,
-        // and `p_location` is that file.
+        // `named`: a `.sdr` directory is the book's own file with its last suffix cut, and
+        // `p_location` is that file.
         let named = "[An Author] A Book (2011).8e24abcd";
         let books = [book(1000, "A Book", &format!("Sidle/{named}"))];
         assert_eq!(
             stems(&books).get(named).map(|&at| books[at].extent),
             Some(1000)
         );
-        // The bridge is the whole stem, never a prefix: two copies of one
-        // book differ only in the appended hash.
+        // `stems`: the whole stem bridges, never a prefix, two copies of one book differing only in
+        // the appended hash.
         assert!(
             !stems(&books).contains_key("[An Author] A Book (2011).ffffffff"),
             "a stem that only shares a prefix names no book"
@@ -1717,8 +1708,8 @@ mod tests {
         assert_eq!(rows.len(), 2, "{rows:#?}");
         assert!(rows.iter().all(|r| r.notes.is_empty()));
 
-        // And a note the sidecar never placed is not guessed onto a
-        // neighbour: nothing states where it is.
+        // `adrift`: And a note the sidecar never placed is not guessed onto a neighbour: nothing
+        // states where it is.
         let mut adrift = highlight(State::Unconfirmed, -1, -1);
         adrift.kind = Kind::Note;
         let held = [&passage, &adrift];

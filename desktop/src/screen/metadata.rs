@@ -2,7 +2,7 @@
 //! [`charts`]: a book's metadata on its head, the tags over Books, Books narrowed and picked,
 //! and the charts.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::ops::RangeInclusive;
 
@@ -15,6 +15,7 @@ use super::words::Words;
 use super::{Ctx, Route, esc, lang, language_of};
 use crate::metadata::links::{Linked, Linking, Name};
 use crate::metadata::{self, By, Named, Patch, Tag, Values, names};
+use readinglog_native::metadata::breakdown::{self, Ranks};
 
 /// `HUES`: each language's hue, by the record's languages in time read; `OTHER` past the fourth.
 const HUES: [&str; 4] = ["#0f86a3", "#b8781e", "#7d4fb0", "#c4456e"];
@@ -73,7 +74,7 @@ fn said_also(cx: &Ctx, others: &[&str]) -> String {
         .replace("{names}", &others.join(" / "))
 }
 
-/// A ` data-tip` saying `others`, a value's other names; nothing where it has none.
+/// `tip_of`: a ` data-tip` saying `others`, a value's other names; nothing where it has none.
 fn tip_of(cx: &Ctx, others: &[&str]) -> String {
     match others.is_empty() {
         true => String::new(),
@@ -801,9 +802,9 @@ fn name_of(by: &By) -> Option<(Name<'_>, Linked)> {
     }
 }
 
-/// `by`'s chip on Books, its value drawn by its most held name with the others in its
-/// tooltip, its × going back to `back`; Rename… where `by` names a value, and for an
-/// author or a publisher *Same as…*, and *Separate* where an `l` row joins its names.
+/// `chip`: `by`'s chip on Books, its value drawn by its most held name, the others in its
+/// tooltip, its × going back to `back`, with Rename… where `by` names a value, *Same as…* for
+/// an author or a publisher, and *Separate* where an `l` row joins its names.
 pub(super) fn chip(cx: &Ctx, by: &By, back: &str) -> String {
     let w = Words::of(cx.lang);
     let what = match by {
@@ -1141,169 +1142,51 @@ fn headed(cx: &Ctx, head: &str, others: &[&str]) -> String {
 
 /// `days`' charts, the whole record's where `None`: authors, publishers, languages and each
 /// type of tag, a value not set as its own bar, each bar opening Books narrowed to it under
-/// `window`; empty where no book read sets any.
+/// `window`; empty where no book read sets any. `breakdown` gives the figures.
 pub(super) fn charts(
     cx: &Ctx,
     days: Option<RangeInclusive<i64>>,
     window: Option<Window>,
 ) -> String {
     let w = Words::of(cx.lang);
-    // `over`: each book's seconds over `days`, summed in one pass over `cx.stats.sittings`.
-    let mut over: HashMap<usize, i64> = HashMap::new();
-    if let Some(days) = &days {
-        for sitting in &cx.stats.sittings {
-            if let Some(book) = sitting.book.filter(|_| days.contains(&sitting.day)) {
-                *over.entry(book).or_default() += sitting.seconds;
-            }
-        }
-    }
-    let read: Vec<(usize, i64, Values)> = (0..cx.stats.books.len())
-        .map(|at| {
-            let secs = match &days {
-                Some(_) => over.get(&at).copied().unwrap_or(0),
-                None => cx.stats.books[at].read_seconds(cx.from),
-            };
-            (at, secs, values(cx, at))
-        })
-        .filter(|(_, secs, _)| *secs > 0)
-        .collect();
+    let read = breakdown::read(
+        cx.stats,
+        days.as_ref(),
+        |at| cx.stats.books[at].read_seconds(cx.from),
+        |at| values(cx, at),
+    );
     if read.is_empty() {
         return String::new();
     }
     let total: i64 = read.iter().map(|(_, secs, _)| secs).sum();
-    let to = |by: By| narrowed(by, window);
-    // `tally` counts a book's `secs` on the bar of the value `name` is in, drawn by the
-    // name the value is drawn by and opening `by`; `None`, the bar of a value not set.
-    let tally =
-        |name: Option<Name>, by: By, lang: Option<String>, bars: &mut Vec<Bar>, secs: i64| {
-            let shown = name.map_or(w.not_set, |name| cx.linked.shown(name));
-            match bars.iter_mut().find(|b| b.name == shown) {
-                Some(bar) => {
-                    bar.secs += secs;
-                    bar.books += 1;
-                }
-                None => bars.push(Bar {
-                    name: shown.to_string(),
-                    lang,
-                    secs,
-                    books: 1,
-                    to: to(by),
-                    also: name
-                        .map(|name| cx.linked.also(name))
-                        .filter(|also| !also.is_empty())
-                        .map(|also| said_also(cx, &also))
-                        .unwrap_or_default(),
-                }),
-            }
-        };
-    let mut authors = Vec::new();
-    let mut publishers = Vec::new();
-    let (mut authors_unset, mut publishers_unset) = (Vec::new(), Vec::new());
-    for (at, secs, values) in &read {
-        let book = &cx.stats.books[*at];
-        let mut once: Vec<&str> = Vec::new();
-        for name in &values.authors {
-            let shown = cx.linked.shown(Name::Author(name));
-            if once.contains(&shown) {
-                continue;
-            }
-            once.push(shown);
-            let named = language_of(&book.language, shown);
-            let lang = (!named.is_empty()).then_some(named);
-            let by = By::Author(Some(shown.to_string()));
-            tally(Some(Name::Author(name)), by, lang, &mut authors, *secs);
-        }
-        if values.authors.is_empty() {
-            tally(None, By::Author(None), None, &mut authors_unset, *secs);
-        }
-        match &values.publisher {
-            Some(p) => {
-                let by = By::Publisher(Some(cx.linked.shown(Name::Publisher(p)).to_string()));
-                tally(Some(Name::Publisher(p)), by, None, &mut publishers, *secs);
-            }
-            None => tally(
-                None,
-                By::Publisher(None),
-                None,
-                &mut publishers_unset,
-                *secs,
-            ),
-        }
-    }
-    let mut out = String::new();
+    let figured = breakdown::ranked(&read, cx.linked);
     let mut cards: Vec<String> = Vec::new();
-    if !authors.is_empty() {
-        cards.push(ranked(
-            cx,
-            "authors",
-            &esc(w.authors_head),
-            total,
-            authors,
-            authors_unset,
-            None,
-        ));
-    }
-    if !publishers.is_empty() {
-        cards.push(ranked(
-            cx,
-            "publishers",
-            &esc(w.publishers_head),
-            total,
-            publishers,
-            publishers_unset,
-            None,
-        ));
+    for card in figured
+        .iter()
+        .filter(|c| !matches!(c.ranks, Ranks::Type(_)))
+    {
+        let (chart, head) = match card.ranks {
+            Ranks::Authors => ("authors", esc(w.authors_head)),
+            _ => ("publishers", esc(w.publishers_head)),
+        };
+        let (bars, unset) = drawn(cx, card, window);
+        cards.push(ranked(cx, chart, &head, total, bars, unset, None));
     }
     let languages = languages_chart(cx, &read, days.as_ref(), window, total);
     if !languages.is_empty() {
         cards.push(languages);
     }
-    // `types`: each type in use, by the name it is drawn by, a linked type once.
-    let mut types: Vec<&str> = Vec::new();
-    for (_, _, values) in &read {
-        for tag in &values.tags {
-            let shown = cx.linked.shown(Name::Type(&tag.r#type));
-            if !types.contains(&shown) {
-                types.push(shown);
-            }
-        }
-    }
-    for r#type in types.into_iter().filter(|t| !names::is_type(t)) {
-        let mut bars = Vec::new();
-        let mut unset = Vec::new();
-        let mut doubled = false;
-        for (_, secs, values) in &read {
-            let mut under: Vec<(&Tag, &str)> = Vec::new();
-            for tag in values
-                .tags
-                .iter()
-                .filter(|t| cx.linked.same(Name::Type(&t.r#type), Name::Type(r#type)))
-            {
-                let shown = cx.linked.shown(Name::Tag(&tag.r#type, &tag.tag));
-                if !under.iter().any(|(_, s)| *s == shown) {
-                    under.push((tag, shown));
-                }
-            }
-            doubled |= under.len() > 1;
-            for (tag, shown) in &under {
-                let by = By::Tag(r#type.to_string(), Some(shown.to_string()));
-                tally(
-                    Some(Name::Tag(&tag.r#type, &tag.tag)),
-                    by,
-                    None,
-                    &mut bars,
-                    *secs,
-                );
-            }
-            if under.is_empty() {
-                let by = By::Tag(r#type.to_string(), None);
-                tally(None, by, None, &mut unset, *secs);
-            }
-        }
-        let note = doubled.then(|| w.counts_each.replace("{t}", &date::duration(total, cx.s)));
-        let numbers = bars.iter().all(|b| b.name.parse::<i64>().is_ok());
-        let head = headed(cx, r#type, &cx.linked.also(Name::Type(r#type)));
-        cards.push(match numbers {
+    for card in &figured {
+        let Ranks::Type(r#type) = &card.ranks else {
+            continue;
+        };
+        let (bars, unset) = drawn(cx, card, window);
+        let note = card
+            .doubled
+            .then(|| w.counts_each.replace("{t}", &date::duration(total, cx.s)));
+        let also: Vec<&str> = card.also.iter().map(String::as_str).collect();
+        let head = headed(cx, r#type, &also);
+        cards.push(match card.numbers {
             true => columns(cx, &head, bars, unset, note),
             false => ranked(
                 cx,
@@ -1316,10 +1199,47 @@ pub(super) fn charts(
             ),
         });
     }
+    let mut out = String::new();
     for pair in cards.chunks(2) {
         let _ = write!(out, "<section class=\"split\">{}</section>", pair.join(""));
     }
     out
+}
+
+/// `drawn`: `card`'s bars and its bar not set as a card draws them, each opening Books
+/// narrowed to its value under `window`, an author's name in its first book's language.
+fn drawn(cx: &Ctx, card: &breakdown::Ranked, window: Option<Window>) -> (Vec<Bar>, Vec<Bar>) {
+    let w = Words::of(cx.lang);
+    let one = |bar: &breakdown::Bar| {
+        let by = match &card.ranks {
+            Ranks::Authors => By::Author(bar.name.clone()),
+            Ranks::Publishers => By::Publisher(bar.name.clone()),
+            Ranks::Type(r#type) => By::Tag(r#type.clone(), bar.name.clone()),
+        };
+        let lang = match (&card.ranks, &bar.name) {
+            (Ranks::Authors, Some(name)) => {
+                let named = language_of(&cx.stats.books[bar.first].language, name);
+                (!named.is_empty()).then_some(named)
+            }
+            _ => None,
+        };
+        let also: Vec<&str> = bar.also.iter().map(String::as_str).collect();
+        Bar {
+            name: bar.name.as_deref().unwrap_or(w.not_set).to_string(),
+            lang,
+            secs: bar.secs,
+            books: bar.books,
+            to: narrowed(by, window),
+            also: match also.is_empty() {
+                true => String::new(),
+                false => said_also(cx, &also),
+            },
+        }
+    };
+    (
+        card.bars.iter().map(one).collect(),
+        card.unset.iter().map(one).collect(),
+    )
 }
 
 /// `chart`'s card of ranked bars headed `head`: `bars` by time, the most read in the mark's
@@ -1479,35 +1399,14 @@ fn columns(cx: &Ctx, head: &str, bars: Vec<Bar>, unset: Vec<Bar>, note: Option<S
     out
 }
 
-/// `spoken`: the languages `tags` holds, each tag under a type of [`names::TYPES`],
-/// once each, as the type and the tag are drawn where many books meet.
-fn spoken(cx: &Ctx, tags: &[Tag]) -> Vec<Tag> {
-    let mut out: Vec<Tag> = Vec::new();
-    for tag in tags.iter().filter(|t| names::is_type(&t.r#type)) {
-        let shown = Tag {
-            r#type: cx.linked.shown(Name::Type(&tag.r#type)).to_string(),
-            tag: cx
-                .linked
-                .shown(Name::Tag(&tag.r#type, &tag.tag))
-                .to_string(),
-        };
-        if !out.iter().any(|t| t.tag == shown.tag) {
-            out.push(shown);
-        }
-    }
-    out
+/// `every`: each book's values, by its place in `cx.stats.books`.
+fn every(cx: &Ctx) -> Vec<Values> {
+    (0..cx.metadata.len()).map(|at| values(cx, at)).collect()
 }
 
-/// `part`: the `n`th of `of` even parts of `secs`, the first `secs % of` of them
-/// a second longer, the parts summing to `secs`.
-fn part(secs: i64, n: usize, of: usize) -> i64 {
-    let of = of.max(1) as i64;
-    secs / of + i64::from((n as i64) < secs % of)
-}
-
-/// `read`'s languages card under the type of [`names::TYPES`] most held: each language's
-/// share of the time read, a book's split evenly among its languages, its legend, and
-/// the months split by language where `days` holds more than one.
+/// `read`'s languages card off `breakdown::languages`: each language's share of the time
+/// read, a book's split evenly among its languages, its legend, and the months split by
+/// language where `days` holds more than one.
 fn languages_chart(
     cx: &Ctx,
     read: &[(usize, i64, Values)],
@@ -1516,60 +1415,31 @@ fn languages_chart(
     total: i64,
 ) -> String {
     let w = Words::of(cx.lang);
-    let books: Vec<(usize, Vec<Tag>)> = read
-        .iter()
-        .map(|(at, _, values)| (*at, spoken(cx, &values.tags)))
-        .collect();
-    let (types, _) = in_use(cx);
-    let Some((kind, _)) = types.iter().find(|(t, _)| names::is_type(t)) else {
+    let months = months(cx, days);
+    let spans: Vec<RangeInclusive<i64>> = months.iter().map(|(_, span)| span.clone()).collect();
+    let Some(card) = breakdown::languages(cx.stats, read, &every(cx), cx.linked, &spans) else {
         return String::new();
     };
-    if books.iter().all(|(_, these)| these.is_empty()) {
-        return String::new();
-    }
+    let kind = &card.r#type;
     let hue = hues(cx);
-    // `langs`: each language's tag, `None` for a book holding none, and its seconds.
-    let mut langs: Vec<(Option<Tag>, i64)> = Vec::new();
-    let mut split = false;
-    for ((_, secs, _), (_, these)) in read.iter().zip(&books) {
-        split |= these.len() > 1;
-        let parts: Vec<(Option<&Tag>, i64)> = match these.is_empty() {
-            true => vec![(None, *secs)],
-            false => these
-                .iter()
-                .enumerate()
-                .map(|(n, tag)| (Some(tag), part(*secs, n, these.len())))
-                .collect(),
-        };
-        for (tag, secs) in parts {
-            let words = tag.map(|t| t.tag.as_str());
-            match langs
-                .iter_mut()
-                .find(|(t, _)| t.as_ref().map(|t| t.tag.as_str()) == words)
-            {
-                Some((_, s)) => *s += secs,
-                None => langs.push((tag.cloned(), secs)),
-            }
-        }
-    }
-    langs.sort_by(|a, b| (a.0.is_none(), b.1).cmp(&(b.0.is_none(), a.1)));
     let colour = |tag: &Option<Tag>| match tag {
         None => UNSET.to_string(),
         Some(tag) => hue(&tag.tag),
     };
-    let top = langs
+    let top = card
+        .parts
         .iter()
         .find_map(|(tag, _)| tag.as_ref().map(|t| t.tag.clone()))
         .unwrap_or_default();
+    let also: Vec<&str> = card.also.iter().map(String::as_str).collect();
     let mut out = format!(
         "<div><h2>{}<span class=\"said\">{} · {} {}</span></h2><div class=\"card\"><div class=\"share\">",
-        headed(cx, kind, &cx.linked.also(Name::Type(kind))),
+        headed(cx, kind, &also),
         esc(&date::duration(total, cx.s)),
         esc(cx.s.most),
         esc(&top)
     );
-    let shares = shares(&langs.iter().map(|(_, s)| *s).collect::<Vec<i64>>());
-    for (tag, secs) in &langs {
+    for (tag, secs) in &card.parts {
         let _ = write!(
             out,
             "<i style=\"flex: {secs}; background: {}\"></i>",
@@ -1577,7 +1447,7 @@ fn languages_chart(
         );
     }
     out.push_str("</div><div class=\"legend\">");
-    for ((tag, secs), share) in langs.iter().zip(&shares) {
+    for ((tag, secs), share) in card.parts.iter().zip(&card.shares) {
         let (class, name, by) = match tag {
             Some(tag) => (
                 "",
@@ -1601,56 +1471,17 @@ fn languages_chart(
         );
     }
     out.push_str("</div>");
-    let months = months(cx, days);
     if months.len() > 1 {
-        // `by_book`: each book's seconds in each of `months`, off `cx.stats.sittings`.
-        let mut by_book: HashMap<usize, Vec<i64>> = HashMap::new();
-        for sitting in &cx.stats.sittings {
-            let Some(book) = sitting.book else { continue };
-            let Some(month) = months
-                .iter()
-                .position(|(_, span)| span.contains(&sitting.day))
-            else {
-                continue;
-            };
-            by_book.entry(book).or_insert_with(|| vec![0; months.len()])[month] += sitting.seconds;
-        }
-        let split_by: Vec<Split> = months
-            .into_iter()
-            .enumerate()
-            .map(|(month, (name, _))| {
-                let parts = langs
-                    .iter()
-                    .map(|(lang, _)| {
-                        let secs = books
-                            .iter()
-                            .map(|(at, these)| {
-                                let secs = by_book.get(at).map_or(0, |secs| secs[month]);
-                                match lang {
-                                    None if these.is_empty() => secs,
-                                    None => 0,
-                                    Some(lang) => these
-                                        .iter()
-                                        .position(|t| t.tag == lang.tag)
-                                        .map_or(0, |n| part(secs, n, these.len())),
-                                }
-                            })
-                            .sum();
-                        (lang.clone(), secs)
-                    })
-                    .collect();
-                (name, parts)
-            })
-            .collect();
-        let tallest = split_by
+        let tallest = card
+            .months
             .iter()
-            .map(|(_, parts)| parts.iter().map(|(_, s)| s).sum::<i64>())
+            .map(|parts| parts.iter().sum::<i64>())
             .max()
             .unwrap_or(0)
             .max(1);
         out.push_str("<div class=\"months\">");
-        for (name, parts) in &split_by {
-            let sum: i64 = parts.iter().map(|(_, s)| s).sum();
+        for ((name, _), parts) in months.iter().zip(&card.months) {
+            let sum: i64 = parts.iter().sum();
             let _ = write!(
                 out,
                 "<div class=\"m\"><b>{}</b>",
@@ -1659,7 +1490,7 @@ fn languages_chart(
                     _ => esc(&date::duration(sum, cx.s)),
                 }
             );
-            for (lang, secs) in parts.iter().rev().filter(|(_, s)| *s > 0) {
+            for ((lang, _), secs) in card.parts.iter().zip(parts).rev().filter(|(_, s)| **s > 0) {
                 let _ = write!(
                     out,
                     "<i style=\"height: {:.1}px; background: {}\"></i>",
@@ -1671,61 +1502,27 @@ fn languages_chart(
         }
         out.push_str("</div>");
     }
-    if split {
+    if card.split {
         let _ = write!(out, "<p class=\"note\">{}</p>", esc(w.split_each));
     }
     out.push_str("</div></div>");
     out
 }
 
-/// `Split`: a month's name and each language's time read in it.
-type Split = (String, Vec<(Option<Tag>, i64)>);
-
-/// [`HUES`] by a language's words, in the order the whole record's languages take
-/// by time read, each book's split as [`languages_chart`] splits it, the same on
-/// every span.
+/// [`HUES`] by a language's words, in the order the whole record's languages take by
+/// time read (`breakdown::language_order`), the same on every span.
 fn hues<'a>(cx: &'a Ctx) -> impl Fn(&str) -> String + 'a {
-    let mut order: Vec<(String, i64)> = Vec::new();
-    for at in 0..cx.stats.books.len() {
-        let these = spoken(cx, &cx.metadata[at].tags);
-        let secs = cx.stats.books[at].read_seconds(cx.from);
-        for (n, tag) in these.iter().enumerate() {
-            let secs = part(secs, n, these.len());
-            match order.iter_mut().find(|(words, _)| *words == tag.tag) {
-                Some((_, s)) => *s += secs,
-                None => order.push((tag.tag.clone(), secs)),
-            }
-        }
-    }
-    order.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let order = breakdown::language_order(&every(cx), cx.linked, |at| {
+        cx.stats.books[at].read_seconds(cx.from)
+    });
     move |words: &str| {
         order
             .iter()
-            .position(|(held, _)| held == words)
+            .position(|held| held == words)
             .and_then(|n| HUES.get(n))
             .unwrap_or(&OTHER)
             .to_string()
     }
-}
-
-/// `parts` as whole percents summing to 100, by the largest remainder.
-fn shares(parts: &[i64]) -> Vec<i64> {
-    let total: i64 = parts.iter().sum();
-    if total == 0 {
-        return vec![0; parts.len()];
-    }
-    let mut out: Vec<(usize, i64, i64)> = parts
-        .iter()
-        .enumerate()
-        .map(|(n, p)| (n, p * 100 / total, p * 100 % total))
-        .collect();
-    let short = 100 - out.iter().map(|(_, floor, _)| floor).sum::<i64>();
-    let mut order: Vec<usize> = (0..out.len()).collect();
-    order.sort_by(|a, b| out[*b].2.cmp(&out[*a].2).then(a.cmp(b)));
-    for n in order.into_iter().take(short.max(0) as usize) {
-        out[n].1 += 1;
-    }
-    out.into_iter().map(|(_, share, _)| share).collect()
 }
 
 /// `days`' months, the record's from its first day to `cx.today` where `None`,
@@ -1749,16 +1546,4 @@ fn months(cx: &Ctx, days: Option<&RangeInclusive<i64>>) -> Vec<(String, RangeInc
         };
     }
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::shares;
-
-    #[test]
-    fn shares_sum_to_a_hundred_by_the_largest_remainder() {
-        assert_eq!(shares(&[232, 156, 65, 42, 61]), vec![42, 28, 12, 7, 11]);
-        assert_eq!(shares(&[1, 1, 1]), vec![34, 33, 33]);
-        assert_eq!(shares(&[0, 0]), vec![0, 0]);
-    }
 }

@@ -1,6 +1,5 @@
-//! An invented library: books in three scripts and [`DAYS`] of reading over
-//! them. Every number comes off [`Rng`], seeded once: the same picture on
-//! every run.
+//! [`library`]: an invented library, books in three scripts and [`DAYS`] of reading over them,
+//! every number off [`Rng`], seeded once: the same picture on every run.
 
 use std::path::Path;
 
@@ -11,41 +10,37 @@ use readinglog_native::log::sitting::{Measure, Sitting, Stretch};
 use readinglog_native::record::{self, FINISHED_PERCENT, IdentifiedBy, Record};
 use readinglog_native::written::{HighlightId, Note, Passage};
 
-/// Days of reading laid down behind the day being drawn.
+/// `DAYS`: days of reading laid down behind the day being drawn.
 pub const DAYS: i64 = 1150;
 
-/// The [`LIBRARY`] slot `Book::finished` is set on.
+/// `HIGHLIGHTED`: the [`LIBRARY`] slot `Book::finished` is set on.
 const HIGHLIGHTED: usize = 7;
 
-/// The book read end to end twice, and the one part way through the reading
-/// after its own.
+/// `REREAD`, `READING_AGAIN`: the book read end to end twice, and the one read again part way.
 const REREAD: usize = 0;
 const READING_AGAIN: usize = 2;
 
-/// The collection gone back to again and again, which is the only shot the
-/// Graphs tab's list of readings fills up on.
+/// `MANY`, `TIMES`: the collection gone back to again and again, filling the Graphs tab's list.
 const MANY: usize = 11;
 const TIMES: usize = 8;
 
-/// The [`LIBRARY`] slots the Kindle holds no cover for: a Latin title, a Han
-/// one, and a title too long for the box it stands in: what a cover box says
-/// without a cover is drawn in every shape it takes.
+/// `UNCOVERED`: slots with no cover, a Latin title, a Han one and one too long for its box.
 const UNCOVERED: [usize; 3] = [3, 6, 7];
 
-/// A book in the library, and the span of days it was read over.
+/// `Listed`: a book in the library, and the span of days it was read over.
 struct Listed {
     title: &'static str,
     author: &'static str,
     language: &'static str,
     percent: f64,
-    /// Days back from the last day drawn that the book was opened.
+    /// `opened`: days back from the last day drawn that the book was opened.
     opened: i64,
-    /// How many days its reading runs for.
+    /// `days`: how many days its reading runs for.
     days: i64,
 }
 
-/// Titles from one word to a line and a half, in three scripts, at every stage
-/// from opened yesterday to all but finished.
+/// `LIBRARY`: Titles from one word to a line and a half, in three scripts, at every stage from
+/// opened yesterday to all but finished.
 const LIBRARY: &[Listed] = &[
     Listed {
         title: "The Salt Road Companion",
@@ -161,13 +156,13 @@ const LIBRARY: &[Listed] = &[
     },
 ];
 
-/// The hours a sitting opens in, each written as many times as it is common:
-/// evenings mostly, a morning habit, and the odd late night.
+/// `CLOCK`: the hours a sitting opens in, each written as many times as it is common: evenings
+/// mostly, a morning habit, and the odd late night.
 const CLOCK: &[i64] = &[
     0, 1, 6, 7, 7, 8, 8, 12, 13, 13, 16, 17, 19, 20, 20, 21, 21, 21, 22, 22, 22, 23,
 ];
 
-/// A deterministic stream, the same on any machine.
+/// `Rng`: a deterministic stream, the same on any machine.
 struct Rng(u64);
 
 impl Rng {
@@ -179,25 +174,23 @@ impl Rng {
         self.0 >> 33
     }
 
-    /// A number below `bound`.
+    /// `upto`: a number below `bound`.
     fn upto(&mut self, bound: i64) -> i64 {
         (self.next() % bound.max(1) as u64) as i64
     }
 
-    /// A number from `from` up to `to`.
+    /// `between`: a number from `from` up to `to`.
     fn between(&mut self, from: i64, to: i64) -> i64 {
         from + self.upto(to - from + 1)
     }
 
-    /// Whether something one time in `n` happens.
+    /// `one_in`: whether something one time in `n` happens.
     fn one_in(&mut self, n: i64) -> bool {
         self.upto(n) == 0
     }
 }
 
-/// A stand-in cover for the book at `slot`, 217x330.
-///
-/// Two bands and a block.
+/// `cover`: a stand-in cover for the book at `slot`, 217x330, two bands and a block.
 fn cover(dir: &Path, slot: usize) -> String {
     let (w, h) = (217u32, 330u32);
     let hue = [
@@ -225,8 +218,8 @@ fn cover(dir: &Path, slot: usize) -> String {
     path.display().to_string()
 }
 
-/// One sitting of `secs`, opening `at` seconds into `day`, its seconds booked
-/// to each clock hour it crosses.
+/// `sitting`: one sitting of `secs`, opening `at` seconds into `day`, its seconds booked to each
+/// clock hour it crosses.
 fn sitting(day: i64, at: i64, secs: i64, extent: i64, measure: Measure) -> Sitting {
     let (y, m, d) = date::civil_from_days(day);
     let stamp = |secs: i64| {
@@ -263,15 +256,15 @@ fn sitting(day: i64, at: i64, secs: i64, extent: i64, measure: Measure) -> Sitti
     }
 }
 
-/// Days back from the last day drawn that the binge falls on.
+/// `BINGE_DAY`: days back from the last day drawn that the binge falls on.
 const BINGE_DAY: i64 = 40;
 
-/// Books read on the binge day, one to an hour from [`BINGE_OPENS`].
+/// `BINGE_BOOKS`: books read on the binge day, one to an hour from [`BINGE_OPENS`].
 const BINGE_BOOKS: usize = 10;
 const BINGE_OPENS: i64 = 8;
 
-/// One day of [`BINGE_BOOKS`] short sittings, in place of whatever
-/// [`library`] left on it. Every sitting stays under half an hour.
+/// `binge`: one day of [`BINGE_BOOKS`] short sittings, in place of whatever [`library`] left on it;
+/// every sitting stays under half an hour.
 fn binge(record: &mut Record, day: i64) {
     record
         .sittings
@@ -302,14 +295,14 @@ pub fn library(last: i64, covers: &Path) -> Record {
             },
             language: book.language.into(),
             percent: book.percent,
-            // The Kindle's own counter for this book: the whole of `percent`,
-            // at a rate putting a full read at eight hours.
+            // `timer_covered`, `timer_words`: the Kindle's own counter, the whole of `percent` at a
+            // rate putting a full read at eight hours.
             timer_covered: book.percent.max(0.0) / 100.0,
             timer_words: (120_000.0 * book.percent.max(0.0) / 100.0) as i64,
             timer_ms: (8.0 * 3600.0 * 1000.0 * book.percent.max(0.0) / 100.0) as i64,
             on_kindle: slot % 5 != 4,
             cover: String::new(),
-            // A title with a space in it, which `open::uri` escapes.
+            // `location`: a title with a space in it, which `open::uri` escapes.
             location: match slot % 5 != 4 {
                 true => format!("/mnt/us/documents/{}.kfx", book.title),
                 false => String::new(),
@@ -326,7 +319,7 @@ pub fn library(last: i64, covers: &Path) -> Record {
     }
 
     let mut rng = Rng(0x5EED_1D0C);
-    // A fortnight with the Kindle shut, somewhere in the spring.
+    // `shut`: a fortnight with the Kindle shut, somewhere in the spring.
     let shut = last - rng.between(150, 250);
     for back in (0..DAYS).rev() {
         let day = last - back;
@@ -335,7 +328,7 @@ pub fn library(last: i64, covers: &Path) -> Record {
         }
         // `date::weekday` counts from Monday: the weekend is 5 and 6.
         let weekend = matches!(date::weekday(day), 5 | 6);
-        // A day off, three weekdays in ten and one weekend day in ten.
+        // `rng.upto(10)`: a day off, three weekdays in ten and one weekend day in ten.
         if rng.upto(10) < if weekend { 1 } else { 3 } {
             continue;
         }
@@ -358,7 +351,7 @@ pub fn library(last: i64, covers: &Path) -> Record {
             let extent = record.books[slot].extent;
             let hour = CLOCK[rng.upto(CLOCK.len() as i64) as usize];
             let at = hour * 3600 + rng.upto(3600);
-            // One sitting to an hour, and none running past midnight.
+            // `booked`: one sitting to an hour, none running past midnight.
             if booked.contains(&hour) {
                 continue;
             }
@@ -388,8 +381,8 @@ pub fn library(last: i64, covers: &Path) -> Record {
     record
 }
 
-/// The books read end to end before, laid down after the seeded loop so a shot
-/// drawing none stays pixel-identical.
+/// `reread`: the books read end to end before, laid down after the seeded loop, a shot drawing
+/// none staying pixel-identical.
 fn reread(record: &mut Record) {
     for slot in [REREAD, READING_AGAIN, MANY] {
         let Some(extent) = record.books.get(slot).map(|b| b.extent) else {
@@ -401,8 +394,8 @@ fn reread(record: &mut Record) {
             .filter(|s| s.end_position == extent)
             .filter_map(|s| date::parse_day(date::day_of(&s.started_at)))
             .collect();
-        // Each climb after the first opens on the day the book was begun
-        // again, as [`climb`] cuts them.
+        // `over`: each climb after the first opens on the day the book was begun again, as
+        // [`climb`] cuts them.
         let over = (days.len() as f64 / times(slot)).ceil().max(1.0) as usize;
         let Some(book) = record.books.get_mut(slot) else {
             continue;
@@ -416,9 +409,8 @@ fn reread(record: &mut Record) {
     }
 }
 
-/// The highlights `record` holds, laid down after the seeded loop: a shot drawing no
-/// highlight stays pixel-identical. Nothing here is [`State::Retired`]: no fresh
-/// record holds one.
+/// `highlighted`: the highlights `record` holds, laid down after the seeded loop: a shot drawing no
+/// highlight stays pixel-identical; nothing here is [`State::Retired`]: no fresh record holds one.
 fn highlighted(record: &mut Record, last: i64) {
     /// `(slot, kind, state, through the book, the day it was made, the words)`.
     const HIGHLIGHTS: &[(usize, Kind, State, f64, i64, &str)] = &[
@@ -430,8 +422,8 @@ fn highlighted(record: &mut Record, last: i64) {
             86,
             "The road remembers every cart that ever crossed it, and forgives none of them.",
         ),
-        // A note on the passage above: its own range sits inside that one,
-        // the only thing tying the two together.
+        // `0`: a note on the passage above, its own range inside that one, the only tie between
+        // the two.
         (
             0,
             Kind::Note,
@@ -513,9 +505,8 @@ fn highlighted(record: &mut Record, last: i64) {
             200,
             "第二座橋建成那年，河水改道了。",
         ),
-        // Slot 5 is the deep one: enough highlights, and enough of them noted, that
-        // the list pages on every panel. A book of one or two and a book of a
-        // dozen are different pictures and both have to hold.
+        // `5`: the deep one, enough highlights, and enough of them noted, that the list pages on
+        // every panel; a book of one or two and a book of a dozen are different pictures.
         (
             5,
             Kind::Highlight,
@@ -612,8 +603,7 @@ fn highlighted(record: &mut Record, last: i64) {
             141,
             "There is no word in the harbour dialect for a journey that ends where it began, and no shortage of them.",
         ),
-        // Slot 13 is read on the last day drawn, and the day's own list states
-        // what was highlighted on it.
+        // `13`: read on the last day drawn, the day's own list stating what was highlighted on it.
         (
             13,
             Kind::Highlight,
@@ -638,9 +628,8 @@ fn highlighted(record: &mut Record, last: i64) {
             0,
             "Rests are counted, not waited out.",
         ),
-        // Slot 9's passages are all short on purpose. A row is as tall as its
-        // own words: this book's page holds far more rows than slot 5's long
-        // ones. Keep both, and keep these short.
+        // `9`: short passages, a row as tall as its own words: this book's page holds far more rows
+        // than slot 5's long ones.
         (
             9,
             Kind::Highlight,
@@ -711,7 +700,7 @@ fn highlighted(record: &mut Record, last: i64) {
             continue;
         };
         let start = (book.extent as f64 * through) as i64;
-        // A highlight no sidecar placed has no position at all — only the display
+        // `placed`: a highlight no sidecar placed has no position at all — only the display
         // location the clipping named, which is on another axis.
         let placed = *state != State::Unconfirmed;
         record.highlights.push(Highlight {
@@ -724,16 +713,15 @@ fn highlighted(record: &mut Record, last: i64) {
                 true => start,
                 false => -1,
             },
-            // A note covers the few words it was written on; a passage covers
-            // a run of them.
+            // `end`: a note covers the few words it was written on, a passage a run of them.
             end: match (placed, kind) {
                 (true, Kind::Note) => start + 8,
                 (true, _) => start + 400,
                 (false, _) => -1,
             },
             location: start / 150,
-            // A book carrying publisher pages states all three positions; one
-            // without states the two its sources named.
+            // `page`: all three positions on a book carrying publisher pages, the two its sources
+            // named on one without.
             page: match slot % 2 {
                 0 => (start / 3_000).to_string(),
                 _ => String::new(),
@@ -748,13 +736,11 @@ fn highlighted(record: &mut Record, last: i64) {
     record.highlights.sort_by(|a, b| a.at.cmp(&b.at));
 }
 
-/// The [`LIBRARY`] slots [`climb`] reads more than once: their progress climbs,
-/// drops to the front of the book and climbs again. [`RESTARTED`] never reached
-/// the end; the rest carried every reading but the last through it.
+/// `TWICE`: the slots [`climb`] reads more than once, [`RESTARTED`] never reaching the end.
 const TWICE: [usize; 3] = [RESTARTED, REREAD, READING_AGAIN];
 const RESTARTED: usize = 12;
 
-/// How many times [`climb`] reads one slot through.
+/// `times`: how many times [`climb`] reads one slot through.
 fn times(slot: usize) -> f64 {
     match slot {
         MANY => TIMES as f64,
@@ -763,9 +749,9 @@ fn times(slot: usize) -> f64 {
     }
 }
 
-/// Give each sitting the progress its book stood at as it ended: an even climb
-/// over that book's own sittings, ending at the book's `percent`. A sitting
-/// [`ghosts`] left names no book and keeps `None`; [`RESTARTED`] climbs twice.
+/// `climb` gives each sitting the progress its book stood at as it ended: an even climb over that
+/// book's own sittings, ending at the book's `percent`; a sitting [`ghosts`] left names no book and
+/// keeps `None`; [`RESTARTED`] climbs twice.
 fn climb(record: &mut Record) {
     for slot in 0..record.books.len() {
         let (extent, percent) = (record.books[slot].extent, record.books[slot].percent);
@@ -780,17 +766,17 @@ fn climb(record: &mut Record) {
         let mut stood = 0.0;
         for (n, i) in at.iter().enumerate() {
             let step = (n as f64 % over) + 1.0;
-            // Every reading but the last ends at the end of the book, except
-            // for the one that was begun again part way through.
+            // `peak`: every reading but the last ends at the end of the book, except for the one
+            // that was begun again part way through.
             let peak = match (n as f64) < count - over && slot != RESTARTED {
                 true => 100.0,
                 false => percent,
             };
             let progress = (peak / 100.0 * step / over).min(1.0);
             record.sittings[*i].progress = Some(progress);
-            // A sitting covers the ground between where the one before it left
-            // off and where it ends — except every fifth, which dips into the
-            // front matter first and carries on, the shape a jump leaves.
+            // `opened`: a sitting covers the ground between where the one before it left off and
+            // where it ends — except every fifth, which dips into the front matter first and
+            // carries on, the shape a jump leaves.
             let opened = match step == 1.0 {
                 true => 0.0,
                 false => stood,
@@ -835,13 +821,13 @@ pub fn thinned(last: i64, covers: &Path, keep: usize) -> Record {
 pub fn crowded(last: i64, covers: &Path) -> Record {
     let mut record = library(last, covers);
     binge(&mut record, last);
-    // The second binge lands past [`library`]'s own call, and each of its
-    // sittings takes its progress here.
+    // `climb`: the second binge lands past [`library`]'s own call, each sitting taking its
+    // progress here.
     climb(&mut record);
     record
 }
 
-/// [`library`] with notes written on the desktop on slot 9's book: one opening
+/// [`library`] with `w` rows, notes, on slot 9's book: one opening
 /// on a `# ` heading and one with none on the book alone, two under one passage,
 /// and one under another beside the Kindle's own note; in Japanese where `ja`.
 pub fn written(last: i64, covers: &Path, ja: bool) -> Record {
@@ -929,7 +915,7 @@ pub fn written(last: i64, covers: &Path, ja: bool) -> Record {
             deleted: false,
         });
     }
-    // A review longer than any page holds, on slot 0's book, every kind of block in it.
+    // `first`: slot 0's book, under a review longer than any page holds, every kind of block in it.
     if let Some(first) = record.books.first().cloned() {
         let written = date::stamp(last - 2, 21 * 3600);
         let paragraph = "The roads in this book are kept the way a ledger is kept, every crossing entered and none forgiven, and the people on them learn to travel light because the road remembers what they carried.";
@@ -945,7 +931,7 @@ pub fn written(last: i64, covers: &Path, ja: bool) -> Record {
             deleted: false,
         });
     }
-    // Forty paragraphs of a line each on slot 1's book, more air than any page holds.
+    // `second`: slot 1's book, under forty paragraphs of a line each, more air than any page holds.
     if let Some(second) = record.books.get(1).cloned() {
         let written = date::stamp(last - 3, 21 * 3600);
         record.add_note(Note {
@@ -961,22 +947,22 @@ pub fn written(last: i64, covers: &Path, ja: bool) -> Record {
     record
 }
 
-/// The day [`library`] lays the binge on, for reading ending on `last`.
+/// `binge_day`: the day [`library`] lays the binge on, for reading ending on `last`.
 pub fn binge_day(last: i64) -> i64 {
     last - BINGE_DAY
 }
 
-/// Books keyed by an extent the record holds no book for.
+/// `GHOSTS`: books keyed by an extent the record holds no book for.
 const GHOSTS: i64 = 5;
 
-/// Days between one day of ghost sittings and the next.
+/// `GHOST_EVERY`: days between one day of ghost sittings and the next.
 const GHOST_EVERY: i64 = 3;
 
-/// The first ghost extent, past every extent [`library`] gives its books.
+/// `GHOST_KEY`: the first ghost extent, past every extent [`library`] gives its books.
 const GHOST_KEY: i64 = 640_000;
 
-/// One to three ghost sittings on every [`GHOST_EVERY`]th day, today included:
-/// a total no list of books adds up to.
+/// `ghosts`: one to three ghost sittings on every [`GHOST_EVERY`]th day, today included: a total no
+/// list of books adds up to.
 fn ghosts(record: &mut Record, last: i64) {
     for back in (0..DAYS).step_by(GHOST_EVERY as usize).chain([BINGE_DAY]) {
         let day = last - back;
@@ -990,4 +976,95 @@ fn ghosts(record: &mut Record, last: i64) {
                 .push(sitting(day, at, secs, key, Measure::Counted));
         }
     }
+}
+
+/// `TAGGED`: each [`LIBRARY`] slot's tags: its form, its genre in the book's own words, and its
+/// language.
+const TAGGED: [(&str, &str, &str); 14] = [
+    ("Nonfiction", "Travel", "English"),
+    ("Fiction", "ミステリー", "Japanese"),
+    ("Fiction", "Literary", "Chinese, Traditional"),
+    ("Essays", "Science", "English"),
+    ("Fiction", "推理", "Chinese, Simplified"),
+    ("Fiction", "Fantasy", "English"),
+    ("Nonfiction", "History", "Chinese, Traditional"),
+    ("Nonfiction", "History", "English"),
+    ("Comics", "Fantasy", "Japanese"),
+    ("Fiction", "Mystery", "English"),
+    ("Fiction", "Literary", "Chinese, Simplified"),
+    ("Short stories", "Literary", "English"),
+    ("Fiction", "Sci-Fi", "Chinese, Traditional"),
+    ("Poetry", "Literary", "English"),
+];
+
+/// `RATED`: the slots `tagged` gives a Rating, a type whose every tag is a whole number.
+const RATED: [(usize, &str); 8] = [
+    (0, "5"),
+    (2, "3"),
+    (4, "4"),
+    (5, "5"),
+    (6, "2"),
+    (7, "4"),
+    (8, "3"),
+    (9, "4"),
+];
+
+/// `record` with `d` and `l` rows for [`TAGGED`]: every book's
+/// tags, a co-author on slot 3, two publishers over five books, slot 3 under Nonfiction
+/// beside Essays, and Mystery, ミステリー and 推理 linked as one genre.
+pub fn tagged(mut record: Record) -> Record {
+    use readinglog_native::metadata::links::{Link, Linked};
+    use readinglog_native::metadata::{Field, Metadata, Tag, tags_value};
+    let row = |slot: usize, field: Field, value: String| Metadata {
+        edited: "2026-11-14T10:00:00".into(),
+        key: format!("KEY{slot}"),
+        extent: 100_000 + slot as i64,
+        field,
+        value: Some(value),
+        was: None,
+    };
+    let tag = |r#type: &str, tag: &str| Tag {
+        r#type: r#type.into(),
+        tag: tag.into(),
+    };
+    for (slot, (form, genre, language)) in TAGGED.iter().enumerate() {
+        let mut tags = vec![
+            tag("Form", form),
+            tag("Genre", genre),
+            tag("Language", language),
+        ];
+        if slot == 3 {
+            tags.insert(1, tag("Form", "Nonfiction"));
+        }
+        if let Some((_, rating)) = RATED.iter().find(|(rated, _)| *rated == slot) {
+            tags.push(tag("Rating", rating));
+        }
+        record
+            .metadata
+            .push(row(slot, Field::Tags, tags_value(&tags)));
+    }
+    record.metadata.push(row(
+        3,
+        Field::Authors,
+        "Aurelio Sandoval & Mina Okafor".into(),
+    ));
+    for (slot, publisher) in [
+        (0, "Harbour Books"),
+        (5, "Harbour Books"),
+        (9, "Harbour Books"),
+        (1, "みなと書房"),
+        (8, "みなと書房"),
+    ] {
+        record
+            .metadata
+            .push(row(slot, Field::Publisher, publisher.into()));
+    }
+    record.links.push(Link {
+        edited: "2026-11-14T10:00:00".into(),
+        linked: Linked::Tag,
+        r#type: "Genre".into(),
+        first: "Mystery".into(),
+        names: Some(vec!["ミステリー".into(), "推理".into()]),
+    });
+    record
 }

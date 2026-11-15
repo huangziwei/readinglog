@@ -6,7 +6,7 @@ const NAME_SUFFIXES: &[&str] = &[
     "jr", "sr", "ii", "iii", "iv", "v", "phd", "md", "do", "esq", "dds", "jd",
 ];
 
-/// Whether `c` is CJK, kana or Hangul: a name holding one is never flipped.
+/// `is_cjk`: whether `c` is CJK, kana or Hangul: a name holding one is never flipped.
 fn is_cjk(c: char) -> bool {
     matches!(c as u32,
         0x3040..=0x30FF |   // Hiragana + Katakana
@@ -19,7 +19,7 @@ fn is_cjk(c: char) -> bool {
     )
 }
 
-/// Whether `name` holds a Han ideograph or a Hangul syllable.
+/// `is_han_or_hangul_name`: whether `name` holds a Han ideograph or a Hangul syllable.
 fn is_han_or_hangul_name(name: &str) -> bool {
     name.chars().any(|c| {
         matches!(c as u32,
@@ -29,8 +29,8 @@ fn is_han_or_hangul_name(name: &str) -> bool {
     })
 }
 
-/// The names `packed` holds: split on `、`, and on an ASCII or full-width comma when
-/// every part holds Han or Hangul (`春野一郎, 秋山次郎` splits, `スミス，ジョン` stays one).
+/// `unpack`: the names `packed` holds, split on `、` and, where every part holds Han or Hangul,
+/// on a comma of either width (`春野一郎, 秋山次郎` splits, `スミス，ジョン` stays one).
 fn unpack(packed: &str) -> Vec<&str> {
     packed
         .split('、')
@@ -68,7 +68,7 @@ fn normalize_display(name: &str) -> String {
     format!("{given} {surname}")
 }
 
-/// Each of `parts` through [`normalize_display`], the empty ones dropped.
+/// `canonicalize`: each of `parts` through [`normalize_display`], the empty ones dropped.
 fn canonicalize<'a>(parts: impl Iterator<Item = &'a str>) -> Vec<String> {
     parts
         .map(normalize_display)
@@ -161,8 +161,8 @@ mod tests {
                 "{packed}"
             );
         }
-        // A comma beside a Latin name is not a list, nor between the halves of a
-        // Western name written in katakana.
+        // `one`: a comma beside a Latin name is not a list, nor between the halves of a Western
+        // name written in katakana.
         for one in ["Ann Writer, 春野一郎", "スミス，ジョン", "スミス, ジョン"] {
             assert_eq!(parse_input(one), vec![one], "{one}");
             assert_eq!(split_display(one), vec![one], "{one}");

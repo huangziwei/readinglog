@@ -24,7 +24,7 @@ pub fn at_version(template: &str, version: &str) -> String {
     template.replace("{v}", version)
 }
 
-/// The languages [`Strings`] is written in.
+/// `Lang`: the languages [`Strings`] is written in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lang {
     #[default]
@@ -35,11 +35,11 @@ pub enum Lang {
     TraditionalChinese,
 }
 
-/// The file [`Lang::detect`] reads.
+/// `LOCALE_FILE`: the file [`Lang::detect`] reads.
 const LOCALE_FILE: &str = "/var/local/system/locale";
 
 impl Lang {
-    /// Every [`Lang`], in display order.
+    /// `ALL`: every [`Lang`], in display order.
     pub const ALL: [Lang; 5] = [
         Lang::English,
         Lang::German,
@@ -48,7 +48,7 @@ impl Lang {
         Lang::Japanese,
     ];
 
-    /// One or two characters per [`Lang`], in that language's own script.
+    /// `label`: one or two characters per [`Lang`], in that language's own script.
     pub fn label(self) -> &'static str {
         match self {
             Lang::English => "EN",
@@ -59,7 +59,7 @@ impl Lang {
         }
     }
 
-    /// The letter [`Lang::from_letter`] reads.
+    /// `letter`: the letter [`Lang::from_letter`] reads.
     pub fn letter(self) -> char {
         match self {
             Lang::English => 'e',
@@ -70,8 +70,7 @@ impl Lang {
         }
     }
 
-    /// The [`Lang`] a [`Lang::letter`] names. Any other `s` gives
-    /// `Lang::English`.
+    /// `from_letter`: the [`Lang`] a [`Lang::letter`] names; any other `s` gives `Lang::English`.
     pub fn from_letter(s: &str) -> Lang {
         match s.trim() {
             "d" => Lang::German,
@@ -82,7 +81,7 @@ impl Lang {
         }
     }
 
-    /// The tag `font::Script::of_language` reads for this [`Lang`].
+    /// `language_tag`: the tag `font::Script::of_language` reads for this [`Lang`].
     pub fn language_tag(self) -> &'static str {
         match self {
             Lang::English => "en",
@@ -103,8 +102,8 @@ impl Lang {
         }
     }
 
-    /// The [`Lang`] `LOCALE_FILE` names. `Lang::English` where that file is
-    /// missing, unreadable, or names no [`Lang`].
+    /// `detect`: the [`Lang`] `LOCALE_FILE` names. `Lang::English` where that file is missing,
+    /// unreadable, or names no [`Lang`].
     pub fn detect() -> Lang {
         Self::detect_in(Path::new(LOCALE_FILE))
     }
@@ -119,7 +118,7 @@ impl Lang {
     }
 }
 
-/// The [`Lang`] a `LANG=` line in `text` names, quotes trimmed. `None` where
+/// `of_locale_file`: the [`Lang`] a `LANG=` line in `text` names, quotes trimmed. `None` where
 /// `text` holds no such line.
 fn of_locale_file(text: &str) -> Option<Lang> {
     let value = text.lines().find_map(|line| {
@@ -130,8 +129,8 @@ fn of_locale_file(text: &str) -> Option<Lang> {
     of_posix(value)
 }
 
-/// The [`Lang`] `value` names. Every subtag is cut at its first `.`:
-/// `zh_CN.utf8` reads as `zh` and `CN`.
+/// `of_posix`: the [`Lang`] `value` names; every subtag is cut at its first `.`: `zh_CN.utf8` reads
+/// as `zh` and `CN`.
 pub fn of_posix(value: &str) -> Option<Lang> {
     let mut subtags = value
         .split(['-', '_'])
@@ -154,31 +153,27 @@ pub fn of_posix(value: &str) -> Option<Lang> {
     }
 }
 
-/// Every word drawn in one [`Lang`].
+/// `Strings`: every word drawn in one [`Lang`].
 pub struct Strings {
-    // Tab strip.
     pub exit: &'static str,
     pub config: &'static str,
     pub today: &'static str,
     pub rhythm: &'static str,
     pub books: &'static str,
-    // Today.
     pub read_today: &'static str,
     pub pages_turned: &'static str,
     pub current_streak: &'static str,
     pub what_was_read: &'static str,
 
-    // Rhythm.
     pub all_time: &'static str,
     pub week: &'static str,
-    /// Before a week number's digits, [`Strings::week_no_after`] after them.
+    /// `week_no`: before a week number's digits, [`Strings::week_no_after`] after them.
     pub week_no: &'static str,
     pub week_no_after: &'static str,
     pub month: &'static str,
     pub year: &'static str,
 
-    // All Time.
-    /// `{m}` is the opening month, `{d}` the days run to.
+    /// `since_days`: `{m}` is the opening month, `{d}` the days run to.
     pub since_days: &'static str,
     pub total_read: &'static str,
     pub days_read: &'static str,
@@ -192,114 +187,125 @@ pub struct Strings {
     pub longest_sitting: &'static str,
     pub a_sitting: &'static str,
 
-    // Books.
     pub shelf_every: &'static str,
     pub shelf_finished: &'static str,
     pub shelf_unfinished: &'static str,
-    /// The line for a shelf with no books.
+    /// `nothing_on_the_shelf`: the line for a shelf with no books.
     pub nothing_on_the_shelf: &'static str,
-    /// The same, for a search over the highlights that matched none.
+    /// `no_highlights_here`: the same, for a search over the highlights that matched none.
     pub no_highlights_here: &'static str,
-    /// What stands in the search field before anything is typed.
+    /// `search_hint`: what stands in the search field before anything is typed.
     pub search_hint: &'static str,
-    /// The same, where the search is over the highlights.
+    /// `search_hint_journal`: the same, where the search is over the highlights.
     pub search_hint_journal: &'static str,
-    /// The three list orders.
+    /// `by_recent`: the three list orders.
     pub by_recent: &'static str,
     pub by_time: &'static str,
     pub by_progress: &'static str,
-    /// Headings over the [`Strings::trends`] bands.
+    /// `an_average_day`: the headings over the [`Strings::trends`] bands.
     pub an_average_day: &'static str,
     pub an_average_week: &'static str,
     pub by_month: &'static str,
-    /// The heading over the sitting histogram, and the word closing its count.
+    /// `sitting_lengths`: the heading over the sitting histogram, and the word closing its count.
     pub sitting_lengths: &'static str,
     pub in_all: &'static str,
-    /// The word before the fullest column.
+    /// `most`: the word before the fullest column.
     pub most: &'static str,
-    /// The second page of [`Strings::all_time`].
+    /// `trends`: the second page of [`Strings::all_time`].
     pub trends: &'static str,
-    /// The chip returning a span page to today.
+    /// `breakdown`: All Time's third page, standing where the record holds a `d` or `l` row.
+    pub breakdown: &'static str,
+    /// `authors_head`, `publishers_head`: two of Breakdown's card headings.
+    pub authors_head: &'static str,
+    pub publishers_head: &'static str,
+    /// `not_set`: the bar of the books holding no value.
+    pub not_set: &'static str,
+    /// `counts_each`, `split_each`: a type card's note and the language card's.
+    pub counts_each: &'static str,
+    pub split_each: &'static str,
+    /// `show_all`: under a card showing fewer bars than its `{d}`, opening the card whole.
+    pub show_all: &'static str,
+    /// `author_field`, `publisher_field`: a narrowed list's chip naming a field no value is set in.
+    pub author_field: &'static str,
+    pub publisher_field: &'static str,
+    /// `now`: the chip returning a span page to today.
     pub now: &'static str,
-    /// The chip opening one day as its own page.
+    /// `open_day`: the chip opening one day as its own page.
     pub open_day: &'static str,
     pub nothing_read: &'static str,
 
-    /// The word in `{a}–{b} of {c}`.
+    /// `of`: the word in `{a}–{b} of {c}`.
     pub of: &'static str,
 
-    // Book.
     pub the_reading: &'static str,
     pub sittings: &'static str,
     pub days: &'static str,
     pub average_a_day: &'static str,
     pub average_a_sitting: &'static str,
-    /// The count of a book whose script spaces its words, paired with `wpm`.
+    /// `words`: the count of a book whose script spaces its words, paired with `wpm`.
     pub words: &'static str,
-    /// The count of one set in Han or kana, a character at a time, with `cpm`.
+    /// `characters`: the count of one set in Han or kana, a character at a time, with `cpm`.
     pub characters: &'static str,
     pub reading_speed: &'static str,
     pub wpm: &'static str,
     pub cpm: &'static str,
     pub started: &'static str,
     pub last_read: &'static str,
-    /// The day a book read through was last put down.
+    /// `finished_on`: the day a book read through was last put down.
     pub finished_on: &'static str,
-    /// How many times a book has been read end to end, and its figure.
+    /// `read_through_row`: how many times a book has been read end to end, and its figure.
     pub read_through_row: &'static str,
     pub n_times: &'static str,
     pub on_the_kindle: &'static str,
-    /// The long form, and the short one drawn beside `restart`.
+    /// `continue_reading`: the long form, and the short one drawn beside `restart`.
     pub continue_reading: &'static str,
     pub continue_short: &'static str,
-    /// The two marking answers, each with its question and note.
+    /// `mark_finished`: the two marking answers, each with its question and note.
     pub mark_finished: &'static str,
     pub mark_ask: &'static str,
     pub mark_note: &'static str,
     pub mark_unfinished: &'static str,
     pub unmark_ask: &'static str,
     pub unmark_note: &'static str,
-    /// The progress a book stood at as a span ended. `{d}` is that figure.
+    /// `percent_reached`: the progress a book stood at as a span ended. `{d}` is that figure.
     pub percent_reached: &'static str,
-    /// The figure on a bar. `{d}` is that figure, rounded.
+    /// `percent_plain`: the figure on a bar. `{d}` is that figure, rounded.
     pub percent_plain: &'static str,
-    /// The run of days a `//` on the day axis stands for. `{d}` is that run.
+    /// `days_plain`: the run of days a `//` on the day axis stands for. `{d}` is that run.
     pub days_plain: &'static str,
-    /// The restart control, its question, and what that question states.
+    /// `restart`: the restart control, its question, and what that question states.
     pub restart: &'static str,
     pub restart_ask: &'static str,
     pub restart_note: &'static str,
-    /// The way out of a question, beside the word the question is asked in.
+    /// `cancel`: the way out of a question, beside the word the question is asked in.
     pub cancel: &'static str,
     pub yes: &'static str,
     pub no: &'static str,
-    /// The Graphs tab's bands, one heading each. `the_clock` names its
-    /// fullest hour after `most`.
+    /// `read_through_band`: the Graphs tab's bands, one heading each.
     pub read_through_band: &'static str,
     pub the_days: &'static str,
     pub where_you_sat: &'static str,
+    /// `the_clock`: named with its fullest hour after `most`.
     pub the_clock: &'static str,
     pub read: &'static str,
     pub left: &'static str,
-    /// The book screen's three tabs, each set in a third of the strip.
-    /// `journal_tab` carries a count after it and holds one word.
+    /// `statistics`: the book screen's three tabs, each set in a third of the strip.
     pub statistics: &'static str,
     pub graphs_tab: &'static str,
+    /// `journal_tab`: one word, a count after it.
     pub journal_tab: &'static str,
-    /// What closes a cut row's words after their `…`, where a tap opens the row.
+    /// `more`: what closes a cut row's words after their `…`, where a tap opens the row.
     pub more: &'static str,
-    /// What stands over the highlights for a book carrying none.
+    /// `no_highlights_in_book`: what stands over the highlights for a book carrying none.
     pub no_highlights_in_book: &'static str,
-    /// What a book's row in a list says it carries, joined by `·` where it
-    /// carries both. `{d}` is filled by [`counted`].
+    /// `n_highlights`, `n_notes`: a list row's counts, filled by [`counted`], joined by `·`.
     pub n_highlights: &'static str,
     pub n_notes: &'static str,
-    /// Before the display location a clipping stated, as `Location 608`.
+    /// `at_location`: before the display location a clipping stated, as `Location 608`.
     pub at_location: &'static str,
-    /// Before the publisher's page label, where the book carries one.
+    /// `at_page`: before the publisher's page label, where the book carries one.
     pub at_page: &'static str,
-    /// The seven kinds a highlight can be, as a row's own label states them;
-    /// [`Strings::kind_other`] names the rest.
+    /// `kind_bookmark`: the seven kinds a highlight can be, as a row's own label states them.
     pub kind_bookmark: &'static str,
     pub kind_highlight: &'static str,
     pub kind_note: &'static str,
@@ -307,135 +313,132 @@ pub struct Strings {
     pub kind_underline: &'static str,
     pub kind_circle: &'static str,
     pub kind_asterisk: &'static str,
+    /// `kind_other`: any other kind.
     pub kind_other: &'static str,
 
-    // Splash.
     pub first_launch_1: &'static str,
     pub first_launch_2: &'static str,
     pub catching_up: &'static str,
-    /// The line under a banner counting files: `{d}` files behind it, of
-    /// `{n}` to open. `step_logs` counts logs, `step_files` backup entries.
+    /// `step_logs`: the line under a banner counting logs, `{d}` behind it of `{n}` to open.
     pub step_logs: &'static str,
+    /// `step_files`: the same, counting a backup's entries.
     pub step_files: &'static str,
 
-    // Config.
-    /// The section headings, and the name of each setting's row.
+    /// `interface`: the section headings, and the name of each setting's row.
     pub interface: &'static str,
     pub the_calendar: &'static str,
     pub language_row: &'static str,
     pub week_starts_on: &'static str,
-    /// The row naming where a book's stats come from, and its two chips.
+    /// `stats_from_row`: the row naming where a book's stats come from, and its two chips.
     pub stats_from_row: &'static str,
     pub stats_from_kindle: &'static str,
     pub stats_from_app: &'static str,
-    /// The record section, and the row counting unidentified books.
+    /// `the_record`: the record section, and the row counting unidentified books.
     pub the_record: &'static str,
-    /// The row `SittingFloor::label` fills the values of.
+    /// `sitting_floor_row`: the row `SittingFloor::label` fills the values of.
     pub sitting_floor_row: &'static str,
     pub unidentified_row: &'static str,
-    /// Show and Hide, the two answers a row that hides something takes, the
-    /// unidentified row's and the covers row's.
+    /// `chip_show`, `chip_hide`: the two answers of a row that hides something.
     pub chip_show: &'static str,
     pub chip_hide: &'static str,
-    /// The row hiding every book no cover can be drawn for.
+    /// `uncovered_row`: the row hiding every book no cover can be drawn for.
     pub uncovered_row: &'static str,
-    /// `{d} sitting[s]` and `{d} book[s]`, which the record heading's own
-    /// figure and the dialogs below count with.
+    /// `n_sittings`, `n_books`: `{d} sitting[s]` and `{d} book[s]`, filled by [`counted`].
     pub n_sittings: &'static str,
     pub n_books: &'static str,
-    /// The reset row, and its two chips.
+    /// `reset_row`: the reset row, and its two chips.
     pub reset_row: &'static str,
     pub reset_keep: &'static str,
     pub reset_none: &'static str,
-    /// The backups row, and the chip offering a rebuild from the logs.
+    /// `backups_row`: the backups row, and the chip offering a rebuild from the logs.
     pub backups_row: &'static str,
     pub rebuild: &'static str,
-    /// The two chips beside it: one writes a backup, one lists them.
+    /// `back_up`: the two chips beside it: one writes a backup, one lists them.
     pub back_up: &'static str,
     pub restore: &'static str,
-    /// The backup list: how many files it holds, the way out, and the second
-    /// line of a row the backup states nothing on.
+    /// `n_files`: the backup list's count of files; `close`, its way out.
     pub n_files: &'static str,
     pub close: &'static str,
+    /// `backup_silent`: the second line of a row the backup states nothing on.
     pub backup_silent: &'static str,
-    /// The second line of a row the backup does state: `{n}` sittings over
-    /// `{from}` to `{to}`, and the note where the record holds all of it.
+    /// `backup_holds`: a row's second line, `{n}` sittings from `{from}` to `{to}`.
     pub backup_holds: &'static str,
+    /// `backup_whole`: the note where the record holds all of it.
     pub backup_whole: &'static str,
-    /// Writing a backup: the banner over it, and what it came to.
+    /// `back_up_doing`: the banner over writing a backup, and what it came to.
     pub back_up_doing: &'static str,
     pub back_up_done: &'static str,
     pub back_up_failed: &'static str,
-    /// Taking a backup off disk. `{file}` is its name, `{size}` its weight.
+    /// `delete_ask`: taking a backup off disk, `{file}` its name and `{size}` its weight.
     pub delete_ask: &'static str,
     pub delete_note: &'static str,
     pub delete_do: &'static str,
-    /// What the backups beside the record take on disk. `{size}` is the total.
+    /// `n_in_backups`: what the backups beside the record take on disk. `{size}` is the total.
     pub n_in_backups: &'static str,
-    /// Emptying the record, keeping a backup first. `{what}` is what goes,
-    /// `{file}` the backup's name, `{size}` how large it is.
+    /// `reset_keep_ask`: emptying the record, keeping a backup first.
     pub reset_keep_ask: &'static str,
+    /// `reset_keep_note`: `{what}` goes, `{file}` names the backup, `{size}` is its weight.
     pub reset_keep_note: &'static str,
     pub reset_keep_do: &'static str,
-    /// Emptying it keeping nothing. `{what}` and `{size}` as above.
+    /// `reset_none_ask`: emptying it keeping nothing, `{what}` and `{size}` as above.
     pub reset_none_ask: &'static str,
     pub reset_none_note: &'static str,
     pub reset_none_do: &'static str,
-    /// Restoring a backup. `{what}` is what it holds, `{file}` its name.
+    /// `restore_ask`: restoring a backup, `{what}` what it holds and `{file}` its name.
     pub restore_ask: &'static str,
     pub restore_note: &'static str,
     pub restore_do: &'static str,
-    /// Reading every log again.
+    /// `rebuild_ask`: reading every log again.
     pub rebuild_ask: &'static str,
     pub rebuild_note: &'static str,
     pub rebuild_do: &'static str,
-    /// The banner headline over the log pass.
+    /// `rebuild_head`: the banner headline over the log pass.
     pub rebuild_head: &'static str,
-    /// The line under that headline while each of the three runs.
+    /// `reset_doing`: the line under that headline while each of the three runs.
     pub reset_doing: &'static str,
     pub restore_doing: &'static str,
     pub rebuild_doing: &'static str,
-    /// The book screen's own control, and the question it puts up. `{what}` is
-    /// the reading that goes.
+    /// `clear`: the book screen's own control.
     pub clear: &'static str,
+    /// `clear_ask`, `clear_note`: the question it puts up, `{what}` the reading that goes.
     pub clear_ask: &'static str,
     pub clear_note: &'static str,
-    /// Added to that note where the longest streak moves: `{a}` to `{b}` days.
+    /// `streak_note`: added to that note where the longest streak moves, `{a}` to `{b}` days.
     pub streak_note: &'static str,
-    /// Its two answers, keeping the book or forgetting it too.
+    /// `clear_keep`: its two answers, keeping the book or forgetting it too.
     pub clear_keep: &'static str,
     pub clear_forget: &'static str,
-    /// What the Books list says with nothing to list: before any reading, and
-    /// after a reset. `{t}` is a duration.
+    /// `no_reading_yet`: what an empty Books list says before any reading.
     pub no_reading_yet: &'static str,
+    /// `nothing_since_reset`: the same after a reset.
     pub nothing_since_reset: &'static str,
+    /// `unidentified_only`: the same over reading on unidentified books, `{t}` its duration.
     pub unidentified_only: &'static str,
     /// `{n} unidentified · {duration}`, closing a list of books.
     pub unidentified: &'static str,
-    /// What a cover box with no cover drawn in it says, its title beside it.
+    /// `no_cover`: what a cover box with no cover drawn in it says, its title beside it.
     pub no_cover: &'static str,
     pub text_size: &'static str,
-    /// The colours the charts draw in.
+    /// `color_scheme`: the colours the charts draw in.
     pub color_scheme: &'static str,
-    /// One name per scheme, in `ColorScheme::ALL` order.
+    /// `color_schemes`: one name per scheme, in `ColorScheme::ALL` order.
     pub color_schemes: [&'static str; 4],
     pub size_small: &'static str,
     pub size_medium: &'static str,
     pub size_large: &'static str,
 
-    // Updating.
-    /// The About section: the version, and the button checking for a newer one.
+    /// `about`: the About section: the version, and the button checking for a newer one.
     pub about: &'static str,
     pub version_row: &'static str,
     pub update_row: &'static str,
     pub update_check: &'static str,
-    /// The banner, while an update runs.
+    /// `update_asking`: the banner, while an update runs.
     pub update_asking: &'static str,
     pub update_downloading: &'static str,
     pub update_checking: &'static str,
     pub update_placing: &'static str,
     pub update_tap_to_stop: &'static str,
-    /// How an update ended. `{v}` is a version, filled by [`at_version`].
+    /// `update_up_to_date`: how an update ended. `{v}` is a version, filled by [`at_version`].
     pub update_up_to_date: &'static str,
     pub update_this_version: &'static str,
     pub update_installed: &'static str,
@@ -450,12 +453,12 @@ pub struct Strings {
     pub update_wrong_build: &'static str,
     pub update_not_placed: &'static str,
 
-    /// Hours and minutes, appended across [`Strings::unit_space`].
+    /// `hours`, `minutes`: appended to a figure across [`Strings::unit_space`].
     pub hours: &'static str,
     pub minutes: &'static str,
     pub unit_space: bool,
 
-    /// Whether a date runs year first: `2026年9月3日`.
+    /// `date_ymd`: whether a date runs year first: `2026年9月3日`.
     pub date_ymd: bool,
 
     pub months: [&'static str; 12],
@@ -512,6 +515,15 @@ const ENGLISH: Strings = Strings {
     in_all: "in all",
     most: "MOST",
     trends: "TRENDS",
+    breakdown: "Breakdown",
+    authors_head: "AUTHORS",
+    publishers_head: "PUBLISHERS",
+    not_set: "not set",
+    counts_each: "A book under two tags of one type counts under each.",
+    split_each: "A book in several languages counts its time evenly under each.",
+    show_all: "Show all {d}",
+    author_field: "Author",
+    publisher_field: "Publisher",
     now: "Now",
     open_day: "Open",
     nothing_read: "Nothing read.",
@@ -768,6 +780,15 @@ const GERMAN: Strings = Strings {
     in_all: "insgesamt",
     most: "AM MEISTEN",
     trends: "VERLAUF",
+    breakdown: "Aufschlüsselung",
+    authors_head: "AUTOREN",
+    publishers_head: "VERLAGE",
+    not_set: "nicht gesetzt",
+    counts_each: "Ein Titel mit zwei Tags eines Typs zählt bei beiden.",
+    split_each: "Ein Titel in mehreren Sprachen zählt seine Zeit zu gleichen Teilen bei jeder.",
+    show_all: "Alle {d} anzeigen",
+    author_field: "Autor",
+    publisher_field: "Verlag",
     now: "Jetzt",
     open_day: "Öffnen",
     nothing_read: "Nichts gelesen.",
@@ -1026,6 +1047,15 @@ const JAPANESE: Strings = Strings {
     in_all: "回",
     most: "最も多い",
     trends: "傾向",
+    breakdown: "内訳",
+    authors_head: "著者",
+    publishers_head: "出版社",
+    not_set: "未設定",
+    counts_each: "同じ種類のタグが二つある本は両方に数えます。",
+    split_each: "複数の言語の本は、その時間を各言語に均等に分けて数えます。",
+    show_all: "全{d}件を表示",
+    author_field: "著者",
+    publisher_field: "出版社",
     now: "現在",
     open_day: "開く",
     nothing_read: "読書なし。",
@@ -1261,6 +1291,15 @@ const SIMPLIFIED: Strings = Strings {
     in_all: "次",
     most: "最多",
     trends: "趋势",
+    breakdown: "构成",
+    authors_head: "作者",
+    publishers_head: "出版社",
+    not_set: "未设置",
+    counts_each: "同一类型有两个标签的书在两处都计入。",
+    split_each: "多语言的书，其时间平均计入每种语言。",
+    show_all: "显示全部{d}项",
+    author_field: "作者",
+    publisher_field: "出版社",
     now: "现在",
     open_day: "打开",
     nothing_read: "没有阅读。",
@@ -1503,6 +1542,15 @@ const TRADITIONAL: Strings = Strings {
     in_all: "次",
     most: "最多",
     trends: "趨勢",
+    breakdown: "構成",
+    authors_head: "作者",
+    publishers_head: "出版社",
+    not_set: "未設定",
+    counts_each: "同一類型有兩個標籤的書在兩處都計入。",
+    split_each: "多語言的書，其時間平均計入每種語言。",
+    show_all: "顯示全部{d}項",
+    author_field: "作者",
+    publisher_field: "出版社",
     now: "現在",
     open_day: "開啟",
     nothing_read: "沒有閱讀。",
@@ -1703,7 +1751,7 @@ mod tests {
         assert_eq!(counted("{d} DAY[S]", 1), "1 DAY");
         assert_eq!(counted("{d} DAY[S]", 30), "30 DAYS");
         assert_eq!(counted("SEIT {m} · {d} TAG[E]", 1), "SEIT {m} · 1 TAG");
-        // A `template` with no brackets.
+        // `{d}\u{65e5}`: a template with no brackets.
         assert_eq!(counted("{d}\u{65e5}", 1), "1\u{65e5}");
         for lang in Lang::ALL {
             let s = lang.strings();
@@ -1719,7 +1767,7 @@ mod tests {
 
     use super::*;
 
-    /// Every value that can reach [`LOCALE_FILE`].
+    /// `KINDLE_LOCALES`: every value that can reach [`LOCALE_FILE`].
     const KINDLE_LOCALES: &[(&str, Option<Lang>)] = &[
         ("de_DE.utf8", Some(Lang::German)),
         ("ja_JP.utf8", Some(Lang::Japanese)),
@@ -1753,7 +1801,7 @@ mod tests {
         assert_eq!(of_posix("zh_TW.utf8"), Some(Lang::TraditionalChinese));
         assert_eq!(of_posix("zh-Hant-TW"), Some(Lang::TraditionalChinese));
         assert_eq!(of_posix("zh-Hans-CN"), Some(Lang::SimplifiedChinese));
-        // A bare `zh` gives `Lang::SimplifiedChinese`.
+        // `zh` alone gives `Lang::SimplifiedChinese`.
         assert_eq!(of_posix("zh"), Some(Lang::SimplifiedChinese));
     }
 
@@ -1768,7 +1816,7 @@ mod tests {
         );
         // `LC_ALL` alone gives `None`.
         assert_eq!(of_locale_file("LC_ALL=de_DE.utf8\n"), None);
-        // Shell quoting, and a file that names nothing.
+        // `\"de_DE.utf8\"` in quotes, then a file naming nothing.
         assert_eq!(of_locale_file("LANG=\"de_DE.utf8\"\n"), Some(Lang::German));
         assert_eq!(of_locale_file(""), None);
         assert_eq!(of_locale_file("# nothing here\n"), None);
@@ -1806,7 +1854,7 @@ mod tests {
 
     #[test]
     fn no_language_leaves_a_word_empty() {
-        // A field filled in with nothing.
+        // `lang`: a field filled in with nothing.
         for lang in Lang::ALL {
             let s = lang.strings();
             let named: [(&str, &str); 15] = [
@@ -1839,15 +1887,15 @@ mod tests {
         }
     }
 
-    /// A line's width, the way `the_nav_labels_fit_the_narrowest_panel`
-    /// estimates one: Latin at 0.6 em a character, CJK at a full em.
+    /// `em_width`: a line's width, the way `the_nav_labels_fit_the_narrowest_panel` estimates one:
+    /// Latin at 0.6 em a character, CJK at a full em.
     fn em_width(said: &str, px: f32) -> u32 {
         let wide = said.chars().filter(|c| *c as u32 > 0x2E80).count() as f32;
         let thin = said.chars().count() as f32 - wide;
         ((wide + thin * 0.6) * px) as u32
     }
 
-    /// How many lines `said` wraps to at `px` inside `width`.
+    /// `lines_of`: how many lines `said` wraps to at `px` inside `width`.
     fn lines_of(said: &str, width: u32, px: f32) -> usize {
         crate::wrap::wrap_to_width(said, width, |t| em_width(t, px)).len()
     }
@@ -1912,7 +1960,7 @@ mod tests {
 
     #[test]
     fn every_dialog_answer_fits_beside_its_fellows() {
-        // Three answers abreast on the narrow panel at Large, gaps included.
+        // `theme`: three answers abreast on the narrow panel at Large, gaps included.
         let theme = crate::ui::theme::Theme::sized(1264, 1680, crate::settings::TextSize::Large);
         let inner = crate::ui::chrome::content_box(&theme).w - theme.gap * 12;
         for lang in Lang::ALL {
@@ -1938,12 +1986,11 @@ mod tests {
 
     #[test]
     fn the_nav_labels_fit_the_narrowest_panel() {
-        // Five cells of 252 px on a 1264 px panel, 238 usable inside the
-        // inverted block.
+        // `lang`: five cells of 252 px on a 1264 px panel, 238 usable inside the inverted block.
         for lang in Lang::ALL {
             let s = lang.strings();
             for label in [s.exit, s.config, s.today, s.rhythm, s.books] {
-                // Latin at 0.6 em a character, CJK at one.
+                // `em`: Latin at 0.6 em a character, CJK at one.
                 let em: f32 = if label.chars().any(|c| c as u32 > 0x2E80) {
                     1.0
                 } else {

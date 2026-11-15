@@ -1,20 +1,18 @@
-//! Each language a book can be set in, named in the five interface languages
-//! and in its own: [`own`] and [`name`] by the code `lang::normalize` writes,
-//! [`code_of`] the code a tag of a [`TYPES`] type names.
+//! [`LANGUAGES`]: each language a book can be set in, named in the five interface languages and
+//! in its own; [`own`] and [`name`] by the code `lang::normalize` writes, [`code_of`] the code a
+//! tag of a [`TYPES`] type names.
 
-use readinglog_native::lang::Lang;
+use crate::lang::Lang;
 
 use super::{Tag, folded, lang};
 
-/// `TYPES`: the type a language is a tag of, in English, German, Simplified
-/// Chinese, Traditional Chinese and Japanese.
+/// `TYPES`: the language type's word in each interface language.
 pub const TYPES: [&str; 5] = ["language", "Sprache", "语言", "語言", "言語"];
 
-/// A language: its code, its own name, then its name in English, German,
-/// Simplified Chinese, Traditional Chinese and Japanese.
+/// `Named`: a language's code, its own name, and its name in each interface language.
 type Named = (&'static str, &'static str, [&'static str; 5]);
 
-/// Every language named here, in the order a list offers them.
+/// `LANGUAGES`: every language named here, in the order a list offers them.
 pub const LANGUAGES: [Named; 31] = [
     (
         "en",
@@ -239,7 +237,7 @@ pub const LANGUAGES: [Named; 31] = [
     ),
 ];
 
-/// The place [`Named`]'s names give `lang`.
+/// `column`: the place [`Named`]'s names give `lang`.
 fn column(lang: Lang) -> usize {
     match lang {
         Lang::English => 0,
@@ -290,7 +288,7 @@ pub fn codes(tags: &[Tag]) -> Vec<&'static str> {
     out
 }
 
-/// The language `code` names, in its own words; `None` for a code not listed.
+/// `own`: the language `code` names, in its own words; `None` for a code not listed.
 pub fn own(code: &str) -> Option<&'static str> {
     LANGUAGES
         .iter()
@@ -298,8 +296,8 @@ pub fn own(code: &str) -> Option<&'static str> {
         .map(|(_, own, _)| *own)
 }
 
-/// The language `code` names, in the interface language `lang`; `None` for a
-/// code not listed.
+/// `name`: the language `code` names, in the interface language `lang`; `None` for a code not
+/// listed.
 pub fn name(code: &str, lang: Lang) -> Option<&'static str> {
     LANGUAGES
         .iter()

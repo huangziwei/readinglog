@@ -1,15 +1,13 @@
-//! Harmonize the language tags a reader sets into one canonical code, so the
-//! books in one language are counted together. ISO 639-1 where one exists; `zh`
-//! keeps script.
+//! [`normalize`]: a language tag as one canonical code, ISO 639-1 where one exists, `zh` keeping
+//! its script.
 
-/// Normalize a raw language tag to its canonical code. Empty (or whitespace) in
-/// → empty out, so a book with no language stays blank rather than gaining one.
+/// `normalize`: a raw language tag as its canonical code; empty (or white space) in, empty out.
 pub fn normalize(raw: &str) -> String {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return String::new();
     }
-    // BCP-47 subtags are '-'-separated; tolerate the '_' some sources use.
+    // `parts`: BCP-47 subtags are '-'-separated; tolerate the '_' some sources use.
     let parts: Vec<String> = trimmed
         .split(['-', '_'])
         .filter(|s| !s.is_empty())
@@ -26,7 +24,7 @@ pub fn normalize(raw: &str) -> String {
     primary
 }
 
-/// Fold a primary subtag to its ISO 639-1 two-letter form. Two-letter codes pass
+/// `to_iso639_1` folds a primary subtag to its ISO 639-1 two-letter form; two-letter codes pass
 fn to_iso639_1(code: &str) -> String {
     if code.len() == 2 {
         return code.to_string();
@@ -66,8 +64,8 @@ fn to_iso639_1(code: &str) -> String {
     mapped.to_string()
 }
 
-/// Resolve a `zh` tag to `zh-Hans` / `zh-Hant` / `zh`. An explicit script subtag
-/// wins; otherwise the region picks the script; with neither it stays `zh`.
+/// `chinese_with_script` resolves a `zh` tag to `zh-Hans`, `zh-Hant` or `zh`: by its script
+/// subtag where it states one, else by its region, else `zh`.
 fn chinese_with_script(parts: &[String]) -> String {
     for p in &parts[1..] {
         match p.as_str() {
@@ -130,9 +128,9 @@ mod tests {
         ] {
             assert_eq!(normalize(raw), "zh-Hant", "{raw:?}");
         }
-        // Script outranks a conflicting region.
+        // `zh-Hant-CN`: the script outranks a conflicting region.
         assert_eq!(normalize("zh-Hant-CN"), "zh-Hant");
-        // Bare / generic Chinese has no script to keep.
+        // `zh`, `zho`, `chi`: generic Chinese, no script to keep.
         assert_eq!(normalize("zh"), "zh");
         assert_eq!(normalize("zho"), "zh");
         assert_eq!(normalize("chi"), "zh");
@@ -142,7 +140,7 @@ mod tests {
     fn empty_and_unknown() {
         assert_eq!(normalize(""), "");
         assert_eq!(normalize("   "), "");
-        // Unmapped three-letter code passes through (Klingon).
+        // `tlh`: an unmapped three-letter code (Klingon) passes through.
         assert_eq!(normalize("tlh"), "tlh");
     }
 }

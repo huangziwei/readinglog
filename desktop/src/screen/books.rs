@@ -1,6 +1,6 @@
-//! [`page`]: Books, every book as its cover on the shelves `books_view::shelves` offers, in an
-//! order and its way, narrowed to a span's window, the values [`narrows`] holds and a search over
-//! titles, authors, publishers and tags, the tags in use over the grid; its tiles feed the bulk editor.
+//! [`page`]: Books, each book's cover on the shelves `books_view::shelves` offers, in an order,
+//! narrowed to a window, the values [`narrows`] holds and a search over titles, authors,
+//! publishers and tags, the tags in use over the grid, its tiles feeding the bulk editor.
 
 use std::fmt::Write as _;
 
@@ -89,7 +89,7 @@ pub(super) fn page(
     let found = searched(cx, query);
     let over = window.map(|window| window.days(cx.week));
     let (drawn, nameless): (Vec<usize>, Vec<usize>) =
-        books_view::listed(cx.stats, shelf, order, way, over, cx.uncovered)
+        books_view::listed(cx.stats, shelf, order, way, over, cx.uncovered, None)
             .into_iter()
             .filter(|at| found.contains(at))
             .filter(|at| narrows(by, &metadata::values(cx, *at), cx.linked))

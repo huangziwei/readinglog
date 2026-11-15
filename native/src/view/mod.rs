@@ -1,6 +1,6 @@
-//! The screens: each `draw` takes the box left above the tab strip, draws into
-//! it and records a [`Hit`] box for anything touchable. [`State`] holds the
-//! day, the span and the open book.
+//! [`State`]: the day, the span and the open book the screens draw at; each screen's `draw`
+//! takes the box left above the tab strip, draws into it and records a [`Hit`] box for anything
+//! touchable.
 
 pub mod alltime;
 pub mod backups;
@@ -8,6 +8,7 @@ pub mod band;
 pub mod book;
 pub mod book_graphs;
 pub mod books;
+pub mod breakdown;
 pub mod config;
 pub mod daybooks;
 pub mod home;
@@ -19,6 +20,7 @@ pub mod search;
 use crate::date;
 use crate::eink::fb::Framebuffer;
 use crate::lang::{Lang, Strings};
+use crate::metadata::By;
 use crate::settings::{Scope, WeekStart};
 use crate::stats::Stats;
 use crate::ui::chrome::Tab;
@@ -27,141 +29,151 @@ use crate::ui::paint::Rect;
 use crate::ui::text::TextRenderer;
 use crate::ui::theme::Theme;
 
-/// Something a touch lands on.
+/// `Hit`: Something a touch lands on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hit {
     Tab(Tab),
-    /// A day of the Rhythm grid, as a day count.
+    /// `Day`: a day of the Rhythm grid, as a day count.
     Day(i64),
-    /// A book, by its index in [`Stats::books`].
+    /// `Book`: a book, by its index in [`Stats::books`].
     Book(usize),
-    /// One of the open book's own three tabs.
+    /// `BookTab`: one of the open book's own three tabs.
     BookTab(BookTab),
-    /// Where the open book's journal opens, as an index into it.
+    /// `JournalPage`: where the open book's journal opens, as an index into it.
     JournalPage(usize),
-    /// Open a row of the open book's journal on a page of its own, by its place in the list.
+    /// `Entry`: open the journal row at this place on a page of its own.
     Entry(usize),
-    /// Take that page down, back onto the journal's page under it.
+    /// `EntryClose` takes that page down, back onto the journal's page under it.
     EntryClose,
-    /// A passage the search found: its book, and its place in that book's journal.
+    /// `Highlight`: a passage the search found: its book, and its place in that book's journal.
     Highlight(usize, usize),
-    /// Open a book through `open::uri`, by its index in [`Stats::books`], leaving the app.
+    /// `Open` opens a book through `open::uri`, by its index in [`Stats::books`], leaving the app.
     Open(usize),
-    /// Ask to set `Book::finished`, by book index and value; [`Hit::Answer`] answers it.
+    /// `Finished`: ask to set `Book::finished`, by book and value; [`Hit::Answer`] answers it.
     Finished(usize, bool),
-    /// Ask to read a book again, by its index; [`Hit::Answer`] answers it.
+    /// `Restart` asks to read a book again, by its index; [`Hit::Answer`] answers it.
     Restart(usize),
-    /// Carry out the question [`State::asked`] holds; a restart leaves the app.
+    /// `Answer` carries out the question [`State::asked`] holds; a restart leaves the app.
     Answer,
-    /// Take the question down, leaving the book as it stands.
+    /// `Dismiss` takes the question down, leaving the book as it stands.
     Dismiss,
-    /// Leave the app, the only way out of it.
+    /// `Exit` leaves the app, the only way out of it.
     Exit,
-    /// A chip on the config page.
+    /// `Language`: a chip on the config page.
     Language(Lang),
     WeekStart(WeekStart),
     TextSize(crate::settings::TextSize),
-    /// Whether a total counts reading on unidentified books.
+    /// `ShowUnidentified`: whether a total counts reading on unidentified books.
     ShowUnidentified(bool),
-    /// Whether a book no cover can be drawn for is listed at all.
+    /// `ShowUncovered`: whether a book no cover can be drawn for is listed at all.
     ShowUncovered(bool),
-    /// The colours the charts are drawn in.
+    /// `ColorScheme`: the colours the charts are drawn in.
     ColorScheme(crate::settings::ColorScheme),
-    /// Where a book's own stats come from.
+    /// `StatsFrom`: where a book's own stats come from.
     StatsFrom(crate::settings::StatsFrom),
-    /// The shortest sitting a total counts as reading.
+    /// `SittingFloor`: the shortest sitting a total counts as reading.
     SittingFloor(crate::settings::SittingFloor),
-    /// Go looking for a newer release.
+    /// `Update` goes looking for a newer release.
     Update,
     Prev,
     Next,
-    /// One span of the Rhythm screen.
+    /// `Span`: one span of the Rhythm screen.
     Span(Span),
-    /// The span of the width showing that holds today.
+    /// `Now`: the span of the width showing that holds today.
     Now,
-    /// The day picked off the grid, opened as its own page.
+    /// `OpenDay`: the day picked off the grid, opened as its own page.
     OpenDay,
-    /// Where a book list opens, as an index the drawing screen holds inside the list.
+    /// `ListPage`: where a book list opens, as an index the drawing screen holds inside the list.
     ListPage(usize),
-    /// The books tab, narrowed to one shelf and one span of days.
+    /// `Shelved`: the books tab, narrowed to one shelf and one span of days.
     Shelved(Shelf, Option<Window>),
-    /// Where the Books list opens, as an index into it.
+    /// `BooksPage`: where the Books list opens, as an index into it.
     BooksPage(usize),
-    /// Which page of the config screen is showing, counted from zero.
+    /// `ConfigPage`: which page of the config screen is showing, counted from zero.
     ConfigPage(usize),
-    /// The order the Books screen lists in.
+    /// `Sorted`: the order the Books screen lists in.
     Sorted(Sort),
-    /// Which way that order runs.
+    /// `SortWay`: which way that order runs.
     SortWay(Way),
-    /// Which of the open book's readings the Graphs tab draws.
+    /// `Reading`: which of the open book's readings the Graphs tab draws.
     Reading(usize),
-    /// Which list the search names, off the chips in its head row.
+    /// `Scoped`: which list the search names, off the chips in its head row.
     Scoped(Scope),
-    /// Open the search over the Books tab, with the keyboard up.
+    /// `Search` opens the search over the Books tab, with the keyboard up.
     Search,
-    /// A tap on the search field, which raises the keyboard.
+    /// `SearchField`: a tap on the search field, which raises the keyboard.
     SearchField,
-    /// The field's cross: it takes the query off, or closes the search with none.
+    /// `SearchClear`: the field's cross: it takes the query off, or closes the search with none.
     SearchClear,
-    /// Where the results open, as an index into them.
+    /// `SearchPage`: where the results open, as an index into them.
     SearchPage(usize),
-    /// Ask what becomes of a book's reading; [`Hit::ClearBook`] or [`Hit::ForgetBook`] answers.
+    /// `Clear`: ask what becomes of a book's reading, answered by `ClearBook` or `ForgetBook`.
     Clear(usize),
-    /// Take one book's reading, keeping the book.
+    /// `ClearBook` takes one book's reading, keeping the book.
     ClearBook(usize),
-    /// Take one book's reading, and forget the book too.
+    /// `ForgetBook` takes one book's reading, and forget the book too.
     ForgetBook(usize),
-    /// Ask to reset the whole record, the flag whether a backup is written first.
+    /// `Reset` asks to reset the whole record, the flag whether a backup is written first.
     Reset(bool),
-    /// Reset it, as [`Hit::Reset`] asked.
+    /// `ResetDone` resets it, as [`Hit::Reset`] asked.
     ResetDone(bool),
-    /// Write a backup of the record, taking nothing away.
+    /// `BackUp` writes a backup of the record, taking nothing away.
     BackUp,
-    /// List the backups over the config page.
+    /// `Backups` lists the backups over the config page.
     Backups,
-    /// Where that list is paged to, as an index into it.
+    /// `BackupsPage`: where that list is paged to, as an index into it.
     BackupsPage(usize),
-    /// Take the list down.
+    /// `BackupsClose` takes the list down.
     BackupsClose,
-    /// Ask what to do with one backup, by its place in `backup::list`.
+    /// `Restore` asks what to do with one backup, by its place in `backup::list`.
     Restore(usize),
-    /// Restore it.
+    /// `Restored` restores it.
     Restored(usize),
-    /// Take it off disk.
+    /// `Deleted` takes it off disk.
     Deleted(usize),
-    /// Ask to read every log again, and read them.
+    /// `Rebuild` asks to read every log again, and read them.
     Rebuild,
     Rebuilt,
+    /// `Bar`: a Breakdown card's bar by the card's place and its own, `None` its unset bar.
+    Bar(usize, Option<usize>),
+    /// `Whole`: open the Breakdown card at this place whole, on a page of its own.
+    Whole(usize),
+    /// `WholeClose`: take that page down, back onto Breakdown.
+    WholeClose,
+    /// `Tagged`: a tag on a book's page, by the book and the tag's place in its `Set::tags`.
+    Tagged(usize, usize),
+    /// `Unnarrow`: take [`State::narrowed`] off the Books list.
+    Unnarrow,
 }
 
-/// A question standing over the config page, with the figures it states
-/// gathered when it went up.
+/// `Confirm`: a question standing over the config page, with the figures it states gathered when it
+/// went up.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Confirm {
     pub about: Act,
-    /// What the question is about, counted when it went up.
+    /// `sittings`: what the question is about, counted when it went up.
     pub sittings: usize,
     pub books: usize,
-    /// The backup to be written, or the space a reset gives back.
+    /// `bytes`: the backup to be written, or the space a reset gives back.
     pub bytes: u64,
-    /// The backup's name, where the question names one.
+    /// `named`: the backup's name, where the question names one.
     pub named: String,
 }
 
-/// Which act on the whole record a [`Confirm`] asks about.
+/// `Act`: which act on the whole record a [`Confirm`] asks about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Act {
-    /// Empty the record; the flag is whether a backup is kept.
+    /// `Reset`: empty the record; the flag is whether a backup is kept.
     Reset(bool),
-    /// Restore the backup at this place in `backup::list`.
+    /// `Restore` restores the backup at this place in `backup::list`.
     Restore(usize),
-    /// Read every log again.
+    /// `Rebuild` reads every log again.
     Rebuild,
 }
 
 impl Act {
-    /// The headline and the note a banner over this act draws, the headline
-    /// `reset_row`, `restore_do` or `rebuild_head`.
+    /// `doing`: the headline and the note a banner over this act draws, the headline `reset_row`,
+    /// `restore_do` or `rebuild_head`.
     pub fn doing(self, s: &Strings) -> (String, Vec<String>) {
         let (headline, said) = match self {
             Act::Reset(_) => (s.reset_row, s.reset_doing),
@@ -172,34 +184,34 @@ impl Act {
     }
 }
 
-/// A question standing over a book's own screen, which [`Hit::Answer`] carries
-/// out and [`Hit::Dismiss`] takes down.
+/// `Ask`: a question standing over a book's own screen, which [`Hit::Answer`] carries out and
+/// [`Hit::Dismiss`] takes down.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ask {
-    /// Give up the book's progress and its mark, and hand it back at its start.
+    /// `Restart` gives up the book's progress and its mark, and hand it back at its start.
     Restart,
-    /// Set `Book::finished` to the value carried.
+    /// `Mark` sets `Book::finished` to the value carried.
     Mark(bool),
-    /// Put this book's reading back to zero, keeping the book or not.
+    /// `Clear` puts this book's reading back to zero, keeping the book or not.
     Clear,
 }
 
-/// The three pages a book's own screen holds, as its picker states them.
+/// `BookTab`: the three pages a book's own screen holds, as its picker states them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BookTab {
-    /// What the reading came to, as figures and rows.
+    /// `Statistics`: what the reading came to, as figures and rows.
     #[default]
     Statistics,
-    /// The reading drawn: the progress, the journey and the clock.
+    /// `Graphs`: the reading drawn: the progress, the journey and the clock.
     Graphs,
-    /// The book's journal: its highlights and notes, most recent first.
+    /// `Journal`: the book's journal: its highlights and notes, most recent first.
     Journal,
 }
 
 impl BookTab {
     pub const ALL: [BookTab; 3] = [BookTab::Statistics, BookTab::Graphs, BookTab::Journal];
 
-    /// What this page is called, in the interface's own language.
+    /// `label`: what this page is called, in the interface's own language.
     pub fn label(self, lang: Lang) -> &'static str {
         let s = lang.strings();
         match self {
@@ -210,39 +222,39 @@ impl BookTab {
     }
 }
 
-/// The search standing over the Books tab.
+/// `Search`: the search standing over the Books tab.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Search {
     pub query: String,
-    /// What an IME is composing, drawn after `query` and matched on by nothing.
+    /// `preedit`: what an IME is composing, drawn after `query` and matched on by nothing.
     pub preedit: String,
     pub from: usize,
-    /// Whether the on-screen keyboard stands over the foot of the screen.
+    /// `keyboard`: whether the on-screen keyboard stands over the foot of the screen.
     pub keyboard: bool,
 }
 
 impl Search {
-    /// Takes `said` onto `query`, and puts `from` back to the head.
+    /// `typed` takes `said` onto `query`, and puts `from` back to the head.
     pub fn typed(&mut self, said: char) {
         self.query.push(said);
         self.from = 0;
     }
 
-    /// Takes the last character off `query`, answering whether there was one,
-    /// and puts `from` back to the head.
+    /// `backspace` takes the last character off `query`, answering whether there was one, and puts
+    /// `from` back to the head.
     pub fn backspace(&mut self) -> bool {
         self.from = 0;
         self.query.pop().is_some()
     }
 
-    /// Takes `said` onto `query`, clearing `preedit`.
+    /// `commit` takes `said` onto `query`, clearing `preedit`.
     pub fn commit(&mut self, said: &str) {
         self.preedit.clear();
         self.query.push_str(said);
         self.from = 0;
     }
 
-    /// Takes `count` characters off the end of `query`.
+    /// `delete` takes `count` characters off the end of `query`.
     pub fn delete(&mut self, count: usize) {
         for _ in 0..count {
             self.query.pop();
@@ -277,19 +289,19 @@ impl Search {
     }
 }
 
-/// Which books the Books screen lists.
+/// `Shelf`: which books the Books screen lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Shelf {
     #[default]
     All,
-    /// Books the library states read through.
+    /// `Finished`: books the library states read through.
     Finished,
-    /// Books the library states short of read through.
+    /// `Unfinished`: books the library states short of read through.
     Unfinished,
 }
 
 impl Shelf {
-    /// What this shelf is called, in the interface's own language.
+    /// `label`: what this shelf is called, in the interface's own language.
     pub fn label(self, lang: Lang) -> &'static str {
         let s = lang.strings();
         match self {
@@ -300,22 +312,22 @@ impl Shelf {
     }
 }
 
-/// The order the Books screen lists in.
+/// `Sort`: the order the Books screen lists in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Sort {
-    /// Last put down first.
+    /// `Recent`: last put down first.
     #[default]
     Recent,
-    /// Most time read first.
+    /// `Time`: most time read first.
     Time,
-    /// Furthest through first.
+    /// `Progress`: Furthest through first.
     Progress,
 }
 
 impl Sort {
     pub const ALL: [Sort; 3] = [Sort::Recent, Sort::Time, Sort::Progress];
 
-    /// What this order is called, in the interface's own language.
+    /// `label`: what this order is called, in the interface's own language.
     pub fn label(self, lang: Lang) -> &'static str {
         let s = lang.strings();
         match self {
@@ -325,15 +337,15 @@ impl Sort {
         }
     }
 
-    /// The order the chip stating this one opens.
+    /// `next`: the order the chip stating this one opens.
     pub fn next(self) -> Sort {
         let at = Sort::ALL.iter().position(|o| *o == self).unwrap_or(0);
         Sort::ALL[(at + 1) % Sort::ALL.len()]
     }
 }
 
-/// Which way a list runs: `Down` the order its own measure gives, `Up` that
-/// order turned over.
+/// `Way`: which way a list runs: `Down` the order its own measure gives, `Up` that order turned
+/// over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Way {
     #[default]
@@ -342,7 +354,7 @@ pub enum Way {
 }
 
 impl Way {
-    /// The way a tap on the caret opens.
+    /// `flipped`: the way a tap on the caret opens.
     pub fn flipped(self) -> Way {
         match self {
             Way::Down => Way::Up,
@@ -350,7 +362,7 @@ impl Way {
         }
     }
 
-    /// The mark a control carries, stating which way its list runs.
+    /// `caret`: the mark a control carries, stating which way its list runs.
     pub fn caret(self) -> &'static str {
         match self {
             Way::Down => "▾",
@@ -358,8 +370,8 @@ impl Way {
         }
     }
 
-    /// Where the row standing `at` in the measure's own order falls in a list
-    /// of `of` rows drawn this way. Its own mirror.
+    /// `place`: where the row standing `at` in the measure's own order falls in a list of `of` rows
+    /// drawn this way; its own mirror.
     pub fn place(self, at: usize, of: usize) -> usize {
         match self {
             Way::Down => at,
@@ -368,10 +380,10 @@ impl Way {
     }
 }
 
-/// How wide a span of days the Rhythm screen draws around the one showing.
+/// `Span`: how wide a span of days the Rhythm screen draws around the one showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Span {
-    /// Everything the record holds, which a board of figures states.
+    /// `AllTime`: everything the record holds, which a board of figures states.
     AllTime,
     Year,
     Month,
@@ -381,10 +393,10 @@ pub enum Span {
 impl Span {
     pub const ALL: [Span; 4] = [Span::AllTime, Span::Year, Span::Month, Span::Week];
 
-    /// The spans drawn as a grid of days over the page.
+    /// `CALENDAR`: the spans drawn as a grid of days over the page.
     pub const CALENDAR: [Span; 3] = [Span::Year, Span::Month, Span::Week];
 
-    /// What this span is called, in the interface's own language.
+    /// `label`: what this span is called, in the interface's own language.
     pub fn label(self, lang: Lang) -> &'static str {
         let s = lang.strings();
         match self {
@@ -395,11 +407,11 @@ impl Span {
         }
     }
 
-    /// The days this span covers, `day` among them.
+    /// `days`: the days this span covers, `day` among them.
     pub fn days(self, day: i64, week: WeekStart) -> std::ops::RangeInclusive<i64> {
         let (year, month, _) = date::civil_from_days(day);
         match self {
-            // Every day the record can hold: the epoch opens it.
+            // `0..=day`: every day the record can hold, the epoch opening it.
             Span::AllTime => 0..=day,
             Span::Week => {
                 let first = day - week.column_of(date::weekday(day)) as i64;
@@ -424,7 +436,7 @@ impl Span {
         }
     }
 
-    /// What the span holding `day` is called.
+    /// `name`: what the span holding `day` is called.
     pub fn name(self, day: i64, week: WeekStart, s: &Strings) -> String {
         let (year, month, _) = date::civil_from_days(day);
         match self {
@@ -452,8 +464,8 @@ impl Span {
     }
 }
 
-/// The window a book list is narrowed to: a span, and a day inside it, holding
-/// each book last put down in [`Self::days`], as `Stats::finished_over` counts.
+/// `Window`: the window a book list is narrowed to: a span, and a day inside it, holding each book
+/// last put down in [`Self::days`], as `Stats::finished_over` counts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Window {
     pub span: Span,
@@ -465,8 +477,8 @@ impl Window {
         self.span.days(self.day, week)
     }
 
-    /// What the chip stating this window reads, which is short enough for a
-    /// chip and names the year wherever the span is smaller than one.
+    /// `name`: what the chip stating this window reads, which is short enough for a chip and names
+    /// the year wherever the span is smaller than one.
     pub fn name(self, week: WeekStart, s: &Strings) -> String {
         let (year, month, _) = date::civil_from_days(self.day);
         let at = (month - 1).clamp(0, 11) as usize;
@@ -493,56 +505,60 @@ impl Window {
     }
 }
 
-/// What the screens are drawn at: the tab, the day, the span, the open book.
+/// `State`: what the screens are drawn at: the tab, the day, the span, the open book.
 #[derive(Debug, Clone, PartialEq)]
 pub struct State {
     pub tab: Tab,
-    /// The day Rhythm looks at, which `span` holds.
+    /// `day`: the day Rhythm looks at, which `span` holds.
     pub day: i64,
     pub span: Span,
-    /// Whether `day` is picked off the grid, which a month and the board open whole.
+    /// `picked`: whether `day` is picked off the grid, which a month and the board open whole.
     pub picked: bool,
-    /// The book whose own screen is open, over whichever tab opened it.
+    /// `book`: the book whose own screen is open, over whichever tab opened it.
     pub book: Option<usize>,
-    /// The question over the open book's screen, and the book it names.
+    /// `asked`: the question over the open book's screen, and the book it names.
     pub asked: Option<(usize, Ask)>,
-    /// The question over the config page, with the figures it states.
+    /// `confirm`: the question over the config page, with the figures it states.
     pub confirm: Option<Confirm>,
-    /// The backups listed over the config page, and how far down.
+    /// `backups`: the backups listed over the config page, and how far down.
     pub backups: Option<usize>,
-    /// Which page of the config screen is showing.
+    /// `config_page`: which page of the config screen is showing.
     pub config_page: usize,
-    /// How far down the book list has been paged.
+    /// `books_from`: how far down the book list has been paged.
     pub books_from: usize,
-    /// The search open over the Books tab.
+    /// `search`: the search open over the Books tab.
     pub search: Option<Search>,
-    /// The search open over the book on screen, held apart from `search`.
+    /// `book_search`: the search open over the book on screen, held apart from `search`.
     pub book_search: Option<Search>,
-    /// Which books the Books screen lists.
+    /// `shelf`: which books the Books screen lists.
     pub shelf: Shelf,
-    /// The window that list is narrowed to.
+    /// `window`: the window that list is narrowed to.
     pub window: Option<Window>,
-    /// The order it lists them in, which a tab change keeps.
+    /// `narrowed`: the value that list is narrowed to, off a Breakdown bar or a book's tag.
+    pub narrowed: Option<By>,
+    /// `sort`: the order it lists them in, which a tab change keeps.
     pub sort: Sort,
-    /// Which way that order runs.
+    /// `sort_way`: which way that order runs.
     pub sort_way: Way,
-    /// Which list the search names, kept over a tab change and, in `Settings::scope`, launches.
+    /// `scope`: the list the search names; `Settings::scope` keeps it over launches.
     pub scope: Scope,
-    /// Whether the day picked off the grid opens as its own page.
+    /// `opened_day`: whether the day picked off the grid opens as its own page.
     pub opened_day: bool,
-    /// Which page of All Time is showing, of [`alltime::PAGES`].
+    /// `alltime_page`: the page of All Time showing: the board, Trends, then each Breakdown page.
     pub alltime_page: usize,
-    /// How far down Rhythm's own book list has been paged.
+    /// `whole`: the Breakdown card open on a page of its own, and which of its pages shows.
+    pub whole: Option<breakdown::Whole>,
+    /// `list_from`: how far down Rhythm's own book list has been paged.
     pub list_from: usize,
-    /// Which of the open book's pages is showing.
+    /// `book_tab`: which of the open book's pages is showing.
     pub book_tab: BookTab,
-    /// How far down that book's journal has been paged.
+    /// `journal_from`: how far down that book's journal has been paged.
     pub journal_from: usize,
-    /// The row of that journal open on a page of its own, and which of its pages shows.
+    /// `journal_entry`: that journal's row open on a page of its own, and the page showing.
     pub journal_entry: Option<journal::Entry>,
-    /// Which end that list opens at, which opening another book keeps.
+    /// `journal_way`: which end that list opens at, which opening another book keeps.
     pub journal_way: Way,
-    /// The reading the Graphs tab draws, counted from the first; `None` the standing one.
+    /// `reading`: the Graphs tab's reading, counted from the first; `None`, the standing one.
     pub reading: Option<usize>,
 }
 
@@ -563,11 +579,13 @@ impl State {
             book_search: None,
             shelf: Shelf::default(),
             window: None,
+            narrowed: None,
             sort: Sort::default(),
             sort_way: Way::default(),
             scope: Scope::default(),
             opened_day: false,
             alltime_page: 0,
+            whole: None,
             list_from: 0,
             book_tab: BookTab::default(),
             journal_from: 0,
@@ -577,7 +595,7 @@ impl State {
         }
     }
 
-    /// Open `book`'s own screen, at the page a book always opens on, with
+    /// `open_book` opens `book`'s own screen, at the page a book always opens on, with
     /// `Search::keyboard` cleared.
     pub fn open_book(&mut self, book: usize) {
         self.book = Some(book);
@@ -590,7 +608,7 @@ impl State {
         }
     }
 
-    /// Where the search in play is held: the open book's own where a book is
+    /// `searching_slot`: where the search in play is held: the open book's own where a book is
     /// open, and the Books tab's where none is.
     pub fn searching_slot(&mut self) -> &mut Option<Search> {
         match self.book {
@@ -599,7 +617,7 @@ impl State {
         }
     }
 
-    /// The search in play, where one stands.
+    /// `searching`: the search in play, where one stands.
     pub fn searching(&self) -> Option<&Search> {
         match self.book {
             Some(_) => self.book_search.as_ref(),
@@ -607,12 +625,12 @@ impl State {
         }
     }
 
-    /// The same search, to type into.
+    /// `searching_mut`: the same search, to type into.
     pub fn searching_mut(&mut self) -> Option<&mut Search> {
         self.searching_slot().as_mut()
     }
 
-    /// Open `book` at the passage standing `at` of `of` in `Stats::highlights`'s
+    /// `open_highlight` opens `book` at the passage standing `at` of `of` in `Stats::highlights`'s
     /// order, read through `journal_way`.
     pub fn open_highlight(&mut self, book: usize, at: usize, of: usize) {
         self.open_book(book);
@@ -620,7 +638,7 @@ impl State {
         self.journal_from = self.journal_way.place(at, of);
     }
 
-    /// Show `tab` of the open book. Answers whether that moved anywhere.
+    /// `go_in_book` shows `tab` of the open book. `go_in_book` answers whether that moved anywhere.
     pub fn go_in_book(&mut self, tab: BookTab) -> bool {
         if self.book_tab == tab {
             return false;
@@ -630,32 +648,31 @@ impl State {
         true
     }
 
-    /// Turn the open book's journal over, which opens it at the head
-    /// again.
+    /// `flip_journal` turns the open book's journal over, which opens it at the head again.
     pub fn flip_journal(&mut self) {
         self.journal_way = self.journal_way.flipped();
         self.journal_head();
     }
 
-    /// Open the row `row` places down the open book's journal on a page of its
-    /// own, at its head.
+    /// `open_entry` opens the row `row` places down the open book's journal on a page of its own,
+    /// at its head.
     pub fn open_entry(&mut self, row: usize) {
         self.journal_entry = Some(journal::Entry { row, page: 0 });
     }
 
-    /// Take the open entry down, back onto the journal's page under it.
+    /// `close_entry` takes the open entry down, back onto the journal's page under it.
     pub fn close_entry(&mut self) {
         self.journal_entry = None;
     }
 
-    /// Open the book's journal at its head, no entry open.
+    /// `journal_head` opens the book's journal at its head, no entry open.
     fn journal_head(&mut self) {
         self.journal_from = 0;
         self.journal_entry = None;
     }
 
-    /// Go to `tab`, closing any book, day or shelf open over it; answers `false`
-    /// where `tab` shows with nothing open over it.
+    /// `go` goes to `tab`, closing any book, day or shelf open over it; answers `false` where `tab`
+    /// shows with nothing open over it.
     pub fn go(&mut self, tab: Tab) -> bool {
         if self.tab == tab
             && self.book.is_none()
@@ -665,6 +682,8 @@ impl State {
             && self.search.is_none()
             && self.shelf == Shelf::All
             && self.window.is_none()
+            && self.narrowed.is_none()
+            && self.whole.is_none()
         {
             return false;
         }
@@ -678,7 +697,9 @@ impl State {
         self.book_search = None;
         self.shelf = Shelf::All;
         self.window = None;
+        self.narrowed = None;
         self.alltime_page = 0;
+        self.whole = None;
         self.list_from = 0;
         self.book_tab = BookTab::default();
         self.journal_head();
@@ -686,15 +707,15 @@ impl State {
         true
     }
 
-    /// Step Rhythm on: a day where one is picked, a page where `span` is
-    /// `Span::AllTime`, else a whole span; answers whether anything moved.
-    pub fn shift(&mut self, by: i64) -> bool {
+    /// `shift` steps Rhythm on: a day where one is picked, a page of All Time's `pages` where
+    /// `span` is `Span::AllTime`, else a whole span; answers whether anything moved.
+    pub fn shift(&mut self, by: i64, pages: usize) -> bool {
         if self.picked {
             self.day += by;
             return true;
         }
         if self.span == Span::AllTime {
-            let last = alltime::PAGES as i64 - 1;
+            let last = pages.max(1) as i64 - 1;
             let page = (self.alltime_page as i64 + by).clamp(0, last) as usize;
             let moved = page != self.alltime_page;
             self.alltime_page = page;
@@ -713,8 +734,8 @@ pub fn covered(stats: &Stats, uncovered: bool, read: &mut Vec<(usize, i64)>) {
     }
 }
 
-/// `s.n_highlights` and `s.n_notes` counted and joined by ` · `, each dropped
-/// where its count is zero. Empty where both are.
+/// `s.n_highlights` and `s.n_notes` counted and joined by ` · `, each dropped where its count is
+/// zero; empty where both are.
 pub fn highlights_said(s: &Strings, (highlights, notes): (usize, usize)) -> String {
     let said = [(highlights, s.n_highlights), (notes, s.n_notes)];
     said.iter()
@@ -762,14 +783,14 @@ pub(crate) fn over_keyboard(theme: &Theme, area: Rect) -> Rect {
     Rect::new(area.x, area.y, area.w, (over - theme.gap - area.y).max(0))
 }
 
-/// The index the last page of `count` rows opens at, `deep` rows to a page,
-/// the last page the short one.
+/// `last_page_at`: the index the last page of `count` rows opens at, `deep` rows to a page, the
+/// last page the short one.
 pub fn last_page_at(count: usize, deep: usize) -> usize {
     let deep = deep.max(1);
     count.saturating_sub(1) / deep * deep
 }
 
-/// What a screen draws with.
+/// `Ctx`: what a screen draws with.
 pub struct Ctx<'a> {
     pub fb: &'a mut Framebuffer,
     pub text: &'a mut TextRenderer,
@@ -777,17 +798,17 @@ pub struct Ctx<'a> {
     pub theme: &'a Theme,
     pub lang: Lang,
     pub week: WeekStart,
-    /// Where a book's own stats come from.
+    /// `stats_from`: where a book's own stats come from.
     pub stats_from: crate::settings::StatsFrom,
-    /// Whether a book no cover can be drawn for is listed at all.
+    /// `uncovered`: whether a book no cover can be drawn for is listed at all.
     pub uncovered: bool,
-    /// What the charts draw in, from `crate::ui::paint::Palette::for_panel`.
+    /// `palette`: what the charts draw in, from `crate::ui::paint::Palette::for_panel`.
     pub palette: crate::ui::paint::Palette,
     pub stats: &'a Stats,
-    /// The local day, and the second of it.
+    /// `today`: the local day, and the second of it.
     pub today: i64,
     pub now: i64,
-    /// Whether the record was reset, which tells an empty list's reset from a first launch.
+    /// `was_reset`: whether the record was reset, which an empty list states.
     pub was_reset: bool,
     pub hits: Vec<(Hit, Rect)>,
 }
@@ -797,12 +818,12 @@ impl Ctx<'_> {
         self.hits.push((what, area));
     }
 
-    /// The words this screen is written in.
+    /// `s`: the words this screen is written in.
     pub fn s(&self) -> &'static Strings {
         self.lang.strings()
     }
 
-    /// The script this screen's own labels are set in, off `self.lang`.
+    /// `ui_script`: the script this screen's own labels are set in, off `self.lang`.
     pub fn ui_script(&self) -> crate::font::Script {
         crate::font::Script::of_language(self.lang.language_tag())
     }
@@ -812,8 +833,8 @@ impl Ctx<'_> {
 mod tests {
     use super::*;
 
-    /// A day the assertions below are written against: Thursday 3 September
-    /// 2026, in a month of thirty days.
+    /// `third`: a day the assertions below are written against: Thursday 3 September 2026, in a
+    /// month of thirty days.
     fn third() -> i64 {
         date::days_from_civil(2026, 9, 3)
     }
@@ -941,8 +962,8 @@ mod tests {
         assert_eq!(s.journal_from, 7, "the book opens on the passage tapped");
         // `open_highlight` takes the keyboard down, as `open_book` does.
         assert_eq!(s.search.as_ref().map(|search| search.keyboard), Some(false));
-        // The same passage, counted from the other end, where the book's own
-        // list is turned over.
+        // `s.journal_way`: the same passage, counted from the other end, where the book's own list
+        // is turned over.
         s.journal_way = Way::Up;
         s.open_highlight(4, 7, 12);
         assert_eq!(s.journal_from, 4, "the passage is the fifth from the front");
@@ -1053,25 +1074,31 @@ mod tests {
         let mut s = State::new(third());
         assert_eq!(s.span, Span::AllTime);
         assert_eq!(s.alltime_page, 0);
-        assert!(!s.shift(-1), "the first page has nothing before it");
+        assert!(
+            !s.shift(-1, alltime::PAGES),
+            "the first page has nothing before it"
+        );
         assert_eq!(s.alltime_page, 0);
 
         for page in 1..alltime::PAGES {
-            assert!(s.shift(1), "page {page} is a step");
+            assert!(s.shift(1, alltime::PAGES), "page {page} is a step");
             assert_eq!(s.alltime_page, page);
             assert_eq!(s.day, third(), "paging never moves the day");
         }
-        assert!(!s.shift(1), "the last page has nothing after it");
+        assert!(
+            !s.shift(1, alltime::PAGES),
+            "the last page has nothing after it"
+        );
         assert_eq!(s.alltime_page, alltime::PAGES - 1);
 
-        assert!(s.shift(-1));
+        assert!(s.shift(-1, alltime::PAGES));
         assert_eq!(s.alltime_page, alltime::PAGES - 2);
     }
 
     #[test]
     fn leaving_all_time_comes_back_to_its_first_page() {
         let mut s = State::new(third());
-        s.shift(1);
+        s.shift(1, alltime::PAGES);
         assert_ne!(s.alltime_page, 0);
         s.go(Tab::Books);
         s.go(Tab::Rhythm);
@@ -1079,10 +1106,35 @@ mod tests {
     }
 
     #[test]
+    fn all_time_steps_onto_each_breakdown_page_and_a_tab_tap_closes_what_it_opened() {
+        let mut s = State::new(third());
+        let pages = alltime::PAGES + 2;
+        for page in 1..pages {
+            assert!(s.shift(1, pages), "page {page} is a step");
+            assert_eq!(s.alltime_page, page);
+        }
+        assert!(
+            !s.shift(1, pages),
+            "the last Breakdown page has nothing after it"
+        );
+        s.whole = Some(breakdown::Whole { card: 1, page: 2 });
+        assert!(
+            s.go(Tab::Rhythm),
+            "a card opened whole is something to close"
+        );
+        assert_eq!((s.alltime_page, s.whole), (0, None));
+        s.go(Tab::Books);
+        s.narrowed = Some(By::Author(None));
+        assert!(s.go(Tab::Books), "a narrowed list is something to close");
+        assert_eq!(s.narrowed, None);
+        assert!(!s.go(Tab::Books));
+    }
+
+    #[test]
     fn a_calendar_span_steps_a_span_and_leaves_the_page_alone() {
         let mut s = State::new(third());
         s.span = Span::Month;
-        assert!(s.shift(1));
+        assert!(s.shift(1, alltime::PAGES));
         assert_eq!(s.day, date::days_from_civil(2026, 10, 3));
         assert_eq!(s.alltime_page, 0);
     }
@@ -1090,10 +1142,10 @@ mod tests {
     #[test]
     fn a_picked_day_steps_a_day_at_a_time() {
         let mut s = State::new(third());
-        s.shift(1);
+        s.shift(1, alltime::PAGES);
         assert_eq!(s.day, third(), "paging All Time moves no day");
         s.span = Span::Month;
-        s.shift(1);
+        s.shift(1, alltime::PAGES);
         assert_eq!(
             s.day,
             date::days_from_civil(2026, 10, 3),
@@ -1101,9 +1153,9 @@ mod tests {
         );
         s.day = third();
         s.picked = true;
-        s.shift(1);
+        s.shift(1, alltime::PAGES);
         assert_eq!(s.day, third() + 1);
-        s.shift(-3);
+        s.shift(-3, alltime::PAGES);
         assert_eq!(s.day, third() - 2);
     }
 

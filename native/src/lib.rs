@@ -1,8 +1,7 @@
-//! Reading Log: [`log`] over the reading logs, [`library`], [`record`],
-//! [`stats`] over those, and [`view`] drawing them.
+//! [`log`] reads the reading logs and [`library`] the library, [`record`] keeps what both state,
+//! [`stats`] totals it, and [`view`] draws it.
 
-// Docs name the private helpers beside them: this crate is read with
-// `--document-private-items`.
+// `private_intra_doc_links`: the docs link private helpers, read with `--document-private-items`.
 #![allow(rustdoc::private_intra_doc_links)]
 
 pub mod app;
@@ -24,6 +23,7 @@ pub mod lipc;
 pub mod log;
 pub mod mark;
 pub mod markdown;
+pub mod metadata;
 pub mod net;
 pub mod open;
 pub mod orientation;

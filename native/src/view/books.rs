@@ -1,7 +1,11 @@
-//! Every [`crate::stats::BookStat`], most recent first, with its cover, the
-//! progress the library states, and a filled figure on a book read through.
+//! [`draw`]: every [`crate::stats::BookStat`], most recent first, with its cover, the progress
+//! the library states, and a filled figure on a book read through.
 
 use crate::date;
+use crate::font::Script;
+use crate::lang::Strings;
+use crate::metadata::By;
+use crate::metadata::links::Name;
 use crate::stats::{BookStat, Stats};
 use crate::ui::chrome;
 use crate::ui::cover;
@@ -10,28 +14,28 @@ use crate::ui::theme::Theme;
 
 use super::{Ctx, Hit, Shelf, Sort, State, Way, Window, band, pager};
 
-/// Lines a title takes before the rest of it is ellipsized.
+/// `TITLE_LINES`: lines a title takes before the rest of it is ellipsized.
 const TITLE_LINES: usize = 2;
 
-/// The cross on the window chip, which a tap on it takes off the list.
+/// `DROP`: the cross on the window chip, which a tap on it takes off the list.
 const DROP: &str = "×";
 
-/// The share of a search box's side [`magnifier`] draws into.
+/// `GLYPH`: the share of a search box's side [`magnifier`] draws into.
 const GLYPH: (i32, i32) = (3, 5);
 
-/// The height one book takes, set by the cover it carries.
+/// `row_height`: the height one book takes, set by the cover it carries.
 fn row_height(theme: &Theme) -> i32 {
     theme.row_h * 5 / 2
 }
 
-/// The width `figure` measures at.
+/// `figures_width`: the width `figure` measures at.
 fn figures_width(cx: &mut Ctx, figure: &str) -> i32 {
     cx.text.measure_width(figure) as i32
 }
 
-/// Books on `shelf` in `order`, running `way`, by their index in
-/// [`Stats::books`], held most recently read first. [`Sort::Recent`] is that
-/// order untouched, and the stable sorts fall back to it on a tie.
+/// `listed`: the books on `shelf` holding `by` in `order`, running `way`, by their index in
+/// [`Stats::books`], held most recently read first; [`Sort::Recent`] is that order untouched,
+/// and the stable sorts fall back to it on a tie.
 pub fn listed(
     stats: &Stats,
     shelf: Shelf,
@@ -39,6 +43,7 @@ pub fn listed(
     way: Way,
     days: Option<std::ops::RangeInclusive<i64>>,
     uncovered: bool,
+    by: Option<&By>,
 ) -> Vec<usize> {
     let mut out: Vec<usize> = (0..stats.books.len())
         .filter(|at| match shelf {
@@ -51,11 +56,12 @@ pub fn listed(
                 .is_none_or(|days| days.contains(&stats.books[*at].last_day))
         })
         .filter(|at| uncovered || stats.books[*at].has_cover())
+        .filter(|at| by.is_none_or(|by| by.holds(&stats.values(*at), &stats.linked)))
         .collect();
     match order {
         Sort::Recent => {}
         Sort::Time => out.sort_by_key(|at| -stats.books[*at].seconds),
-        // A book the library states no percent for sorts as though unopened.
+        // `percent_shown`: a book the library states no percent for sorts as unopened.
         Sort::Progress => out.sort_by_key(|at| -stats.books[*at].percent_shown().max(0)),
     }
     if way == Way::Up {
@@ -64,8 +70,8 @@ pub fn listed(
     out
 }
 
-/// Whether any [`on_show`] book passes [`BookStat::is_finished`]. The
-/// `Finished` chip stands on it.
+/// `shelved`: whether any [`on_show`] book passes [`BookStat::is_finished`]; the `Finished` chip
+/// stands on it.
 pub fn shelved(stats: &Stats, uncovered: bool) -> bool {
     on_show(stats, uncovered).any(|b| b.is_finished())
 }
@@ -79,9 +85,8 @@ fn on_show(stats: &Stats, uncovered: bool) -> impl Iterator<Item = &BookStat> {
         .filter(move |b| uncovered || b.has_cover())
 }
 
-/// The shelves [`shelf_chips`] draws a chip apiece for. [`Shelf::Unfinished`]
-/// drops where every [`on_show`] book passes [`BookStat::is_finished`], and
-/// stands where `on` names it.
+/// `shelves`: the shelves [`shelf_chips`] draws a chip apiece for. [`Shelf::Unfinished`] drops
+/// where every [`on_show`] book passes [`BookStat::is_finished`], and stands where `on` names it.
 pub fn shelves(stats: &Stats, on: Shelf, uncovered: bool) -> &'static [Shelf] {
     const EVERY: [Shelf; 3] = [Shelf::All, Shelf::Finished, Shelf::Unfinished];
     let read_through = on_show(stats, uncovered).all(BookStat::is_finished);
@@ -91,7 +96,7 @@ pub fn shelves(stats: &Stats, on: Shelf, uncovered: bool) -> &'static [Shelf] {
     }
 }
 
-/// The box the rows are drawn into, the shelf chips taken off the top.
+/// `list_box`: the box the rows are drawn into, the shelf chips taken off the top.
 pub fn list_box(theme: &Theme, area: Rect, chips: bool) -> Rect {
     match chips {
         true => area.split_top(chrome::chip_height(theme) + theme.gap * 2).1,
@@ -99,18 +104,18 @@ pub fn list_box(theme: &Theme, area: Rect, chips: bool) -> Rect {
     }
 }
 
-/// Rows one page of the list holds, the pager's own strip taken off first.
+/// `rows_per_page`: rows one page of the list holds, the pager's own strip taken off first.
 pub fn rows_per_page(theme: &Theme, area: Rect) -> usize {
     (((area.h - pager::height(theme)) / row_height(theme)).max(1)) as usize
 }
 
-/// Where the last page of `count` books opens, in `area`.
+/// `last_page_at`: where the last page of `count` books opens, in `area`.
 pub fn last_page_at(theme: &Theme, area: Rect, count: usize) -> usize {
     super::last_page_at(count, rows_per_page(theme, area))
 }
 
-/// The height a row is drawn at: the page's rows share `area`, capped at
-/// [`row_height`] and half again.
+/// `row_span`: the height a row is drawn at: the page's rows share `area`, capped at [`row_height`]
+/// and half again.
 pub(super) fn row_span(theme: &Theme, area: Rect) -> i32 {
     let fits = rows_per_page(theme, area) as i32;
     ((area.h - pager::height(theme)) / fits).clamp(row_height(theme), row_height(theme) * 3 / 2)
@@ -132,8 +137,15 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
         true => shelf_chips(cx, head, state.shelf, state.window) + theme.gap * 2,
         false => head.x,
     };
-    if let Some(window) = state.window {
-        window_chip(cx, head, opens, sort.x - theme.gap * 2, window, state.shelf);
+    let until = sort.x - theme.gap * 2;
+    let opens = match state.window {
+        Some(window) => {
+            window_chip(cx, head, opens, until, window, state.shelf).right() + theme.gap * 2
+        }
+        None => opens,
+    };
+    if let Some(by) = &state.narrowed {
+        narrowed_chip(cx, head, opens, until, by);
     }
     let area = list_box(theme, area, true);
     let over = state.window.map(|window| window.days(cx.week));
@@ -144,6 +156,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
         state.sort_way,
         over,
         cx.uncovered,
+        state.narrowed.as_ref(),
     );
     if shelf.is_empty() {
         let said = cx.s().nothing_on_the_shelf;
@@ -175,16 +188,15 @@ pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
     }
 }
 
-/// The square the search stands in at the head of a row: `chip_height` a
-/// side, at the left edge of `area`. The book screen opens its own head row
-/// with this one.
+/// `search_box`: the square the search stands in at the head of a row: `chip_height` a side, at the
+/// left edge of `area`; the book screen opens its own head row with this one.
 pub(super) fn search_box(theme: &Theme, area: Rect) -> Rect {
     let side = chrome::chip_height(theme);
     Rect::new(area.x, area.y, side, side)
 }
 
-/// The search, at the head of the shelf chips' own row: a square of
-/// `chrome::chip_height` a side, in their outline. Answers the box it took.
+/// `search_button`: the search, at the head of the shelf chips' own row: a square of
+/// `chrome::chip_height` a side, in their outline. `search_button` answers the box it took.
 fn search_button(cx: &mut Ctx, area: Rect) -> Rect {
     let theme: &Theme = cx.theme;
     let box_ = search_box(theme, area);
@@ -194,7 +206,7 @@ fn search_button(cx: &mut Ctx, area: Rect) -> Rect {
     box_
 }
 
-/// The magnifier centred in `box_`, [`GLYPH`] of its shorter side across.
+/// `magnifier`: the magnifier centred in `box_`, [`GLYPH`] of its shorter side across.
 pub(super) fn magnifier(cx: &mut Ctx, box_: Rect) {
     let glyph = box_.w.min(box_.h) * GLYPH.0 / GLYPH.1;
     paint::magnifier(
@@ -211,8 +223,8 @@ pub(super) fn magnifier(cx: &mut Ctx, box_: Rect) {
     );
 }
 
-/// The order the list is in, at the right of the shelf chips' own row: the
-/// words open the order after this one, the caret turns the list over.
+/// `sort_chip`: the order the list is in, at the right of the shelf chips' own row: the words open
+/// the order after this one, the caret turns the list over.
 fn sort_chip(cx: &mut Ctx, area: Rect, on: Sort, way: Way) -> Rect {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
@@ -236,9 +248,9 @@ fn sort_chip(cx: &mut Ctx, area: Rect, on: Sort, way: Way) -> Rect {
     chip
 }
 
-/// The shelves as a chip apiece, the one showing filled, each its own hit box,
-/// answering the right edge of the last of them. A chip stands for the shelf
-/// it names and keeps the window the list is under.
+/// `shelf_chips`: the shelves as a chip apiece, the one showing filled, each its own hit box,
+/// answering the right edge of the last of them; a chip stands for the shelf it names and keeps the
+/// window the list is under.
 fn shelf_chips(cx: &mut Ctx, area: Rect, on: Shelf, window: Option<Window>) -> i32 {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
@@ -258,10 +270,17 @@ fn shelf_chips(cx: &mut Ctx, area: Rect, on: Shelf, window: Option<Window>) -> i
     edge
 }
 
-/// The window the list is narrowed to, standing between `opens` and `until`,
-/// filled the way the shelf showing is. Its name carries [`DROP`], and a tap
-/// opens the same shelf over the whole record.
-fn window_chip(cx: &mut Ctx, area: Rect, opens: i32, until: i32, window: Window, shelf: Shelf) {
+/// `window_chip`: the window the list is narrowed to, standing between `opens` and `until`, filled
+/// the way the shelf showing is; its name carries [`DROP`], and a tap opens the same shelf over the
+/// whole record. `window_chip` answers the box it took.
+fn window_chip(
+    cx: &mut Ctx,
+    area: Rect,
+    opens: i32,
+    until: i32,
+    window: Window,
+    shelf: Shelf,
+) -> Rect {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
     let said = format!("{} {DROP}", window.name(cx.week, cx.s()));
@@ -274,7 +293,7 @@ fn window_chip(cx: &mut Ctx, area: Rect, opens: i32, until: i32, window: Window,
         chrome::chip_height(theme),
     );
     paint::fill(cx.fb, chip, INK);
-    // Cut inside the chip, never drawn over the row beside it.
+    // `room` cuts inside the chip, never drawn over the row beside it.
     let room = (chip.w - chrome::chip_pad(theme)).max(1) as u32;
     let said = cx.text.wrap_and_clamp_in(script, &said, room, 1);
     let said = said.first().map(String::as_str).unwrap_or_default();
@@ -289,6 +308,46 @@ fn window_chip(cx: &mut Ctx, area: Rect, opens: i32, until: i32, window: Window,
         true,
     );
     cx.hit(Hit::Shelved(shelf, None), chip);
+    chip
+}
+
+/// `narrowed_name`: what the chip of a list narrowed to `by` reads: its value by the name
+/// `stats.linked` draws it by, or its field and `s.not_set`.
+pub fn narrowed_name(stats: &Stats, by: &By, s: &Strings) -> String {
+    let linked = &stats.linked;
+    match by {
+        By::Author(Some(name)) => linked.shown(Name::Author(name)).to_string(),
+        By::Publisher(Some(name)) => linked.shown(Name::Publisher(name)).to_string(),
+        By::Tag(r#type, Some(tag)) => linked.shown(Name::Tag(r#type, tag)).to_string(),
+        By::Author(None) => format!("{} · {}", s.author_field, s.not_set),
+        By::Publisher(None) => format!("{} · {}", s.publisher_field, s.not_set),
+        By::Tag(r#type, None) => format!("{} · {}", linked.shown(Name::Type(r#type)), s.not_set),
+    }
+}
+
+/// `narrowed_chip`: the value the list is narrowed to, standing between `opens` and `until`,
+/// filled as the window chip is; its name carries [`DROP`], and a tap takes it off the list.
+fn narrowed_chip(cx: &mut Ctx, area: Rect, opens: i32, until: i32, by: &By) {
+    let theme: &Theme = cx.theme;
+    let said = format!("{} {DROP}", narrowed_name(cx.stats, by, cx.s()));
+    let script = Script::resolve(cx.ui_script(), &said);
+    cx.text.set_px(theme.body_px);
+    let w = cx.text.measure_width_in(script, &said) as i32 + chrome::chip_pad(theme) * 2;
+    let chip = Rect::new(
+        opens,
+        area.y,
+        w.min((until - opens).max(1)),
+        chrome::chip_height(theme),
+    );
+    paint::fill(cx.fb, chip, INK);
+    let room = (chip.w - chrome::chip_pad(theme)).max(1) as u32;
+    let said = cx.text.wrap_and_clamp_in(script, &said, room, 1);
+    let said = said.first().map(String::as_str).unwrap_or_default();
+    let tw = cx.text.measure_width_in(script, said) as i32;
+    let baseline = chip.center_y() + cx.text.cap_height() as i32 / 2;
+    let x = chip.x + (chip.w - tw) / 2;
+    cx.text.draw_in(script, cx.fb, x, baseline, said, true);
+    cx.hit(Hit::Unnarrow, chip);
 }
 
 /// `said` at the head of `area`, for a list with no row to draw.
@@ -300,8 +359,8 @@ fn bare(cx: &mut Ctx, area: Rect, said: &str) {
         .draw_in(script, cx.fb, area.x, baseline, said, false);
 }
 
-/// One book's row, stating what the whole record holds for it. The window
-/// chip over the list picks which books stand, never what their figures count.
+/// `book_row`: one book's row, stating what the whole record holds for it; the window chip over the
+/// list picks which books stand, never what their figures count.
 pub(super) fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
     let theme: &Theme = cx.theme;
     let book = &cx.stats.books[index];
@@ -321,7 +380,7 @@ pub(super) fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
     );
     let script = crate::font::Script::of_language(&book.language);
 
-    // Two columns: the words on the left, the figures on the right.
+    // `figure`: two columns: the words on the left, the figures on the right.
     let figure = date::duration(book.read_seconds(cx.stats_from), cx.s());
     cx.text.set_px(theme.body_px);
     let column_w = figures_width(cx, &figure) + theme.gap * 2;
@@ -333,9 +392,8 @@ pub(super) fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
         .wrap_and_clamp_in(script, &book.title, words.w as u32, TITLE_LINES);
     let title_h = lines.len() as i32 * cx.text.line_height() as i32;
     cx.text.set_px(theme.small_px);
-    // The line under the title carries `book.author` at its left and
-    // `highlights_said` at its right. A row with neither gives the line's height
-    // back to the block.
+    // `highlights`: the line under the title carries `book.author` at its left and
+    // `highlights_said` at its right; a row with neither gives the line's height back to the block.
     let highlights = super::highlights_said(cx.s(), cx.stats.highlights_counted(index));
     let author_h = match book.author.is_empty() && highlights.is_empty() {
         true => 0,
@@ -345,7 +403,7 @@ pub(super) fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
     cx.text.set_px(theme.small_px);
     let block_h = title_h + author_h + theme.gap + band_h;
 
-    // The block sets against the middle of `body`.
+    // `top`: the block set against the middle of `body`.
     cx.text.set_px(theme.body_px);
     let top = body.y + (body.h - block_h).max(0) / 2 + cx.text.cap_height() as i32;
     let mut y = top;
@@ -367,8 +425,7 @@ pub(super) fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
     cx.text
         .draw(cx.fb, figures.right() - fw, top, &figure, false);
 
-    // The band closes the block, across the whole of `body`. A book the library
-    // states no progress for and no mark draws none.
+    // `band::draw` closes the block across `body`, on a book with a percent or a mark.
     if book.has_percent() || book.is_finished() {
         let foot = Rect::new(body.x, y + theme.gap, body.w, band_h);
         band::draw(cx, foot, band::Band::of(book, book.is_finished()));
@@ -376,8 +433,8 @@ pub(super) fn book_row(cx: &mut Ctx, row: Rect, index: usize) {
     paint::hline(cx.fb, row.x, row.bottom() - 1, row.w, LIGHT, 1);
 }
 
-/// The line an empty list stands under: reading on unidentified books alone,
-/// nothing since a reset, or nothing at all.
+/// `empty_line`: the line an empty list stands under: reading on unidentified books alone, nothing
+/// since a reset, or nothing at all.
 fn empty_line(stats: &crate::stats::Stats, was_reset: bool, s: &crate::lang::Strings) -> String {
     if stats.total_seconds > 0 {
         return s
@@ -409,7 +466,7 @@ mod tests {
     use crate::ui::chrome;
     use crate::ui::theme::tests::PANELS;
 
-    /// A shelf of books at `percents`, held most recent first.
+    /// `shelf_of`: a shelf of books at `percents`, held most recent first.
     fn shelf_of(percents: &[f64]) -> Stats {
         let books = percents
             .iter()
@@ -418,7 +475,7 @@ mod tests {
                 extent: at as i64,
                 cde_key: format!("KEY{at}"),
                 cde_type: "EBOK".into(),
-                // The mark the record puts on progress read through.
+                // `FINISHED_PERCENT`: the mark the record puts on progress read through.
                 finished: *percent >= crate::record::FINISHED_PERCENT,
                 restarted_on: Vec::new(),
                 title: format!("Book {at}"),
@@ -471,7 +528,7 @@ mod tests {
             shelves(&all_done, Shelf::All, true),
             [Shelf::All, Shelf::Finished]
         );
-        // The shelf showing is named wherever the list stands.
+        // `Shelf::Unfinished` showing is named wherever the list stands.
         assert_eq!(
             shelves(&all_done, Shelf::Unfinished, true),
             [Shelf::All, Shelf::Finished, Shelf::Unfinished]
@@ -482,14 +539,22 @@ mod tests {
     fn a_list_turned_over_runs_the_other_way_under_every_order() {
         let stats = shelf_of(&[100.0, 98.0, -1.0, 99.9]);
         for order in Sort::ALL {
-            let down = listed(&stats, Shelf::All, order, Way::Down, None, true);
-            let mut up = listed(&stats, Shelf::All, order, Way::Up, None, true);
+            let down = listed(&stats, Shelf::All, order, Way::Down, None, true, None);
+            let mut up = listed(&stats, Shelf::All, order, Way::Up, None, true, None);
             assert_eq!(up.len(), down.len(), "{order:?}");
             up.reverse();
             assert_eq!(up, down, "{order:?}");
         }
-        // The shelf is picked before the turn: it names the same books.
-        let up = listed(&stats, Shelf::Finished, Sort::Recent, Way::Up, None, true);
+        // `up`: the shelf is picked before the turn: it names the same books.
+        let up = listed(
+            &stats,
+            Shelf::Finished,
+            Sort::Recent,
+            Way::Up,
+            None,
+            true,
+            None,
+        );
         assert_eq!(up, [3, 0]);
     }
 
@@ -498,11 +563,27 @@ mod tests {
         // 100 and 99.9 are read through; 98 and a book with no figure are not.
         let stats = shelf_of(&[100.0, 98.0, -1.0, 99.9]);
         assert_eq!(
-            listed(&stats, Shelf::All, Sort::Recent, Way::Down, None, true),
+            listed(
+                &stats,
+                Shelf::All,
+                Sort::Recent,
+                Way::Down,
+                None,
+                true,
+                None
+            ),
             [0, 1, 2, 3]
         );
         assert_eq!(
-            listed(&stats, Shelf::Finished, Sort::Recent, Way::Down, None, true),
+            listed(
+                &stats,
+                Shelf::Finished,
+                Sort::Recent,
+                Way::Down,
+                None,
+                true,
+                None
+            ),
             [0, 3]
         );
         assert_eq!(
@@ -512,7 +593,8 @@ mod tests {
                 Sort::Recent,
                 Way::Down,
                 None,
-                true
+                true,
+                None
             ),
             [1, 2]
         );
@@ -520,13 +602,13 @@ mod tests {
 
     #[test]
     fn a_chip_never_opens_a_shelf_hiding_holds_nothing_of() {
-        // The one book read through is also the one with no cover.
+        // `stats`: the one book read through is also the one with no cover.
         let mut stats = shelf_of(&[100.0, 40.0]);
         stats.books[1].thumbnail = "/covers/1.jpg".into();
         assert!(shelved(&stats, true), "the Finished chip stands");
         assert!(!shelved(&stats, false), "it opens an empty shelf");
 
-        // Hiding leaves nothing unfinished.
+        // `done`: Hiding leaves nothing unfinished.
         let mut done = shelf_of(&[100.0, 40.0]);
         done.books[0].thumbnail = "/covers/0.jpg".into();
         assert_eq!(
@@ -546,14 +628,30 @@ mod tests {
             stats.books[at].thumbnail = format!("/covers/{at}.jpg");
         }
         assert_eq!(
-            listed(&stats, Shelf::All, Sort::Recent, Way::Down, None, true),
+            listed(
+                &stats,
+                Shelf::All,
+                Sort::Recent,
+                Way::Down,
+                None,
+                true,
+                None
+            ),
             [0, 1, 2, 3]
         );
         assert_eq!(
-            listed(&stats, Shelf::All, Sort::Recent, Way::Down, None, false),
+            listed(
+                &stats,
+                Shelf::All,
+                Sort::Recent,
+                Way::Down,
+                None,
+                false,
+                None
+            ),
             [1, 3]
         );
-        // A shelf narrows what is left and never brings one back.
+        // `Shelf::Finished` narrows what is left and brings none back.
         assert_eq!(
             listed(
                 &stats,
@@ -561,7 +659,8 @@ mod tests {
                 Sort::Recent,
                 Way::Down,
                 None,
-                false
+                false,
+                None
             ),
             [3]
         );
@@ -591,7 +690,15 @@ mod tests {
         let stats = shelf_of(&[100.0, 40.0, -1.0, 100.0, 92.0]);
         // `Sort::Progress` leads on the books read through.
         assert_eq!(
-            listed(&stats, Shelf::All, Sort::Progress, Way::Down, None, true),
+            listed(
+                &stats,
+                Shelf::All,
+                Sort::Progress,
+                Way::Down,
+                None,
+                true,
+                None
+            ),
             [0, 3, 4, 1, 2]
         );
         assert_eq!(
@@ -601,13 +708,14 @@ mod tests {
                 Sort::Progress,
                 Way::Down,
                 None,
-                true
+                true,
+                None
             ),
             [4, 1, 2]
         );
     }
 
-    /// A content box holding exactly `rows` rows and the page counter.
+    /// `area_for`: a content box holding exactly `rows` rows and the page counter.
     fn area_for(theme: &Theme, rows: i32) -> Rect {
         let box_ = chrome::content_box(theme);
         let h = row_height(theme) * rows + pager::height(theme);
@@ -619,7 +727,7 @@ mod tests {
         let theme = Theme::for_screen(1264, 1680);
         assert_eq!(rows_per_page(&theme, area_for(&theme, 6)), 6);
         assert_eq!(rows_per_page(&theme, area_for(&theme, 1)), 1);
-        // A box under one row tall shows one.
+        // `Rect::new(0, 0, 100, 1)`, under one row tall, shows one.
         assert_eq!(rows_per_page(&theme, Rect::new(0, 0, 100, 1)), 1);
     }
 
@@ -651,7 +759,7 @@ mod tests {
                 h as i32 - theme.tabs_h,
                 "{w}x{h}: the strip stops short of the tab strip"
             );
-            // The rows meet it: nothing but the counter stands in the band.
+            // `rows`: the rows meet it: nothing but the counter stands in the band.
             let rows = rows_per_page(&theme, area) as i32;
             let under = foot.y - (area.y + rows * row_span(&theme, area));
             assert!(
@@ -684,9 +792,9 @@ mod tests {
         let area = area_for(&theme, 6);
         // 20 books, 6 to a page: 0..6, 6..12, 12..18, and 18..20 to close.
         assert_eq!(last_page_at(&theme, area, 20), 18);
-        // A page and one over opens its second page on that one book.
+        // `7` books, a page and one over, open the second page on that one.
         assert_eq!(last_page_at(&theme, area, 7), 6);
-        // Fewer books than a page: the list never scrolls.
+        // `6` books and fewer, a page or less, never page.
         assert_eq!(last_page_at(&theme, area, 6), 0);
         assert_eq!(last_page_at(&theme, area, 2), 0);
         assert_eq!(last_page_at(&theme, area, 0), 0);
@@ -736,20 +844,84 @@ mod tests {
                 Way::Down,
                 Some(year.clone()),
                 true,
+                None,
             )
         };
         assert_eq!(over(Shelf::All), [0, 1]);
         assert_eq!(over(Shelf::Finished), [0]);
         assert_eq!(over(Shelf::Unfinished), [1]);
-        // The two shelves under a window sum to the whole of it.
+        // `Shelf::Finished` and `Shelf::Unfinished` under a window sum to the whole of it.
         assert_eq!(
             over(Shelf::Finished).len() + over(Shelf::Unfinished).len(),
             2
         );
-        // With no window, the book of the year before stands with them.
+        // `None`, no window: the book of the year before stands with them.
         assert_eq!(
-            listed(&stats, Shelf::All, Sort::Recent, Way::Down, None, true),
+            listed(
+                &stats,
+                Shelf::All,
+                Sort::Recent,
+                Way::Down,
+                None,
+                true,
+                None
+            ),
             [0, 1, 2]
+        );
+    }
+
+    #[test]
+    fn a_list_narrowed_to_a_tag_holds_the_books_holding_any_of_its_names() {
+        use crate::metadata::links::{Link, Linked, Links};
+        use crate::metadata::{By, Set, Tag};
+        let genre = |tag: &str| {
+            let mut set = Set::default();
+            set.tags = vec![Tag {
+                r#type: "Genre".into(),
+                tag: tag.into(),
+            }];
+            set
+        };
+        let mut stats = shelf_of(&[100.0, 40.0, 60.0]);
+        stats.sets = vec![genre("Mystery"), genre("ミステリー"), Set::default()];
+        let values: Vec<_> = (0..3).map(|at| stats.values(at)).collect();
+        let link = Link {
+            edited: "2026-11-14T09:00:00".into(),
+            linked: Linked::Tag,
+            r#type: "Genre".into(),
+            first: "Mystery".into(),
+            names: Some(vec!["ミステリー".into()]),
+        };
+        stats.linked = Links::new(&[link], &values);
+        let by = |by: By| {
+            listed(
+                &stats,
+                Shelf::All,
+                Sort::Recent,
+                Way::Down,
+                None,
+                true,
+                Some(&by),
+            )
+        };
+        assert_eq!(by(By::Tag("Genre".into(), Some("Mystery".into()))), [0, 1]);
+        assert_eq!(
+            by(By::Tag("genre".into(), Some("ミステリー".into()))),
+            [0, 1]
+        );
+        assert_eq!(by(By::Tag("Genre".into(), None)), [2]);
+        assert_eq!(by(By::Author(None)), [0, 1, 2]);
+        assert_eq!(
+            by(By::Publisher(Some("Harbour Books".into()))),
+            Vec::<usize>::new()
+        );
+        assert_eq!(
+            narrowed_name(
+                &stats,
+                &By::Tag("Genre".into(), Some("ミステリー".into())),
+                crate::lang::Lang::English.strings()
+            ),
+            "Mystery"
         );
     }
 }

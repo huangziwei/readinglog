@@ -1,6 +1,5 @@
-//! Books by title or author, and highlights by the words in them: [`field`]
-//! carries the query, [`listed`] and [`listed_highlights`] name what it found, and
-//! [`results_box`] holds the rows the Books list draws.
+//! [`listed`] finds books by title or author, [`listed_highlights`] highlights by their words;
+//! [`field`] carries the query and [`results_box`] holds the rows the Books list draws.
 
 use crate::font::Script;
 use crate::hanfold;
@@ -13,32 +12,67 @@ use crate::ui::theme::Theme;
 
 use super::{Ctx, Hit, Search, books, journal, pager};
 
-/// Half the width of [`field`]'s cross, as a share of its height.
+/// `CROSS`: half the width of [`field`]'s cross, as a share of its height.
 const CROSS: f32 = 0.19;
 
-/// The head [`field`] stands in, and the box left below it: the Books list's
-/// own head, holding `books::search_button` and every row below it in place.
+/// `split`: the head [`field`] stands in, and the box left below it: the Books list's own head,
+/// holding `books::search_button` and every row below it in place.
 fn split(theme: &Theme, area: Rect) -> (Rect, Rect) {
     area.split_top(chrome::chip_height(theme) + theme.gap * 2)
 }
 
-/// The books `query` names, by their index in [`Stats::books`], in the order
-/// they are held: those whose `title` or `author` [`Needle::holds`]. An empty
-/// `query` names every book.
+/// `listed`: the books `query` names by their index in [`Stats::books`], those whose `title` or
+/// `author` [`Needle::holds`] in the order held, then those [`holds_a_value`] answers for; an
+/// empty `query` names every book.
 pub fn listed(stats: &Stats, query: &str, uncovered: bool) -> Vec<usize> {
     let needle = Needle::of(query);
-    (0..stats.books.len())
-        .filter(|at| uncovered || stats.books[*at].has_cover())
+    let shown = |at: &usize| uncovered || stats.books[*at].has_cover();
+    let mut out: Vec<usize> = (0..stats.books.len())
+        .filter(shown)
         .filter(|at| {
             let book = &stats.books[*at];
             needle.holds(&book.title) || needle.holds(&book.author)
         })
-        .collect()
+        .collect();
+    if needle.said.is_empty() || !stats.has_metadata() {
+        return out;
+    }
+    let mut taken = vec![false; stats.books.len()];
+    for at in &out {
+        taken[*at] = true;
+    }
+    for at in (0..stats.books.len()).filter(shown) {
+        if !taken[at] && holds_a_value(stats, at, &needle) {
+            out.push(at);
+        }
+    }
+    out
 }
 
-/// A query as every list tests it: `said` case folded, and `folded` taken
-/// through [`hanfold::fold`] as well. [`Needle::holds`] takes either, which
-/// only ever adds matches.
+/// `holds_a_value`: whether `needle` holds the publisher, a tag or a type of the book at `at`,
+/// or another name `stats.linked` counts with one of its values, its authors' among them.
+fn holds_a_value(stats: &Stats, at: usize, needle: &Needle) -> bool {
+    use crate::metadata::links::Name;
+    let linked = &stats.linked;
+    let values = stats.values(at);
+    let any = |name: Name| linked.every(name).into_iter().any(|n| needle.holds(n));
+    values.authors.iter().any(|a| {
+        linked
+            .others(Name::Author(a), a)
+            .into_iter()
+            .any(|n| needle.holds(n))
+    }) || values
+        .publisher
+        .as_deref()
+        .is_some_and(|p| any(Name::Publisher(p)))
+        || values
+            .tags
+            .iter()
+            .any(|t| any(Name::Tag(&t.r#type, &t.tag)) || any(Name::Type(&t.r#type)))
+}
+
+/// `Needle`: a query as every list tests it: `said` case folded, and `folded` taken through
+/// [`hanfold::fold`] as well. [`Needle::holds`] takes either, which only ever adds matches.
 pub(super) struct Needle {
     said: String,
     folded: String,
@@ -51,7 +85,7 @@ impl Needle {
         Self { said, folded }
     }
 
-    /// Whether `body` holds it. An empty query is held by everything.
+    /// `holds`: whether `body` holds it; an empty query is held by everything.
     pub(super) fn holds(&self, body: &str) -> bool {
         if self.said.is_empty() {
             return true;
@@ -60,16 +94,16 @@ impl Needle {
         body.contains(&self.said) || hanfold::fold(&body).contains(&self.folded)
     }
 
-    /// Whether `folded`, a body lowercased and folded as [`Stats::folded`] holds
+    /// `holds_folded`: whether `folded`, a body lowercased and folded as [`Stats::folded`] holds
     /// one per highlight, holds it: the answer [`Self::holds`] gives that body.
     pub(super) fn holds_folded(&self, folded: &str) -> bool {
         self.said.is_empty() || folded.contains(&self.folded)
     }
 }
 
-/// The highlights `query` names, across every book, most recently made first:
-/// those whose `highlight.body` or a note's `body` [`Needle::holds`]. An empty `query`
-/// names every highlight, and `uncovered` is the filter [`listed`] takes.
+/// `listed_highlights`: the highlights `query` names, across every book, most recently made first:
+/// those whose `highlight.body` or a note's `body` [`Needle::holds`]; an empty `query` names every
+/// highlight, and `uncovered` is the filter [`listed`] takes.
 pub fn listed_highlights<'a>(stats: &'a Stats, query: &str, uncovered: bool) -> Vec<Across<'a>> {
     let needle = Needle::of(query);
     stats
@@ -88,7 +122,7 @@ pub fn listed_highlights<'a>(stats: &'a Stats, query: &str, uncovered: bool) -> 
         .collect()
 }
 
-/// What [`listed_highlights`] found, as the rows a list of highlights is drawn from.
+/// `highlight_rows`: what [`listed_highlights`] found, as rows a list of highlights draws.
 fn highlight_rows(stats: &Stats, query: &str, uncovered: bool) -> Vec<journal::Row> {
     listed_highlights(stats, query, uncovered)
         .into_iter()
@@ -106,9 +140,9 @@ fn highlight_rows(stats: &Stats, query: &str, uncovered: bool) -> Vec<journal::R
         .collect()
 }
 
-/// Where each page of the highlights `search` named opens, which is the step a page
-/// button takes. Every row is measured, each being as tall as its own words, a
-/// desktop note's in `ui`, the window's own script.
+/// `highlight_pages`: where each page of the highlights `search` named opens, which is the step a
+/// page button takes; every row is measured, each being as tall as its own words, a `w` row's
+/// in `ui`, the window's own script.
 pub fn highlight_pages(
     text: &mut TextRenderer,
     theme: &Theme,
@@ -124,7 +158,7 @@ pub fn highlight_pages(
     journal::openings(text, theme, &held, &at, inner.h)
 }
 
-/// The box the rows are drawn into: the page under [`field`], floored at the
+/// `results_box`: the box the rows are drawn into: the page under [`field`], floored at the
 /// keyboard's top edge where `keyboard`.
 pub fn results_box(theme: &Theme, area: Rect, keyboard: bool) -> Rect {
     let (_, under) = split(theme, area);
@@ -134,7 +168,7 @@ pub fn results_box(theme: &Theme, area: Rect, keyboard: bool) -> Rect {
     }
 }
 
-/// The box the rows themselves take: [`results_box`] over the pager's strip.
+/// `rows_box`: the box the rows themselves take: [`results_box`] over the pager's strip.
 fn rows_box(theme: &Theme, area: Rect, keyboard: bool) -> Rect {
     // `split_bottom` answers the strip first and what is left above it second.
     results_box(theme, area, keyboard)
@@ -142,19 +176,19 @@ fn rows_box(theme: &Theme, area: Rect, keyboard: bool) -> Rect {
         .1
 }
 
-/// The height one result row is drawn at: the height the Books list gives a
-/// row of the whole page, held while the keyboard stands over part of it.
+/// `row_span`: the height one result row is drawn at: the height the Books list gives a row of the
+/// whole page, held while the keyboard stands over part of it.
 fn row_span(theme: &Theme, area: Rect) -> i32 {
     books::row_span(theme, split(theme, area).1)
 }
 
-/// Rows one page of the results holds.
+/// `rows_per_page`: rows one page of the results holds.
 pub fn rows_per_page(theme: &Theme, area: Rect, keyboard: bool) -> usize {
     let box_ = results_box(theme, area, keyboard);
     (((box_.h - pager::height(theme)) / row_span(theme, area)).max(1)) as usize
 }
 
-/// Where the last page of `count` results opens.
+/// `last_page_at`: where the last page of `count` results opens.
 pub fn last_page_at(theme: &Theme, area: Rect, keyboard: bool, count: usize) -> usize {
     super::last_page_at(count, rows_per_page(theme, area, keyboard))
 }
@@ -183,9 +217,9 @@ pub fn draw(cx: &mut Ctx, area: Rect, search: &Search, scope: Scope) {
     }
 }
 
-/// The two lists as a chip apiece at the right of the head row, the one
-/// showing filled, each its own hit box. Answers the width it took, the air
-/// before it included, which is what the field gives up.
+/// `scope_chips`: the two lists as a chip apiece at the right of the head row, the one showing
+/// filled, each its own hit box. `scope_chips` answers the width it took, the air before it
+/// included, which is what the field gives up.
 fn scope_chips(cx: &mut Ctx, area: Rect, on: Scope) -> i32 {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
@@ -206,7 +240,7 @@ fn scope_chips(cx: &mut Ctx, area: Rect, on: Scope) -> i32 {
     wide + chrome::chip_gap(theme)
 }
 
-/// The books the query named, in the rows the Books list gives them.
+/// `shelf`: the books the query named, in the rows the Books list gives them.
 fn shelf(cx: &mut Ctx, area: Rect, search: &Search) {
     let theme: &Theme = cx.theme;
     let row_h = row_span(theme, area);
@@ -237,8 +271,8 @@ fn shelf(cx: &mut Ctx, area: Rect, search: &Search) {
     }
 }
 
-/// The highlights the query named, most recently made first: every row as tall
-/// as its own words, paged the way one book's own list is.
+/// `highlighted`: the highlights the query named, most recently made first: every row as tall as
+/// its own words, paged the way one book's own list is.
 fn highlighted(cx: &mut Ctx, area: Rect, search: &Search) {
     let theme: &Theme = cx.theme;
     let box_ = results_box(theme, area, search.keyboard);
@@ -254,7 +288,7 @@ fn highlighted(cx: &mut Ctx, area: Rect, search: &Search) {
         &search.query,
     );
     let opens = journal::openings(cx.text, theme, &held, &at, inner.h);
-    // The page showing opens at the last opening at or before `search.from`.
+    // `page`: the page showing opens at the last opening at or before `search.from`.
     let page = opens.iter().rposition(|o| *o <= search.from).unwrap_or(0);
     let from = opens.get(page).copied().unwrap_or(0);
     let to = opens.get(page + 1).copied().unwrap_or(held.len());
@@ -266,7 +300,7 @@ fn highlighted(cx: &mut Ctx, area: Rect, search: &Search) {
         let box_of = Rect::new(inner.x, y, inner.w, high);
         journal::row(cx, box_of, row, &at);
         cx.hit(Hit::Highlight(row.book, row.at), box_of);
-        // A rule between rows, and none under the last.
+        // `n + 1 < shown.len()`: a rule between rows, none under the last.
         if n + 1 < shown.len() {
             paint::hline(
                 cx.fb,
@@ -295,9 +329,9 @@ fn highlighted(cx: &mut Ctx, area: Rect, search: &Search) {
     }
 }
 
-/// An outline over `at`, `books::magnifier` at its left end and
-/// [`Hit::SearchClear`]'s cross at its right. `query` and `preedit` are set
-/// tail-first, the caret after them; `hint` stands for both empty.
+/// `field`: an outline over `at`, `books::magnifier` at its left end and [`Hit::SearchClear`]'s
+/// cross at its right. `query` and `preedit` are set tail-first, the caret after them; `hint`
+/// stands for both empty.
 pub(super) fn field(cx: &mut Ctx, at: Rect, query: &str, preedit: &str, hint: &str) {
     let theme: &Theme = cx.theme;
     paint::stroke(cx.fb, at, INK, theme.rule());
@@ -341,7 +375,7 @@ pub(super) fn field(cx: &mut Ctx, at: Rect, query: &str, preedit: &str, hint: &s
     );
 }
 
-/// The trailing part of `said` that fits `room`.
+/// `tail`: the trailing part of `said` that fits `room`.
 fn tail(text: &mut TextRenderer, script: crate::font::Script, said: &str, room: u32) -> String {
     if text.measure_width_in(script, said) <= room {
         return said.to_string();
@@ -356,7 +390,7 @@ fn tail(text: &mut TextRenderer, script: crate::font::Script, said: &str, room: 
     String::new()
 }
 
-/// The line drawn where a scope found nothing.
+/// `nothing`: the line drawn where a scope found nothing.
 fn nothing(cx: &mut Ctx, area: Rect, said: &str) {
     let script = cx.ui_script();
     cx.text.set_px(cx.theme.body_px);
@@ -372,7 +406,7 @@ mod tests {
     use crate::stats::tests::highlighted_books;
     use crate::ui::theme::tests::PANELS;
 
-    /// Two books sharing no word.
+    /// `shelf`: two books sharing no word.
     fn shelf() -> Stats {
         let one = BookStat {
             title: "The Ninth Winter".into(),
@@ -390,6 +424,48 @@ mod tests {
             books: vec![one, two],
             ..Stats::default()
         }
+    }
+
+    /// `listed` finds a book by its publisher, a tag, a type or another name a link counts
+    /// with one, after the books its title or author holds; with no metadata, by neither.
+    #[test]
+    fn a_query_names_a_book_by_its_publisher_its_tags_and_their_linked_names() {
+        use crate::metadata::links::{Link, Linked, Links};
+        use crate::metadata::{Set, Tag, Values};
+        let mut stats = shelf();
+        assert!(listed(&stats, "Harbour", true).is_empty());
+        let tag = |r#type: &str, tag: &str| Tag {
+            r#type: r#type.into(),
+            tag: tag.into(),
+        };
+        let (mut first, mut second) = (Set::default(), Set::default());
+        first.publisher = Some("Harbour Books".into());
+        first.tags = vec![tag("Genre", "Mystery")];
+        second.tags = vec![tag("Genre", "推理"), tag("Mood", "slow")];
+        stats.sets = vec![first, second];
+        let link = Link {
+            edited: "2026-11-14T10:00:00".into(),
+            linked: Linked::Tag,
+            r#type: "Genre".into(),
+            first: "Mystery".into(),
+            names: Some(vec!["推理".into()]),
+        };
+        let values: Vec<Values> = stats
+            .books
+            .iter()
+            .zip(&stats.sets)
+            .map(|(b, set)| Values::of(&b.author, set))
+            .collect();
+        stats.linked = Links::new(&[link], &values);
+        assert_eq!(listed(&stats, "harbour", true), [0]);
+        assert_eq!(
+            listed(&stats, "mystery", true),
+            [0, 1],
+            "推理 is linked with it"
+        );
+        assert_eq!(listed(&stats, "mood", true), [1]);
+        assert_eq!(listed(&stats, "nash", true), [0]);
+        assert_eq!(listed(&stats, "slow", true), [1]);
     }
 
     #[test]
@@ -413,14 +489,14 @@ mod tests {
     fn a_query_in_one_script_names_a_book_written_in_the_other() {
         let mut stats = shelf();
         stats.books[1].title = "萬國博覽會".into();
-        // 万国 is what a pinyin keyboard commits.
+        // `万国`: what a pinyin keyboard commits.
         assert_eq!(listed(&stats, "万国", true), [1]);
         assert_eq!(listed(&stats, "萬國", true), [1]);
-        // And a Traditional query against a Simplified `title`.
+        // `万国博览会`: a Simplified `title` under a Traditional query.
         stats.books[1].title = "万国博览会".into();
         assert_eq!(listed(&stats, "萬國", true), [1]);
         assert_eq!(listed(&stats, "万国", true), [1]);
-        // 楽 is no key of `hanfold::FOLD`, and 楽園 folds onto neither.
+        // `楽`: no key of `hanfold::FOLD`, 楽園 folding onto neither.
         stats.books[0].title = "楽園".into();
         assert!(listed(&stats, "乐", true).is_empty());
     }
@@ -473,12 +549,12 @@ mod tests {
         let found = listed_highlights(&stats, "sky", true);
         assert_eq!(found.len(), 1);
         assert_eq!((found[0].book, found[0].at), (0, 0));
-        // The note written on that passage, which the passage itself does not
-        // hold, names the same row.
+        // `found`: the note written on that passage, which the passage itself does not hold, names
+        // the same row.
         let found = listed_highlights(&stats, "BORROWED", true);
         assert_eq!(found.len(), 1);
         assert_eq!((found[0].book, found[0].at), (0, 0));
-        // The other book's passage, in its own script.
+        // `found`: the other book's passage, in its own script.
         let found = listed_highlights(&stats, "港", true);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].book, 1);
@@ -538,7 +614,7 @@ mod tests {
             }
         }
 
-        // The fast path and the fallback name the same highlights.
+        // `query`: the fast path and the fallback name the same highlights.
         for query in queries {
             let with: Vec<usize> = listed_highlights(&held, query, true)
                 .iter()

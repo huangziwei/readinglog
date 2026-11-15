@@ -6,20 +6,19 @@ use std::path::{Path, PathBuf};
 use readinglog_native::covers;
 use readinglog_native::record::{self, Record};
 
-/// A record, the folder it was loaded from, and the Kindle it is from.
+/// `Source`: a record, the folder it was loaded from, and the Kindle it is from.
 pub struct Source {
     pub record: Record,
-    /// The folder the record was loaded from, holding its covers.
+    /// `dir`: the folder the record was loaded from, holding its covers.
     pub dir: PathBuf,
-    /// The Kindle's serial, cut; `None` for backups naming no Kindle.
+    /// `serial`: the Kindle's serial, cut; `None` for backups naming no Kindle.
     pub serial: Option<String>,
 }
 
-/// [`together`] moves the `n`th source's extents and end positions above
-/// `(n + 1) * SPACE`, past any a Kindle states.
+/// `SPACE`: the `n`th source's extents and end positions start at `(n + 1) * SPACE`.
 const SPACE: i64 = 1 << 40;
 
-/// Between a `cde_key` and the number of the source [`together`] took it from.
+/// `KEY_MARK`: between a `cde_key` and the number of the source [`together`] took it from.
 const KEY_MARK: char = '@';
 
 /// `sources` as one record, each through `Record::drop_nested`: one as it is, two
@@ -102,11 +101,15 @@ fn apart(record: &Record, n: usize) -> Record {
         note.extent = into(note.extent);
         note.key = mark(&note.key);
     }
+    for row in &mut out.metadata {
+        row.extent = into(row.extent);
+        row.key = mark(&row.key);
+    }
     out
 }
 
-/// The source [`together`] took `extent` from, and the extent as that source
-/// states it; `None` and `extent` itself for one it did not move.
+/// `origin`: the source [`together`] took `extent` from, and the extent as that source states it;
+/// `None` and `extent` itself for one it did not move.
 pub fn origin(extent: i64) -> (Option<usize>, i64) {
     match extent > SPACE {
         true => (Some((extent / SPACE - 1) as usize), extent % SPACE),
@@ -114,8 +117,8 @@ pub fn origin(extent: i64) -> (Option<usize>, i64) {
     }
 }
 
-/// The source [`together`] took `key` from, and the key as that source states
-/// it; `None` and `key` itself for one it did not mark.
+/// `key_origin`: the source [`together`] took `key` from, and the key as that source states it;
+/// `None` and `key` itself for one it did not mark.
 pub fn key_origin(key: &str) -> (Option<usize>, &str) {
     match key.rsplit_once(KEY_MARK) {
         Some((own, n)) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => {
@@ -125,8 +128,8 @@ pub fn key_origin(key: &str) -> (Option<usize>, &str) {
     }
 }
 
-/// The copy of the cover `key` names: in its own source's folder for a key
-/// [`together`] marked, else in the first of `dirs` holding one.
+/// `cover`: the copy of the cover `key` names: in its own source's folder for a key [`together`]
+/// marked, else in the first of `dirs` holding one.
 pub fn cover(dirs: &[PathBuf], key: &str) -> Option<PathBuf> {
     let held = |dir: &Path, key: &str| covers::held(dir, key).then(|| covers::path(dir, key));
     match key_origin(key) {
@@ -151,13 +154,13 @@ pub fn on_this_computer(book: &record::Book, dirs: &[PathBuf]) -> record::Book {
     }
 }
 
-/// The model `serial` names, `Kindle` where no table holds its code.
+/// `model`: the model `serial` names, `Kindle` where no table holds its code.
 pub fn model(serial: &str) -> &'static str {
     crate::device::model::of(serial).unwrap_or("Kindle")
 }
 
-/// What each of `sources` is called: its Kindle's [`model`], with the serial's
-/// last four where two share one; `unnamed` for the backups naming no Kindle.
+/// `labels`: what each of `sources` is called: its Kindle's [`model`], with the serial's last four
+/// where two share one; `unnamed` for the backups naming no Kindle.
 pub fn labels(sources: &[Source], unnamed: &str) -> Vec<String> {
     let models: Vec<Option<&str>> = sources
         .iter()
@@ -199,8 +202,8 @@ mod tests {
         }
     }
 
-    /// One book, `B1` at extent 100, at `percent`, read for `seconds` on the
-    /// first of September.
+    /// `reading`: one book, `B1` at extent 100, at `percent`, read for `seconds` on the first of
+    /// September.
     fn reading(percent: f64, seconds: i64) -> Record {
         record_of(
             vec![Book {
@@ -272,6 +275,40 @@ mod tests {
         assert_eq!(one.highlights.len(), 1);
         assert_eq!(one.highlights[0].body, "# A title\n\nIts words");
         assert_eq!(origin(one.highlights[0].extent), (Some(0), 100));
+    }
+
+    /// `together` keeps each Kindle's `d` rows on its own book, the same title set on the same
+    /// book of two Kindles two rows.
+    #[test]
+    fn a_book_two_kindles_retitle_keeps_each_kindles_title() {
+        use readinglog_native::metadata::{Field, Metadata, Set};
+        let titled = |title: &str| {
+            let mut record = reading(10.0, 600);
+            record.metadata.push(Metadata {
+                edited: "2026-11-14T10:00:00".into(),
+                key: "B1".into(),
+                extent: 100,
+                field: Field::Title,
+                value: Some(title.into()),
+                was: None,
+            });
+            record
+        };
+        let sources = [
+            source(titled("First"), Some("G003H2-7890")),
+            source(titled("Second"), Some("G0027J-ABCD")),
+        ];
+        let one = together(&sources);
+        assert_eq!(one.metadata.len(), 2);
+        for (at, title) in [(0, "First"), (1, "Second")] {
+            let book = one
+                .books
+                .iter()
+                .find(|b| origin(b.extent).0 == Some(at))
+                .expect("each Kindle's book");
+            let set = Set::of(&one.metadata, &book.cde_key, book.extent);
+            assert_eq!(set.title.as_deref(), Some(title));
+        }
     }
 
     #[test]

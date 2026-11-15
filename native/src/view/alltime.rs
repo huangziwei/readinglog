@@ -1,72 +1,147 @@
-//! All Time, in two pages: a board of four rows of three figures, three of them
-//! carrying a hit box, and Trends, the record folded onto a day, a week and a
-//! year. An arrow at the head of each page steps onto the other.
+//! [`draw`]: All Time's pages: the board of four rows of three figures, three of them carrying
+//! a hit box, Trends folding the record onto a day, a week and a year, and [`Breakdown`]'s pages
+//! where the record holds a `d` or `l` row; [`BACK`] and [`FORWARD`] step between them.
 
 use crate::date;
-use crate::lang::Strings;
-use crate::settings::{SittingFloor, WeekStart};
+use crate::lang::{Lang, Strings};
+use crate::settings::{SittingFloor, StatsFrom, WeekStart};
 use crate::stats::{Fold, SITTING_BANDS, SITTING_STEP_SECS, Stats};
 use crate::ui::paint::{self, LIGHT, PALE, Rect};
+use crate::ui::text::TextRenderer;
 use crate::ui::theme::Theme;
 use crate::ui::{charts, chrome};
 
-use super::{Ctx, Hit, Shelf};
+use super::breakdown::{self, Breakdown};
+use super::{Ctx, Hit, Shelf, State};
 
-/// How many pages All Time holds.
+/// `PAGES`: All Time's pages before [`Breakdown`]'s: the board and Trends.
 pub const PAGES: usize = 2;
 
-/// Rows of three the board holds.
+/// `ROWS`: rows of three the board holds.
 const ROWS: i32 = 4;
 
-/// Bands the Trends page stacks: the three folds and the sittings.
+/// `BANDS`: Bands the Trends page stacks: the three folds and the sittings.
 const BANDS: i32 = 4;
 
-/// One figure of the board: what it states, what it is called, and the page it
-/// opens.
+/// `Cell`: one figure of the board: what it states, what it is called, and the page it opens.
 struct Cell {
     value: String,
     label: &'static str,
     opens: Option<Hit>,
 }
 
-/// The page at `page`, and the arrows onto the one either side of it.
-pub fn draw(cx: &mut Ctx, area: Rect, page: usize) {
+/// `draw`: the page `state.alltime_page` in `area`, and the arrows onto the pages either side;
+/// `state.whole`, a Breakdown card opened whole over them.
+pub fn draw(cx: &mut Ctx, area: Rect, state: &State) {
     let (line, body) = area.split_top(edge_height(cx.theme));
+    let held = breakdown_in(
+        cx.text,
+        cx.theme,
+        cx.lang,
+        cx.stats,
+        cx.stats_from,
+        cx.today,
+        area,
+    );
+    if held.pages() == 0 {
+        match state.alltime_page {
+            0 => {
+                span_line(cx, line);
+                edges(cx, line, None, Some(FORWARD));
+                let cells = cells(cx);
+                board_of(cx, body, &cells);
+            }
+            _ => {
+                let name = cx.s().trends.to_string();
+                edges(cx, line, Some(BACK), Some(&name));
+                trends(cx, body);
+            }
+        }
+        return;
+    }
+    if let Some(open) = state.whole {
+        breakdown::whole(cx, area, open, &held);
+        return;
+    }
+    let pages = PAGES + held.pages();
+    let page = state.alltime_page.min(pages - 1);
+    let name = match page {
+        0 => since(cx.stats, cx.today, cx.s()),
+        1 => cx.s().trends.to_string(),
+        at => held.name(cx.s(), at - PAGES),
+    };
+    centred(cx, line, &name, page > 0, page + 1 < pages);
     match page {
         0 => {
-            span_line(cx, line);
-            edges(cx, line, None, Some(FORWARD));
             let cells = cells(cx);
             board_of(cx, body, &cells);
         }
-        _ => {
-            let name = cx.s().trends.to_string();
-            edges(cx, line, Some(BACK), Some(&name));
-            trends(cx, body);
-        }
+        1 => trends(cx, body),
+        at => breakdown::draw(cx, body, at - PAGES, &held),
     }
 }
 
-/// The arrows onto the page either side, each its own hit box.
+/// `breakdown_in`: `stats`' [`Breakdown`] laid over the box under the head line of `area`, the
+/// box an All Time page draws into.
+pub fn breakdown_in(
+    text: &mut TextRenderer,
+    theme: &Theme,
+    lang: Lang,
+    stats: &Stats,
+    from: StatsFrom,
+    today: i64,
+    area: Rect,
+) -> Breakdown {
+    let (_, body) = area.split_top(edge_height(theme));
+    Breakdown::of(text, theme, lang, stats, from, today, body)
+}
+
+/// `centred`: `name` centred on `line`, ‹ at its left edge where `back` and › at its right
+/// where `on`, each with a sixth of the line to tap.
+fn centred(cx: &mut Ctx, line: Rect, name: &str, back: bool, on: bool) {
+    let theme: &Theme = cx.theme;
+    let script = cx.ui_script();
+    cx.text.set_px(theme.small_px);
+    let baseline = line.y + cx.text.cap_height() as i32;
+    let w = cx.text.measure_width_in(script, name) as i32;
+    let x = line.x + (line.w - w) / 2;
+    cx.text.draw_in(script, cx.fb, x, baseline, name, false);
+    cx.text.set_px(theme.head_px);
+    let reach = line.w / 6;
+    if back {
+        cx.text
+            .draw_in(script, cx.fb, line.x, baseline, BACK, false);
+        cx.hit(Hit::Prev, Rect::new(line.x, line.y, reach, line.h));
+    }
+    if on {
+        let w = cx.text.measure_width_in(script, FORWARD) as i32;
+        cx.text
+            .draw_in(script, cx.fb, line.right() - w, baseline, FORWARD, false);
+        let at = line.right() - reach;
+        cx.hit(Hit::Next, Rect::new(at, line.y, reach, line.h));
+    }
+}
+
+/// `BACK`: the arrows onto the page either side, each its own hit box.
 const BACK: &str = "‹";
 const FORWARD: &str = "›";
 
-/// The height of the line at the head of a page.
+/// `edge_height`: the height of the line at the head of a page.
 fn edge_height(theme: &Theme) -> i32 {
     theme.small_px as i32 + theme.gap * 2
 }
 
-/// A marker at each end of `line`: an arrow onto the page either side, and the
-/// page's own name where it has one.
+/// `edges`: a marker at each end of `line`: an arrow onto the page either side, and the page's own
+/// name where it has one.
 fn edges(cx: &mut Ctx, line: Rect, left: Option<&str>, right: Option<&str>) {
     let theme: &Theme = cx.theme;
     let script = cx.ui_script();
-    // One baseline for both ends, taken from the type the line is set in.
+    // `baseline`: one for both ends, off the type the line is set in.
     cx.text.set_px(theme.small_px);
     let baseline = line.y + cx.text.cap_height() as i32;
     for (said, at_left) in [(left, true), (right, false)] {
         let Some(said) = said else { continue };
-        // An arrow takes `Theme::head_px`; a name takes the line's own type.
+        // `arrow`: an arrow takes `Theme::head_px`; a name takes the line's own type.
         let arrow = said == BACK || said == FORWARD;
         cx.text.set_px(match arrow {
             true => theme.head_px,
@@ -79,7 +154,7 @@ fn edges(cx: &mut Ctx, line: Rect, left: Option<&str>, right: Option<&str>) {
         };
         cx.text.draw_in(script, cx.fb, x, baseline, said, false);
         if arrow {
-            // The hit box reaches past the arrow's own width.
+            // `reach`: the hit box reaches past the arrow's own width.
             let reach = line.w / 6;
             let at = match at_left {
                 true => line.x,
@@ -94,7 +169,7 @@ fn edges(cx: &mut Ctx, line: Rect, left: Option<&str>, right: Option<&str>) {
     }
 }
 
-/// The three folds over the sitting histogram, in equal bands down the page.
+/// `trends`: the three folds over the sitting histogram, in equal bands down the page.
 fn trends(cx: &mut Ctx, area: Rect) {
     let rows = area.rows(BANDS, cx.theme.gap * 3);
 
@@ -115,8 +190,8 @@ fn trends(cx: &mut Ctx, area: Rect) {
     sittings(cx, rows[3]);
 }
 
-/// One fold under its own heading: the name, what one turn of the cycle
-/// averages, and the fullest bucket.
+/// `band`: one fold under its own heading: the name, what one turn of the cycle averages, and the
+/// fullest bucket.
 pub(super) fn band(
     cx: &mut Ctx,
     area: Rect,
@@ -133,7 +208,7 @@ pub(super) fn band(
         Some(at) => format!("{short} · {} {}", s.most, axis[at]),
         None => short.clone(),
     };
-    // The fullest bucket is named only where the row has the width for it.
+    // `title` names the fullest bucket only where the row has the width for it.
     cx.text.set_px(theme.small_px);
     let title = match cx.text.measure_width(&title) as i32 <= area.w {
         true => title,
@@ -160,15 +235,14 @@ pub(super) fn band(
     );
 }
 
-/// A duration over its bar, as the rows it is set in: the hour and minute
-/// parts stack: `2h 22m` fits the width of `22m`. A bucket under a minute
-/// states nothing.
+/// `duration_rows`: a duration over its bar, as the rows it is set in: the hour and minute parts
+/// stack: `2h 22m` fits the width of `22m`; a bucket under a minute states nothing.
 pub fn duration_rows(secs: i64, s: &Strings) -> Vec<String> {
     if secs < 60 {
         return Vec::new();
     }
     let space = if s.unit_space { " " } else { "" };
-    // Rounded, as [`date::duration`] is.
+    // `hours`: Rounded, as [`date::duration`] is.
     let (hours, mins) = date::hours_and_minutes(secs);
     let hour = format!("{hours}{space}{}", s.hours);
     let min = format!("{mins}{space}{}", s.minutes);
@@ -179,7 +253,7 @@ pub fn duration_rows(secs: i64, s: &Strings) -> Vec<String> {
     }
 }
 
-/// How many sittings of the record ran each length, five minutes to a band.
+/// `sittings`: how many sittings of the record ran each length, five minutes to a band.
 fn sittings(cx: &mut Ctx, area: Rect) {
     let theme: &Theme = cx.theme;
     let s = cx.s();
@@ -221,7 +295,7 @@ fn sittings(cx: &mut Ctx, area: Rect) {
     );
 }
 
-/// The length the band at `at` opens at, counting from `first`.
+/// `sitting_name`: the length the band at `at` opens at, counting from `first`.
 pub fn sitting_name(at: usize, first: usize, floor: SittingFloor, s: &Strings) -> String {
     // `floor.label` names the band the scale opens on.
     if at == 0 {
@@ -239,8 +313,8 @@ pub fn sitting_name(at: usize, first: usize, floor: SittingFloor, s: &Strings) -
     }
 }
 
-/// The twelve figures of the board, row by row: what each states and what it
-/// is called. The board states what the whole record came to by `today`.
+/// `board`: the twelve figures of the board, row by row: what each states and what it is called;
+/// the board states what the whole record came to by `today`.
 pub fn board(
     stats: &Stats,
     today: i64,
@@ -276,7 +350,7 @@ fn cells(cx: &Ctx) -> Vec<Cell> {
     let finished = cx.stats.finished_in(i64::MIN..=i64::MAX).next().is_some();
     let (best_day, best_day_secs) = best_day(cx);
     let (sat_on, sat_secs) = longest_sitting(cx);
-    // The page each figure opens, in the board's order.
+    // `opens`: the page each figure opens, in the board's order.
     let opens = [
         None,
         None,
@@ -302,8 +376,8 @@ fn cells(cx: &Ctx) -> Vec<Cell> {
         .collect()
 }
 
-/// What a finished book took, off [`crate::stats::Stats::a_book`]. A record
-/// with no book read through states no average.
+/// `a_book`: what a finished book took, off [`crate::stats::Stats::a_book`]; a record with no book
+/// read through states no average.
 fn a_book(secs: Option<i64>, s: &Strings) -> String {
     match secs {
         Some(secs) => date::duration_coarse(secs, s),
@@ -311,19 +385,19 @@ fn a_book(secs: Option<i64>, s: &Strings) -> String {
     }
 }
 
-/// The fullest day of the record, and what was read on it.
+/// `best_day`: the fullest day of the record, and what was read on it.
 fn best_day(cx: &Ctx) -> (i64, i64) {
     cx.stats
         .busiest_day(i64::MIN..=i64::MAX)
         .unwrap_or((cx.today, 0))
 }
 
-/// The longest single sitting of the record, and the day it fell on.
+/// `longest_sitting`: the longest single sitting of the record, and the day it fell on.
 fn longest_sitting(cx: &Ctx) -> (i64, i64) {
     cx.stats.longest_sitting().unwrap_or((cx.today, 0))
 }
 
-/// What the record covers, over the board.
+/// `span_line`: what the record covers, over the board.
 fn span_line(cx: &mut Ctx, area: Rect) {
     let line = since(cx.stats, cx.today, cx.s());
     cx.text.set_px(cx.theme.small_px);
@@ -333,8 +407,8 @@ fn span_line(cx: &mut Ctx, area: Rect) {
         .draw_in(script, cx.fb, area.x, baseline, &line, false);
 }
 
-/// The month the record opens in and the days from its first to `today`, as
-/// the head of the board states them.
+/// `since`: the month the record opens in and the days from its first to `today`, as the head of
+/// the board states them.
 pub fn since(stats: &Stats, today: i64, s: &Strings) -> String {
     let first = stats.opened(today);
     let over = (today - first + 1).max(1);
@@ -343,9 +417,8 @@ pub fn since(stats: &Stats, today: i64, s: &Strings) -> String {
         .replace("{m}", &date::month_name(year, month, s).to_uppercase())
 }
 
-/// `cells` in rows of three down `area`, each row at its own size. Every
-/// figure is centred in a fixed third, and the three column centres hold
-/// across rows of unequal size.
+/// `cells` in rows of three down `area`, each row at its own size; every figure is centred in a
+/// fixed third, and the three column centres hold across rows of unequal size.
 fn board_of(cx: &mut Ctx, area: Rect, cells: &[Cell]) {
     let theme: &Theme = cx.theme;
     let rows = area.rows(ROWS, 0);
@@ -365,7 +438,7 @@ fn board_of(cx: &mut Ctx, area: Rect, cells: &[Cell]) {
     }
 }
 
-/// The largest size at or under [`Theme::display_px`] that sets every value in
+/// `fitting_px`: the largest size at or under [`Theme::display_px`] that sets every value in
 /// `cells` inside one column.
 fn fitting_px(cx: &mut Ctx, cells: &[Cell], column_w: i32) -> f32 {
     let theme: &Theme = cx.theme;
@@ -380,8 +453,8 @@ fn fitting_px(cx: &mut Ctx, cells: &[Cell], column_w: i32) -> f32 {
         if widest <= column_w {
             break;
         }
-        // A width is near enough proportional to `px` to land in one step; the
-        // pixel taken off it settles the rounding.
+        // `px`: a width is near enough proportional to `px` to land in one step; the pixel taken
+        // off it settles the rounding.
         px = (px * column_w as f32 / widest.max(1) as f32)
             .min(px - 1.0)
             .max(theme.body_px);
@@ -389,8 +462,8 @@ fn fitting_px(cx: &mut Ctx, cells: &[Cell], column_w: i32) -> f32 {
     px
 }
 
-/// One figure centred in `box_`, its name under it. A name carrying
-/// [`Cell::opens`] is underlined.
+/// `figure`: one figure centred in `box_`, its name under it; a name carrying [`Cell::opens`] is
+/// underlined.
 fn figure(cx: &mut Ctx, box_: Rect, cell: &Cell, px: f32) {
     let theme: &Theme = cx.theme;
     cx.text.set_px(px);

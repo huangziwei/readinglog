@@ -1,6 +1,6 @@
-//! The record of what was read, at [`RECORD_DIR`]: [`Record::update`] folds
-//! `log::source` and `library` into `RECORD_FILE`, writing each sitting once
-//! but the one in progress, re-measured from its own start.
+//! [`Record`]: what was read, at [`RECORD_DIR`]; [`Record::update`] folds `log::source` and
+//! `library` into `RECORD_FILE`, writing each sitting once but the one in progress, re-measured
+//! from its own start.
 
 use std::cmp::Reverse;
 use std::fmt::Write as _;
@@ -17,21 +17,19 @@ use crate::log::sitting::{Measure, SITTING_GAP_SECS, Sitting, Stretch};
 use crate::log::source;
 use crate::sidecar;
 
-/// The directory the record's file sits in.
+/// `RECORD_DIR`: the directory the record's file sits in.
 pub const RECORD_DIR: &str = "/mnt/us/extensions/readinglog";
 
-/// The file inside it, holding the sittings, the books and the watermark.
+/// `RECORD_FILE`: the file inside it, holding the sittings, the books and the watermark.
 const RECORD_FILE: &str = "sessions.tsv";
 
-/// `sessions.tsv.partial`: the record another app uploads whole beside
-/// [`RECORD_FILE`] before it replaces that file, deleted once the file holds it.
+/// `PARTIAL_FILE`: a whole record uploaded beside [`RECORD_FILE`], deleted once that holds it.
 pub const PARTIAL_FILE: &str = "sessions.tsv.partial";
 
-/// The first field of the row closing the file, stating the lines above it.
+/// `END`: the first field of the row closing the file, stating the lines above it.
 pub(crate) const END: &str = "end";
 
-/// A record's file by its length and modification time, what
-/// [`Record::follow`] compares.
+/// `Seen`: a record's file by its length and modification time, what [`Record::follow`] compares.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Seen {
     len: u64,
@@ -39,7 +37,7 @@ pub struct Seen {
 }
 
 impl Seen {
-    /// The record's file in `dir`, `None` where there is none.
+    /// `of`: the record's file in `dir`, `None` where there is none.
     pub fn of(dir: &Path) -> Option<Self> {
         let meta = std::fs::metadata(Record::file(dir)).ok()?;
         Some(Self {
@@ -49,13 +47,13 @@ impl Seen {
     }
 }
 
-/// Append the closing row: [`END`] and the count of lines above it.
+/// `close` appends the closing row: [`END`] and the count of lines above it.
 pub(crate) fn close(out: &mut String) {
     let lines = out.lines().count();
     row(out, format_args!("{END}\t{lines}"));
 }
 
-/// Whether `text` ends in the row [`close`] writes.
+/// `closed`: whether `text` ends in the row [`close`] writes.
 pub fn closed(text: &str) -> bool {
     let Some(body) = text.strip_suffix('\n') else {
         return false;
@@ -65,25 +63,25 @@ pub fn closed(text: &str) -> bool {
     stated == Some(above.lines().count().to_string().as_str())
 }
 
-/// Whether `partial`, a [`PARTIAL_FILE`]'s bytes, stands for the record: whole
-/// by [`closed`], and `held`, the record's own file, missing or a cut copy of it.
+/// `partial_stands`: whether `partial`, a [`PARTIAL_FILE`]'s bytes, stands for the record: whole by
+/// [`closed`], and `held`, the record's own file, missing or a cut copy of it.
 pub fn partial_stands(held: Option<&[u8]>, partial: &[u8]) -> bool {
     std::str::from_utf8(partial).is_ok_and(closed)
         && held.is_none_or(|h| partial.len() > h.len() && partial.starts_with(h))
 }
 
-/// What the first line reads, `2` naming the parse below it.
+/// `HEADER`: what the first line reads, `2` naming the parse below it.
 pub(crate) const HEADER: &str = "#readinglog\t2";
 
-/// The progress `Book::stand_at` sets [`Book::finished`] at.
+/// `FINISHED_PERCENT`: the progress `Book::stand_at` sets [`Book::finished`] at.
 pub const FINISHED_PERCENT: f64 = 99.5;
 
-/// The shortest sitting [`Record::identify_from`] lets a witness identify a book over.
+/// `CLAIM_MIN_SECS`: the shortest sitting [`Record::identify_from`] identifies a book over.
 pub const CLAIM_MIN_SECS: i64 = 60;
 
-/// What identified a book, ranked strongest first, in the order
-/// [`crate::identify::from_sources`] asks the sources: each variant takes a book a
-/// weaker one identified, and none one [`IdentifiedBy::Library`] identified.
+/// `IdentifiedBy`: what identified a book, ranked strongest first, in the order
+/// [`crate::identify::from_sources`] asks the sources: each variant takes a book a weaker one
+/// identified, and none one [`IdentifiedBy::Library`] identified.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum IdentifiedBy {
     /// `cc.db`: the title, the author, the cover, the content key, the progress.
@@ -93,12 +91,12 @@ pub enum IdentifiedBy {
     Vocab,
     /// `My Clippings.txt`: a title and an author, per clipping.
     Clippings,
-    /// A `.sdr` directory: the book's own file name and nothing else.
+    /// `Sidecar`: a `.sdr` directory: the book's own file name and nothing else.
     Sidecar,
 }
 
 impl IdentifiedBy {
-    /// The letter a `b` row carries.
+    /// `as_str`: the letter a `b` row carries.
     fn as_str(self) -> &'static str {
         match self {
             Self::Library => "c",
@@ -108,8 +106,8 @@ impl IdentifiedBy {
         }
     }
 
-    /// What a `b` row's letter names, and `None` for a row carrying none or
-    /// any other text.
+    /// `from_stored`: what a `b` row's letter names, and `None` for a row carrying none or any
+    /// other text.
     fn from_stored(text: &str) -> Option<Self> {
         match text.trim() {
             "c" => Some(Self::Library),
@@ -121,7 +119,7 @@ impl IdentifiedBy {
     }
 }
 
-/// What `library` stated about one book, on the last pass that listed it.
+/// `Book`: what `library` stated about one book, on the last pass that listed it.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Book {
     /// `p_contentSize`, the number a sitting is keyed by.
@@ -133,50 +131,49 @@ pub struct Book {
     pub author: String,
     pub thumbnail: String,
     pub language: String,
-    /// The library's `p_percentFinished`, 0 through 100, negative where unstated.
+    /// `percent`: the library's `p_percentFinished`, 0 through 100, negative where unstated.
     pub percent: f64,
-    /// Whether `library` stated a `p_location` for this book on the last pass.
+    /// `on_kindle`: whether `library` stated a `p_location` for this book on the last pass.
     pub on_kindle: bool,
-    /// The record's own copy of the cover, under `covers::COVERS_DIR`.
+    /// `cover`: the record's own copy of the cover, under `covers::COVERS_DIR`.
     pub cover: String,
-    /// The `p_location` `library` last stated, empty where it stated none.
+    /// `location`: the `p_location` `library` last stated, empty where it stated none.
     pub location: String,
-    /// Whether this book is read through, set by [`Record::set_finished`].
+    /// `finished`: whether this book is read through, set by [`Record::set_finished`].
     pub finished: bool,
-    /// The progress [`Record::restart`] was called at.
+    /// `restart`: the progress [`Record::restart`] was called at.
     pub restart: Option<f64>,
-    /// The day each reading carried through to the end was restarted on.
+    /// `restarted_on`: the day each reading carried through to the end was restarted on.
     pub restarted_on: Vec<i64>,
-    /// The library's `p_readState`, negative where it states none.
+    /// `read_state`: the library's `p_readState`, negative where it states none.
     pub read_state: i64,
     /// `timer.model`'s `TotalTime` in milliseconds, zero until a sidecar of this book is read.
     pub timer_ms: i64,
     /// `timer.model`'s `TotalWords` beside `timer_ms`.
     pub timer_words: i64,
-    /// The share of the book `timer_ms` and `timer_words` were gathered over.
+    /// `timer_covered`: the share of the book `timer_ms` and `timer_words` were gathered over.
     pub timer_covered: f64,
-    /// Whether [`Record::clear_book`] took this book's reading, `Stats::build` listing it at zero.
+    /// `kept`: whether [`Record::clear_book`] took its reading, `Stats::build` listing it at zero.
     pub kept: bool,
-    /// What identified this book, free to a stronger [`IdentifiedBy`].
+    /// `identified_by`: what identified this book, free to a stronger [`IdentifiedBy`].
     pub identified_by: IdentifiedBy,
 }
 
 impl Book {
-    /// Whether this names a book. [`Self::cde_key`] carries a `*` for
-    /// a file with no content key, and [`crate::library::is_reading`] answers
-    /// for those from [`Self::location`].
+    /// `is_book`: whether this names a book. [`Self::cde_key`] carries a `*` for a file with no
+    /// content key, and [`crate::library::is_reading`] answers for those from [`Self::location`].
     pub fn is_book(&self) -> bool {
         !self.cde_key.starts_with('*') || crate::library::is_reading(&self.location)
     }
 
-    /// Whether the progress this book holds calls it read through.
+    /// `read_through`: whether the progress this book holds calls it read through.
     fn read_through(&self) -> bool {
         self.percent >= FINISHED_PERCENT
     }
 
-    /// Take `percent` as this book's progress, carrying [`Self::finished`] at or
-    /// past [`FINISHED_PERCENT`]. A `percent` equal to [`Self::restart`] is
-    /// dropped, and any other `percent` clears `restart` and stands.
+    /// `stand_at` takes `percent` as this book's progress, carrying [`Self::finished`] at or past
+    /// [`FINISHED_PERCENT`]; a `percent` equal to [`Self::restart`] is dropped, and any other
+    /// `percent` clears `restart` and stands.
     fn stand_at(&mut self, percent: f64) {
         let percent = stored_percent(percent);
         if let Some(from) = self.restart {
@@ -189,9 +186,9 @@ impl Book {
         self.finished |= self.read_through();
     }
 
-    /// Take `state` as [`Self::read_state`]: `state` differing from the one held
-    /// carries [`Self::finished`], an unchanged one leaves `finished` standing,
-    /// and [`Self::read_through`] outranks both.
+    /// `take_mark` takes `state` as [`Self::read_state`]: `state` differing from the one held
+    /// carries [`Self::finished`], an unchanged one leaves `finished` standing, and
+    /// [`Self::read_through`] outranks both.
     fn take_mark(&mut self, state: i64) {
         if state == self.read_state {
             return;
@@ -215,28 +212,28 @@ impl Book {
     }
 }
 
-/// A book whose reading was put back to zero, and when. Outlives the sittings
-/// it holds back.
+/// `Cleared`: a book whose reading was put back to zero, and when, outliving the sittings it
+/// holds back.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Cleared {
-    /// The book's `p_contentSize`, 0 where the library never stated one.
+    /// `extent`: the book's `p_contentSize`, 0 where the library never stated one.
     pub extent: i64,
-    /// The book's `cde_key`, which reaches a book carrying no extent.
+    /// `key`: the book's `cde_key`, which reaches a book carrying no extent.
     pub key: String,
-    /// The instant it was cleared, as `YYMMDD:HHMMSS`.
+    /// `at`: the instant it was cleared, as `YYMMDD:HHMMSS`.
     pub at: String,
 }
 
-/// The record, loaded whole.
+/// `Record`: the record, loaded whole.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Record {
-    /// Ascending by `started_at`, with `end_position` a sitting's identity.
+    /// `sittings`: ascending by `started_at`, with `end_position` a sitting's identity.
     pub sittings: Vec<Sitting>,
-    /// The offsets `Clock` holds, placing an instant a source states as a true epoch.
+    /// `clock`: the offsets `Clock` holds, placing an instant a source states as a true epoch.
     pub clock: Clock,
     /// `EndPos → BookEndPosition.FromBook`, ascending by key.
     pub ends: Vec<(i64, i64)>,
-    /// Every book `library` has listed, ascending by `extent` then `cde_key`.
+    /// `books`: every book `library` has listed, ascending by `extent` then `cde_key`.
     pub books: Vec<Book>,
     /// `extent → cde_key`, every pairing any pass has seen, ascending.
     pub keys: Vec<(i64, String)>,
@@ -244,47 +241,51 @@ pub struct Record {
     pub counters: Vec<(i64, i64, i64)>,
     /// `extent → the book's file`, from a sidecar of the same counter.
     pub pairs: Vec<(i64, String)>,
-    /// The newest log line any pass has read, as `YYMMDD:HHMMSS`.
+    /// `watermark`: the newest log line any pass has read, as `YYMMDD:HHMMSS`.
     pub watermark: String,
-    /// Seconds ahead of UTC at [`Self::watermark`], read by [`Self::follow_clock`].
+    /// `watermark_offset`: seconds ahead of UTC at [`Self::watermark`], for [`Self::follow_clock`].
     pub watermark_offset: Option<i64>,
-    /// Where the record was last reset, `YYMMDD:HHMMSS`, a floor to every pass.
+    /// `reset_at`: where the record was last reset, `YYMMDD:HHMMSS`, a floor to every pass.
     pub reset_at: String,
-    /// Books put back to zero, ascending by `extent` then `key`.
+    /// `cleared`: books put back to zero, ascending by `extent` then `key`.
     pub cleared: Vec<Cleared>,
-    /// Every highlight by stamp, each pass laid over them by [`crate::highlights::fold`].
+    /// `highlights`: every highlight by stamp, each pass laid over by [`crate::highlights::fold`].
     pub highlights: Vec<Highlight>,
-    /// What the pass that wrote [`Self::highlights`] saw, `None` where no pass has.
+    /// `gate`: what the pass that wrote [`Self::highlights`] saw, `None` where no pass has.
     pub gate: Option<Gate>,
-    /// What the last pass over the identifying sources stood at, `None` where none has.
+    /// `sources`: what the last pass over the identifying sources stood at, `None` where none has.
     pub sources: Option<Sources>,
     /// `w` rows, ascending by when they were written.
     pub notes: Vec<crate::written::Note>,
     /// `r` rows, ascending by identity.
     pub corrections: Vec<crate::written::Correction>,
+    /// `metadata`: `d` rows, one per book and field.
+    pub metadata: Vec<crate::metadata::Metadata>,
+    /// `links`: `l` rows, names counted as one value, one per link.
+    pub links: Vec<crate::metadata::links::Link>,
 }
 
-/// What one pass did.
+/// `Pass`: what one pass did.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Pass {
     pub lines: usize,
-    /// Sittings this pass added, past the ones it re-measured.
+    /// `added`: sittings this pass added, past the ones it re-measured.
     pub added: usize,
-    /// Sittings re-measured, having been in progress.
+    /// `extended`: sittings re-measured, having been in progress.
     pub extended: usize,
     pub from: source::Sources,
-    /// Seconds [`Record::follow_clock`] pulled the watermark back by, else 0.
+    /// `rewound`: seconds [`Record::follow_clock`] pulled the watermark back by, else 0.
     pub rewound: i64,
 }
 
 impl Record {
-    /// The record's file under `dir`.
+    /// `file`: the record's file under `dir`.
     pub fn file(dir: &Path) -> PathBuf {
         dir.join(RECORD_FILE)
     }
 
-    /// Read the record: empty where there is none or it will not parse, whole
-    /// under any other `HEADER`.
+    /// `load` reads the record: empty where there is none or it will not parse, whole under any
+    /// other `HEADER`.
     pub fn load(dir: &Path) -> Self {
         let Some(text) = Self::read(dir) else {
             return Self::default();
@@ -300,8 +301,8 @@ impl Record {
         Self::from_text(&text)
     }
 
-    /// The record's file in `dir` as text, a [`PARTIAL_FILE`] renamed into its
-    /// place first where it [`partial_stands`] for the record.
+    /// `read`: the record's file in `dir` as text, a [`PARTIAL_FILE`] renamed into its place first
+    /// where it [`partial_stands`] for the record.
     fn read(dir: &Path) -> Option<String> {
         let file = Self::file(dir);
         let held = std::fs::read_to_string(&file).ok();
@@ -318,7 +319,7 @@ impl Record {
         }
     }
 
-    /// Every row `text` holds, whatever stamp it carries.
+    /// `from_text`: every row `text` holds, whatever stamp it carries.
     pub fn from_text(text: &str) -> Self {
         Self::parse(text)
     }
@@ -328,11 +329,13 @@ impl Record {
         Self::parse(text)
     }
 
-    /// The rows of `text`, one arm per row type.
+    /// `parse`: the rows of `text`, one arm per row type.
     fn parse(text: &str) -> Self {
         let mut out = Self::default();
         // `Clock` sorts and collapses `seen`, folded in whole past the loop.
         let mut seen: Vec<(i64, i64)> = Vec::new();
+        // `set` and `linked` take every readable copy, folded in past the loop.
+        let (mut set, mut linked) = (Vec::new(), Vec::new());
         for line in text.lines() {
             let mut f = line.split('\t');
             match f.next() {
@@ -391,18 +394,22 @@ impl Record {
                 Some("r") => out
                     .corrections
                     .extend(crate::written::read_correction(&mut f)),
+                Some("d") => set.extend(crate::metadata::read_row(line)),
+                Some("l") => linked.extend(crate::metadata::links::read_row(line)),
                 _ => {}
             }
         }
+        crate::metadata::take(&mut out.metadata, &set);
+        crate::metadata::links::take(&mut out.links, &linked);
         out.clock.observe(seen);
         out.sort();
         out.migrate();
         out
     }
 
-    /// Set [`IdentifiedBy::Sidecar`] on each [`IdentifiedBy::Library`] book whose
-    /// `(extent, cde_key)` sits in [`Self::pairs`] — the pairing
-    /// [`Self::recover`] writes, and no other record carries.
+    /// `migrate` sets [`IdentifiedBy::Sidecar`] on each [`IdentifiedBy::Library`] book whose
+    /// `(extent, cde_key)` sits in [`Self::pairs`] — the pairing [`Self::recover`] writes, and no
+    /// other record carries.
     fn migrate(&mut self) {
         for i in 0..self.books.len() {
             if self.books[i].identified_by != IdentifiedBy::Library {
@@ -415,9 +422,8 @@ impl Record {
         }
     }
 
-    /// Write the record to `dir`, replacing what is there.
-    ///
-    /// Through a `.partial` sibling and a rename.
+    /// `save` writes the record to `dir` through a `.partial` sibling and a rename, replacing what
+    /// is there.
     pub fn save(&self, dir: &Path) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
         let target = Self::file(dir);
@@ -441,8 +447,8 @@ impl Record {
         Ok(())
     }
 
-    /// Take the notes and corrections of the file in `dir` where it moved since
-    /// `seen`, then set `seen` to it; answers whether this record moved.
+    /// `follow` takes the notes and corrections of the file in `dir` where it moved since `seen`,
+    /// then set `seen` to it; answers whether this record moved.
     pub fn follow(&mut self, dir: &Path, seen: &mut Option<Seen>) -> bool {
         let now = Seen::of(dir);
         if now == *seen {
@@ -455,8 +461,8 @@ impl Record {
         }
     }
 
-    /// The record as the file holds it, which is what a backup carries and
-    /// what [`Self::load`] reads back.
+    /// `text`: the record as the file holds it, which is what a backup carries and what
+    /// [`Self::load`] reads back.
     pub fn text(&self) -> String {
         // `out` takes every row through `write!`, a `String` for none.
         let mut out = String::new();
@@ -526,6 +532,12 @@ impl Record {
                 ),
             );
         }
+        for row in &self.metadata {
+            crate::metadata::write_row(&mut out, row);
+        }
+        for link in &self.links {
+            crate::metadata::links::write_row(&mut out, link);
+        }
         for n in &self.notes {
             crate::written::write_note(&mut out, n);
         }
@@ -536,9 +548,9 @@ impl Record {
         out
     }
 
-    /// Take `highlights`, one pass's rows, over [`Self::highlights`] as
-    /// [`crate::highlights::over`] lays them, with the gate the pass stood
-    /// at. Answers whether anything moved.
+    /// `take_highlights` takes `highlights`, one pass's rows, over [`Self::highlights`] as
+    /// [`crate::highlights::over`] lays them, with the gate the pass stood at. `take_highlights`
+    /// answers whether anything moved.
     pub fn take_highlights(
         &mut self,
         highlights: Vec<Highlight>,
@@ -553,14 +565,14 @@ impl Record {
         moved
     }
 
-    /// The highlights one book carries, in the order they were made.
+    /// `highlights_of`: the highlights one book carries, in the order they were made.
     pub fn highlights_of(&self, extent: i64) -> impl Iterator<Item = &Highlight> {
         self.highlights.iter().filter(move |m| m.extent == extent)
     }
 
-    /// Move [`Self::watermark`] and [`Self::reset_at`] onto the clock `offset` names at
-    /// `at`, answering the seconds they moved, and write that clock into
-    /// [`Self::clock`]. `offset` stepping forward moves neither.
+    /// `follow_clock` moves [`Self::watermark`] and [`Self::reset_at`] onto the clock `offset`
+    /// names at `at`, answering the seconds they moved, and write that clock into [`Self::clock`].
+    /// `offset` stepping forward moves neither.
     pub fn follow_clock(&mut self, at: i64, offset: Option<i64>) -> i64 {
         let Some(now) = offset else {
             return 0;
@@ -579,15 +591,15 @@ impl Record {
         back
     }
 
-    /// The instant a pass must start reading the log at: [`Self::watermark`], or under
-    /// `Self::open_at_watermark` the newest sitting's own start, re-measuring that
-    /// sitting whole. Never under [`Self::reset_at`].
+    /// `read_from`: the instant a pass starts reading the log at, never under [`Self::reset_at`]:
+    /// [`Self::watermark`], or under `Self::open_at_watermark` the newest sitting's own start,
+    /// re-measuring that sitting whole.
     pub fn read_from(&self) -> String {
         self.starts_at().max(self.reset_at.clone())
     }
 
-    /// [`Self::read_from`] before [`Self::reset_at`] is applied. An empty `sittings`
-    /// answers the empty string, and [`Self::watermark`] bounds nothing.
+    /// [`Self::read_from`] before [`Self::reset_at`] is applied; an empty `sittings` answers the
+    /// empty string, and [`Self::watermark`] bounds nothing.
     fn starts_at(&self) -> String {
         let Some(newest) = self.sittings.last() else {
             return String::new();
@@ -599,7 +611,7 @@ impl Record {
         self.watermark.clone().max(start)
     }
 
-    /// The sitting `sitting` continues across a midnight cut: the same book's
+    /// `continued_from`: the sitting `sitting` continues across a midnight cut: the same book's
     /// sitting closing at `23:59:59` the day before, else `sitting` itself.
     fn continued_from<'a>(&'a self, sitting: &'a Sitting) -> &'a Sitting {
         let mut begun = sitting;
@@ -620,8 +632,8 @@ impl Record {
         begun
     }
 
-    /// Whether [`Self::watermark`] falls within [`SITTING_GAP_SECS`] of `sitting`
-    /// ending, true where a stamp will not parse.
+    /// `open_at_watermark`: whether [`Self::watermark`] falls within [`SITTING_GAP_SECS`] of
+    /// `sitting` ending, true where a stamp will not parse.
     fn open_at_watermark(&self, sitting: &Sitting) -> bool {
         let (Some(ended), Some(watermark)) = (
             instant(&sitting.ended_at),
@@ -632,16 +644,16 @@ impl Record {
         watermark - ended < SITTING_GAP_SECS
     }
 
-    /// Fold `lines` into the record: what `lines` measured replaces every sitting
-    /// at or after `from`, less those [`Self::barred`] answers for.
+    /// `absorb` folds `lines` into the record: what `lines` measured replaces every sitting at or
+    /// after `from`, less those [`Self::barred`] answers for.
     pub fn absorb(&mut self, lines: &[String], from: &str) -> (usize, usize) {
         let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
         let cut = match from.is_empty() {
             true => String::new(),
             false => iso_stamp(from),
         };
-        // The sittings `parsed` replaces, which state the counters a sitting
-        // opened at where the lines before `from` did.
+        // `restated`: the sittings `parsed` replaces, which state the counters a sitting opened at
+        // where the lines before `from` did.
         let restated = match cut.is_empty() {
             true => &[][..],
             false => {
@@ -651,7 +663,7 @@ impl Record {
         };
         let parsed =
             crate::log::sitting::parse_restating(refs.iter().copied(), &self.counters, restated);
-        // Ahead of the sittings: `Self::barred` places one through `ends`.
+        // `k`: Ahead of the sittings: `Self::barred` places one through `ends`.
         for (k, v) in crate::log::line::frombook_map(refs.iter().copied()) {
             self.learn_end(k, v);
         }
@@ -660,8 +672,8 @@ impl Record {
             self.learn_counter(ep, ms, words);
         }
         let mut parsed: Vec<Sitting> = parsed.into_iter().filter(|s| !self.barred(s)).collect();
-        // The clock this pass ran under, on the sittings it caught up with, an
-        // older one keeping its own pass's.
+        // `offset`: the clock this pass ran under, on the sittings it caught up with, an older one
+        // keeping its own pass's.
         if let Some(offset) = self.watermark_offset {
             let (today, _) = crate::date::now();
             for sitting in &mut parsed {
@@ -690,8 +702,8 @@ impl Record {
         (found.saturating_sub(dropped), dropped.min(found))
     }
 
-    /// Whether `sitting` starts under [`Self::reset_at`], or under the stamp of
-    /// the `c` row identifying its book.
+    /// `barred`: whether `sitting` starts under [`Self::reset_at`], or under the stamp of the `c`
+    /// row identifying its book.
     fn barred(&self, sitting: &Sitting) -> bool {
         if !self.reset_at.is_empty() && sitting.started_at < iso_stamp(&self.reset_at) {
             return true;
@@ -706,8 +718,8 @@ impl Record {
         }
     }
 
-    /// When a book was last cleared, found the way [`Self::slot_for`] finds the
-    /// book: under `extent` where one is stated, else under `key`.
+    /// `cleared_at`: when a book was last cleared, found the way [`Self::slot_for`] finds the book:
+    /// under `extent` where one is stated, else under `key`.
     fn cleared_at(&self, extent: i64, key: Option<&str>) -> Option<&str> {
         if extent != 0
             && let Some(c) = self.cleared.iter().find(|c| c.extent == extent)
@@ -721,7 +733,7 @@ impl Record {
             .map(|c| c.at.as_str())
     }
 
-    /// Read the log and fold it in, reporting files opened and files to open.
+    /// `update` reads the log and fold it in, reporting files opened and files to open.
     pub fn update(&mut self, on: &mut dyn FnMut(usize, usize)) -> Pass {
         let now = crate::date::epoch_now();
         let rewound = self.follow_clock(now, crate::zone::offset_at(now));
@@ -743,8 +755,8 @@ impl Record {
         }
     }
 
-    /// Parse the whole log into a [`Record`] of its own and fold it in through
-    /// [`Self::merge`]. Clears [`Self::reset_at`], keeps the `c` rows. Answers
+    /// `rebuild` parses the whole log into a [`Record`] of its own and fold it in through
+    /// [`Self::merge`]. `rebuild` clears [`Self::reset_at`], keeps the `c` rows. `rebuild` answers
     /// the sittings [`Self::merge`] added.
     pub fn rebuild(&mut self, on: &mut dyn FnMut(usize, usize)) -> usize {
         self.rebuild_from(
@@ -755,8 +767,8 @@ impl Record {
         )
     }
 
-    /// Re-measure every sitting [`source::collect_from`] restates. Answers
-    /// the stored rows whose figures moved.
+    /// `heal`: Re-measure every sitting [`source::collect_from`] restates. `heal` answers the
+    /// stored rows whose figures moved.
     pub fn heal(&mut self, on: &mut dyn FnMut(usize, usize)) -> usize {
         self.heal_from(
             Path::new(source::LIVE_LOG),
@@ -766,9 +778,9 @@ impl Record {
         )
     }
 
-    /// Every end position each counter pair was stated for, all pairs at
-    /// once: the sittings carrying their own last reading, and the `t` rows
-    /// standing for the end positions no sitting counter reaches.
+    /// `end_positions_by_counter`: every end position each counter pair was stated for, all pairs
+    /// at once: the sittings carrying their own last reading, and the `t` rows standing for the end
+    /// positions no sitting counter reaches.
     fn end_positions_by_counter(&self) -> std::collections::HashMap<(i64, i64), Vec<i64>> {
         let mut out: std::collections::HashMap<(i64, i64), Vec<i64>> =
             std::collections::HashMap::new();
@@ -791,8 +803,8 @@ impl Record {
         out
     }
 
-    /// Whether an end position no book names holds no counter, on the sitting or in
-    /// [`Self::counters`] — what a pass over the logs can add.
+    /// `wants_the_logs`: whether an end position no book names holds no counter, on the sitting or
+    /// in [`Self::counters`] — what a pass over the logs can add.
     pub fn wants_the_logs(&self) -> bool {
         self.sittings.iter().any(|s| {
             let held = s.end_counter_ms.is_some()
@@ -807,9 +819,9 @@ impl Record {
         })
     }
 
-    /// Read the whole log for what each end position states — its book end
-    /// in [`Self::ends`], its counter in [`Self::counters`] — folding in no
-    /// sitting. Answers the end positions that gained a counter.
+    /// `relearn_end_positions` reads the whole log for what each end position states — its book
+    /// end in [`Self::ends`], its counter in [`Self::counters`] — folding in no sitting.
+    /// `relearn_end_positions` answers the end positions that gained a counter.
     pub fn relearn_end_positions(&mut self, on: &mut dyn FnMut(usize, usize)) -> usize {
         self.end_positions_from(
             Path::new(source::LIVE_LOG),
@@ -940,9 +952,9 @@ impl Record {
         healed
     }
 
-    /// Fold what `library` states into [`Self::books`], answering how many
-    /// books changed: `library` merges into each book it lists, and leaves
-    /// a book it stops listing what it holds.
+    /// `remember` folds what `library` states into [`Self::books`], answering how many books
+    /// changed: `library` merges into each book it lists, and leaves a book it stops listing what
+    /// it holds.
     pub fn remember(&mut self, library: &[library::Book]) -> usize {
         let was_on: Vec<bool> = self.books.iter().map(|r| r.on_kindle).collect();
         // `moved` opens on `was_on`, moving each book the library stops listing.
@@ -950,13 +962,13 @@ impl Record {
         for book in &mut self.books {
             book.on_kindle = false;
         }
-        // Every slot a `cde_key` reaches, in slot order.
+        // `by_key`: every slot a `cde_key` reaches, in slot order.
         let mut by_key: std::collections::HashMap<String, Vec<usize>> =
             std::collections::HashMap::new();
         for (at, book) in self.books.iter().enumerate() {
             by_key.entry(book.cde_key.clone()).or_default().push(at);
         }
-        // The slots `library` stated a `p_percentFinished` for on this pass.
+        // `stated`: the slots `library` stated a `p_percentFinished` for on this pass.
         let mut stated: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for listed in library {
             let slot = match slot_in(&by_key, &self.books, listed) {
@@ -991,8 +1003,8 @@ impl Record {
         moved.into_iter().filter(|&m| m).count()
     }
 
-    /// Take each book's `timer.model` counter off the sidecar of its own file,
-    /// through [`Self::pairs`]. Answers how many books moved.
+    /// `note_timers` takes each book's `timer.model` counter off the sidecar of its own file,
+    /// through [`Self::pairs`]. `note_timers` answers how many books moved.
     pub fn note_timers(&mut self, sidecars: &[sidecar::Counter]) -> usize {
         let mut moved = 0;
         for card in sidecars {
@@ -1016,9 +1028,10 @@ impl Record {
         moved
     }
 
-    /// Identify reading the library cannot: `sidecars` against [`Self::end_positions_by_counter`].
+    /// `recover` identifies reading the library cannot: `sidecars` against
+    /// [`Self::end_positions_by_counter`].
     pub fn recover(&mut self, sidecars: &[sidecar::Counter]) -> usize {
-        // Drop a pairing whose extent a book carries under another key.
+        // `self.pairs` loses each pairing whose extent a book carries under another key.
         if !self.pairs.is_empty() {
             let mut keyed: std::collections::HashMap<i64, Vec<&str>> =
                 std::collections::HashMap::new();
@@ -1040,11 +1053,11 @@ impl Record {
                 .collect();
             self.pairs.retain(|held| !drop.contains(held));
         }
-        // Nothing to identify and nothing left to drop.
+        // `sidecars`, empty, leaves nothing to identify and nothing to drop.
         if sidecars.is_empty() {
             return 0;
         }
-        // The end positions each counter pair was ever stated for.
+        // `end_positions`: the end positions each counter pair was ever stated for.
         let end_positions = self.end_positions_by_counter();
         let mut claims: Vec<(i64, &str)> = Vec::new();
         for card in sidecars {
@@ -1086,7 +1099,7 @@ impl Record {
         identified
     }
 
-    /// Every end position with sittings that [`Self::wants`] answers `by`
+    /// `end_positions_wanting`: every end position with sittings that [`Self::wants`] answers `by`
     /// for: one no book names, and one whose `identified_by` ranks under `by`.
     /// [`crate::identify::from_sources`] reads no source an empty answer names.
     pub fn end_positions_wanting(&self, by: IdentifiedBy) -> Vec<i64> {
@@ -1102,9 +1115,8 @@ impl Record {
         out
     }
 
-    /// The record as the identifying pass reads it, in one number: the sittings'
-    /// brackets and counters, the end position each states, and the books a
-    /// claim could land on.
+    /// `identify_stamp`: the record as the identifying pass reads it, in one number: the sittings'
+    /// brackets and counters, the end position each states, and the books a claim could land on.
     pub fn identify_stamp(&self) -> u64 {
         let mut stamp = crate::stamp::Stamp::default();
         for s in &self.sittings {
@@ -1144,7 +1156,7 @@ impl Record {
         stamp.done()
     }
 
-    /// Whether [`Self::wants`] answers `by` for any end position in
+    /// `wants_identifying`: whether [`Self::wants`] answers `by` for any end position in
     /// [`Self::sittings`].
     pub fn wants_identifying(&self, by: IdentifiedBy) -> bool {
         self.sittings
@@ -1152,7 +1164,7 @@ impl Record {
             .any(|s| self.wants(self.extent_of(s.end_position), s.asin.as_deref(), by))
     }
 
-    /// Whether a source ranked `by` may speak for `extent`.
+    /// `wants`: whether a source ranked `by` may speak for `extent`.
     fn wants(&self, extent: i64, key: Option<&str>, by: IdentifiedBy) -> bool {
         match self.book_for(extent, key) {
             Some(book) => book.identified_by > by,
@@ -1160,9 +1172,9 @@ impl Record {
         }
     }
 
-    /// Identify reading the library cannot, from what `witnesses` saw: each names the
-    /// one end position bracketing its instant, over a sitting of at least
-    /// [`CLAIM_MIN_SECS`]; `contested` holds the rest.
+    /// `identify_from` identifies reading the library cannot, from what `witnesses` saw: each names
+    /// the one end position bracketing its instant, over a sitting of at least [`CLAIM_MIN_SECS`];
+    /// `contested` holds the rest.
     pub fn identify_from(
         &mut self,
         witnesses: &[crate::identify::Witness],
@@ -1247,8 +1259,8 @@ impl Record {
         identified
     }
 
-    /// The book a claim names: the one `key` names, else the only one
-    /// carrying `name`. `None` where two books share `name`.
+    /// `titled`: the book a claim names: the one `key` names, else the only one carrying `name`.
+    /// `None` where two books share `name`.
     fn titled(&self, name: &str, key: &str) -> Option<usize> {
         if !key.is_empty()
             && let Some(slot) = self.books.iter().position(|b| b.cde_key == key)
@@ -1264,8 +1276,8 @@ impl Record {
         found.next().is_none().then_some(slot)
     }
 
-    /// Drop the book a source weaker than `by` made for `extent`, and the
-    /// `pairs` and `keys` rows reaching it.
+    /// `give_up` drops the book a source weaker than `by` made for `extent`, and the `pairs` and
+    /// `keys` rows reaching it.
     fn give_up(&mut self, extent: i64, by: IdentifiedBy) -> bool {
         let Some(slot) = self
             .books
@@ -1282,8 +1294,7 @@ impl Record {
         true
     }
 
-    /// Every sitting placed on the clock, ascending by start, for bracketing
-    /// a witness.
+    /// `spans`: every sitting placed on the clock, ascending by start, for bracketing a witness.
     fn spans(&self) -> Vec<Span> {
         self.sittings
             .iter()
@@ -1299,7 +1310,7 @@ impl Record {
             .collect()
     }
 
-    /// The book whose `cde_key` `file` contains, where exactly one does and it
+    /// `keyed_by_name`: the book whose `cde_key` `file` contains, where exactly one does and it
     /// states no extent.
     fn keyed_by_name(&self, file: &str) -> Option<usize> {
         let mut found = self.books.iter().enumerate().filter(|(_, b)| {
@@ -1309,7 +1320,7 @@ impl Record {
         found.next().is_none().then_some(slot)
     }
 
-    /// Give the book at `slot` the progress its newest sitting states.
+    /// `stand_where_read` gives the book at `slot` the progress its newest sitting states.
     /// `sittings` ascends by `started_at`.
     fn stand_where_read(&mut self, slot: usize) {
         let extent = self.books[slot].extent;
@@ -1324,9 +1335,9 @@ impl Record {
         }
     }
 
-    /// Give each book outside `stated` the furthest its sittings reached,
-    /// where that stands past the progress it holds. `progress` fills the gap a
-    /// library row's deletion leaves, and stands a page short of the end.
+    /// `note_progress` gives each book outside `stated` the furthest its sittings reached, where
+    /// that stands past the progress it holds. `progress` fills the gap a library row's deletion
+    /// leaves, and stands a page short of the end.
     fn note_progress(&mut self, stated: &std::collections::HashSet<usize>) {
         for i in 0..self.sittings.len() {
             let Some(progress) = self.sittings[i].progress else {
@@ -1344,9 +1355,8 @@ impl Record {
         }
     }
 
-    /// The slots in [`Self::books`] `Stats::build` lists: the slot a sitting
-    /// is credited to, and one [`Self::clear_book`] set `kept`, less those
-    /// [`Book::is_book`] refuses.
+    /// `shown_slots`: the slots in [`Self::books`] `Stats::build` lists: the slot a sitting is
+    /// credited to, and one [`Self::clear_book`] set `kept`, less those [`Book::is_book`] refuses.
     fn shown_slots(&self) -> std::collections::HashSet<usize> {
         let mut out: std::collections::HashSet<usize> = self
             .sittings
@@ -1358,8 +1368,7 @@ impl Record {
         out
     }
 
-    /// The record in one short line: what it holds, and how far the pass has
-    /// read.
+    /// `said`: the record in one short line: what it holds, and how far the pass has read.
     pub fn said(&self) -> String {
         format!(
             "{} s, {} b, {} a, watermark {}",
@@ -1373,9 +1382,9 @@ impl Record {
         )
     }
 
-    /// Copy the cover of each slot [`Self::shown_slots`] answers into `dir`,
-    /// point its `cover` at the copy, and delete every other file there,
-    /// leaving an empty `cover` on a slot left out.
+    /// `keep_covers` copies the cover of each slot [`Self::shown_slots`] answers into `dir`, point
+    /// its `cover` at the copy, and delete every other file there, leaving an empty `cover` on a
+    /// slot left out.
     pub fn keep_covers(&mut self, dir: &Path) -> CoverSweep {
         self.keep_covers_from(dir, Path::new(covers::THUMBNAILS_DIR))
     }
@@ -1391,7 +1400,7 @@ impl Record {
         let mut cached: Option<std::collections::HashMap<String, PathBuf>> = None;
         let mut kept = 0;
         let mut uncovered = 0;
-        // Titles named on one line by `CoverSweep::said`.
+        // `lost`: Titles named on one line by `CoverSweep::said`.
         let mut lost: Vec<String> = Vec::new();
         for (slot, book) in self.books.iter_mut().enumerate() {
             if !shown.contains(&slot) {
@@ -1456,8 +1465,8 @@ impl Record {
         }
     }
 
-    /// Where `book` sits in [`Self::books`]: under its `extent`, else its key.
-    /// A `book` stating no extent reaches a book carrying one.
+    /// `slot_of`: where `book` sits in [`Self::books`]: under its `extent`, else its key; a `book`
+    /// stating no extent reaches a book carrying one.
     #[cfg(test)]
     fn slot_of(&self, book: &library::Book) -> Option<usize> {
         if book.extent != 0
@@ -1471,15 +1480,14 @@ impl Record {
         self.books.iter().position(|r| r.cde_key == book.cde_key)
     }
 
-    /// The [`Book`] a sitting reaches: by `extent` first, then by `key`.
-    ///
-    /// `key` reaches a book whose `p_contentSize` `library` never stated.
+    /// `book_for`: the [`Book`] a sitting reaches, by `extent` first, then by `key`, which reaches
+    /// a book whose `p_contentSize` `library` never stated.
     pub fn book_for(&self, extent: i64, key: Option<&str>) -> Option<&Book> {
         self.slot_for(extent, key).map(|i| &self.books[i])
     }
 
-    /// Where [`Self::book_for`]'s answer sits in [`Self::books`]. `extent`
-    /// answers, and `key` takes it where `key` reaches the lower [`IdentifiedBy`].
+    /// `slot_for`: where [`Self::book_for`]'s answer sits in [`Self::books`]. `extent` answers, and
+    /// `key` takes it where `key` reaches the lower [`IdentifiedBy`].
     fn slot_for(&self, extent: i64, key: Option<&str>) -> Option<usize> {
         let by_extent = match extent {
             0 => None,
@@ -1505,9 +1513,8 @@ impl Record {
             .and_then(|f| self.books.iter().position(|b| b.cde_key == f))
     }
 
-    /// The first book carrying `extent`, over the key [`Self::sort_books`]
-    /// orders on: `partition_point` answers the **first** of a run of books
-    /// sharing an extent.
+    /// `slot_at`: the first book carrying `extent`, over the key [`Self::sort_books`] orders on:
+    /// `partition_point` answers the **first** of a run of books sharing an extent.
     fn slot_at(&self, extent: i64) -> Option<usize> {
         let at = self.books.partition_point(|b| b.extent < extent);
         self.books
@@ -1516,23 +1523,22 @@ impl Record {
             .map(|_| at)
     }
 
-    /// The book file a sidecar paired `extent` with, where exactly one did.
+    /// `file_at`: the book file a sidecar paired `extent` with, where exactly one did.
     fn file_at(&self, extent: i64) -> Option<&str> {
         let mut found = self.pairs.iter().filter(|(e, _)| *e == extent);
         let (_, only) = found.next()?;
         found.next().is_none().then_some(only.as_str())
     }
 
-    /// The `cde_key` some pass paired `extent` with, where exactly one did.
+    /// `key_at`: the `cde_key` some pass paired `extent` with, where exactly one did.
     fn key_at(&self, extent: i64) -> Option<&str> {
         let mut found = self.keys.iter().filter(|(e, _)| *e == extent);
         let (_, only) = found.next()?;
         found.next().is_none().then_some(only.as_str())
     }
 
-    /// Set [`Book::finished`] on the book [`Self::book_for`] answers
-    /// for `extent` and `key`, answering whether the value changed; `finished`
-    /// clears [`Book::restart`].
+    /// `set_finished` sets [`Book::finished`] on the book [`Self::book_for`] answers for `extent`
+    /// and `key`, answering whether the value changed; `finished` clears [`Book::restart`].
     pub fn set_finished(&mut self, extent: i64, key: &str, finished: bool) -> bool {
         let Some(slot) = self.slot_for(extent, Some(key)) else {
             return false;
@@ -1546,17 +1552,17 @@ impl Record {
         changed
     }
 
-    /// Write `state` down as [`Book::read_state`], leaving
-    /// [`Book::finished`] where it stands.
+    /// `note_mark` writes `state` down as [`Book::read_state`], leaving [`Book::finished`] where it
+    /// stands.
     pub fn note_mark(&mut self, extent: i64, key: &str, state: i64) {
         if let Some(slot) = self.slot_for(extent, Some(key)) {
             self.books[slot].read_state = state;
         }
     }
 
-    /// Restart the book [`Self::book_for`] answers for, on `day`: `finished`
-    /// banks on [`Book::restarted_on`] and comes off, `percent` becomes
-    /// [`Book::restart`] and reads 0. Answers whether anything changed.
+    /// `restart` restarts the book [`Self::book_for`] answers for, on `day`: `finished` banks on
+    /// [`Book::restarted_on`] and comes off, `percent` becomes [`Book::restart`] and reads 0.
+    /// `restart` answers whether anything changed.
     pub fn restart(&mut self, extent: i64, key: &str, day: i64) -> bool {
         let Some(slot) = self.slot_for(extent, Some(key)) else {
             return false;
@@ -1574,8 +1580,8 @@ impl Record {
         changed
     }
 
-    /// Clear `sittings`, `books` and `ends`, and set [`Self::reset_at`] from
-    /// [`Self::watermark`]. `watermark` and the `c` rows stand. Answers false where
+    /// `reset` clears `sittings`, `books` and `ends`, and set [`Self::reset_at`] from
+    /// [`Self::watermark`]. `watermark` and the `c` rows stand. `reset` answers false where
     /// `watermark` is empty.
     pub fn reset(&mut self) -> bool {
         if self.watermark.is_empty() {
@@ -1610,9 +1616,8 @@ impl Record {
         self.merge(other)
     }
 
-    /// Fold `other`'s sittings, ends and books into this one, through
-    /// [`Self::sort`]. [`Self::reset_at`] and the `c` rows stand. Answers the
-    /// sittings added.
+    /// `merge` folds `other`'s sittings, ends and books into this one, through [`Self::sort`].
+    /// [`Self::reset_at`] and the `c` rows stand. `merge` answers the sittings added.
     pub fn merge(&mut self, other: &Record) -> usize {
         let before = self.sittings.len();
         self.take_sittings(&other.sittings);
@@ -1653,7 +1658,7 @@ impl Record {
         self.sittings.len() - before
     }
 
-    /// Fold `fresh` into `sittings`. A `row` closing where a held row of its book
+    /// `take_sittings` folds `fresh` into `sittings`; a `row` closing where a held row of its book
     /// closes hands that row [`Sitting::keep_close`] from a start no earlier, and
     /// [`Sitting::remeasure`] from an earlier one.
     fn take_sittings(&mut self, fresh: &[Sitting]) {
@@ -1685,9 +1690,8 @@ impl Record {
         }
     }
 
-    /// One book's rows as a [`Record`]: its `b` row, the sittings
-    /// [`Self::slot_for`] places on it, and the `e` rows keying them. Empty
-    /// where `extent` and `key` reach no book.
+    /// `one_book`: one book's rows as a [`Record`]: its `b` row, the sittings [`Self::slot_for`]
+    /// places on it, and the `e` rows keying them; empty where `extent` and `key` reach no book.
     pub fn one_book(&self, extent: i64, key: &str) -> Record {
         let Some(slot) = self.slot_for(extent, Some(key)) else {
             return Record::default();
@@ -1758,12 +1762,20 @@ impl Record {
                 })
                 .cloned()
                 .collect(),
+            metadata: self
+                .metadata
+                .iter()
+                .filter(|m| m.names(&key, self.books[slot].extent))
+                .cloned()
+                .collect(),
+            // `links` name words of the whole record, not one book.
+            links: Vec::new(),
         }
     }
 
-    /// Put one book back to zero: [`Self::drop_reading`] takes its sittings,
-    /// [`Self::restart`] its progress, and [`Book::kept`] keeps it listed.
-    /// Answers the sittings dropped.
+    /// `clear_book` puts one book back to zero: [`Self::drop_reading`] takes its sittings,
+    /// [`Self::restart`] its progress, and [`Book::kept`] keeps it listed. `clear_book` answers the
+    /// sittings dropped.
     pub fn clear_book(&mut self, extent: i64, key: &str) -> usize {
         let went = self.drop_reading(extent, key);
         self.restart(extent, key, 0);
@@ -1774,9 +1786,8 @@ impl Record {
         went
     }
 
-    /// [`Self::clear_book`], and the `b` row with it. Answers the sittings
-    /// dropped. [`Self::remember`] writes a fresh `b` row for a book the
-    /// library lists.
+    /// [`Self::clear_book`], and the `b` row with it. `forget_book` answers the sittings dropped.
+    /// [`Self::remember`] writes a fresh `b` row for a book the library lists.
     pub fn forget_book(&mut self, extent: i64, key: &str) -> usize {
         let went = self.drop_reading(extent, key);
         if let Some(slot) = self.slot_for(extent, Some(key)) {
@@ -1786,7 +1797,7 @@ impl Record {
         went
     }
 
-    /// The highlights of one book, dropped, and `gate` with them.
+    /// `drop_highlights`: the highlights of one book, dropped, and `gate` with them.
     fn drop_highlights(&mut self, extent: i64) {
         let before = self.highlights.len();
         self.highlights.retain(|m| m.extent != extent);
@@ -1795,14 +1806,14 @@ impl Record {
         }
     }
 
-    /// The sittings of one book, dropped and held back. Answers how many went.
+    /// `drop_reading` drops one book's sittings and holds them back, answering how many went.
     fn drop_reading(&mut self, extent: i64, key: &str) -> usize {
         let Some(slot) = self.slot_for(extent, Some(key)) else {
             return 0;
         };
         self.drop_highlights(self.books[slot].extent);
         let kept: Vec<Sitting> = {
-            // A sitting landing on this book, as `Stats::build` places one.
+            // `mine`: a sitting landing on this book, as `Stats::build` places one.
             let mine = |s: &Sitting| {
                 self.slot_for(self.extent_of(s.end_position), s.asin.as_deref()) == Some(slot)
             };
@@ -1810,7 +1821,7 @@ impl Record {
         };
         let went = self.sittings.len() - kept.len();
         self.sittings = kept;
-        // An empty `watermark` names no instant to hold a parse below.
+        // `watermark`: empty, it names no instant to hold a parse below.
         if !self.watermark.is_empty() {
             self.cleared.push(Cleared {
                 extent: self.books[slot].extent,
@@ -1822,18 +1833,18 @@ impl Record {
         went
     }
 
-    /// The library number for a sitting's own key, which is the key itself
-    /// where no line ever stated the mapping.
+    /// `extent_of`: the library number for a sitting's own key, which is the key itself where no
+    /// line ever stated the mapping.
     pub fn extent_of(&self, end_position: i64) -> i64 {
         self.ends
             .binary_search_by_key(&end_position, |(k, _)| *k)
             .map_or(end_position, |i| self.ends[i].1)
     }
 
-    /// Orders `sittings` on `started_at`, `end_position` and `ended_at`, keeping
-    /// one row per `started_at` and `end_position`.
+    /// `sort` orders `sittings` on `started_at`, `end_position` and `ended_at`, keeping one row per
+    /// `started_at` and `end_position`.
     fn sort(&mut self) {
-        // The latest `ended_at` sorts first and stands, `ended_at` moving between passes.
+        // `ended_at`: the latest sorts first and stands, `ended_at` moving between passes.
         self.sittings.sort_by(|a, b| {
             (&a.started_at, a.end_position, Reverse(&a.ended_at)).cmp(&(
                 &b.started_at,
@@ -1856,8 +1867,8 @@ impl Record {
         self.sort_written();
     }
 
-    /// How many sittings close on the second another sitting of their book closes
-    /// on, from a later start: the shorter of two spans, one nested in the other.
+    /// `nested`: how many sittings close on the second another sitting of their book closes on,
+    /// from a later start: the shorter of two spans, one nested in the other.
     pub fn nested(&self) -> usize {
         let mut closes: Vec<(i64, &str)> = self
             .sittings
@@ -1870,12 +1881,12 @@ impl Record {
         rows - closes.len()
     }
 
-    /// Folds each sitting [`Self::nested`] counts into the row of the earliest
-    /// `started_at` closing on its second, through [`Sitting::keep_close`].
-    /// Answers how many went.
+    /// `drop_nested` folds each sitting [`Self::nested`] counts into the row of the earliest
+    /// `started_at` closing on its second, through [`Sitting::keep_close`]. `drop_nested` answers
+    /// how many went.
     pub fn drop_nested(&mut self) -> usize {
         let rows = self.sittings.len();
-        // The earliest `started_at` sorts first among the rows closing on one second.
+        // `started_at`: the earliest sorts first among the rows closing on one second.
         self.sittings.sort_by(|a, b| {
             (a.end_position, &a.ended_at, &a.started_at).cmp(&(
                 b.end_position,
@@ -1894,7 +1905,7 @@ impl Record {
         rows - self.sittings.len()
     }
 
-    /// Orders `highlights` by when they were made, then by the book and the position.
+    /// `sort_highlights` orders `highlights` by when they were made, then by book and position.
     pub fn sort_highlights(&mut self) {
         self.highlights.sort_by(|a, b| {
             (&a.at, a.extent, &a.title, a.kind, a.start, a.location)
@@ -1902,7 +1913,7 @@ impl Record {
         });
     }
 
-    /// Hold `extent` against `key`, in order, keeping a pairing held.
+    /// `learn_key` holds `extent` against `key`, in order, keeping a pairing held.
     fn learn_key(&mut self, extent: i64, key: &str) {
         let at = (extent, key.to_string());
         if let Err(i) = self.keys.binary_search(&at) {
@@ -1910,8 +1921,8 @@ impl Record {
         }
     }
 
-    /// Hold `from_book` as the book end `end_position` names, the
-    /// last statement standing.
+    /// `learn_end` holds `from_book` as the book end `end_position` names, the last statement
+    /// standing.
     fn learn_end(&mut self, end_position: i64, from_book: i64) {
         match self.ends.iter_mut().find(|(key, _)| *key == end_position) {
             Some(held) => held.1 = from_book,
@@ -1919,7 +1930,7 @@ impl Record {
         }
     }
 
-    /// Hold the counter `ep` was logged with, where it is the highest yet seen.
+    /// `learn_counter` holds the counter `ep` was logged with, where it is the highest yet seen.
     fn learn_counter(&mut self, ep: i64, total_ms: i64, words: i64) {
         match self.counters.iter_mut().find(|(k, _, _)| *k == ep) {
             Some(held) if held.1 < total_ms => *held = (ep, total_ms, words),
@@ -1928,7 +1939,7 @@ impl Record {
         }
     }
 
-    /// Hold `file` against `extent`, in order, keeping a pairing held.
+    /// `learn_pair` holds `file` against `extent`, in order, keeping a pairing held.
     fn learn_pair(&mut self, extent: i64, file: &str) {
         let at = (extent, file.to_string());
         if let Err(i) = self.pairs.binary_search(&at) {
@@ -1936,14 +1947,15 @@ impl Record {
         }
     }
 
-    /// Orders and de-duplicates `ends` on their key, which is what
-    /// [`Self::extent_of`] searches.
+    /// `sort_ends` orders and de-duplicates `ends` on their key, which is what [`Self::extent_of`]
+    /// searches.
     fn sort_ends(&mut self) {
         self.ends.sort_unstable();
         self.ends.dedup_by_key(|(k, _)| *k);
     }
 
-    /// Orders and de-duplicates `books` on `extent` and `cde_key` together, neither unique alone.
+    /// `sort_books` orders and de-duplicates `books` on `extent` and `cde_key` together, neither
+    /// unique alone.
     fn sort_books(&mut self) {
         self.books
             .sort_by(|a, b| (a.extent, &a.cde_key).cmp(&(b.extent, &b.cde_key)));
@@ -1951,8 +1963,8 @@ impl Record {
             .dedup_by(|a, b| a.extent == b.extent && a.cde_key == b.cde_key);
     }
 
-    /// Orders `cleared` on `extent` and `key`, keeping the newest stamp where
-    /// one book was cleared more than once.
+    /// `sort_cleared` orders `cleared` on `extent` and `key`, keeping the newest stamp where one
+    /// book was cleared more than once.
     fn sort_cleared(&mut self) {
         self.cleared.sort_by(|a, b| {
             (a.extent, &a.key)
@@ -1964,21 +1976,21 @@ impl Record {
     }
 }
 
-/// The shortest `cde_key` [`Record::keyed_by_name`] matches inside a name.
+/// `KEY_IN_NAME`: the shortest `cde_key` [`Record::keyed_by_name`] matches inside a name.
 const KEY_IN_NAME: usize = 10;
 
-/// One sitting placed on the clock, for bracketing a witness.
+/// `Span`: one sitting placed on the clock, for bracketing a witness.
 struct Span {
     from: i64,
     to: i64,
-    /// The extent a book is keyed by.
+    /// `extent`: the extent a book is keyed by.
     extent: i64,
     /// `Sitting::asin`, which reaches a book the library never sized.
     key: Option<String>,
     seconds: i64,
 }
 
-/// What one witness said about one end position.
+/// `Claim`: what one witness said about one end position.
 struct Claim {
     extent: i64,
     /// [`crate::identify::normalise`] over `title`, what two claims agree on.
@@ -1988,9 +2000,9 @@ struct Claim {
     key: String,
 }
 
-/// The end position every sitting spanning `at` states, the key one of them
-/// carried, and the longest of them in seconds. `None` where no sitting spans
-/// `at`, and where two do. `longest` bounds the walk back.
+/// `around`: the end position every sitting spanning `at` states, the key one of them carried, and
+/// the longest of them in seconds. `None` where no sitting spans `at`, and where two do. `longest`
+/// bounds the walk back.
 fn around(spans: &[Span], at: i64, longest: i64) -> Option<(i64, Option<&str>, i64)> {
     let over = spans.partition_point(|s| s.from <= at);
     let mut extent: Option<i64> = None;
@@ -2014,8 +2026,8 @@ fn around(spans: &[Span], at: i64, longest: i64) -> Option<(i64, Option<&str>, i
     extent.map(|extent| (extent, key, seconds))
 }
 
-/// The [`Book`] a witness identified, keyed by `key` where stated, else
-/// by `title`, as [`from_sidecar`] keys one by the file name.
+/// `from_witness`: the [`Book`] a witness identified, keyed by `key` where stated, else by `title`,
+/// as [`from_sidecar`] keys one by the file name.
 fn from_witness(extent: i64, title: &str, author: &str, key: &str, by: IdentifiedBy) -> Book {
     Book {
         extent,
@@ -2044,13 +2056,13 @@ fn from_witness(extent: i64, title: &str, author: &str, key: &str, by: Identifie
     }
 }
 
-/// A field with nothing in it that could be read as a separator.
+/// `flat`: a field with nothing in it that could be read as a separator.
 fn flat(text: &str) -> String {
     text.replace(['\t', '\n', '\r'], " ")
 }
 
-/// The [`Book`] its sidecar alone identifies. `file` is the `.sdr`
-/// directory's name without the suffix, standing as both `cde_key` and `title`.
+/// `from_sidecar`: the [`Book`] its sidecar alone identifies. `file` is the `.sdr` directory's name
+/// without the suffix, standing as both `cde_key` and `title`.
 fn from_sidecar(extent: i64, file: &str) -> Book {
     Book {
         extent,
@@ -2076,7 +2088,7 @@ fn from_sidecar(extent: i64, file: &str) -> Book {
     }
 }
 
-/// A `Book` holding everything `book` states.
+/// `taken`: a `Book` holding everything `book` states.
 fn taken(listed: &library::Book) -> Book {
     let mut book = Book {
         extent: listed.extent,
@@ -2093,7 +2105,7 @@ fn taken(listed: &library::Book) -> Book {
         finished: listed.percent >= FINISHED_PERCENT,
         restart: None,
         restarted_on: Vec::new(),
-        // What `take_mark` reads to answer whether `book` states a new mark.
+        // `read_state`: what `take_mark` reads to answer whether `book` states a new mark.
         read_state: -1,
         timer_ms: 0,
         timer_words: 0,
@@ -2105,18 +2117,18 @@ fn taken(listed: &library::Book) -> Book {
     book
 }
 
-/// What one pass of [`Record::keep_covers`] came to.
+/// `CoverSweep`: what one pass of [`Record::keep_covers`] came to.
 #[derive(Default)]
 pub struct CoverSweep {
-    /// Books whose `cover` changed.
+    /// `kept`: books whose `cover` changed.
     pub kept: usize,
-    /// Covers standing under the covers directory after the sweep.
+    /// `held` covers standing under the covers directory after the sweep.
     pub held: usize,
-    /// Files the sweep dropped, naming no shown book.
+    /// `swept`: files the sweep dropped, naming no shown book.
     pub swept: usize,
-    /// Books the record holds no cover for at all.
+    /// `uncovered`: books the record holds no cover for at all.
     pub uncovered: usize,
-    /// Books whose `Book::cover` names a file `keep_covers_from` could not read.
+    /// `lost`: books whose `Book::cover` names a file `keep_covers_from` could not read.
     pub lost: Vec<String>,
 }
 
@@ -2133,7 +2145,7 @@ impl CoverSweep {
         out
     }
 
-    /// The books whose cover is gone, named on one line.
+    /// `lost_said`: the books whose cover is gone, named on one line.
     pub fn lost_said(&self) -> Option<String> {
         (!self.lost.is_empty()).then(|| first_few(&self.lost))
     }
@@ -2149,8 +2161,8 @@ fn first_few(names: &[String]) -> String {
     }
 }
 
-/// Where `book` sits: one under this key carrying this extent, else
-/// the first under this key whatever its extent.
+/// `slot_in`: where `book` sits: one under this key carrying this extent, else the first under this
+/// key whatever its extent.
 fn slot_in(
     by_key: &std::collections::HashMap<String, Vec<usize>>,
     books: &[Book],
@@ -2168,9 +2180,9 @@ fn slot_in(
     slots.first().copied()
 }
 
-/// Take what `incoming` claims about a book `held` names too, where the claim
-/// is the stronger one. `on_kindle`, `location` and `read_state` stand, and a
-/// `held` carrying a `restart` keeps its progress and its mark.
+/// `take_stronger` takes what `incoming` claims about a book `held` names too, where the claim is
+/// the stronger one. `on_kindle`, `location` and `read_state` stand, and a `held` carrying a
+/// `restart` keeps its progress and its mark.
 fn take_stronger(held: &mut Book, incoming: &Book) {
     for (field, stated) in [
         (&mut held.cde_type, &incoming.cde_type),
@@ -2197,8 +2209,8 @@ fn take_stronger(held: &mut Book, incoming: &Book) {
     held.finished |= incoming.finished;
 }
 
-/// Fold what the library states into `record`, answering whether anything
-/// moved. `on_kindle` is [`Record::remember`]'s to judge.
+/// `merge` folds what the library states into `record`, answering whether anything moved.
+/// `on_kindle` is [`Record::remember`]'s to judge.
 fn merge(book: &mut Book, listed: &library::Book) -> bool {
     let mut moved = false;
     for (field, stated) in [
@@ -2233,14 +2245,14 @@ fn merge(book: &mut Book, listed: &library::Book) -> bool {
     moved
 }
 
-/// Append one row and its line ending.
+/// `row` appends one row and its line ending.
 fn row(out: &mut String, args: std::fmt::Arguments) {
     use std::fmt::Write as _;
     let _ = out.write_fmt(args);
     out.push('\n');
 }
 
-/// Decimal places a `b` row carries for a book's progress, all a book holds.
+/// `PERCENT_PLACES`: Decimal places a `b` row carries for a book's progress, all a book holds.
 const PERCENT_PLACES: usize = 6;
 
 /// `percent` as a `b` row can hold it.
@@ -2284,9 +2296,8 @@ fn write_book(out: &mut String, b: &Book) {
     )
 }
 
-/// A `b` row as a [`Book`]. `extent` is the one field a row has to carry: `next`
-/// reads every field past the row's last as empty, which each parse below takes
-/// for its default.
+/// `read_book`: a `b` row as a [`Book`]. `extent` is the one field a row has to carry: `next` reads
+/// every field past the row's last as empty, which each parse below takes for its default.
 fn read_book<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Book> {
     let mut next = || f.next().unwrap_or_default();
     Some(Book {
@@ -2324,9 +2335,9 @@ fn read_book<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Book> {
     })
 }
 
-/// An `a` row: one highlight, as [`crate::highlights`] merged it. `m.at` is
-/// the key. `m.start`/`m.end` are on the book's `p_contentSize` axis and
-/// `m.location` is the display location the clipping stated.
+/// `write_highlight`: an `a` row: one highlight, as [`crate::highlights`] merged it. `m.at` is the
+/// key. `m.start`/`m.end` are on the book's `p_contentSize` axis and `m.location` is the display
+/// location the clipping stated.
 fn write_highlight(out: &mut String, m: &Highlight) {
     row(
         out,
@@ -2347,7 +2358,7 @@ fn write_highlight(out: &mut String, m: &Highlight) {
     )
 }
 
-/// An `a` row as a [`Highlight`]: `None` for a kind unknown here and for
+/// `read_highlight`: an `a` row as a [`Highlight`]: `None` for a kind unknown here and for
 /// `State::Retired`, neither of which [`crate::highlights::fold`] writes.
 fn read_highlight<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Highlight> {
     let mut next = || f.next().unwrap_or_default();
@@ -2367,8 +2378,8 @@ fn read_highlight<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Highlight
     out.state.is_in_the_book().then_some(out)
 }
 
-/// What a pass over the identifying sources stood at, the next pass skipped whole
-/// where it finds the same.
+/// `Sources`: what a pass over the identifying sources stood at, the next pass skipped whole where
+/// it finds the same.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Sources {
     /// `vocab.db`'s length and modification time.
@@ -2386,8 +2397,8 @@ pub struct Sources {
     pub rules: u32,
 }
 
-/// An `n` row: what the pass that wrote the `a` rows above it had seen,
-/// `rules` 0 or `None` where a field is missing.
+/// `read_gate`: an `n` row: what the pass that wrote the `a` rows above it had seen, `rules` 0 or
+/// `None` where a field is missing.
 fn read_gate<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Gate> {
     let mut next = || f.next().unwrap_or_default();
     Some(Gate {
@@ -2399,7 +2410,7 @@ fn read_gate<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Gate> {
     })
 }
 
-/// A `g` row as a [`Sources`], every field it does not state zero.
+/// `read_sources`: a `g` row as a [`Sources`], every field it does not state zero.
 fn read_sources<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Sources> {
     let mut next = || f.next().unwrap_or_default().trim().to_string();
     Some(Sources {
@@ -2414,7 +2425,7 @@ fn read_sources<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Sources> {
     })
 }
 
-/// A `c` row as a [`Cleared`], `None` where it states no stamp.
+/// `read_cleared`: a `c` row as a [`Cleared`], `None` where it states no stamp.
 fn read_cleared<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Cleared> {
     let mut next = || f.next().unwrap_or_default();
     let out = Cleared {
@@ -2425,11 +2436,10 @@ fn read_cleared<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Cleared> {
     (!out.at.is_empty()).then_some(out)
 }
 
-/// How far the offset must step back before a pass follows it as a zone change.
+/// `CLOCK_STEP_SECS`: how far the offset must step back before a pass follows it as a zone change.
 const CLOCK_STEP_SECS: i64 = 60;
 
-/// A `YYMMDD:HHMMSS` stamp moved `by` seconds, and left alone where it names
-/// no instant.
+/// `moved`: a `YYMMDD:HHMMSS` stamp moved `by` seconds, and left alone where it names no instant.
 fn moved(stamp: &str, by: i64) -> String {
     let Some(at) = instant(&iso_stamp(stamp)).map(|at| at + by) else {
         return stamp.to_string();
@@ -2438,7 +2448,7 @@ fn moved(stamp: &str, by: i64) -> String {
     log_stamp(&iso).unwrap_or_else(|| stamp.to_string())
 }
 
-/// A stored `YYYY-MM-DDTHH:MM:SS` as seconds, for taking one from another.
+/// `instant`: a stored `YYYY-MM-DDTHH:MM:SS` as seconds, for taking one from another.
 fn instant(at: &str) -> Option<i64> {
     Some(crate::date::parse_day(crate::date::day_of(at))? * 86_400 + crate::date::secs_of(at))
 }
@@ -2451,7 +2461,7 @@ fn iso_stamp(stamp: &str) -> String {
     }
 }
 
-/// The hours of a sitting as `h:s;h:s`, the one field carrying a list.
+/// `write_hours`: the hours of a sitting as `h:s;h:s`, the one field carrying a list.
 fn write_hours(hours: &[(u8, i64)]) -> String {
     hours
         .iter()
@@ -2537,13 +2547,13 @@ fn read_sitting<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Sitting> {
         timed_words: next().parse().unwrap_or(0),
         // 0.0 where the row states no share.
         covered: next().parse().unwrap_or(0.0),
-        // No stretch where the row states no field here.
+        // `stretches`: none where the row states no field here.
         stretches: read_stretches(next()),
     })
 }
 
-/// The stretches a sitting covered, as `from-to` pairs in hundredths of
-/// a per cent: `500-800,1000-1200` is 5 %–8 % and then 10 %–12 %.
+/// `write_stretches`: the stretches a sitting covered, as `from-to` pairs in hundredths of a per
+/// cent: `500-800,1000-1200` is 5 %–8 % and then 10 %–12 %.
 fn write_stretches(stretches: &[Stretch]) -> String {
     stretches
         .iter()
@@ -2603,12 +2613,12 @@ mod tests {
         }
 
         for (extent, key) in [
-            (900, "shared"),  // one of several under the key, by extent
-            (0, "shared"),    // the zero-extent one under the same key
-            (4242, "shared"), // an extent none of them carries
-            (0, "alone"),     // a key one record holds
+            (900, "shared"),  // `900`: one of several under the key, by extent
+            (0, "shared"),    // `0`: the zero-extent one under the same key
+            (4242, "shared"), // `4242`: an extent none of them carries
+            (0, "alone"),     // `alone`: a key one record holds
             (77, "other"),
-            (5, "nobody"), // a key no record holds
+            (5, "nobody"), // `nobody`: a key no record holds
         ] {
             let book = listed(extent, key, key, -1.0);
             assert_eq!(
@@ -2647,7 +2657,7 @@ mod tests {
             ..bought.clone()
         };
 
-        // Either order: one book, the file's own title.
+        // `library`: either order: one book, the file's own title.
         for library in [
             vec![bought.clone(), downloaded.clone()],
             vec![downloaded.clone(), bought.clone()],
@@ -2712,7 +2722,7 @@ mod tests {
         assert_eq!(again.text(), text);
     }
 
-    /// One book, at the progress and the mark each record gives it.
+    /// `one_book_at`: one book, at the progress and the mark each record gives it.
     fn one_book_at(percent: f64, finished: bool, title: &str) -> Record {
         let mut record = Record::default();
         let mut book = from_witness(
@@ -2789,7 +2799,7 @@ mod tests {
         assert_eq!(record.books[0].restarted_on.len(), 1);
         assert!(!record.books[0].finished, "the mark comes off");
 
-        // Part way through the second reading: `restarted_on` stands where it is.
+        // `40.0`: part way through the second reading, `restarted_on` standing where it is.
         record.books[0].percent = 40.0;
         record.restart(extent, &key, 0);
         assert_eq!(record.books[0].restarted_on.len(), 1);
@@ -2977,9 +2987,9 @@ mod tests {
             books: vec![
                 // `thumbnail` names `stated`, and `cache` holds the key too.
                 identified(148_207, "B00OKPCRLG", &stated.to_string_lossy()),
-                // An empty `thumbnail`, under a key `cache` holds.
+                // `B00RESCUED`: an empty `thumbnail`, under a key `cache` holds.
                 identified(148_301, "B00RESCUED", ""),
-                // A `thumbnail` naming no file, under a key `cache` lacks.
+                // `148_402`: a `thumbnail` naming no file, under a key `cache` lacks.
                 identified(
                     148_402,
                     "B00SIDELOAD",
@@ -3010,11 +3020,11 @@ mod tests {
         let dir = scratch("placeholder-covers");
         let cache = dir.join("thumbnails");
         std::fs::create_dir_all(&cache).expect("a thumbnail cache");
-        // A 60x40 GIF under a `.jpg` name, which `covers::drawable` refuses.
+        // `picture`: a 60x40 GIF under a `.jpg` name, which `covers::drawable` refuses.
         let picture = cache.join("thumbnail_B0053VMNY2_EBOK_portrait.jpg");
         std::fs::write(&picture, b"GIF89a\x3c\x00\x28\x00\x80\x00\x00")
             .expect("a written thumbnail");
-        // The same bytes under `covers::COVERS_DIR`.
+        // `covers::COVERS_DIR`: the same bytes under it.
         std::fs::create_dir_all(dir.join(covers::COVERS_DIR)).expect("the covers directory");
         std::fs::write(
             covers::path(&dir, "B0053VMNY2"),
@@ -3105,8 +3115,8 @@ mod tests {
         assert!(covers::held(&dir, "B00OKPCRLG"));
     }
 
-    /// An `end_position` no `e` row raises lands on the [`IdentifiedBy::Sidecar`]
-    /// book. `asin` reaches the [`IdentifiedBy::Library`] one.
+    /// `end_position`, no `e` row raising it, lands on the [`IdentifiedBy::Sidecar`] book; `asin`
+    /// reaches the [`IdentifiedBy::Library`] one.
     #[test]
     fn a_sidecar_book_gives_up_its_extent_to_the_key_the_library_holds() {
         let dir = scratch("shadowed-sidecar");
@@ -3158,7 +3168,7 @@ mod tests {
         assert_eq!(raised.title, "A Christmas Carol");
     }
 
-    /// A highlight of a known shape, for the `a` row below.
+    /// `one_highlight`: a highlight of a known shape, for the `a` row below.
     fn one_highlight() -> Highlight {
         Highlight {
             extent: 148_207,
@@ -3294,6 +3304,8 @@ mod tests {
             sources: None,
             notes: Vec::new(),
             corrections: Vec::new(),
+            metadata: Vec::new(),
+            links: Vec::new(),
             cleared: vec![Cleared {
                 extent: 304_517,
                 key: "B00OKPCRLG".into(),
@@ -3313,7 +3325,7 @@ mod tests {
 
     #[test]
     fn a_pass_with_no_stamp_to_cut_at_leaves_every_sitting_standing() {
-        // A stored `started_at` no `log_stamp` reads leaves `read_from` empty.
+        // `record`: a stored `started_at` no `log_stamp` reads leaves `read_from` empty.
         let mut record = Record {
             sittings: vec![sitting("nonsense", "nonsense", 148_207, 2_400)],
             ..Record::default()
@@ -3350,6 +3362,8 @@ mod tests {
             sources: None,
             notes: Vec::new(),
             corrections: Vec::new(),
+            metadata: Vec::new(),
+            links: Vec::new(),
             cleared: vec![Cleared {
                 extent: 148_207,
                 key: "B00OKPCRLG".into(),
@@ -3478,7 +3492,7 @@ mod tests {
     fn a_row_written_before_the_mark_reads_as_unmarked() {
         let dir = scratch("premark");
         std::fs::create_dir_all(&dir).expect("a directory to write in");
-        // Ten fields: a `b` row without the `finished` field.
+        // `row`: Ten fields: a `b` row without the `finished` field.
         let row = "b\t938018\tB00OKPCRLG\tBible\tBerlin\t\ten\t55.000000\t1\t\t/mnt/us/a.kfx";
         std::fs::write(Record::file(&dir), format!("{HEADER}\n{row}\n")).expect("a record");
         let record = Record::load(&dir);
@@ -3582,7 +3596,7 @@ mod tests {
         assert_eq!(back.books[0].read_state, 1);
         assert!(back.books[0].finished);
 
-        // Twelve fields: a `b` row without `read_state`, -1 against what `remember` takes.
+        // `row`: twelve fields, a `b` row without `read_state`, -1 against what `remember` takes.
         std::fs::create_dir_all(&dir).expect("a directory to write in");
         let row = "b\t938018\tB00OKPCRLG\tBible\tBerlin\t\ten\t40.000000\t1\t\t/mnt/us/a.kfx\t0\t";
         std::fs::write(Record::file(&dir), format!("{HEADER}\n{row}\n")).expect("a record");
@@ -3605,7 +3619,7 @@ mod tests {
         assert_eq!(record.books[0].percent, 71.0);
         assert!(record.books[0].finished);
 
-        // A `b` row carrying `finished` at 0 reads back marked.
+        // `dir`: a `b` row carrying `finished` at 0 reads back marked.
         let dir = scratch("through");
         std::fs::create_dir_all(&dir).expect("a directory to write in");
         let row = "b\t938018\tB00OKPCRLG\tBible\tBerlin\t\ten\t100.000000\t1\t\t/mnt/us/a.kfx\t0";
@@ -3634,7 +3648,7 @@ mod tests {
         record.save(&dir).expect("a written record");
         assert_eq!(Record::load(&dir).books[0].restart, Some(100.0));
 
-        // A `percent` under `restart` clears it, and `remember` takes over.
+        // `4.0`: a `percent` under `restart` clears it, and `remember` takes over.
         record.remember(&[listed(938_018, "B00OKPCRLG", "Bible", 4.0)]);
         assert_eq!(
             (record.books[0].percent, record.books[0].restart),
@@ -3729,8 +3743,7 @@ mod tests {
         assert_eq!(record.remember(&[]), 0);
     }
 
-    /// A record read to 88%, then to `progress`, then with its library row
-    /// deleted.
+    /// `read_on_to`: a record read to 88%, then to `progress`, then with its library row deleted.
     fn read_on_to(progress: Option<f64>) -> Record {
         let mut record = Record {
             sittings: vec![sitting(
@@ -3753,6 +3766,8 @@ mod tests {
             sources: None,
             notes: Vec::new(),
             corrections: Vec::new(),
+            metadata: Vec::new(),
+            links: Vec::new(),
             clock: Clock::default(),
         };
         record.sittings[0].progress = progress;
@@ -3774,8 +3789,8 @@ mod tests {
 
     #[test]
     fn a_deleted_book_keeps_the_progress_the_library_stated_for_it() {
-        // The shape the two disagree in: `p_percentFinished` reads 100 and the
-        // last turn's `%Left` is a page short of it.
+        // `record`: the shape the two disagree in: `p_percentFinished` reads 100 and the last
+        // turn's `%Left` is a page short of it.
         let mut record = Record {
             sittings: vec![sitting(
                 "2026-08-27T10:34:40",
@@ -3840,7 +3855,7 @@ mod tests {
             "The Jewish Study Bible",
             76.0,
         )]);
-        // The same book with no extent and no progress, a title only.
+        // `cloud`: the same book with no extent and no progress, a title only.
         let mut cloud = listed(0, "B00OKPCRLG", "The Jewish Study Bible", -1.0);
         cloud.on_kindle = false;
         record.remember(&[cloud]);
@@ -3874,7 +3889,7 @@ mod tests {
         assert!(record.book_for(4_242, None).is_none());
     }
 
-    /// A record holding one sitting, with the log read as far as `watermark`.
+    /// `one_sitting`: a record holding one sitting, with the log read as far as `watermark`.
     fn one_sitting(watermark: &str) -> Record {
         Record {
             sittings: vec![sitting(
@@ -3897,18 +3912,20 @@ mod tests {
             sources: None,
             notes: Vec::new(),
             corrections: Vec::new(),
+            metadata: Vec::new(),
+            links: Vec::new(),
             clock: Clock::default(),
         }
     }
 
-    /// The instant a pass ran at.
+    /// `NOW`: the instant a pass ran at.
     const NOW: i64 = 1_788_951_701;
 
     #[test]
     fn the_clocks_the_kindle_stood_on_round_trip_through_the_file() {
         let dir = scratch("clocks");
         let mut record = on_clock("260911:115340", Some(7200));
-        // A fortnight four hours east, between two spans at home.
+        // `record.clock`: a fortnight four hours east, between two spans at home.
         record.clock.observe(vec![
             (1_786_000_000, 7200),
             (1_787_600_000, 21_600),
@@ -3928,8 +3945,8 @@ m	260911:115340	7200
         assert!(older.clock.is_empty());
     }
 
-    /// A record at `watermark` under `offset`, its `reset_at` the same
-    /// wall-clock stamp.
+    /// `on_clock`: a record at `watermark` under `offset`, its `reset_at` the same wall-clock
+    /// stamp.
     fn on_clock(watermark: &str, offset: Option<i64>) -> Record {
         Record {
             watermark: watermark.into(),
@@ -3941,7 +3958,7 @@ m	260911:115340	7200
 
     #[test]
     fn a_clock_stepping_back_pulls_the_watermark_and_the_reset_stamp_with_it() {
-        // Berlin +2 to +1, 02:00 to 03:00 written twice: `watermark` bars the second.
+        // `record`: Berlin +2 to +1, 02:00 to 03:00 written twice: `watermark` bars the second.
         let mut record = on_clock("261025:023000", Some(7200));
         assert_eq!(record.follow_clock(NOW, Some(3600)), 3600);
         assert_eq!(record.watermark, "261025:013000");
@@ -3956,13 +3973,13 @@ m	260911:115340	7200
 
     #[test]
     fn a_clock_that_has_not_stepped_back_moves_nothing() {
-        // Forward: `watermark` falls further behind, skipping no line.
+        // `ahead`: Forward: `watermark` falls further behind, skipping no line.
         let mut ahead = on_clock("260909:130922", Some(7200));
         assert_eq!(ahead.follow_clock(NOW, Some(8 * 3600)), 0);
         assert_eq!(ahead.watermark, "260909:130922");
         assert_eq!(ahead.watermark_offset, Some(8 * 3600));
 
-        // The same offset, and a step under `CLOCK_STEP_SECS`, change no zone.
+        // `same`: the same offset, and a step under `CLOCK_STEP_SECS`, change no zone.
         let mut same = on_clock("260909:130922", Some(7200));
         assert_eq!(same.follow_clock(NOW, Some(7200)), 0);
         assert_eq!(same.follow_clock(NOW, Some(7170)), 0);
@@ -3971,7 +3988,7 @@ m	260911:115340	7200
 
     #[test]
     fn a_record_with_no_offset_takes_one_and_stands_still() {
-        // Nothing to compare against.
+        // `fresh`: nothing to compare against.
         let mut fresh = on_clock("260909:130922", None);
         assert_eq!(fresh.follow_clock(NOW, Some(7260)), 0);
         assert_eq!(fresh.watermark, "260909:130922");
@@ -4003,7 +4020,7 @@ m	260911:115340	7200
 
     #[test]
     fn the_pass_does_not_rewind_to_a_sitting_the_log_has_closed() {
-        // A whole day past the sitting's end.
+        // `260808:213000`: a whole day past the sitting's end.
         assert_eq!(one_sitting("260808:213000").read_from(), "260808:213000");
         // 10:55:43 ending: 29 minutes on is open, 30 closed.
         assert_eq!(one_sitting("260807:112443").read_from(), "260807:101501");
@@ -4030,8 +4047,7 @@ m	260911:115340	7200
         assert_eq!(one_sitting("").read_from(), "260807:101501");
     }
 
-    /// The two lines a sitting is measured from, at `stamp` with the counter at
-    /// `total_ms`.
+    /// `page`: the two lines a sitting is measured from, at `stamp` with the counter at `total_ms`.
     fn page(stamp: &str, total_ms: i64) -> String {
         format!(
             "{stamp} cvm[6144]: I ReadingTimerController:Information::NextPage,Verdict:Processed,\
@@ -4041,8 +4057,7 @@ m	260911:115340	7200
         )
     }
 
-    /// A page turn of the book whose `EndPos` is `at`, carrying `total_ms` and
-    /// `words`.
+    /// `turn`: a page turn of the book whose `EndPos` is `at`, carrying `total_ms` and `words`.
     fn turn(stamp: &str, at: i64, total_ms: i64, words: i64) -> String {
         format!(
             "{stamp} cvm[6144]: I ReadingTimerController:Information::NextPage,Verdict:Processed,\
@@ -4061,7 +4076,7 @@ m	260911:115340	7200
         }
     }
 
-    /// A record holding one book's reading, and nothing that names it: the
+    /// `read_but_unidentified`: a record holding one book's reading, and nothing that names it: the
     /// state a first parse is in when the book was deleted before it ran.
     fn read_but_unidentified() -> Record {
         let mut record = Record::default();
@@ -4097,7 +4112,7 @@ m	260911:115340	7200
     #[test]
     fn a_counter_short_of_the_last_one_logged_names_nothing() {
         let mut record = read_but_unidentified();
-        // A counter below the end position's highest.
+        // `49_583`: a counter below the end position's highest.
         assert_eq!(record.recover(&[card("some book", 7_390_020, 49_583)]), 0);
         assert!(record.book_for(148_207, None).is_none());
         assert!(record.pairs.is_empty());
@@ -4165,8 +4180,8 @@ m	260911:115340	7200
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A page turn of a mobi8 book, whose positions are `HTMLPosition` and
-    /// whose `EndPos` is one under `p_contentSize`.
+    /// `mobi8_turn`: a page turn of a mobi8 book, whose positions are `HTMLPosition` and whose
+    /// `EndPos` is one under `p_contentSize`.
     fn mobi8_turn(stamp: &str, at: i64, total_ms: i64, words: i64) -> String {
         format!(
             "{stamp} cvm[6144]: I ReadingTimerController:Information::NextPage,Verdict:Processed,\
@@ -4192,7 +4207,7 @@ m	260911:115340	7200
         // `from_book` puts the mobi8 book end back at `p_contentSize`.
         assert_eq!(record.extent_of(1_543_288), 1_543_289);
         assert!(record.book_for(1_543_289, None).is_none());
-        // The counters an `.azw3f` states, in `timer.model`'s own order.
+        // `1_003_773`, `1_834`: the counters an `.azw3f` states, in `timer.model`'s own order.
         assert_eq!(record.recover(&[card("lovecraft", 1_003_773, 1_834)]), 1);
         let book = record
             .book_for(1_543_289, None)
@@ -4204,7 +4219,7 @@ m	260911:115340	7200
     #[test]
     fn a_sidecar_named_for_a_key_reaches_the_row_holding_that_key() {
         let mut record = read_but_unidentified();
-        // The row a deletion leaves: a key and a title, no location, no extent.
+        // `cloud`: the row a deletion leaves: a key and a title, no location, no extent.
         let mut cloud = listed(0, "B00OKPCRLG", "The Jewish Study Bible", -1.0);
         cloud.location = String::new();
         cloud.on_kindle = false;
@@ -4316,7 +4331,7 @@ m	260911:115340	7200
         assert_eq!(record.sittings[0].end_position, 999, "the old one survives");
     }
 
-    /// Two books' reading, with a book for each and the log read to `watermark`.
+    /// `two_books`: two books' reading, with a book for each and the log read to `watermark`.
     fn two_books() -> Record {
         let mut record = Record {
             sittings: vec![
@@ -4398,7 +4413,7 @@ m	260911:115340	7200
     fn a_cleared_book_is_not_re_derived_by_the_whole_log() {
         let mut record = two_books();
         record.clear_book(148_207, "B00OKPCRLG");
-        // Every line the book was measured from.
+        // `lines`: every line the book was measured from.
         let lines = vec![
             page("260807:101501", 7_390_020),
             page("260807:101543", 7_431_463),
@@ -4516,7 +4531,7 @@ m	260911:115340	7200
         .expect("a log to read");
 
         let mut record = Record {
-            // Older than the lines `live` holds.
+            // `sittings`: older than the lines `live` holds.
             sittings: vec![sitting(
                 "2026-07-01T09:00:00",
                 "2026-07-01T09:30:00",
@@ -4540,8 +4555,7 @@ m	260911:115340	7200
 
     #[test]
     fn a_sitting_carrying_its_own_counter_reaches_its_sidecar_with_no_log() {
-        // One sitting holding the counter it was last seen at, with no `t`
-        // row beside it.
+        // `record`: one sitting holding the counter it was last seen at, with no `t` row beside it.
         let mut record = Record {
             sittings: vec![Sitting {
                 end_counter_ms: Some(900_000),
@@ -4587,8 +4601,8 @@ m	260911:115340	7200
         )
         .expect("a log to read");
 
-        // One sitting, no counter for a sidecar to match, and a watermark past
-        // everything the log holds.
+        // `record`: one sitting, no counter for a sidecar to match, and a watermark past everything
+        // the log holds.
         let mut record = Record {
             sittings: vec![sitting(
                 "2026-08-07T10:15:01",
@@ -4630,7 +4644,7 @@ m	260911:115340	7200
         )
         .expect("a log to read");
 
-        // The two stamps that hold the parser back, both above the log.
+        // `record`: the two stamps that hold the parser back, both above the log.
         let mut record = having_cleared("260807:120000");
         record.watermark = "260807:101543".into();
         record.reset_at = "260807:120000".into();
@@ -4663,7 +4677,7 @@ m	260911:115340	7200
         )
         .expect("a log to read");
 
-        // The same sitting the log states, measured by an older parse at zero.
+        // `record`: the same sitting the log states, measured by an older parse at zero.
         let mut record = Record {
             sittings: vec![Sitting {
                 words: 0,
@@ -4680,8 +4694,8 @@ m	260911:115340	7200
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A page, a sleep of forty minutes, and two pages after the wake, the
-    /// first measured from it.
+    /// `log_with_a_wake`: a page, a sleep of forty minutes, and two pages after the wake, the first
+    /// measured from it.
     fn log_with_a_wake() -> String {
         [
             page("260807:100000", 7_390_020),
@@ -4698,8 +4712,6 @@ m	260911:115340	7200
             + "\n"
     }
 
-    /// A stored row opening at the first page after a wake, and the log opening
-    /// its sitting at the wake, ending on the same second: one sitting, once.
     #[test]
     fn a_rebuild_restates_once_a_sitting_the_log_now_opens_at_its_wake() {
         let dir = scratch("rebuild-wake");
@@ -4724,7 +4736,7 @@ m	260911:115340	7200
             .collect();
         assert_eq!(ending.len(), 1, "the sitting was stated twice");
         assert_eq!(ending[0].started_at, "2026-08-07T10:40:00");
-        // Both pages after the wake, the first one included.
+        // `79`: both pages after the wake, the first one included.
         assert_eq!(ending[0].seconds, 79);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -4956,7 +4968,7 @@ m	260911:115340	7200
                 from: 0.1,
                 to: 0.1234,
             },
-            // One read backwards, which the record states as it stands.
+            // `0.9`: one read backwards, which the record states as it stands.
             Stretch {
                 from: 0.9,
                 to: 0.87,
@@ -4994,7 +5006,7 @@ m	260911:115340	7200
                  EndPos:YJPosition: AbcVAAAPAAAA:148207,PosLeft:94002,%Left:{left};"
             )
         };
-        // Two turns, at 10 % and at 20 %.
+        // `first`: two turns, at 10 % and at 20 %.
         let first = [
             page_at("260807:101501", 7_390_020, 0.9),
             page_at("260807:101543", 7_431_463, 0.8),
@@ -5024,7 +5036,8 @@ m	260911:115340	7200
             "the sitting still opens where the reader opened it",
         );
 
-        // Past `SITTING_GAP_SECS`: `read_from` answers `watermark`, `absorb` keeping the row.
+        // `260807:120000`, past `SITTING_GAP_SECS`: `read_from` answers `watermark`, `absorb`
+        // keeping the row.
         record.watermark = "260807:120000".into();
         let from = record.read_from();
         assert!(
@@ -5054,7 +5067,7 @@ m	260911:115340	7200
         )
         .expect("a log to read");
 
-        // One row `live` restates, at other figures, and one it does not.
+        // `record`: one row `live` restates, at other figures, and one it does not.
         let mut record = Record {
             sittings: vec![
                 Sitting {
@@ -5167,8 +5180,8 @@ m	260911:115340	7200
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A stored row closing where its pass stopped reading, the rest of its sitting
-    /// in the log: [`Record::heal_from`] states the whole sitting on the one row.
+    /// [`Record::heal_from`] states on one row a sitting whose stored row closes where its pass
+    /// stopped reading, the rest of it in the log.
     #[test]
     fn a_heal_holds_one_row_for_a_sitting_whose_close_moved() {
         let dir = scratch("heal-moved-close");
@@ -5225,7 +5238,7 @@ m	260911:115340	7200
             highlights: vec![held.clone()],
             ..Record::default()
         };
-        // The same highlight as the clippings file alone can state it.
+        // `thin`: the same highlight as the clippings file alone can state it.
         let thin = Highlight {
             state: State::Unconfirmed,
             start: -1,
@@ -5336,7 +5349,7 @@ m	260911:115340	7200
             }],
             watermark: "260807:101543".into(),
             watermark_offset: None,
-            // Past every line `live` holds.
+            // `reset_at`: past every line `live` holds.
             reset_at: "260810:120000".into(),
             ..Record::default()
         };
@@ -5366,7 +5379,7 @@ m	260911:115340	7200
 
         let mut record = Record {
             sittings: vec![Sitting {
-                // The open a watermark pass states.
+                // `started_at`: the open a watermark pass states.
                 started_at: "2026-08-07T10:15:30".into(),
                 ended_at: "2026-08-07T10:15:43".into(),
                 end_position: 148_207,
@@ -5448,7 +5461,7 @@ m	260911:115340	7200
              skips it hands back sittings against nothing"
         );
 
-        // The pass `App::relearn` makes once a reset is over.
+        // `remember`: the pass `App::relearn` makes once a reset is over.
         record.remember(&library);
         assert_eq!(record.books.len(), 1, "the library left the books empty");
         let _ = std::fs::remove_dir_all(&dir);
@@ -5491,7 +5504,7 @@ m	260911:115340	7200
         record.reset_at = "260810:120000".into();
         let held = record.cleared.clone();
 
-        // What a backup of the book holds.
+        // `coming_back`: what a backup of the book holds.
         let mut coming_back = Record::default();
         coming_back.sittings.push(sitting(
             "2026-08-07T10:15:01",
@@ -5524,7 +5537,7 @@ m	260911:115340	7200
         assert_eq!(two_books().one_book(1, "B00NOTHERE"), Record::default());
     }
 
-    /// A record that gave up book 148207 at `at`, which is what `page` writes.
+    /// `having_cleared`: a record that gave up book 148207 at `at`, which is what `page` writes.
     fn having_cleared(at: &str) -> Record {
         Record {
             reset_at: String::new(),
@@ -5546,7 +5559,7 @@ m	260911:115340	7200
             page("260807:101501", 7_390_020),
             page("260807:101543", 7_431_463),
         ];
-        // A `c` row stamped past the sitting, as `drop_reading` writes one.
+        // `record`: a `c` row stamped past the sitting, as `drop_reading` writes one.
         let mut record = having_cleared("260807:120000");
         let (added, extended) = record.absorb(&lines, "");
         assert_eq!((added, extended), (0, 0));
@@ -5798,7 +5811,7 @@ m	260911:115340	7200
     fn a_sitting_reaches_its_book_at_an_extent_the_record_no_longer_carries() {
         let mut record = Record {
             books: vec![Book {
-                // The `extent` the library names this key at.
+                // `148_199`: the `extent` the library names this key at.
                 extent: 148_199,
                 cde_key: "BTIFIHP3JYKFKDNZLSD7CODVHTDUEOIM".into(),
                 title: "A Volume".into(),
@@ -5829,7 +5842,7 @@ m	260911:115340	7200
             record.book_for(148_213, None).map(|b| &b.title[..]),
             Some("A Volume")
         );
-        // Written down and read back.
+        // `read`: Written down and read back.
         let read = Record::from_text(&record.text());
         assert_eq!(read.keys, record.keys);
         assert_eq!(
@@ -5861,10 +5874,8 @@ m	260911:115340	7200
         assert!(record.book_for(999, None).is_none());
     }
 
-    // ---- identifying an end position no book reaches ---------------
-
-    /// A record of three days' reading: one book the library names and two
-    /// end positions it does not.
+    /// `with_unidentified`: a record of three days' reading: one book the library names and two end
+    /// positions it does not.
     fn with_unidentified() -> Record {
         Record {
             sittings: vec![
@@ -5929,7 +5940,7 @@ m	260911:115340	7200
 
     #[test]
     fn an_end_position_whose_book_the_record_already_holds_is_linked_and_not_copied() {
-        // One book under two end positions, filed under the older.
+        // `record`: one book under two end positions, filed under the older.
         let mut record = with_unidentified();
         for s in &mut record.sittings {
             s.asin = None;
@@ -5951,7 +5962,7 @@ m	260911:115340	7200
             IdentifiedBy::Library,
             "the library still holds it"
         );
-        // Through the `k` row `slot_for`'s third arm consults.
+        // `key_at`: through the `k` row `slot_for`'s third arm consults.
         assert_eq!(record.key_at(500_100), Some("B00OKPCRLG"));
     }
 
@@ -5994,7 +6005,7 @@ m	260911:115340	7200
         for s in &mut record.sittings {
             s.asin = None;
         }
-        // A second sitting of another end position over the same hour.
+        // `record.sittings`: a second sitting of another end position over the same hour.
         record.sittings.push(sitting(
             "2026-08-08T10:00:00",
             "2026-08-08T11:00:00",
@@ -6060,7 +6071,7 @@ m	260911:115340	7200
 
     #[test]
     fn a_book_that_arrived_as_a_file_name_gets_its_real_title() {
-        // A book the sidecar arm identified from the `.sdr` directory, nothing better spoken.
+        // `record`: a book the sidecar arm identified off its `.sdr` directory alone.
         let mut record = with_unidentified();
         for s in &mut record.sittings {
             s.asin = None;
@@ -6121,8 +6132,8 @@ m	260911:115340	7200
             "a `b` row lost what identified it"
         );
 
-        // The same file with every `b` row one column short, its last field
-        // gone, `pairs` picking the stem out.
+        // `older`: the same file with every `b` row one column short, its last field gone, `pairs`
+        // picking the stem out.
         let older: String = std::fs::read_to_string(Record::file(&dir))
             .expect("a record to shorten")
             .lines()
