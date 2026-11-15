@@ -8,23 +8,30 @@ use std::ops::RangeInclusive;
 
 use readinglog_native::date;
 use readinglog_native::lang::counted;
-use readinglog_native::view::{Shelf, Sort, Way, Window};
+use readinglog_native::view::{Shelf, Sort, Way, Window, alltime};
 use serde::Serialize;
 
+use super::chart;
+use super::look::{Look, hex};
 use super::words::Words;
 use super::{Ctx, Route, esc, lang, language_of};
 use crate::metadata::links::{Linked, Linking, Name};
 use crate::metadata::{self, By, Named, Patch, Tag, Values, names};
-use readinglog_native::metadata::breakdown::{self, Ranks};
+use readinglog_native::metadata::breakdown::{self, Languages, Ranks};
 
 /// `HUES`: each language's hue, by the record's languages in time read; `OTHER` past the fourth.
-const HUES: [&str; 4] = ["#0f86a3", "#b8781e", "#7d4fb0", "#c4456e"];
-const OTHER: &str = "#9a958b";
+const HUES: [[u8; 3]; 4] = [
+    [0x0f, 0x86, 0xa3],
+    [0xb8, 0x78, 0x1e],
+    [0x7d, 0x4f, 0xb0],
+    [0xc4, 0x45, 0x6e],
+];
+const OTHER: [u8; 3] = [0x9a, 0x95, 0x8b];
 
 /// `UNSET`, `BAR`, `MOST`: the bar of a value no book sets, a ranked bar, the most read one.
-const UNSET: &str = "#ccc8bf";
-const BAR: &str = "#79a260";
-const MOST: &str = "#d23f6b";
+const UNSET: [u8; 3] = [0xcc, 0xc8, 0xbf];
+const BAR: [u8; 3] = [0x79, 0xa2, 0x60];
+const MOST: [u8; 3] = [0xd2, 0x3f, 0x6b];
 
 /// `TOP`: the bars a ranked chart shows until Show all opens the rest.
 const TOP: usize = 10;
@@ -1140,9 +1147,9 @@ fn headed(cx: &Ctx, head: &str, others: &[&str]) -> String {
     }
 }
 
-/// `days`' charts, the whole record's where `None`: authors, publishers, languages and each
-/// type of tag, a value not set as its own bar, each bar opening Books narrowed to it under
-/// `window`; empty where no book read sets any. `breakdown` gives the figures.
+/// `charts`: `days`' charts off `breakdown`, the whole record's where `None`: authors, publishers,
+/// languages and each type of tag, a value not set as its own bar, each opening Books narrowed to
+/// it under `window`, [`Ctx::per_row`] cards to a row; empty where no book read sets any.
 pub(super) fn charts(
     cx: &Ctx,
     days: Option<RangeInclusive<i64>>,
@@ -1160,6 +1167,11 @@ pub(super) fn charts(
     }
     let total: i64 = read.iter().map(|(_, secs, _)| secs).sum();
     let figured = breakdown::ranked(&read, cx.linked);
+    let months = months(cx, days.as_ref());
+    let spans: Vec<RangeInclusive<i64>> = months.iter().map(|(_, span)| span.clone()).collect();
+    let languages = breakdown::languages(cx.stats, &read, &every(cx), cx.linked, &spans);
+    let count = figured.len() + usize::from(languages.is_some());
+    let wide = |at: usize| cx.card_width(at, count);
     let mut cards: Vec<String> = Vec::new();
     for card in figured
         .iter()
@@ -1172,9 +1184,9 @@ pub(super) fn charts(
         let (bars, unset) = drawn(cx, card, window);
         cards.push(ranked(cx, chart, &head, total, bars, unset, None));
     }
-    let languages = languages_chart(cx, &read, days.as_ref(), window, total);
-    if !languages.is_empty() {
-        cards.push(languages);
+    if let Some(card) = &languages {
+        let width = wide(cards.len());
+        cards.push(languages_chart(cx, card, &months, window, total, width));
     }
     for card in &figured {
         let Ranks::Type(r#type) = &card.ranks else {
@@ -1186,8 +1198,9 @@ pub(super) fn charts(
             .then(|| w.counts_each.replace("{t}", &date::duration(total, cx.s)));
         let also: Vec<&str> = card.also.iter().map(String::as_str).collect();
         let head = headed(cx, r#type, &also);
+        let width = wide(cards.len());
         cards.push(match card.numbers {
-            true => columns(cx, &head, bars, unset, note),
+            true => columns(cx, &head, bars, unset, note, width),
             false => ranked(
                 cx,
                 &format!("type {}", r#type),
@@ -1200,7 +1213,7 @@ pub(super) fn charts(
         });
     }
     let mut out = String::new();
-    for pair in cards.chunks(2) {
+    for pair in cards.chunks(cx.per_row()) {
         let _ = write!(out, "<section class=\"split\">{}</section>", pair.join(""));
     }
     out
@@ -1288,7 +1301,7 @@ fn ranked(
         let _ = write!(
             out,
             "<a class=\"r{}\" href=\"{}\" data-tip=\"{}\"{}><span class=\"who\"{}>{}</span>\
-             <span class=\"bar\"><i style=\"width: {width:.1}%; background: {colour}\"></i></span>\
+             <span class=\"bar\"><i style=\"width: {width:.1}%; background: {}\"></i></span>\
              <b>{}</b><span class=\"n\">{}</span></a>",
             match (colour, past) {
                 (UNSET, _) => " unset",
@@ -1306,6 +1319,7 @@ fn ranked(
                 .map(|l| format!(" lang=\"{}\"", esc(l)))
                 .unwrap_or_default(),
             esc(&bar.name),
+            hex(colour),
             esc(&time),
             esc(&books(bar.books))
         );
@@ -1328,10 +1342,17 @@ fn ranked(
     out
 }
 
-/// `bars` as columns under `head`, escaped, for a type whose tags are all numbers: one a
-/// number, in their order, every whole number between standing; `unset` stated
-/// under them.
-fn columns(cx: &Ctx, head: &str, bars: Vec<Bar>, unset: Vec<Bar>, note: Option<String>) -> String {
+/// `columns`: `bars` as columns `width` wide under `head`, escaped, for a type whose tags are all
+/// numbers: a column a number, every whole number between standing, the most read in the mark and
+/// each holding books opening Books narrowed to it; `unset` stated under them.
+fn columns(
+    cx: &Ctx,
+    head: &str,
+    bars: Vec<Bar>,
+    unset: Vec<Bar>,
+    note: Option<String>,
+    width: f32,
+) -> String {
     let w = Words::of(cx.lang);
     let numbered: Vec<(i64, &Bar)> = bars
         .iter()
@@ -1339,49 +1360,44 @@ fn columns(cx: &Ctx, head: &str, bars: Vec<Bar>, unset: Vec<Bar>, note: Option<S
         .collect();
     let low = numbered.iter().map(|(n, _)| *n).min().unwrap_or(0).min(1);
     let high = numbered.iter().map(|(n, _)| *n).max().unwrap_or(0);
-    let most = numbered
-        .iter()
-        .map(|(_, b)| b.secs)
-        .max()
-        .unwrap_or(0)
-        .max(1);
     let top = numbered
         .iter()
         .max_by_key(|(n, b)| (b.secs, *n))
-        .map(|(n, _)| n.to_string())
-        .unwrap_or_default();
+        .map(|(n, _)| *n);
     let mut out = format!(
-        "<div><h2>{}<span class=\"said\">{} {}</span></h2><div class=\"card\"><div class=\"cols\">",
+        "<div><h2>{}<span class=\"said\">{} {}</span></h2><div class=\"card\">",
         head,
         esc(cx.s.most),
-        esc(&top)
+        esc(&top.map(|n| n.to_string()).unwrap_or_default())
     );
-    for n in low..=high.min(low + 40) {
-        match numbered.iter().find(|(m, _)| *m == n) {
-            Some((_, bar)) => {
-                let colour = match bar.secs == most {
-                    true => MOST,
-                    false => BAR,
-                };
-                let _ = write!(
-                    out,
-                    "<a class=\"c\" href=\"{}\" data-tip=\"{}\"><b>{}</b>\
-                     <i style=\"height: {:.0}px; background: {colour}\"></i><span>{n}</span></a>",
-                    bar.to.link(),
-                    esc(&bar_tip(bar, &[&counted(cx.s.n_books, bar.books as i64)])),
-                    esc(&date::duration(bar.secs, cx.s)),
-                    bar.secs as f64 / most as f64 * 130.0
-                );
-            }
-            None => {
-                let _ = write!(
-                    out,
-                    "<div class=\"c\"><i class=\"none\"></i><span>{n}</span></div>"
-                );
-            }
-        }
-    }
-    out.push_str("</div>");
+    let bar_of = |n: i64| numbered.iter().find(|(m, _)| *m == n).map(|(_, bar)| *bar);
+    let shown: Vec<(i64, Option<&Bar>)> =
+        (low..=high.min(low + 40)).map(|n| (n, bar_of(n))).collect();
+    let values: Vec<i64> = shown
+        .iter()
+        .map(|(_, bar)| bar.map_or(0, |b| b.secs))
+        .collect();
+    let axis: Vec<String> = shown.iter().map(|(n, _)| n.to_string()).collect();
+    out.push_str(&chart::columns(
+        &values,
+        &axis,
+        chart::spacing(&axis, width),
+        top.and_then(|top| shown.iter().position(|(n, _)| *n == top)),
+        &|secs| alltime::duration_rows(secs, cx.s),
+        &|at| {
+            shown[at].1.map_or_else(String::new, |bar| {
+                bar_tip(bar, &[&counted(cx.s.n_books, bar.books as i64)])
+            })
+        },
+        &|at| shown[at].1.map(|bar| bar.to.link()),
+        &Look {
+            bar: BAR,
+            mark: MOST,
+            ..cx.look
+        },
+        width,
+        150.0,
+    ));
     if let Some(bar) = unset.first() {
         let _ = write!(
             out,
@@ -1404,26 +1420,22 @@ fn every(cx: &Ctx) -> Vec<Values> {
     (0..cx.metadata.len()).map(|at| values(cx, at)).collect()
 }
 
-/// `read`'s languages card off `breakdown::languages`: each language's share of the time
-/// read, a book's split evenly among its languages, its legend, and the months split by
-/// language where `days` holds more than one.
+/// `languages_chart`: the languages card `card`, off `breakdown::languages`: each language's share
+/// of the time read, a book's split evenly among its languages, its legend, and where `months` are
+/// more than one, each month's time split by language in columns `width` wide.
 fn languages_chart(
     cx: &Ctx,
-    read: &[(usize, i64, Values)],
-    days: Option<&RangeInclusive<i64>>,
+    card: &Languages,
+    months: &[(String, RangeInclusive<i64>)],
     window: Option<Window>,
     total: i64,
+    width: f32,
 ) -> String {
     let w = Words::of(cx.lang);
-    let months = months(cx, days);
-    let spans: Vec<RangeInclusive<i64>> = months.iter().map(|(_, span)| span.clone()).collect();
-    let Some(card) = breakdown::languages(cx.stats, read, &every(cx), cx.linked, &spans) else {
-        return String::new();
-    };
     let kind = &card.r#type;
     let hue = hues(cx);
     let colour = |tag: &Option<Tag>| match tag {
-        None => UNSET.to_string(),
+        None => UNSET,
         Some(tag) => hue(&tag.tag),
     };
     let top = card
@@ -1443,7 +1455,7 @@ fn languages_chart(
         let _ = write!(
             out,
             "<i style=\"flex: {secs}; background: {}\"></i>",
-            colour(tag)
+            hex(colour(tag))
         );
     }
     out.push_str("</div><div class=\"legend\">");
@@ -1456,51 +1468,47 @@ fn languages_chart(
             ),
             None => (" unset", w.not_set, By::Tag(kind.clone(), None)),
         };
-        let also = tag
-            .as_ref()
-            .map(|t| tip_of(cx, &cx.linked.also(Name::Tag(&t.r#type, &t.tag))))
-            .unwrap_or_default();
+        // `tip` states the name a narrow card cuts, and its other names.
+        let mut tip = vec![name.to_string()];
+        if let Some(t) = tag {
+            let others = cx.linked.also(Name::Tag(&t.r#type, &t.tag));
+            if !others.is_empty() {
+                tip.push(said_also(cx, &others));
+            }
+        }
         let _ = write!(
             out,
-            "<a class=\"r{class}\" href=\"{}\"{also}><i style=\"background: {}\"></i><span>{}</span>\
-             <span class=\"h\">{}</span><span class=\"p\">{share}%</span></a>",
+            "<a class=\"r{class}\" href=\"{}\" data-tip=\"{}\"><i style=\"background: {}\"></i>\
+             <span>{}</span><span class=\"h\">{}</span><span class=\"p\">{share}%</span></a>",
             narrowed(by, window).link(),
-            colour(tag),
+            esc(&tip.join(" · ")),
+            hex(colour(tag)),
             esc(name),
             esc(&date::duration(*secs, cx.s))
         );
     }
     out.push_str("</div>");
     if months.len() > 1 {
-        let tallest = card
-            .months
+        let axis: Vec<String> = months.iter().map(|(name, _)| name.clone()).collect();
+        let named: Vec<&str> = card
+            .parts
             .iter()
-            .map(|parts| parts.iter().sum::<i64>())
-            .max()
-            .unwrap_or(0)
-            .max(1);
-        out.push_str("<div class=\"months\">");
-        for ((name, _), parts) in months.iter().zip(&card.months) {
-            let sum: i64 = parts.iter().sum();
-            let _ = write!(
-                out,
-                "<div class=\"m\"><b>{}</b>",
-                match sum {
-                    0 => String::new(),
-                    _ => esc(&date::duration(sum, cx.s)),
-                }
-            );
-            for ((lang, _), secs) in card.parts.iter().zip(parts).rev().filter(|(_, s)| **s > 0) {
-                let _ = write!(
-                    out,
-                    "<i style=\"height: {:.1}px; background: {}\"></i>",
-                    *secs as f64 / tallest as f64 * 120.0,
-                    colour(lang)
-                );
-            }
-            let _ = write!(out, "<span>{}</span></div>", esc(name));
-        }
-        out.push_str("</div>");
+            .map(|(tag, _)| tag.as_ref().map_or(w.not_set, |t| t.tag.as_str()))
+            .collect();
+        let svg = chart::stacked(
+            &card.months,
+            &axis,
+            &|part| colour(&card.parts[part].0),
+            &|at, part| {
+                let time = date::duration(card.months[at][part], cx.s);
+                format!("{} · {} · {time}", axis[at], named[part])
+            },
+            &|secs| alltime::duration_rows(secs, cx.s),
+            &cx.look,
+            width,
+            140.0,
+        );
+        let _ = write!(out, "<div class=\"months\">{svg}</div>");
     }
     if card.split {
         let _ = write!(out, "<p class=\"note\">{}</p>", esc(w.split_each));
@@ -1511,7 +1519,7 @@ fn languages_chart(
 
 /// [`HUES`] by a language's words, in the order the whole record's languages take by
 /// time read (`breakdown::language_order`), the same on every span.
-fn hues<'a>(cx: &'a Ctx) -> impl Fn(&str) -> String + 'a {
+fn hues<'a>(cx: &'a Ctx) -> impl Fn(&str) -> [u8; 3] + 'a {
     let order = breakdown::language_order(&every(cx), cx.linked, |at| {
         cx.stats.books[at].read_seconds(cx.from)
     });
@@ -1520,16 +1528,16 @@ fn hues<'a>(cx: &'a Ctx) -> impl Fn(&str) -> String + 'a {
             .iter()
             .position(|held| held == words)
             .and_then(|n| HUES.get(n))
-            .unwrap_or(&OTHER)
-            .to_string()
+            .copied()
+            .unwrap_or(OTHER)
     }
 }
 
-/// `days`' months, the record's from its first day to `cx.today` where `None`,
+/// `days`' months up to `cx.today`'s, the record's from its first day where `None`,
 /// each named and as its days.
 fn months(cx: &Ctx, days: Option<&RangeInclusive<i64>>) -> Vec<(String, RangeInclusive<i64>)> {
     let (first, last) = match days {
-        Some(days) => (*days.start(), *days.end()),
+        Some(days) => (*days.start(), (*days.end()).min(cx.today)),
         None => (cx.opened, cx.today),
     };
     let (mut y, mut m, _) = date::civil_from_days(first);

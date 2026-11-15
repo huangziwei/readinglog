@@ -1,6 +1,6 @@
-//! Rhythm as the Kindle states it at each zoom: the picker, the span between
-//! its arrows, what it came to, its grid — a week's bars, a month's calendar, a
-//! year's strip — and what was read; and All Time, a strip a year over its board.
+//! `rhythm`: Rhythm as the Kindle states it at each zoom: the picker, the span between its
+//! arrows, what it came to, its grid — a week's bars, a month's calendar, a year's strip — and
+//! what was read; and All Time, a strip a year over its board.
 
 use std::fmt::Write as _;
 
@@ -11,8 +11,8 @@ use readinglog_native::view::{Shelf, Span, Window, alltime, covered, rhythm};
 use super::chart::{self, Weeks};
 use super::{Ctx, Route, esc, in_year, tile};
 
-/// The span picker: All Time, Year, Month and Week as the Kindle orders them,
-/// each a link onto that span around `day`, `on` lit.
+/// `head`: the span picker: All Time, Year, Month and Week as the Kindle orders them, each a link
+/// onto that span around `day`, `on` lit.
 pub(super) fn head(cx: &Ctx, on: Option<Span>, day: i64) -> String {
     let mut out = String::from("<div class=\"chips picker\">");
     for span in Span::ALL {
@@ -26,8 +26,8 @@ pub(super) fn head(cx: &Ctx, on: Option<Span>, day: i64) -> String {
     out
 }
 
-/// The span holding `day`: its name between the arrows, what it came to, its
-/// grid, and what was read over it.
+/// `span`: the span holding `day`: its name between the arrows, what it came to, its grid, and what
+/// was read over it.
 pub(super) fn span(cx: &Ctx, span: Span, day: i64) -> String {
     let days = span.days(day, cx.week);
     let mut out = head(cx, Some(span), day);
@@ -64,9 +64,8 @@ pub(super) fn span(cx: &Ctx, span: Span, day: i64) -> String {
     out
 }
 
-/// The span's name between the arrows onto the span either side, an arrow
-/// standing only where the record reaches that way, and `s.now` where the span
-/// does not hold `cx.today`.
+/// `nav`: the span's name between the arrows onto the span either side, an arrow standing only
+/// where the record reaches that way, and `s.now` where the span does not hold `cx.today`.
 fn nav(cx: &Ctx, span: Span, day: i64) -> String {
     let days = span.days(day, cx.week);
     let arrow = |by: i64, key: &str, said: &str, open: bool| match open {
@@ -119,9 +118,8 @@ fn lede(cx: &Ctx, span: Span, day: i64) -> String {
     out
 }
 
-/// The year holding `day` as one strip, each day with reading a link onto its
-/// page and each month's name onto that month at the day the arrows step `day`
-/// to.
+/// `year_strip`: the year holding `day` as one strip, each day with reading a link onto its page
+/// and each month's name onto that month at the day the arrows step `day` to.
 fn year_strip(cx: &Ctx, day: i64, width: f32, months: bool) -> String {
     let (year, month, _) = date::civil_from_days(day);
     let weeks = Weeks::of(year, cx.week, 30.0, width);
@@ -142,9 +140,8 @@ fn year_strip(cx: &Ctx, day: i64, width: f32, months: bool) -> String {
     )
 }
 
-/// Every book read over `days` as its [`tile::tile`] over them, most recently
-/// put down first, as the Kindle's grid under a span lists them.
-/// [`Ctx::unidentified`] closes it.
+/// `what_was_read`: every book read over `days` as its [`tile::tile`] over them, most recently put
+/// down first, as the Kindle's grid under a span lists them. [`Ctx::unidentified`] closes it.
 fn what_was_read(cx: &Ctx, days: std::ops::RangeInclusive<i64>) -> String {
     let s = cx.s;
     let mut read = cx.stats.book_totals_recent(days.clone());
@@ -168,9 +165,8 @@ fn what_was_read(cx: &Ctx, days: std::ops::RangeInclusive<i64>) -> String {
     out
 }
 
-/// All Time: what the record covers, a strip a year, the Kindle's four trends,
-/// and its board, the finished books, the best day and the longest sitting
-/// each opening their own page.
+/// `all_time`: all Time: what the record covers, a strip a year, the Kindle's four trends, and its
+/// board, the finished books, the best day and the longest sitting each opening their own page.
 pub(super) fn all_time(cx: &Ctx, years: &[i64]) -> String {
     let s = cx.s;
     let mut out = head(cx, Some(Span::AllTime), cx.today);
@@ -228,11 +224,11 @@ pub(super) fn all_time(cx: &Ctx, years: &[i64]) -> String {
     out
 }
 
-/// The Kindle's four trends, two to a row: the average day and week, the
+/// `trends`: the Kindle's four trends, [`Ctx::per_row`] to a row: the average day and week, the
 /// months, and the sittings by length.
 fn trends(cx: &Ctx) -> String {
     let s = cx.s;
-    let half = (cx.width - 24.0) / 2.0 - 40.0;
+    let width = cx.card_width(0, 4);
     let day = cx.stats.average_day(cx.today);
     let hours: Vec<String> = (0..24).map(|h| format!("{h:02}")).collect();
     let week = cx.stats.average_week(cx.today, cx.week);
@@ -252,17 +248,17 @@ fn trends(cx: &Ctx) -> String {
         (
             s.an_average_day,
             chart::stated(&day, &hours, date::duration(day.each, s), s),
-            chart::fold(&day, &hours, 3, s, &cx.look, half),
+            chart::fold(&day, &hours, 3, s, &cx.look, width),
         ),
         (
             s.an_average_week,
             chart::stated(&week, &weekdays, date::duration(week.each, s), s),
-            chart::fold(&week, &weekdays, 1, s, &cx.look, half),
+            chart::fold(&week, &weekdays, 1, s, &cx.look, width),
         ),
         (
             s.by_month,
             chart::stated(&month, &months, date::duration(month.each, s), s),
-            chart::fold(&month, &months, 1, s, &cx.look, half),
+            chart::fold(&month, &months, 1, s, &cx.look, width),
         ),
         (
             s.sitting_lengths,
@@ -276,15 +272,16 @@ fn trends(cx: &Ctx) -> String {
                     0 => Vec::new(),
                     n => vec![n.to_string()],
                 },
-                &|n| n.to_string(),
+                &|at| format!("{} · {}", lengths[at], sittings.values[at]),
+                &|_| None,
                 &cx.look,
-                half,
+                width,
                 120.0,
             ),
         ),
     ];
     let mut out = String::new();
-    for pair in panels.chunks(2) {
+    for pair in panels.chunks(cx.per_row()) {
         out.push_str("<section class=\"split\">");
         for (name, said, svg) in pair {
             let _ = write!(

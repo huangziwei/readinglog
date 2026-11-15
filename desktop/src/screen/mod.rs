@@ -1,6 +1,6 @@
-//! The window's screens: each [`Route`] drawn as HTML off the record as of the
-//! clock's day, the charts inline SVG, every figure a Kindle view's own and
-//! every day, span and book a link to its own page.
+//! `screen`: the window's screens, each [`Route`] drawn as HTML off the record as of the
+//! clock's day, the charts inline SVG, every figure a Kindle view's own and every day, span and
+//! book a link to its own page.
 
 mod book;
 mod books;
@@ -36,7 +36,7 @@ use crate::metadata::By;
 use crate::notes::Laid;
 use crate::workspace::Workspace;
 
-/// One screen as the window sets it.
+/// `Page`: one screen as the window sets it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Page {
     pub title: String,
@@ -48,15 +48,15 @@ pub struct Page {
     pub lang: String,
 }
 
-/// Where a page is asked for, as the window's hash states it: `/`, `/day/`,
-/// `/week/`, `/month/` and `/year/` with a date (`<yyyy-mm>` and `<yyyy>` the
-/// first day), `/all`, `/books`, `/book/<key>`, `/journal`, `/settings`.
+/// `Route`: where a page is asked for, as the window's hash states it: `/`, `/day/`, `/week/`,
+/// `/month/` and `/year/` with a date (`<yyyy-mm>` and `<yyyy>` the first day), `/all`, `/books`,
+/// `/book/<key>`, `/journal`, `/settings`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
-    /// The clock's day, as the Kindle's Today states it.
+    /// `Today`: the clock's day, as the Kindle's Today states it.
     Today,
     Day(i64),
-    /// A span of Rhythm by the day it holds, the Kindle's `State::day`; `AllTime` 0.
+    /// `Span`: a span of Rhythm by the day it holds, the Kindle's `State::day`; `AllTime` 0.
     Span(Span, i64),
     Books {
         shelf: Shelf,
@@ -71,9 +71,9 @@ pub enum Route {
     },
     Book {
         key: String,
-        /// Which reading the graphs draw, from the first; `None` the standing one.
+        /// `reading`: which reading the graphs draw, from the first; `None` the standing one.
         reading: Option<usize>,
-        /// Which end the journal opens at.
+        /// `way`: which end the journal opens at.
         way: Way,
         query: String,
     },
@@ -165,7 +165,7 @@ impl Route {
         }
     }
 
-    /// The hash that asks for this route.
+    /// `link`: the hash that asks for this route.
     pub fn link(&self) -> String {
         let query = |pairs: &[(&str, String)]| {
             let said: Vec<String> = pairs
@@ -284,7 +284,7 @@ impl Route {
         }
     }
 
-    /// The Books route on `shelf` under `window`, in the Kindle's default order.
+    /// `shelf`: the Books route on `shelf` under `window`, in the Kindle's default order.
     fn shelf(shelf: Shelf, window: Option<Window>) -> Route {
         Route::Books {
             shelf,
@@ -297,7 +297,7 @@ impl Route {
         }
     }
 
-    /// The route of a book, at its standing reading.
+    /// `book`: the route of a book, at its standing reading.
     fn book(key: String) -> Route {
         Route::Book {
             key,
@@ -307,7 +307,7 @@ impl Route {
         }
     }
 
-    /// The Journal route as a [`Mode::Timeline`], newest first.
+    /// `journal`: the Journal route as a [`Mode::Timeline`], newest first.
     fn journal() -> Route {
         Route::Journal {
             mode: Mode::Timeline,
@@ -323,54 +323,53 @@ fn day_key(day: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
-/// The day of `year` the Kindle's arrows step `today` to, a year a step.
+/// `in_year`: the day of `year` the Kindle's arrows step `today` to, a year a step.
 fn in_year(today: i64, year: i64) -> i64 {
     Span::Year.step(today, year - date::civil_from_days(today).0)
 }
 
-/// How a page names a cover file.
+/// `Covers`: how a page names a cover file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Covers {
-    /// A `data-cover` path, which `convertFileSrc` in `app.js` turns into an asset URL.
+    /// `Window`: a `data-cover` path, which `convertFileSrc` in `app.js` turns into an asset URL.
     Window,
-    /// A `file:` URL, which a page read off the disk loads.
+    /// `Files`: a `file:` URL, which a page read off the disk loads.
     Files,
 }
 
-/// The record as every screen states it: `Stats` as of `today` under the
-/// settings `Workspace::config` names, each book in the metadata its Kindle's
-/// record sets, and each book's cover, tone and Kindle.
+/// `Shown`: the record as every screen states it: `Stats` as of `today` under the settings
+/// `Workspace::config` names, each book in the metadata its Kindle's record sets, and each book's
+/// cover, tone and Kindle.
 pub struct Shown {
     pub record: Record,
     pub stats: Stats,
     pub settings: Settings,
     pub lang: Lang,
-    /// The clock's day, which every screen states as today.
+    /// `today`: the clock's day, which every screen states as today.
     pub today: i64,
     pub covers: Vec<Option<PathBuf>>,
     pub tones: Vec<[u8; 3]>,
-    /// Each book's Kindle as `kindles::labels` calls it, `None` throughout for one source.
+    /// `kindles`: each book's Kindle as `kindles::labels` names it, all `None` for one source.
     pub kindles: Vec<Option<String>>,
-    /// Each source's Kindle by its cut serial, empty for the backups naming none.
+    /// `serials`: each source's Kindle by its cut serial, empty for the backups naming none.
     pub serials: Vec<String>,
-    /// What `kindles::labels` calls each source.
+    /// `labels`: what `kindles::labels` calls each source.
     pub labels: Vec<String>,
-    /// The highlights in words a correction sets, by their Kindle's serial.
+    /// `corrected`: the highlights in words a correction sets, by their Kindle's serial.
     pub corrected: HashSet<(String, HighlightId)>,
-    /// The notes laid into the record, by their Kindle's serial and the identity each takes.
+    /// `written`: the notes laid into the record, by Kindle serial and the identity each takes.
     pub written: HashMap<(String, HighlightId), Laid>,
-    /// Each book's `Set` off its Kindle's `d` rows, by its place in `stats.books`.
+    /// `metadata`: each book's `Set` off its Kindle's `d` rows, by its place in `stats.books`.
     pub metadata: Vec<crate::metadata::Set>,
-    /// Each book's title and author as its Kindle states them, by its place in `stats.books`.
+    /// `own`: each book's title and author as its Kindle states them, by place in `stats.books`.
     pub own: Vec<(String, String)>,
-    /// The values the workspace's `l` rows and its books' metadata make.
+    /// `linked`: the values the workspace's `l` rows and its books' metadata make.
     pub linked: crate::metadata::links::Links,
 }
 
 impl Shown {
-    /// The record `ws` holds as of `today`, the day `date::now` answers, each
-    /// source as `Record::drawn` draws it; `None` where the record holds no
-    /// sitting.
+    /// `of`: the record `ws` holds as of `today`, the day `date::now` answers, each source as
+    /// `Record::drawn` draws it; `None` where the record holds no sitting.
     pub fn of(ws: &Workspace, today: i64) -> Option<Shown> {
         let mut sources = ws.sources();
         let serials: Vec<String> = sources
@@ -498,7 +497,7 @@ impl Shown {
         })
     }
 
-    /// What the Kindle the cut serial `serial` names is called: its source's
+    /// `called`: what the Kindle the cut serial `serial` names is called: its source's
     /// [`Shown::labels`] entry, or `kindles::model` where `serials` lacks it.
     pub fn called(&self, serial: &str) -> String {
         self.serials
@@ -508,7 +507,7 @@ impl Shown {
             .unwrap_or_else(|| crate::kindles::model(serial).to_string())
     }
 
-    /// The years holding a sitting, newest first.
+    /// `years`: the years holding a sitting, newest first.
     fn years(&self) -> Vec<i64> {
         let year = |at: Option<&(i64, i64)>| at.map(|(day, _)| date::civil_from_days(*day).0);
         match (year(self.stats.days.first()), year(self.stats.days.last())) {
@@ -517,14 +516,14 @@ impl Shown {
         }
     }
 
-    /// The book `key` names, by its index in `Stats::books`.
+    /// `book`: the book `key` names, by its index in `Stats::books`.
     fn book(&self, key: &str) -> Option<usize> {
         self.stats.books.iter().position(|b| key_of(b) == key)
     }
 }
 
-/// What a book's route names it by: its `cde_key`, or `e` and its extent where
-/// `cde_key` is empty.
+/// `key_of`: what a book's route names it by: its `cde_key`, or `e` and its extent where `cde_key`
+/// is empty.
 pub fn key_of(book: &readinglog_native::stats::BookStat) -> String {
     match book.cde_key.is_empty() {
         true => format!("e{}", book.extent),
@@ -639,9 +638,9 @@ pub fn render(
     }
 }
 
-/// The editors `app.js` opens: a highlight's, its text areas above these
-/// buttons and `revert` only on one in words set here; and a desktop note's,
-/// `delete-note` taken away where it opens on no note.
+/// `editor`: the editors `app.js` opens: a highlight's, its text areas above these buttons and
+/// `revert` only on one in words set here; and a desktop note's, `delete-note` taken away where it
+/// opens on no note.
 fn editor(s: &Strings, w: &Words) -> String {
     format!(
         "<template id=\"editor\"><div class=\"editor\"><p class=\"acts\">\
@@ -662,16 +661,16 @@ fn editor(s: &Strings, w: &Words) -> String {
     )
 }
 
-/// What every page of one render reads.
+/// `Ctx`: what every page of one render reads.
 struct Ctx<'a> {
     stats: &'a Stats,
     s: &'static Strings,
     lang: Lang,
     week: WeekStart,
     from: StatsFrom,
-    /// The clock's day, which every page reads as today.
+    /// `today`: the clock's day, which every page reads as today.
     today: i64,
-    /// The record's first day with reading on it.
+    /// `opened`: the record's first day with reading on it.
     opened: i64,
     look: Look,
     tones: &'a [[u8; 3]],
@@ -688,18 +687,50 @@ struct Ctx<'a> {
     links: Covers,
     /// `Settings::show_uncovered`, which `view::books::listed` takes.
     uncovered: bool,
-    /// The width a chart inside a card takes.
+    /// `width`: the width a chart inside a card takes.
     width: f32,
 }
 
+/// `RANKED`: a ranked row less its bar: `.ranked .r`'s name, time and books and its three gaps.
+const RANKED: f32 = 132.0 + 64.0 + 54.0 + 3.0 * 10.0;
+
+/// `PAIRED`: the narrowest chart beside another card: [`RANKED`] and a bar as wide as its time.
+const PAIRED: f32 = RANKED + 64.0;
+
 impl Ctx<'_> {
-    /// The route of the book at `at` in `Stats::books`.
+    /// `half`: the chart width of each of two cards sharing a row (`.split`): [`Ctx::width`] and a
+    /// card's 20 px padding either side, less the 24 px between the two, halved, less the padding.
+    fn half(&self) -> f32 {
+        (self.width + 40.0 - 24.0) / 2.0 - 40.0
+    }
+
+    /// `per_row`: how many cards a row of them holds: two while each chart is [`PAIRED`] wide at
+    /// least, else one.
+    fn per_row(&self) -> usize {
+        match self.half() >= PAIRED {
+            true => 2,
+            false => 1,
+        }
+    }
+
+    /// `card_width`: the width the chart of the card at `at` of `count` takes, laid
+    /// [`Ctx::per_row`] to a row: [`Ctx::half`] beside another, the whole width alone, as the last
+    /// of an odd count is.
+    fn card_width(&self, at: usize, count: usize) -> f32 {
+        let alone = self.per_row() == 1 || (at + 1 == count && count % 2 == 1);
+        match alone {
+            true => self.width,
+            false => self.half(),
+        }
+    }
+
+    /// `book_link`: the route of the book at `at` in `Stats::books`.
     fn book_link(&self, at: usize) -> String {
         Route::book(key_of(&self.stats.books[at])).link()
     }
 
-    /// The cut serial of the Kindle the book at `at` is from, empty for the
-    /// backups naming none.
+    /// `serial`: the cut serial of the Kindle the book at `at` is from, empty for the backups
+    /// naming none.
     fn serial(&self, at: usize) -> &str {
         let book = &self.stats.books[at];
         let from = match self.serials.len() {
@@ -712,13 +743,12 @@ impl Ctx<'_> {
             .map_or("", String::as_str)
     }
 
-    /// The Kindle the book at `at` is from, where `kindles` names one.
+    /// `kindle`: the Kindle the book at `at` is from, where `kindles` names one.
     fn kindle(&self, at: usize) -> Option<&str> {
         self.kindles.get(at).and_then(|k| k.as_deref())
     }
 
-    /// The note written here that `Record::drawn` laid as `highlight`, in the
-    /// book at `at`.
+    /// `laid`: the note written here that `Record::drawn` laid as `highlight`, in the book at `at`.
     fn laid(
         &self,
         at: usize,
@@ -728,7 +758,7 @@ impl Ctx<'_> {
             .get(&(self.serial(at).to_string(), HighlightId::of(highlight)))
     }
 
-    /// The cover of the book at `at`, or one made of its title on its tone.
+    /// `cover`: the cover of the book at `at`, or one made of its title on its tone.
     fn cover(&self, at: usize) -> String {
         let book = &self.stats.books[at];
         if let Some(path) = &self.covers[at] {
@@ -752,8 +782,8 @@ impl Ctx<'_> {
         )
     }
 
-    /// The note closing a list of books: how many unidentified books `days`
-    /// holds and the time on them, empty where it holds none.
+    /// `unidentified`: the note closing a list of books: how many unidentified books `days` holds
+    /// and the time on them, empty where it holds none.
     fn unidentified(&self, days: std::ops::RangeInclusive<i64>) -> String {
         let (books, seconds) = self.stats.unidentified_over(days);
         match books {
@@ -767,8 +797,8 @@ impl Ctx<'_> {
     }
 }
 
-/// The sidebar: under `shown`, the screens, the years with reading, a Kindle
-/// plugged in and the way to a backup; under any record, the way to the settings.
+/// `side`: the sidebar: under `shown`, the screens, the years with reading, a Kindle plugged in and
+/// the way to a backup; under any record, the way to the settings.
 fn side(
     shown: Option<&Shown>,
     route: &Route,
@@ -830,9 +860,9 @@ fn side(
     out
 }
 
-/// The card of the Kindle plugged in under the cut serial `serial`, `name`
-/// over the line `app.js` sets as a sync goes, and `try_again`, hidden until a
-/// sync stops; `class` is added to `kindle`.
+/// `kindle_card`: the card of the Kindle plugged in under the cut serial `serial`, `name` over the
+/// line `app.js` sets as a sync goes, and `try_again`, hidden until a sync stops; `class` is added
+/// to `kindle`.
 pub(super) fn kindle_card(w: &Words, name: &str, serial: &str, class: &str) -> String {
     format!(
         "<div class=\"kindle{class}\" data-serial=\"{serial}\"><b>{name}</b><p class=\"state\"></p>\
@@ -843,7 +873,7 @@ pub(super) fn kindle_card(w: &Words, name: &str, serial: &str, class: &str) -> S
     )
 }
 
-/// A link drawn as a chip, lit where it is the route standing.
+/// `chip`: a link drawn as a chip, lit where it is the route standing.
 fn chip(out: &mut String, href: &str, name: &str, on: bool) {
     let _ = write!(
         out,
@@ -861,9 +891,9 @@ pub fn esc(text: &str) -> String {
         .replace('"', "&quot;")
 }
 
-/// The language `text` of a book tagged `tag` is set in: the Han convention
-/// `Script::resolve` reads off the two, as the Kindle picks a face, or `tag`
-/// where it reads `Script::Unknown`.
+/// `language_of`: the language `text` of a book tagged `tag` is set in: the Han convention
+/// `Script::resolve` reads off the two, as the Kindle picks a face, or `tag` where it reads
+/// `Script::Unknown`.
 fn language_of(tag: &str, text: &str) -> String {
     let named = match Script::resolve(Script::of_language(tag), text) {
         Script::Japanese => "ja",
@@ -875,7 +905,7 @@ fn language_of(tag: &str, text: &str) -> String {
     named.to_string()
 }
 
-/// A `lang` attribute stating [`language_of`], or nothing where it names none.
+/// `lang`: a `lang` attribute stating [`language_of`], or nothing where it names none.
 fn lang(tag: &str, text: &str) -> String {
     let named = language_of(tag, text);
     match named.is_empty() {
@@ -1113,8 +1143,8 @@ mod tests {
         assert_eq!(unescape("a+b%20c"), "a b c");
     }
 
-    /// The day the clock stands at in these tests, a fortnight past the newest
-    /// sitting [`read`] holds.
+    /// `clock`: the day the clock stands at in these tests, a fortnight past the newest sitting
+    /// [`read`] holds.
     fn clock() -> i64 {
         date::parse_day("2026-10-15").unwrap()
     }
@@ -1572,6 +1602,68 @@ mod tests {
     }
 
     #[test]
+    fn the_months_by_language_stand_inside_their_card_up_to_the_clocks_month() {
+        let ws = read("screen-language-months");
+        for (key, extent, language) in [("B1", 100, "English"), ("B2", 200, "Japanese")] {
+            let named = crate::metadata::Named {
+                kindle: String::new(),
+                key: key.into(),
+                extent,
+            };
+            let patch = crate::metadata::Patch {
+                add: vec![crate::metadata::Tag {
+                    r#type: "Language".into(),
+                    tag: language.into(),
+                }],
+                ..crate::metadata::Patch::default()
+            };
+            crate::metadata::edit(&ws, &[named], &patch, "2026-10-31T10:00:00").unwrap();
+        }
+        let shown = Shown::of(&ws, clock()).unwrap();
+        // `1032.0` is the page of the window's default width, the Authors and Language cards
+        // side by side, and `652.0` that of its narrowest, each card a row of its own.
+        for (page, chart, paired) in [(1032.0, 424.0, true), (652.0, 532.0, false)] {
+            let main = render(
+                Some(&shown),
+                &ws,
+                &Route::parse("/year/2026-10-15"),
+                page,
+                Covers::Files,
+                None,
+            )
+            .main;
+            let months = main
+                .split("<div class=\"months\">")
+                .nth(1)
+                .and_then(|after| after.split("</svg>").next())
+                .unwrap();
+            assert!(
+                months.contains(&format!(" width=\"{chart}\" ")),
+                "{page}: {months}"
+            );
+            let number = |said: &str, key: &str| -> f32 {
+                let at = said.split(key).nth(1).unwrap();
+                at[..at.find('"').unwrap()].parse().unwrap()
+            };
+            for rect in months.split("<rect ").skip(1) {
+                let end = number(rect, "x=\"") + number(rect, "width=\"");
+                assert!(end <= chart, "{page}: a part ends at {end}");
+            }
+            assert_eq!(months.matches(">30m</text>").count(), 2, "{months}");
+            assert!(months.contains(">Oct</text>"), "{months}");
+            assert!(
+                !months.contains(">Nov</text>") && !months.contains(">Dec</text>"),
+                "{months}"
+            );
+            let row = main
+                .split("<section class=\"split\">")
+                .find(|section| section.contains("data-chart=\"authors\""))
+                .unwrap();
+            assert_eq!(row.contains("<div class=\"months\">"), paired, "{page}");
+        }
+    }
+
+    #[test]
     fn a_stretch_draws_a_rectangle_and_a_moment_a_line() {
         let look = Look::light(&Palette::GREY);
         let s = Lang::English.strings();
@@ -1801,7 +1893,7 @@ mod tests {
             body: words.into(),
             ..highlight(100, title, "2026-09-01T09:05:10")
         };
-        // One backup of the Kindle `G003H2-0001`, written at `stamp`.
+        // `import`: one backup of the Kindle `G003H2-0001`, written at `stamp`.
         let import = |stamp: &str, highlights: Vec<Highlight>| {
             let mut record = record_of(
                 vec![book(100, "B1", title)],

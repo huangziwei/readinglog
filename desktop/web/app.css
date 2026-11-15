@@ -1771,8 +1771,8 @@ section h2 .said .search {
   margin: 4px 0;
 }
 
-/* `.ranked`, `.share`, `.legend`, `.months`, `.cols`: the charts' ranked bars, a language's
-   share and legend, the months split by language, a numbered type's columns, every bar square. */
+/* `.ranked`, `.share`, `.legend`, `.months`: the charts' ranked bars, a language's share
+   and legend, and the air over its months, every bar square. */
 .ranked .r {
   display: grid;
   grid-template-columns: 132px minmax(0, 1fr) 64px 54px;
@@ -1843,7 +1843,7 @@ section h2 .said .search {
 }
 .legend .r {
   display: grid;
-  grid-template-columns: 12px minmax(0, 1fr) 64px 40px;
+  grid-template-columns: 12px minmax(0, 1fr) auto 40px;
   align-items: center;
   column-gap: 8px;
   height: 24px;
@@ -1855,9 +1855,15 @@ section h2 .said .search {
   width: 10px;
   height: 10px;
 }
+.legend .r span:nth-child(2) {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .legend .r .h {
   text-align: right;
   color: var(--ink);
+  white-space: nowrap;
 }
 .legend .r .p {
   text-align: right;
@@ -1867,53 +1873,7 @@ section h2 .said .search {
   color: var(--faint);
 }
 .months {
-  display: flex;
-  align-items: flex-end;
-  gap: 18px;
-  min-height: 150px;
   margin: 18px 0 0;
-  padding: 0 0 0 4px;
-}
-.months .m,
-.cols .c {
-  width: 44px;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  color: inherit;
-}
-.months .m b,
-.cols .c b {
-  font-size: 11px;
-  font-weight: 400;
-  text-align: center;
-  color: var(--ink);
-  margin: 0 0 3px;
-  white-space: nowrap;
-}
-.months .m i {
-  display: block;
-  margin-top: 2px;
-}
-.months .m span,
-.cols .c span {
-  font-size: 11px;
-  color: var(--faint);
-  text-align: center;
-  margin: 5px 0 0;
-}
-.cols {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-around;
-  min-height: 176px;
-}
-.cols .c i {
-  display: block;
-}
-.cols .c i.none {
-  background: var(--l0);
-  height: 2px;
 }
 
 /* `hidden` hides, whatever display a rule above sets. */

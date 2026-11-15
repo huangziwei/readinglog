@@ -272,36 +272,38 @@ fn heights(values: &[i64], max: i64, plot: f32) -> Vec<f32> {
         .collect()
 }
 
-/// Where a band `h` tall sets `rows`, as `charts::settle` does: inside each bar
-/// tall enough and over the rest, at the one size all fit their [`rooms`] at;
-/// else every figure over its bar under air kept at the head; else [`thinned`].
+/// `head_of`: the air the head of a band keeps for `rows` standing over its tallest bars.
+fn head_of(rows: &[Vec<String>]) -> f32 {
+    LINE * rows.iter().map(Vec::len).max().unwrap_or(0) as f32 + INSET / 2.0
+}
+
+/// `settle`: where a band `h` tall sets `rows`, as `charts::settle` does: inside each bar tall
+/// enough and over the rest, at the one size all fit their [`rooms`] at; else as [`over`] sets
+/// them.
 fn settle(row: &Row, values: &[i64], max: i64, h: f32, rows: &[Vec<String>]) -> Figures {
-    let placed = |plot: f32| -> (Vec<Vec<String>>, Vec<bool>) {
-        values
-            .iter()
-            .zip(rows)
-            .map(|(value, said)| {
-                let tall = plot * *value as f32 / max as f32;
-                match holds(tall, said.len()) {
-                    true => (said.clone(), true),
-                    // `clears` answers for the air over the bar; with neither,
-                    // `said` joins onto one line.
-                    false => match clears(h - tall, said.len()) {
-                        true => (said.clone(), false),
-                        false => {
-                            let one = match said.is_empty() {
-                                true => Vec::new(),
-                                false => vec![said.concat()],
-                            };
-                            let inside = holds(tall, one.len());
-                            (one, inside)
-                        }
-                    },
-                }
-            })
-            .unzip()
-    };
-    let (said, inside) = placed(h);
+    let (said, inside): (Vec<Vec<String>>, Vec<bool>) = values
+        .iter()
+        .zip(rows)
+        .map(|(value, said)| {
+            let tall = h * *value as f32 / max as f32;
+            match holds(tall, said.len()) {
+                true => (said.clone(), true),
+                // `clears` answers for the air over the bar; with neither,
+                // `said` joins onto one line.
+                false => match clears(h - tall, said.len()) {
+                    true => (said.clone(), false),
+                    false => {
+                        let one = match said.is_empty() {
+                            true => Vec::new(),
+                            false => vec![said.concat()],
+                        };
+                        let inside = holds(tall, one.len());
+                        (one, inside)
+                    }
+                },
+            }
+        })
+        .unzip();
     let room = rooms(row, &said, &inside, &heights(values, max, h));
     let (px, fits) = sized(&said, &|at| room[at]);
     if fits {
@@ -312,39 +314,41 @@ fn settle(row: &Row, values: &[i64], max: i64, h: f32, rows: &[Vec<String>]) -> 
             head: 0.0,
         };
     }
-    let lines = rows.iter().map(Vec::len).max().unwrap_or(0) as f32;
-    let head = LINE * lines + INSET / 2.0;
-    let (flat, _) = placed(h - head);
-    let over = vec![false; values.len()];
-    let room = rooms(row, &flat, &over, &heights(values, max, h - head));
-    let (px, fits) = sized(&flat, &|at| room[at]);
+    over(row, &heights(values, max, h - head_of(rows)), h, rows)
+}
+
+/// `over`: where a band `h` tall sets `rows` over bars `tall` high, its head keeping [`head_of`]
+/// for them: every figure over its bar at the one size all fit their [`rooms`] at; else
+/// [`thinned`].
+fn over(row: &Row, tall: &[f32], h: f32, rows: &[Vec<String>]) -> Figures {
+    let none = vec![false; tall.len()];
+    let room = rooms(row, rows, &none, tall);
+    let (px, fits) = sized(rows, &|at| room[at]);
     if fits {
         return Figures {
-            said: flat,
-            inside: over,
+            said: rows.to_vec(),
+            inside: none,
             px,
-            head,
+            head: head_of(rows),
         };
     }
-    thinned(row, values, max, h, rows).unwrap_or(Figures {
-        said: vec![Vec::new(); values.len()],
-        inside: vec![false; values.len()],
+    thinned(row, tall, h, rows).unwrap_or(Figures {
+        said: vec![Vec::new(); tall.len()],
+        inside: none,
         px,
         head: 0.0,
     })
 }
 
-/// The figures `charts::spread` spreads evenly, both ends always: `stating`
-/// steps down until what is stated fits the room the skipped cells leave and
-/// clears its own bar.
-fn thinned(row: &Row, values: &[i64], max: i64, h: f32, rows: &[Vec<String>]) -> Option<Figures> {
-    let bars = values.len();
+/// `thinned`: the figures `charts::spread` spreads evenly over bars `tall` high, both ends always:
+/// `stating` steps down until what is stated fits the room the skipped cells leave and clears its
+/// own bar.
+fn thinned(row: &Row, tall: &[f32], h: f32, rows: &[Vec<String>]) -> Option<Figures> {
+    let bars = tall.len();
     if bars < 2 {
         return None;
     }
-    let lines = rows.iter().map(Vec::len).max().unwrap_or(0) as f32;
-    let head = LINE * lines + INSET / 2.0;
-    let tall = heights(values, max, h - head);
+    let head = head_of(rows);
     for stating in (2..bars).rev() {
         let marks = charts::spread(bars, stating);
         let said: Vec<Vec<String>> = rows
@@ -365,7 +369,7 @@ fn thinned(row: &Row, values: &[i64], max: i64, h: f32, rows: &[Vec<String>]) ->
             continue;
         }
         let even = row.ordinary() * step as f32 - row.gap;
-        let room = |at: usize| clear_of_bars(row, &tall, at).map_or(even, |clear| even.min(clear));
+        let room = |at: usize| clear_of_bars(row, tall, at).map_or(even, |clear| even.min(clear));
         let (px, fits) = sized(&said, &room);
         let stands =
             (0..bars).all(|at| said[at].is_empty() || clears(h - tall[at], said[at].len()));
@@ -689,7 +693,8 @@ pub fn fold(
         every,
         fold.busiest,
         &|secs| alltime::duration_rows(secs, s),
-        &|secs| date::duration(secs, s),
+        &|at| format!("{} · {}", axis[at], date::duration(fold.values[at], s)),
+        &|_| None,
         look,
         width,
         120.0,
@@ -706,9 +711,15 @@ pub fn stated(fold: &Fold, axis: &[String], each: String, s: &Strings) -> String
     }
 }
 
-/// Draws `values` as [`bars`] `width` wide and at most `plot` tall, `busiest` in
-/// the mark and the rest in `look.bar`, each stating `figure` of its value and
-/// `said` on hover, over [`names`] for every `every`th of `axis`.
+/// `FOOT`: the height of the strip under a row of columns that [`names`] sets their names in.
+const FOOT: f32 = 18.0;
+
+/// `SEAM`: the air between two parts of a column [`stacked`] stacks.
+const SEAM: f32 = 2.0;
+
+/// `columns`: `values` as [`bars`] `width` wide and `plot` tall, `busiest` in the mark, each
+/// stating `figure` and `tip` on hover, over [`names`] for every `every`th of `axis`; a cell `link`
+/// answers for opens it, `tip` over the whole cell.
 #[allow(clippy::too_many_arguments)]
 pub fn columns(
     values: &[i64],
@@ -716,12 +727,12 @@ pub fn columns(
     every: usize,
     busiest: Option<usize>,
     figure: &dyn Fn(i64) -> Vec<String>,
-    said: &dyn Fn(i64) -> String,
+    tip: &dyn Fn(usize) -> String,
+    link: &dyn Fn(usize) -> Option<String>,
     look: &Look,
     width: f32,
     plot: f32,
 ) -> String {
-    let foot = 18.0;
     let gap = cell_gap(values.len());
     let cells = even_cells(values.len(), gap, width);
     let row = Row {
@@ -732,7 +743,7 @@ pub fn columns(
         width,
     };
     let rows: Vec<Vec<String>> = values.iter().map(|value| figure(*value)).collect();
-    let mut svg = open(width, plot + foot);
+    let mut svg = open(width, plot + FOOT);
     bars(
         &mut svg,
         &row,
@@ -744,26 +755,139 @@ pub fn columns(
             true => look.mark,
             false => look.bar,
         },
-        &|at| format!("{} · {}", axis[at], said(values[at])),
+        tip,
         look,
     );
+    axis_under(&mut svg, &row, axis, every, plot, look);
+    for (at, (x, cell)) in cells.iter().enumerate() {
+        let Some(to) = link(at) else {
+            continue;
+        };
+        let _ = write!(
+            svg,
+            "<a href=\"{}\"><rect x=\"{x:.1}\" y=\"0\" width=\"{cell:.1}\" height=\"{:.1}\" fill=\"transparent\"><title>{}</title></rect></a>",
+            esc(&to),
+            plot + FOOT,
+            esc(&tip(at))
+        );
+    }
+    svg.push_str("</svg>");
+    svg
+}
+
+/// `spacing`: how many columns apart [`names`] names `axis` laid across `width`, the widest name
+/// [`INSET`] clear of the next: each column where it fits its own.
+pub fn spacing(axis: &[String], width: f32) -> usize {
+    let gap = cell_gap(axis.len());
+    let cell = even_cells(axis.len(), gap, width)
+        .first()
+        .map_or(width, |(_, cell)| *cell);
+    let widest = axis
+        .iter()
+        .map(|name| wide(name, AXIS_PX))
+        .fold(0.0, f32::max);
+    ((widest + INSET) / (cell + gap)) as usize + 1
+}
+
+/// `stacked`: `parts` in a row laid out as [`columns`] lays one, a column of `axis` each, its parts
+/// stacked from the foot [`SEAM`] apart in `fill` with `tip` on hover, its whole stating `figure`
+/// over its head as [`over`] sets it, and [`names`] for every [`spacing`]th.
+#[allow(clippy::too_many_arguments)]
+pub fn stacked(
+    parts: &[Vec<i64>],
+    axis: &[String],
+    fill: &dyn Fn(usize) -> [u8; 3],
+    tip: &dyn Fn(usize, usize) -> String,
+    figure: &dyn Fn(i64) -> Vec<String>,
+    look: &Look,
+    width: f32,
+    plot: f32,
+) -> String {
+    let gap = cell_gap(parts.len());
+    let cells = even_cells(parts.len(), gap, width);
+    let row = Row {
+        cells: &cells,
+        gap,
+        breaks: &[],
+        said: &[],
+        width,
+    };
+    let sums: Vec<i64> = parts.iter().map(|column| column.iter().sum()).collect();
+    let rows: Vec<Vec<String>> = sums.iter().map(|secs| figure(*secs)).collect();
+    let max = sums.iter().copied().max().unwrap_or(1).max(1);
+    let seams = |column: &[i64]| {
+        let stood = column.iter().filter(|secs| **secs > 0).count();
+        SEAM * stood.saturating_sub(1) as f32
+    };
+    // `scale` keeps the tallest column, seams and all, under the figures' air.
+    let most_seams = parts.iter().map(|column| seams(column)).fold(0.0, f32::max);
+    let scale = (plot - head_of(&rows) - most_seams).max(0.0) / max as f32;
+    let tall: Vec<f32> = parts
+        .iter()
+        .zip(&sums)
+        .map(|(column, sum)| *sum as f32 * scale + seams(column))
+        .collect();
+    let set = over(&row, &tall, plot, &rows);
+    let (bar, line) = (row.bar(), set.px * LINE / FIGURE_PX);
+    let mut svg = open(width, plot + FOOT);
+    for (at, column) in parts.iter().enumerate() {
+        let x = row.opens(at);
+        let mut top = plot;
+        for (part, secs) in column.iter().enumerate().filter(|(_, secs)| **secs > 0) {
+            if top < plot {
+                top -= SEAM;
+            }
+            let h = *secs as f32 * scale;
+            top -= h;
+            let _ = write!(
+                svg,
+                "<rect x=\"{x:.1}\" y=\"{top:.1}\" width=\"{bar:.1}\" height=\"{h:.1}\" fill=\"{}\"><title>{}</title></rect>",
+                hex(fill(part)),
+                esc(&tip(at, part))
+            );
+        }
+        let said = &set.said[at];
+        if said.is_empty() {
+            continue;
+        }
+        let first = plot - tall[at] - INSET / 2.0 - line * (said.len() as f32 - 1.0);
+        let w = said.iter().map(|l| wide(l, set.px)).fold(0.0, f32::max);
+        let centre = (x + bar / 2.0).clamp(w / 2.0, (width - w / 2.0).max(w / 2.0));
+        for (nth, text) in said.iter().enumerate() {
+            let _ = write!(
+                svg,
+                "<text x=\"{centre:.1}\" y=\"{:.1}\" font-size=\"{:.1}\" text-anchor=\"middle\" fill=\"{}\" pointer-events=\"none\">{}</text>",
+                first + line * nth as f32,
+                set.px,
+                hex(look.ink),
+                esc(text)
+            );
+        }
+    }
+    axis_under(&mut svg, &row, axis, spacing(axis, width), plot, look);
+    svg.push_str("</svg>");
+    svg
+}
+
+/// `axis_under`: the rule under a row of columns a band `plot` tall, and [`names`] for every
+/// `every`th of `axis` in the strip under it.
+fn axis_under(svg: &mut String, row: &Row, axis: &[String], every: usize, plot: f32, look: &Look) {
     let _ = write!(
         svg,
-        "<line x1=\"0\" y1=\"{:.1}\" x2=\"{width:.1}\" y2=\"{:.1}\" stroke=\"{}\"/>",
+        "<line x1=\"0\" y1=\"{:.1}\" x2=\"{:.1}\" y2=\"{:.1}\" stroke=\"{}\"/>",
         plot + 0.5,
+        row.width,
         plot + 0.5,
         hex(look.rule)
     );
     names(
-        &mut svg,
-        &row,
+        svg,
+        row,
         every,
         &|at| axis[at].clone(),
-        plot + foot - 4.0,
+        plot + FOOT - 4.0,
         look,
     );
-    svg.push_str("</svg>");
-    svg
 }
 
 /// `count` cells, each as wide as the rest, that fill `width` with `gap`
