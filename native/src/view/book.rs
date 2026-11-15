@@ -18,9 +18,6 @@ use super::{
 /// `TITLE_LINES`: lines a title takes before the rest of it is ellipsized.
 const TITLE_LINES: usize = 2;
 
-/// `TAG_LINES`: the most lines one type's tags take on the book's page.
-const TAG_LINES: i32 = 2;
-
 /// `TAG_JOIN`: what stands between two tags of one type.
 const TAG_JOIN: &str = " · ";
 
@@ -75,7 +72,7 @@ fn controls_split(
     split_from(theme, width, &read)
 }
 
-/// [`controls_split`]'s arithmetic over measured widths: each box from the left
+/// `split_from`: [`controls_split`]'s arithmetic over measured widths, each box from the left
 /// edge in the order given, on a new row where the last cannot hold it.
 fn split_from(theme: &Theme, width: i32, read: &[i32]) -> Vec<Rect> {
     let h = chrome::chip_height(theme);
@@ -100,8 +97,8 @@ fn controls_bottom(read: &[Rect]) -> i32 {
     read.iter().map(Rect::bottom).max().unwrap_or(0)
 }
 
-/// `open_height`: the band the controls take, the gap above them included, and 0 where this book
-/// offers none; the reset control alone opens it.
+/// `open_height`: the band the controls take, the gap above them included, at least one
+/// [`chrome::chip_height`] tall, the reset control's own.
 fn open_height(
     text: &mut TextRenderer,
     theme: &Theme,
@@ -301,14 +298,20 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
         }
         BookTab::Statistics => {}
     }
-    let (head, rest) = area.split_top(heading_height(cx.text, theme, ui, &book, s) + air);
+    let publisher = cx
+        .stats
+        .sets
+        .get(index)
+        .is_some_and(|set| set.publisher.is_some());
+    let named = publisher || !book.author.is_empty();
+    let extra = grown(cx.text, theme, named, kinds(cx.stats, index).len());
+    let (head, rest) = area.split_top(heading_height(cx.text, theme, ui, &book, s) + extra + air);
     heading(
         cx,
         Rect::new(head.x, head.y, head.w, head.h - air),
         &book,
         index,
     );
-    let rest = tags(cx, rest, index);
 
     let inner = chrome::section(cx.fb, cx.text, theme, rest, s.the_reading);
 
@@ -316,7 +319,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
     let mut lines = reading_rows(&book, cx.stats_from, s);
     // `s.on_the_kindle`, the file's row, last whatever stands above it.
     lines.push((s.on_the_kindle, where_note(&book, s)));
-    // `deep`: `theme.row_h` a row, as `config`'s, or what the section leaves.
+    // `deep`: `theme.row_h` a row, or what the section leaves.
     let deep = (theme.row_h * lines.len() as i32).min(inner.h);
     let rows = Rect::new(inner.x, inner.y, inner.w, deep).rows(lines.len() as i32, 0);
     for ((key, value), row) in lines.iter().zip(&rows) {
@@ -347,18 +350,19 @@ fn kinds(stats: &Stats, index: usize) -> Vec<(&str, Vec<(usize, &str)>)> {
     out
 }
 
-/// `tags`: the book at `index`'s tags over the head of `area`, a line per type, the type's
-/// name in [`DARK`] capitals level with its first line and its tags after it; answers the box
-/// left under them, all of `area` where the book holds no tag.
-fn tags(cx: &mut Ctx, area: Rect, index: usize) -> Rect {
-    let stats: &Stats = cx.stats;
-    let kinds = kinds(stats, index);
-    if kinds.is_empty() {
-        return area;
-    }
+/// `kinds_in` sets `kinds`, the book at `index`'s types, a line each from `baseline` down
+/// `words`: the type's name in [`DARK`] capitals, its tags after it.
+fn kinds_in(
+    cx: &mut Ctx,
+    words: Rect,
+    baseline: i32,
+    index: usize,
+    kinds: &[(&str, Vec<(usize, &str)>)],
+) {
     let theme: &Theme = cx.theme;
     let ui = cx.ui_script();
     cx.text.set_px(theme.small_px);
+    let line = cx.text.line_height() as i32;
     let named: Vec<(String, Script)> = kinds
         .iter()
         .map(|(r#type, _)| (r#type.to_uppercase(), Script::resolve(ui, r#type)))
@@ -368,76 +372,70 @@ fn tags(cx: &mut Ctx, area: Rect, index: usize) -> Rect {
         .map(|(said, _)| cx.text.measure_width_in(ui, said) as i32)
         .max()
         .unwrap_or(0)
-        + theme.gap * 3;
-    let room = (area.w - type_w).max(1);
-    let mut y = area.y;
-    for ((_, held), (said, script)) in kinds.iter().zip(&named) {
-        cx.text.set_px(theme.body_px);
-        let line = cx.text.line_height() as i32;
-        let baseline = y + cx.text.cap_height() as i32;
-        let first = Rect::new(area.x + type_w, y, room, line);
-        let lines = tag_lines(cx, first, baseline, index, held);
+        + theme.gap * 2;
+    let tags = Rect::new(words.x + type_w, words.y, (words.w - type_w).max(1), line);
+    for (at, ((_, held), (said, script))) in kinds.iter().zip(&named).enumerate() {
+        let y = baseline + at as i32 * line;
         cx.text.set_px(theme.small_px);
-        cx.text
-            .draw_inked(*script, cx.fb, area.x, baseline, said, DARK);
-        y += line * lines + theme.gap;
+        cx.text.draw_inked(*script, cx.fb, words.x, y, said, DARK);
+        tag_line(cx, tags, y, index, held);
     }
-    let top = y + theme.gap;
-    Rect::new(area.x, top, area.w, (area.bottom() - top).max(0))
 }
 
-/// `tag_lines` sets `held`, one type's tags, from `first`'s left on `baseline`, each after
-/// [`TAG_JOIN`] and a [`Hit::Tagged`], a tag the line cannot hold opening the next, at most
-/// [`TAG_LINES`] lines closed by `…` where tags are left; answers the lines taken.
-fn tag_lines(
-    cx: &mut Ctx,
-    first: Rect,
-    baseline: i32,
-    index: usize,
-    held: &[(usize, &str)],
-) -> i32 {
+/// `tag_line` sets `held`, one type's tags, across `tags` on `baseline`, each after [`TAG_JOIN`],
+/// `…` closing the line where the rest do not fit; each tag's [`Hit::Tagged`] runs to the next.
+fn tag_line(cx: &mut Ctx, tags: Rect, baseline: i32, index: usize, held: &[(usize, &str)]) {
     let theme: &Theme = cx.theme;
     let ui = cx.ui_script();
-    cx.text.set_px(theme.body_px);
+    cx.text.set_px(theme.small_px);
+    let cap = cx.text.cap_height() as i32;
     let join = cx.text.measure_width_in(ui, TAG_JOIN) as i32;
-    let (mut x, mut n) = (0, 0);
+    let top = baseline - cap - (tags.h - cap) / 2;
+    let mut x = 0;
+    let mut taps: Vec<(usize, i32)> = Vec::new();
     for (at, tag) in held {
         let script = Script::resolve(ui, tag);
-        let cut = cx.text.wrap_and_clamp_in(script, tag, first.w as u32, 1);
-        let said = cut.first().map(String::as_str).unwrap_or_default();
-        let w = cx.text.measure_width_in(script, said) as i32;
-        let mut lead = match x {
+        let lead = match x {
             0 => 0,
             _ => join,
         };
-        if x > 0 && x + lead + w > first.w {
-            if n + 1 == TAG_LINES {
-                let rest = format!("{TAG_JOIN}…");
-                let rest_w = cx.text.measure_width_in(ui, &rest) as i32;
-                if x + rest_w <= first.w {
-                    let at_y = baseline + n * first.h;
-                    cx.text.draw_in(ui, cx.fb, first.x + x, at_y, &rest, false);
-                }
-                break;
+        let cut = cx
+            .text
+            .wrap_and_clamp_in(script, tag, (tags.w - x - lead).max(1) as u32, 1);
+        let said = cut.first().map(String::as_str).unwrap_or_default();
+        let w = cx.text.measure_width_in(script, said) as i32;
+        if x > 0 && (said != *tag || x + lead + w > tags.w) {
+            let rest = format!("{TAG_JOIN}…");
+            if x + cx.text.measure_width_in(ui, &rest) as i32 <= tags.w {
+                cx.text
+                    .draw_in(ui, cx.fb, tags.x + x, baseline, &rest, false);
             }
-            (x, n, lead) = (0, n + 1, 0);
+            break;
         }
-        let at_y = baseline + n * first.h;
         if lead > 0 {
             cx.text
-                .draw_in(ui, cx.fb, first.x + x, at_y, TAG_JOIN, false);
+                .draw_in(ui, cx.fb, tags.x + x, baseline, TAG_JOIN, false);
         }
-        let tag_x = first.x + x + lead;
-        cx.text.draw_in(script, cx.fb, tag_x, at_y, said, false);
-        let box_ = Rect::new(tag_x, first.y + n * first.h, w, first.h);
-        cx.hit(Hit::Tagged(index, *at), box_);
+        let tag_x = tags.x + x + lead;
+        cx.text.draw_in(script, cx.fb, tag_x, baseline, said, false);
+        taps.push((*at, tags.x + x));
         x += lead + w;
     }
-    n + 1
+    let ends = taps
+        .iter()
+        .skip(1)
+        .map(|(_, from)| *from)
+        .chain([tags.right()]);
+    for ((at, from), to) in taps.iter().zip(ends.collect::<Vec<i32>>()) {
+        cx.hit(
+            Hit::Tagged(index, *at),
+            Rect::new(*from, top, to - from, tags.h),
+        );
+    }
 }
 
-/// `heading`: the cover, the title beside it, the progress bar under both, and the controls under
-/// that, [`Hit::Finished`] on the bar's own band.
+/// `heading`: the cover, beside it the title, the author line, the types and the three figures,
+/// the progress bar under both and the controls under that, [`Hit::Finished`] on the bar's band.
 fn heading(cx: &mut Ctx, area: Rect, book: &BookStat, index: usize) {
     let theme: &Theme = cx.theme;
     let script = Script::of_language(&book.language);
@@ -451,8 +449,10 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat, index: usize) {
     let (foot, top) = area.split_bottom(band::height(cx.text, theme));
     // `top` stops `theme.gap * 2` above `foot`.
     let top = Rect::new(top.x, top.y, top.w, (top.h - theme.gap * 2).max(1));
-    let slot = top.split_left(cover::width_for(top.h)).0;
+    let cover_top = Rect::new(top.x, top.y, top.w, top.h.min(cover_height(theme)));
+    let slot = cover_top.split_left(cover::width_for(cover_top.h)).0;
     let (cover_box, words) = cover_and_words(theme, top, cx.covers.box_in(slot, &book.thumbnail));
+    let cover_box = Rect::new(cover_box.x, cover_box.y, cover_box.w, cover_top.h);
     // `cover::note` fills a box no cover draws into.
     if !cx.covers.draw(cx.fb, cover_box, &book.thumbnail) {
         cover::note(cx, cover_box);
@@ -474,7 +474,8 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat, index: usize) {
         }
         None => (book.author.clone(), script),
     };
-    let deep = title_lines(cx.text, theme, words.h, !named.is_empty());
+    let kinds = kinds(cx.stats, index);
+    let deep = title_lines(cx.text, theme, words.h, !named.is_empty(), kinds.len());
     cx.text.set_px(theme.head_px);
     let lines = cx
         .text
@@ -498,6 +499,15 @@ fn heading(cx: &mut Ctx, area: Rect, book: &BookStat, index: usize) {
             author.first().map(String::as_str).unwrap_or_default(),
             false,
         );
+    }
+    if !kinds.is_empty() {
+        cx.text.set_px(theme.small_px);
+        let line = cx.text.line_height() as i32;
+        let first = match named.is_empty() {
+            true => y + theme.gap,
+            false => y + theme.gap / 2 + line,
+        };
+        kinds_in(cx, words, first, index, &kinds);
     }
 
     figures(cx, words, book);
@@ -604,8 +614,22 @@ pub fn asking(cx: &mut Ctx, area: Rect, ask: Ask, index: usize) {
 }
 
 /// `title_lines`: lines the title takes in a column `high` tall: [`TITLE_LINES`], fewer where
-/// `author` and [`figures`] leave room for fewer, and never none.
-fn title_lines(text: &mut TextRenderer, theme: &Theme, high: i32, author: bool) -> usize {
+/// `author`, a line for each of `kinds` ([`words_block`]) and [`figures`] leave room for fewer,
+/// and never none.
+fn title_lines(
+    text: &mut TextRenderer,
+    theme: &Theme,
+    high: i32,
+    author: bool,
+    kinds: usize,
+) -> usize {
+    if kinds > 0 {
+        let two = words_block(text, theme, author, kinds, TITLE_LINES);
+        return match two <= high {
+            true => TITLE_LINES,
+            false => 1,
+        };
+    }
     let stood = chrome::figure_height(text, theme);
     text.set_px(theme.small_px);
     let named = match author {
@@ -616,6 +640,36 @@ fn title_lines(text: &mut TextRenderer, theme: &Theme, high: i32, author: bool) 
     let each = (text.line_height() as i32).max(1);
     let room = (high - stood - named) / each;
     room.clamp(1, TITLE_LINES as i32) as usize
+}
+
+/// `words_block`: the height the words column takes with `title` lines of title, the author line
+/// where `author`, a line for each of `kinds` set as `heading` sets them, a gap, and [`figures`].
+fn words_block(
+    text: &mut TextRenderer,
+    theme: &Theme,
+    author: bool,
+    kinds: usize,
+    title: usize,
+) -> i32 {
+    let stood = chrome::figure_height(text, theme);
+    text.set_px(theme.head_px);
+    let titled = text.cap_height() as i32 + text.line_height() as i32 * title as i32;
+    text.set_px(theme.small_px);
+    let line = text.line_height() as i32;
+    let named = match author {
+        true => theme.gap + theme.gap / 2 + line,
+        false => theme.gap,
+    };
+    titled + named + line * kinds as i32 - text.cap_height() as i32 + theme.gap + stood
+}
+
+/// `grown`: what the heading takes over [`cover_height`] for `kinds` lines of types under a
+/// one-line title and the author line where `author`; 0 where they fit beside the cover.
+fn grown(text: &mut TextRenderer, theme: &Theme, author: bool, kinds: usize) -> i32 {
+    match kinds {
+        0 => 0,
+        _ => (words_block(text, theme, author, kinds, 1) - cover_height(theme)).max(0),
+    }
 }
 
 /// `reading_rows`: the rows the reading section states, each its name and its figure: every one but
@@ -670,7 +724,7 @@ fn figures(cx: &mut Ctx, words: Rect, book: &BookStat) {
     chrome::figures(cx.fb, cx.text, theme, row, &stated);
 }
 
-/// `BookStat::on_kindle` as `s.yes` or `s.no`.
+/// `where_note`: `BookStat::on_kindle` as `s.yes` or `s.no`.
 pub fn where_note(book: &BookStat, s: &Strings) -> String {
     match book.on_kindle {
         true => s.yes.into(),
@@ -678,8 +732,8 @@ pub fn where_note(book: &BookStat, s: &Strings) -> String {
     }
 }
 
-/// `finished_note`: the day a book read through was last put down, empty for one short of the end
-/// or with no reading.
+/// `finished_note`: the day a book read through was last put down, [`DASH`] for one short of the
+/// end or with no reading.
 pub fn finished_note(book: &BookStat, s: &Strings) -> String {
     match book.is_finished() {
         true => day_note(book.last_day, book, s),
@@ -687,7 +741,7 @@ pub fn finished_note(book: &BookStat, s: &Strings) -> String {
     }
 }
 
-/// `day`, and [`DASH`] for a book carrying no reading.
+/// `day_note`: `day` as a date, [`DASH`] for a book carrying no reading.
 pub fn day_note(day: i64, book: &BookStat, s: &Strings) -> String {
     match book.sittings {
         0 => DASH.into(),
@@ -808,7 +862,7 @@ mod tests {
         }
     }
 
-    /// [`book`] under a language tag and a title.
+    /// `set_in`: [`book`] under a language tag and a title.
     fn set_in(language: &str, title: &str) -> BookStat {
         BookStat {
             language: language.into(),
@@ -835,7 +889,7 @@ mod tests {
         assert_eq!(unit(&set_in("ko", "채식주의자"), en()), ("Words", "wpm"));
     }
 
-    /// [`book`] with the library naming a file for it.
+    /// `held`: [`book`] with the library naming a file for it.
     fn held(location: &str) -> BookStat {
         BookStat {
             on_kindle: true,
@@ -905,7 +959,7 @@ mod tests {
             [Some("Continue"), Some("Restart")],
             "and reading it again is the way out of the mark"
         );
-        // `back`: Short of [`FINISHED_PERCENT`], `can_mark` holds.
+        // `back`: short of [`FINISHED_PERCENT`], `can_mark` holds.
         let back = BookStat {
             percent: 96.0,
             ..done
@@ -1062,5 +1116,29 @@ mod tests {
         };
         assert_eq!(finished_note(&done, en()), "Sep 3, 2026");
         assert_eq!(where_note(&done, en()), "yes");
+    }
+
+    #[test]
+    fn a_books_types_all_stand_in_the_heading_with_the_figures_under_them() {
+        let Ok(mut text) = TextRenderer::load(24.0) else {
+            return;
+        };
+        for (w, h) in PANELS {
+            for size in crate::settings::TextSize::ALL {
+                let theme = Theme::sized(w, h, size);
+                for (author, kinds) in [true, false]
+                    .into_iter()
+                    .flat_map(|a| (1..=6).map(move |k| (a, k)))
+                {
+                    let high = cover_height(&theme) + grown(&mut text, &theme, author, kinds);
+                    let deep = title_lines(&mut text, &theme, high, author, kinds);
+                    let block = words_block(&mut text, &theme, author, kinds, deep);
+                    assert!(
+                        block <= high,
+                        "{w}x{h} {size:?}: {kinds} types take {block} of {high} px"
+                    );
+                }
+            }
+        }
     }
 }
