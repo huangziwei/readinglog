@@ -316,10 +316,24 @@ main.addEventListener("focusout", (event) => {
   }
 });
 
-/** `bring` imports `paths`, flashes what the record gained, and draws the route again. */
+/** `elsewhere` flashes `said`, the answer naming a Kindle this folder does not take, with its button: a folder chosen for the Kindle the cut serial `kindle` names, `again` runs there. */
+function elsewhere(said, kindle, again) {
+  flash(said.flash, true, {
+    label: said.act,
+    run: async () => {
+      if (!(await call("choose_folder", { kindle }))) return;
+      await show();
+      await again();
+    },
+  });
+}
+
+/** `bring` imports `paths`, flashes what the record gained, and draws the route again; one naming a Kindle this folder does not take is offered a folder of its own. */
 async function bring(paths) {
   if (paths.length === 0) return;
-  flash(await call("import", { paths }));
+  const said = await call("import", { paths });
+  if (said.act) return elsewhere(said, said.kindle, () => bring(paths));
+  flash(said.flash);
   await show();
 }
 
@@ -1281,7 +1295,7 @@ function tell(serial, line, how = "") {
   if (!drawCard() && card.wrong) flash(line, true);
 }
 
-/** `sync` syncs the Kindle `serial` names as `sync_kindle` does, its card told each half, flashing what came in and drawing again where it says anything; `quiet` says nothing where nothing came in. */
+/** `sync` syncs the Kindle `serial` names as `sync_kindle` does, its card told each half, flashing what came in and drawing again where it says anything; `quiet` says nothing where nothing came in. A Kindle this folder does not take is offered a folder of its own, `quiet` setting the card's line alone. */
 async function sync(serial, quiet = false) {
   synced = serial;
   let running = true;
@@ -1296,7 +1310,8 @@ async function sync(serial, quiet = false) {
   } finally {
     running = false;
   }
-  tell(serial, said.card);
+  tell(serial, said.card, said.refused ? "wrong" : "");
+  if (said.act) return elsewhere(said, serial, () => sync(serial));
   if (!said.flash) return;
   flash(said.flash);
   await show();

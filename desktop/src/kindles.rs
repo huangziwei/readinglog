@@ -159,6 +159,12 @@ pub fn model(serial: &str) -> &'static str {
     crate::device::model::of(serial).unwrap_or("Kindle")
 }
 
+/// `named`: what the Kindle `serial` names is called beside another of its model: its
+/// [`model`] and the serial's last four.
+pub fn named(serial: &str) -> String {
+    format!("{} {}", model(serial), tail(serial))
+}
+
 /// `labels`: what each of `sources` is called: its Kindle's [`model`], with the serial's last four
 /// where two share one; `unnamed` for the backups naming no Kindle.
 pub fn labels(sources: &[Source], unnamed: &str) -> Vec<String> {
@@ -338,5 +344,6 @@ mod tests {
             vec!["Kindle Colorsoft 7890", "Kindle Colorsoft 1234"]
         );
         assert_eq!(named(&[Some("G00ZZZ-0000")]), vec!["Kindle"]);
+        assert_eq!(super::named("G003H2-7890"), "Kindle Colorsoft 7890");
     }
 }

@@ -194,14 +194,47 @@ fn today() -> i64 {
     date::now().0
 }
 
+/// What an import says: `flash`, what the record gained in the window's words, or
+/// why nothing came in; where that is a Kindle the folder does not take,
+/// `kindle`, its cut serial, and `act`, the button choosing a folder for it.
+#[derive(Serialize)]
+struct Brought {
+    flash: String,
+    kindle: String,
+    act: String,
+}
+
 /// Import each of `paths`: a backup, or a Kindle's volume or its folder. Answers
-/// what the record gained, in the window's words.
+/// what the record gained, in the window's words; nothing comes in where one of
+/// them names a Kindle the folder does not take.
 #[tauri::command]
-async fn import(app: AppHandle, open: State<'_, Open>, paths: Vec<String>) -> Answer<String> {
+async fn import(app: AppHandle, open: State<'_, Open>, paths: Vec<String>) -> Answer<Brought> {
     let dir = folder(&app, &open)?;
     let ws = Workspace::create(&dir).map_err(said)?;
     remember(&app, &dir)?;
     let kindle = plugged();
+    // `named`: the Kindle each path names, where it names one.
+    let named: Vec<String> = paths
+        .iter()
+        .map(Path::new)
+        .filter_map(|from| match from.is_dir() {
+            true => import::named_by(from, kindle.as_ref()),
+            false => backup::about(from)
+                .ok()
+                .map(|said| said.serial)
+                .filter(|serial| !serial.is_empty()),
+        })
+        .collect();
+    if let Some(serial) = ws.refuses(named.iter().map(String::as_str)) {
+        let w = screen::Words::of(ws.config.lang());
+        return Ok(Brought {
+            flash: w
+                .elsewhere
+                .replace("{kindle}", &crate::kindles::named(serial)),
+            kindle: serial.to_string(),
+            act: w.choose_its_folder.to_string(),
+        });
+    }
     let mut done = Vec::new();
     for path in &paths {
         let from = Path::new(path);
@@ -213,15 +246,43 @@ async fn import(app: AppHandle, open: State<'_, Open>, paths: Vec<String>) -> An
             .map_err(said)?,
         );
     }
-    Ok(gained(&ws, &done))
+    Ok(Brought {
+        flash: gained(&ws, &done),
+        kindle: String::new(),
+        act: String::new(),
+    })
 }
 
 /// What a sync says: `flash`, what the record gained in the window's words,
-/// empty where it says nothing, and `card`, the Kindle card's line.
-#[derive(Serialize)]
+/// empty where it says nothing, and `card`, the Kindle card's line; where the
+/// folder does not take the Kindle, `refused`, and `act`, the button choosing a
+/// folder for it.
+#[derive(Debug, PartialEq, Eq, Serialize)]
 struct Synced {
     flash: String,
     card: String,
+    refused: bool,
+    act: String,
+}
+
+/// What a sync of the Kindle `serial` names says where the folder does not take
+/// it: why nothing came in and the button choosing a folder for it, or, `quiet`,
+/// the card's line alone.
+fn elsewhere(serial: &str, quiet: bool, w: &screen::Words) -> Synced {
+    let (flash, act) = match quiet {
+        true => (String::new(), String::new()),
+        false => (
+            w.elsewhere
+                .replace("{kindle}", &crate::kindles::named(serial)),
+            w.choose_its_folder.to_string(),
+        ),
+    };
+    Synced {
+        flash,
+        card: w.elsewhere_card.to_string(),
+        refused: true,
+        act,
+    }
 }
 
 /// Sync the Kindle `serial` names off the window's thread, as `import::kindle`
@@ -243,16 +304,25 @@ async fn sync_kindle(
     let device = plugged()
         .filter(|d| cut_serial(&d.serial) == serial)
         .ok_or_else(|| stopped(w.unplugged))?;
+    if !ws.takes(&serial) {
+        return Ok(elsewhere(&serial, quiet, w));
+    }
     let _ = phase.send(w.syncing_in.to_string());
     let at = ws.clone();
-    let done = tauri::async_runtime::spawn_blocking(move || {
+    let done = match tauri::async_runtime::spawn_blocking(move || {
         import::kindle(&at, &device, || {
             let _ = phase.send(w.syncing_out.to_string());
         })
     })
     .await
     .map_err(|e| stopped(&e.to_string()))?
-    .map_err(|err| stopped(&stopped_by(&err, w)))?;
+    {
+        Ok(done) => done,
+        Err(err) if err.downcast_ref::<import::Elsewhere>().is_some() => {
+            return Ok(elsewhere(&serial, quiet, w));
+        }
+        Err(err) => return Err(stopped(&stopped_by(&err, w))),
+    };
     let (_, secs) = date::now();
     let card = w.synced.replace(
         "{t}",
@@ -263,7 +333,12 @@ async fn sync_kindle(
         true => String::new(),
         false => gained(&ws, &[done.imported]),
     };
-    Ok(Synced { flash, card })
+    Ok(Synced {
+        flash,
+        card,
+        refused: false,
+        act: String::new(),
+    })
 }
 
 /// What stopped a sync, `err`: `w.in_use` where another app holds the Kindle.
@@ -314,10 +389,25 @@ fn set_setting(app: AppHandle, open: State<'_, Open>, key: String, value: String
     ws.save_config().map_err(said)
 }
 
-/// Show the folder picked in a dialog from here on. Answers whether one was.
+/// Show the folder picked in a dialog from here on, the dialog titled for the
+/// Kindle the cut serial `kindle` names where one is given. Answers whether one
+/// was picked.
 #[tauri::command]
-async fn choose_folder(app: AppHandle, open: State<'_, Open>) -> Answer<bool> {
-    let Some(picked) = app.dialog().file().blocking_pick_folder() else {
+async fn choose_folder(
+    app: AppHandle,
+    open: State<'_, Open>,
+    kindle: Option<String>,
+) -> Answer<bool> {
+    let mut dialog = app.dialog().file();
+    if let Some(serial) = kindle.filter(|serial| !serial.is_empty()) {
+        let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+        let w = screen::Words::of(ws.config.lang());
+        dialog = dialog.set_title(
+            w.folder_for
+                .replace("{kindle}", &crate::kindles::named(&serial)),
+        );
+    }
+    let Some(picked) = dialog.blocking_pick_folder() else {
         return Ok(false);
     };
     let dir = picked.into_path().map_err(|e| e.to_string())?;
@@ -662,6 +752,32 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_kindle_the_folder_does_not_take_is_named_with_the_way_to_a_folder_of_its_own() {
+        let w = screen::Words::of(readinglog_native::lang::Lang::English);
+        let said = elsewhere("G003H2-7890", false, w);
+        assert!(said.refused);
+        assert!(
+            said.flash
+                .starts_with("Kindle Colorsoft 7890 is not this folder's Kindle"),
+            "{}",
+            said.flash
+        );
+        assert_eq!(said.act, w.choose_its_folder);
+        assert_eq!(said.card, w.elsewhere_card);
+        // `quiet`, a sync after an edit: the card's line alone.
+        let quiet = elsewhere("G003H2-7890", true, w);
+        assert_eq!(
+            quiet,
+            Synced {
+                flash: String::new(),
+                card: w.elsewhere_card.to_string(),
+                refused: true,
+                act: String::new(),
+            }
+        );
+    }
 
     #[test]
     fn a_correction_reads_as_the_window_sends_it() {

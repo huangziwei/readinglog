@@ -359,6 +359,24 @@ impl Workspace {
         out
     }
 
+    /// Whether the Kindle the cut serial `serial` names may come in: a workspace
+    /// holding no Kindle yet takes any, else only a Kindle it holds already.
+    pub fn takes(&self, serial: &str) -> bool {
+        let held = self.kindles();
+        held.is_empty() || held.contains(&self.kindle_dir(serial))
+    }
+
+    /// The first of `serials`, taken in turn, that [`Self::takes`] refuses:
+    /// a workspace holding no Kindle takes the first, and then that one alone.
+    pub fn refuses<'a>(&self, serials: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
+        let empty = self.kindles().is_empty();
+        let mut first: Option<&str> = None;
+        serials.into_iter().find(|serial| match empty {
+            false => !self.takes(serial),
+            true => *first.get_or_insert(serial) != *serial,
+        })
+    }
+
     /// Every record the workspace holds, by its folder: each Kindle's, then the
     /// one no Kindle was named for.
     pub fn record_dirs(&self) -> Vec<PathBuf> {
@@ -581,6 +599,28 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_workspace_takes_its_own_kindle_or_any_while_it_holds_none() {
+        let ws = Workspace::create(&scratch("workspace-takes")).unwrap();
+        assert!(
+            ws.takes("G003H2-0001") && ws.takes("G0027J-0002"),
+            "holding none"
+        );
+        assert_eq!(
+            ws.refuses(["G003H2-0001", "G003H2-0001", "G0027J-0002"]),
+            Some("G0027J-0002"),
+            "the first claims it"
+        );
+        std::fs::create_dir_all(ws.kindle_dir("G003H2-0001").join(RECORD)).unwrap();
+        assert!(ws.takes("G003H2-0001"));
+        assert!(!ws.takes("G0027J-0002"), "another Kindle");
+        assert_eq!(ws.refuses(["G003H2-0001"]), None);
+        // A workspace holding two from before keeps taking each, and no third.
+        std::fs::create_dir_all(ws.kindle_dir("G0027J-0002").join(RECORD)).unwrap();
+        assert!(ws.takes("G0027J-0002"));
+        assert!(!ws.takes("G000K9-0003"));
     }
 
     #[test]

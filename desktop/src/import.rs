@@ -1,6 +1,7 @@
 //! [`kindle`] and [`backup`] keep what they read under the `backups/` of the Kindle its cut
 //! serial names, its record the latest whole but the `w`, `r` and `d` rows of both; a [`folder`]
 //! or [`backup`] naming no Kindle folds by `backup::restore`; `keep_latest` leaves one in each.
+//! A Kindle the workspace does not take stays out whole, as [`Elsewhere`].
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
@@ -52,18 +53,48 @@ pub struct Synced {
     pub put: bool,
 }
 
+/// Why a Kindle's record stays out of a workspace: the workspace holds another
+/// Kindle, and takes no second one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Elsewhere {
+    /// The cut serial of the Kindle kept out.
+    pub serial: String,
+}
+
+impl std::fmt::Display for Elsewhere {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} is not this workspace's Kindle", self.serial)
+    }
+}
+
+impl std::error::Error for Elsewhere {}
+
+/// `Ok` where `ws` takes the Kindle the cut serial `serial` names, else [`Elsewhere`].
+fn admit(ws: &Workspace, serial: &str) -> Result<()> {
+    match ws.takes(serial) {
+        true => Ok(()),
+        false => Err(Elsewhere {
+            serial: serial.to_string(),
+        }
+        .into()),
+    }
+}
+
 /// Import the backup at `from`, a `readinglog-*.zip` or `book-*.zip`: under
 /// the Kindle its `about.tsv` names, or where no Kindle is named.
 pub fn backup(ws: &Workspace, from: &Path) -> Result<Imported> {
     // `backup::peek` refuses a file carrying no record before it is kept.
     backup::peek(from)
         .map_err(|err| anyhow!("{} is not a Reading Log backup: {err}", from.display()))?;
+    let serial = backup::about(from).map(|a| a.serial).unwrap_or_default();
+    if !serial.is_empty() {
+        admit(ws, &serial)?;
+    }
     let bytes = std::fs::read(from).with_context(|| format!("reading {}", from.display()))?;
     let named = from
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "backup.zip".into());
-    let serial = backup::about(from).map(|a| a.serial).unwrap_or_default();
     let (group, fold) = match serial.is_empty() {
         true => (ws.dir.clone(), Fold::Restore),
         false => (ws.kindle_dir(&serial), Fold::Latest),
@@ -93,9 +124,10 @@ static SYNCING: Mutex<()> = Mutex::new(());
 /// import its record and covers under its cut serial, call `putting`, then
 /// [`put_back`] the notes, corrections and metadata the workspace's copy holds.
 pub fn kindle(ws: &Workspace, device: &DeviceInfo, putting: impl FnOnce()) -> Result<Synced> {
+    let serial = backup::cut_serial(&device.serial);
+    admit(ws, &serial)?;
     let _one = SYNCING.lock().unwrap_or_else(PoisonError::into_inner);
     let transport = device.open_transport()?;
-    let serial = backup::cut_serial(&device.serial);
     let imported = take(ws, Some(&serial), transport.as_ref())?;
     putting();
     let put = put_back(ws, &serial, transport.as_ref())?;
@@ -171,14 +203,23 @@ fn no_record(transport: &dyn Transport) -> anyhow::Error {
 /// app's own folder on one. The volume `plugged` is mounted at is kept under
 /// that Kindle's cut serial; any other folder names no Kindle.
 pub fn folder(ws: &Workspace, dir: &Path, plugged: Option<&DeviceInfo>) -> Result<Imported> {
-    let serial = plugged
-        .filter(|d| d.mass_storage_mount().as_deref() == Some(dir))
-        .map(|d| backup::cut_serial(&d.serial));
+    let serial = named_by(dir, plugged);
+    if let Some(serial) = &serial {
+        admit(ws, serial)?;
+    }
     take(
         ws,
         serial.as_deref(),
         &MassStorageTransport::new(dir.to_path_buf()),
     )
+}
+
+/// The cut serial of the Kindle `plugged` names where it is mounted at `dir`, the
+/// one Kindle a dropped folder names.
+pub fn named_by(dir: &Path, plugged: Option<&DeviceInfo>) -> Option<String> {
+    plugged
+        .filter(|d| d.mass_storage_mount().as_deref() == Some(dir))
+        .map(|d| backup::cut_serial(&d.serial))
 }
 
 /// The record and covers `transport` reads, kept in one backup laid out as the
@@ -477,6 +518,28 @@ mod tests {
             vec![book(100, "B1", "One")],
             vec![sitting("2026-09-01T09:00:00", 100, 600)],
         )
+    }
+
+    /// Every file under `dir`, by its path, with its bytes.
+    fn files(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+        let mut out = Vec::new();
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            match path.is_dir() {
+                true => out.extend(files(&path)),
+                false => out.push((path.clone(), std::fs::read(&path).unwrap())),
+            }
+        }
+        out.sort();
+        out
+    }
+
+    /// Whether `err` is [`Elsewhere`] for the Kindle `serial`.
+    fn kept_out(err: &anyhow::Error, serial: &str) -> bool {
+        err.downcast_ref::<Elsewhere>()
+            == Some(&Elsewhere {
+                serial: serial.into(),
+            })
     }
 
     #[test]
@@ -878,39 +941,47 @@ mod tests {
     }
 
     #[test]
-    fn two_kindles_are_kept_apart_and_drawn_apart() {
-        let ws = Workspace::create(&scratch("import-two")).unwrap();
-        let mut near = one();
-        near.books[0].percent = 10.0;
-        let mut far = record_of(
-            vec![book(100, "B1", "One")],
-            vec![sitting("2026-09-02T09:00:00", 100, 900)],
-        );
-        far.books[0].percent = 60.0;
+    fn a_second_kindle_is_kept_out_and_the_workspace_left_as_it_was() {
+        let ws = Workspace::create(&scratch("import-second")).unwrap();
         kindle(
             &ws,
-            &plugged(&kindle_dir("import-two-a", &near), "G000K1"),
+            &plugged(&kindle_dir("import-second-a", &one()), "G000K1"),
             || {},
         )
         .unwrap();
-        let added = kindle(
-            &ws,
-            &plugged(&kindle_dir("import-two-b", &far), "G000K2"),
-            || {},
-        )
-        .unwrap()
-        .imported;
-        assert_eq!((added.sittings, added.books), (1, 1), "a book of its own");
-        assert_eq!(ws.kindles().len(), 2);
-        let held = ws.record();
-        let mut percents: Vec<f64> = held.books.iter().map(|b| b.percent).collect();
-        percents.sort_by(f64::total_cmp);
-        assert_eq!(percents, vec![10.0, 60.0]);
-        assert_eq!(held.sittings.len(), 2);
+        let before = files(&ws.dir);
+        let other = kindle_dir("import-second-b", &one());
+        for device in [plugged(&other, "G000K2"), over_mtp(&other, "G000K2")] {
+            let err = kindle(&ws, &device, || panic!("nothing is put")).unwrap_err();
+            assert!(kept_out(&err, "G000K2"), "{err:#}");
+            assert_eq!(files(&ws.dir), before, "nothing kept");
+        }
+        assert_eq!(ws.kindles(), vec![ws.kindle_dir("G000K1")]);
+        assert_eq!(
+            std::fs::read_to_string(Record::file(&other.join(APP_DIR))).unwrap(),
+            one().text(),
+            "nothing put on it"
+        );
     }
 
     #[test]
-    fn a_backup_naming_its_kindle_joins_that_kindle() {
+    fn another_kindles_volume_dropped_is_kept_out() {
+        let ws = Workspace::create(&scratch("import-dropped-second")).unwrap();
+        kindle(
+            &ws,
+            &plugged(&kindle_dir("import-dropped-own", &one()), "G000K1"),
+            || {},
+        )
+        .unwrap();
+        let before = files(&ws.dir);
+        let root = kindle_dir("import-dropped-other", &one());
+        let err = folder(&ws, &root, Some(&plugged(&root, "G000K2"))).unwrap_err();
+        assert!(kept_out(&err, "G000K2"), "{err:#}");
+        assert_eq!(files(&ws.dir), before);
+    }
+
+    #[test]
+    fn a_backup_joins_its_own_kindle_and_another_kindles_is_kept_out() {
         let ws = Workspace::create(&scratch("import-zip")).unwrap();
         kindle(
             &ws,
@@ -919,9 +990,8 @@ mod tests {
         )
         .unwrap();
 
-        // `more`, a second Kindle's record, kept as the window keeps one: one
-        // more sitting, on another book.
-        let other = Workspace::create(&scratch("import-zip-other")).unwrap();
+        // `more`, the Kindle's record since, kept as the window keeps one in a
+        // workspace of its own: one more sitting, on another book.
         let more = record_of(
             vec![book(100, "B1", "One"), book(200, "B2", "Two")],
             vec![
@@ -929,27 +999,34 @@ mod tests {
                 sitting("2026-09-03T09:00:00", 200, 900),
             ],
         );
-        let zip = kindle(
-            &other,
-            &plugged(&kindle_dir("import-zip-second", &more), "G000K2"),
-            || {},
-        )
-        .unwrap()
-        .imported
-        .kept;
-        let added = backup(&ws, &zip).unwrap();
+        let kept_by = |name: &str, serial: &str| {
+            let elsewhere = Workspace::create(&scratch(name)).unwrap();
+            let volume = kindle_dir(&format!("{name}-volume"), &more);
+            kindle(&elsewhere, &plugged(&volume, serial), || {})
+                .unwrap()
+                .imported
+                .kept
+        };
+        let own = kept_by("import-zip-own", "G000K1");
+        let added = backup(&ws, &own).unwrap();
         assert!(!added.again);
         assert!(
             added
                 .kept
-                .starts_with(ws.kindle_dir("G000K2").join(BACKUPS))
+                .starts_with(ws.kindle_dir("G000K1").join(BACKUPS))
         );
         assert_eq!(
             std::fs::read(&added.kept).unwrap(),
-            std::fs::read(&zip).unwrap()
+            std::fs::read(&own).unwrap()
         );
-        assert_eq!((added.sittings, added.books), (2, 2));
-        assert_eq!(ws.record().sittings.len(), 3, "each Kindle's own");
+        assert_eq!((added.sittings, added.books), (1, 1));
+        assert_eq!(ws.record().sittings.len(), 2, "the latest backup stands");
+
+        let before = files(&ws.dir);
+        let other = kept_by("import-zip-other", "G000K2");
+        let err = backup(&ws, &other).unwrap_err();
+        assert!(kept_out(&err, "G000K2"), "{err:#}");
+        assert_eq!(files(&ws.dir), before, "nothing kept");
     }
 
     #[test]
