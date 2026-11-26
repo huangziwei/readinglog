@@ -9,6 +9,7 @@ mod day;
 mod journal;
 mod look;
 mod metadata;
+mod paper;
 mod rhythm;
 mod settings;
 mod tile;
@@ -29,6 +30,7 @@ use readinglog_native::view::{Shelf, Sort, Span, Way, Window};
 
 pub use journal::Mode;
 pub use look::Look;
+pub use paper::refusal;
 pub use words::Words;
 
 use crate::edits::HighlightId;
@@ -365,6 +367,9 @@ pub struct Shown {
     pub own: Vec<(String, String)>,
     /// `linked`: the values the workspace's `l` rows and its books' metadata make.
     pub linked: crate::metadata::links::Links,
+    /// `paper`: each Kindle's paper books and sittings, its `p` and `q` rows alone in a record,
+    /// by its cut serial: what a paper book's page logs against.
+    pub paper: Vec<(String, Record)>,
 }
 
 impl Shown {
@@ -375,6 +380,19 @@ impl Shown {
         let serials: Vec<String> = sources
             .iter()
             .map(|s| s.serial.clone().unwrap_or_default())
+            .collect();
+        let paper: Vec<(String, Record)> = sources
+            .iter()
+            .zip(&serials)
+            .filter(|(s, _)| !s.record.paper_books.is_empty())
+            .map(|(s, serial)| {
+                let rows = Record {
+                    paper_books: s.record.paper_books.clone(),
+                    paper_sittings: s.record.paper_sittings.clone(),
+                    ..Record::default()
+                };
+                (serial.clone(), rows)
+            })
             .collect();
         let mut corrected = HashSet::new();
         let mut written = HashMap::new();
@@ -494,6 +512,7 @@ impl Shown {
             metadata: sets,
             own,
             linked,
+            paper,
         })
     }
 
@@ -573,6 +592,8 @@ pub fn render(
         covers: &shown.covers,
         kindles: &shown.kindles,
         serials: &shown.serials,
+        labels: &shown.labels,
+        paper: &shown.paper,
         corrected: &shown.corrected,
         written: &shown.written,
         metadata: &shown.metadata,
@@ -676,8 +697,11 @@ struct Ctx<'a> {
     tones: &'a [[u8; 3]],
     covers: &'a [Option<PathBuf>],
     kindles: &'a [Option<String>],
-    /// [`Shown::serials`], [`Shown::corrected`] and [`Shown::written`].
+    /// [`Shown::serials`], [`Shown::labels`], [`Shown::paper`], [`Shown::corrected`] and
+    /// [`Shown::written`].
     serials: &'a [String],
+    labels: &'a [String],
+    paper: &'a [(String, Record)],
     corrected: &'a HashSet<(String, HighlightId)>,
     written: &'a HashMap<(String, HighlightId), Laid>,
     /// [`Shown::metadata`], [`Shown::own`] and [`Shown::linked`].
@@ -741,6 +765,19 @@ impl Ctx<'_> {
         };
         from.and_then(|n| self.serials.get(n))
             .map_or("", String::as_str)
+    }
+
+    /// `paper_of`: the paper book at `at` as its Kindle's `p` row states it, with that Kindle's
+    /// paper rows; `None` for a Kindle book.
+    fn paper_of(&self, at: usize) -> Option<(&Record, &readinglog_native::paper::PaperBook)> {
+        let book = &self.stats.books[at];
+        if !book.is_paper() {
+            return None;
+        }
+        let serial = self.serial(at);
+        let key = crate::kindles::key_origin(&book.cde_key).1;
+        let (_, rows) = self.paper.iter().find(|(held, _)| held == serial)?;
+        Some((rows, rows.paper_keyed(key)?))
     }
 
     /// `kindle`: the Kindle the book at `at` is from, where `kindles` names one.
@@ -1536,6 +1573,103 @@ mod tests {
             None,
         );
         assert_eq!(page.title, "Today");
+    }
+
+    #[test]
+    fn a_paper_book_draws_its_panel_and_the_board_every_book_draws_in_pages_a_minute() {
+        let ws = Workspace::create(&scratch("screen-paper")).unwrap();
+        record_of(
+            vec![book(100, "B1", "A Map of Small Rivers")],
+            vec![sitting("2026-09-01T09:00:00", 100, 600)],
+        )
+        .save(&ws.kindle_dir("G000K1").join(crate::workspace::RECORD))
+        .unwrap();
+        let new = crate::paper::NewBook {
+            title: "On Paper".into(),
+            author: "Someone".into(),
+            language: "en".into(),
+            pages: 200,
+        };
+        let key = crate::paper::add_book(&ws, "", &new).unwrap();
+        let shown = Shown::of(&ws, clock()).unwrap();
+        let (_, rows) = &shown.paper[0];
+        let added = rows.paper_books[0].added.clone();
+        let read = crate::paper::Read {
+            day: "2026-10-01".into(),
+            from: "21:00".into(),
+            to: "22:00".into(),
+            from_page: 0,
+            to_page: 60,
+        };
+        crate::paper::log(&ws, "", &added, &read).unwrap();
+        let shown = Shown::of(&ws, clock()).unwrap();
+        let draw = |route: &str| {
+            render(
+                Some(&shown),
+                &ws,
+                &Route::parse(route),
+                1072.0,
+                Covers::Files,
+                None,
+            )
+        };
+        let page = draw(&format!("/book/{key}"));
+        assert_eq!(page.title, "On Paper");
+        let main = &page.main;
+        assert!(main.contains("data-act=\"log-sitting\""), "{main}");
+        assert!(main.contains(&format!(
+            "<div class=\"paper\" data-kindle=\"G000K1\" data-added=\"{added}\">"
+        )));
+        assert!(
+            main.contains("name=\"from_page\" value=\"60\""),
+            "the bookmark"
+        );
+        assert!(main.contains("data-from=\"21:00\" data-to=\"22:00\""));
+        assert!(main.contains("pp. 0–60 · 1h"), "{main}");
+        assert!(main.contains("<dd>1.0 ppm</dd>"), "{main}");
+        let s = Lang::English.strings();
+        assert!(!main.contains(&format!("<dt>{}</dt>", s.on_the_kindle)));
+        assert!(!main.contains(&format!("<dt>{}</dt>", s.words)));
+        // `B1`, a Kindle book: no panel, its file's row standing.
+        let kindle = draw("/book/B1").main;
+        assert!(!kindle.contains("data-act=\"log-sitting\""));
+        assert!(kindle.contains(&format!("<dt>{}</dt>", s.on_the_kindle)));
+        // Books: the button beside the search, the one Kindle named in the form.
+        let books = draw("/books").main;
+        assert!(books.contains("data-act=\"add-paper\""));
+        assert!(books.contains("<input type=\"hidden\" name=\"kindle\" value=\"G000K1\">"));
+        assert!(books.contains("On Paper"), "the book on the shelf");
+    }
+
+    #[test]
+    fn every_refusal_is_said_in_every_language() {
+        use readinglog_native::paper::Refusal;
+        let all = [
+            Refusal::Untitled,
+            Refusal::NoPages,
+            Refusal::UnderLogged,
+            Refusal::NotAnInstant,
+            Refusal::Backwards,
+            Refusal::TooLong,
+            Refusal::Ahead,
+            Refusal::Pages,
+            Refusal::Overlaps,
+            Refusal::NoBook,
+            Refusal::NoSitting,
+        ];
+        for lang in Lang::ALL {
+            let w = Words::of(lang);
+            for one in all {
+                let said = refusal(&anyhow::Error::from(one), w);
+                assert!(
+                    said.is_some_and(|said| !said.is_empty()),
+                    "{lang:?} {one:?}"
+                );
+            }
+            let nowhere = anyhow::Error::from(crate::paper::NoKindle);
+            assert_eq!(refusal(&nowhere, w), Some(w.no_kindle));
+            assert_eq!(refusal(&anyhow::anyhow!("a disk error"), w), None);
+        }
     }
 
     #[test]

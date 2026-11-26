@@ -48,6 +48,17 @@ impl Named {
                 true => other.key.is_empty() && self.extent == other.extent,
             }
     }
+
+    /// `in_record`: the book `self` names in `record`: a `b` row's, or a paper book as it
+    /// draws before its sittings, the same book `Record::drawn` lays in.
+    fn in_record(&self, record: &Record) -> Option<Book> {
+        record
+            .books
+            .iter()
+            .find(|b| self.names(b))
+            .cloned()
+            .or_else(|| record.paper_keyed(&self.key).map(|p| p.as_book()))
+    }
 }
 
 /// `Change`: a field's new value, or `Back` to the book's own.
@@ -345,8 +356,7 @@ fn tagged(ws: &Workspace) -> Vec<Named> {
                 key: row.key,
                 extent: row.extent,
             };
-            if source.record.books.iter().any(|b| book.names(b)) && !out.iter().any(|b| b.is(&book))
-            {
+            if book.in_record(&source.record).is_some() && !out.iter().any(|b| b.is(&book)) {
                 out.push(book);
             }
         }
@@ -364,18 +374,13 @@ fn loaded(ws: &Workspace, books: &[Named]) -> Result<Vec<(Named, Values)>> {
         let source = ws.source(kindle)?;
         let rows = read(&source.dir);
         for named in books.iter().filter(|b| b.kindle == kindle) {
-            let book = source
-                .record
-                .books
-                .iter()
-                .find(|b| named.names(b))
-                .ok_or_else(|| {
-                    anyhow!(
-                        "no book {} at {} in the record of {kindle}",
-                        named.key,
-                        named.extent
-                    )
-                })?;
+            let book = named.in_record(&source.record).ok_or_else(|| {
+                anyhow!(
+                    "no book {} at {} in the record of {kindle}",
+                    named.key,
+                    named.extent
+                )
+            })?;
             let set = Set::of(&rows, &named.key, named.extent);
             out.push((named.clone(), Values::of(&book.author, &set)));
         }
@@ -405,7 +410,7 @@ fn respelled(ws: &Workspace, spelling: &Spelling, each: &[(Named, Patch)]) -> Ve
                 extent: row.extent,
             };
             let named = each.iter().any(|(b, patch)| b.is(&book) && patch.retags());
-            if named || !source.record.books.iter().any(|b| book.names(b)) {
+            if named || book.in_record(&source.record).is_none() {
                 continue;
             }
             out.push((
@@ -440,20 +445,15 @@ pub fn edit_each(ws: &Workspace, each: &[(Named, Patch)], at: &str) -> Result<Ve
         let mut fresh = Vec::new();
         let mut replaced = Vec::new();
         for (named, patch) in each.iter().filter(|(b, _)| b.kindle == kindle) {
-            let book = source
-                .record
-                .books
-                .iter()
-                .find(|b| named.names(b))
-                .ok_or_else(|| {
-                    anyhow!(
-                        "no book {} at {} in the record of {kindle}",
-                        named.key,
-                        named.extent
-                    )
-                })?;
+            let book = named.in_record(&source.record).ok_or_else(|| {
+                anyhow!(
+                    "no book {} at {} in the record of {kindle}",
+                    named.key,
+                    named.extent
+                )
+            })?;
             let set = Set::of(&held, &named.key, named.extent);
-            for (field, value) in patch.values(book, &set, &spelling) {
+            for (field, value) in patch.values(&book, &set, &spelling) {
                 if value == set.value(field) {
                     continue;
                 }
@@ -819,6 +819,35 @@ mod tests {
             edit(&ws, &[named("NONE", 1)], &patch, "2026-10-31T10:00:04").is_err(),
             "a book the record does not hold"
         );
+    }
+
+    #[test]
+    fn a_paper_book_takes_its_metadata_as_rows_on_its_own_key() {
+        let (ws, at) = workspace("metadata-paper");
+        let new = crate::paper::NewBook {
+            title: "On Paper".into(),
+            author: "Someone".into(),
+            language: "en".into(),
+            pages: 200,
+        };
+        let key = crate::paper::add_book(&ws, KINDLE, &new).unwrap();
+        let extent = Record::load(&at).paper_books[0].extent();
+        let patch = Patch {
+            title: to("On Paper, Bound"),
+            tags: Some(vec![tag("genre", "essays")]),
+            ..Patch::default()
+        };
+        let undone =
+            edit_each(&ws, &[(named(&key, extent), patch)], "2026-10-31T10:00:00").unwrap();
+        assert_eq!(undone.len(), 1);
+        let rows = read(&at);
+        assert!(rows.iter().all(|r| r.key == key && r.extent == extent));
+        let set = Set::of(&rows, &key, extent);
+        assert_eq!(set.title.as_deref(), Some("On Paper, Bound"));
+        assert_eq!(set.tags, vec![tag("genre", "essays")]);
+        let title = rows.iter().find(|r| r.field == Field::Title).unwrap();
+        assert_eq!(title.was.as_deref(), Some("On Paper"), "its own title");
+        assert!(tagged(&ws).iter().any(|b| b.key == key), "found as tagged");
     }
 
     #[test]

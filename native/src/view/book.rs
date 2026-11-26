@@ -98,7 +98,8 @@ fn controls_bottom(read: &[Rect]) -> i32 {
 }
 
 /// `open_height`: the band the controls take, the gap above them included, at least one
-/// [`chrome::chip_height`] tall, the reset control's own.
+/// [`chrome::chip_height`] tall, the reset control's own; none on a paper book, whose data the
+/// desktop keeps.
 fn open_height(
     text: &mut TextRenderer,
     theme: &Theme,
@@ -106,6 +107,9 @@ fn open_height(
     book: &BookStat,
     s: &Strings,
 ) -> i32 {
+    if book.is_paper() {
+        return 0;
+    }
     let width = chrome::content_box(theme).w;
     let read = controls_split(text, theme, script, width, control_labels(book, s));
     let foot = controls_bottom(&read).max(chrome::chip_height(theme));
@@ -316,9 +320,7 @@ pub fn draw(cx: &mut Ctx, area: Rect, index: usize, state: &State) {
     let inner = chrome::section(cx.fb, cx.text, theme, rest, s.the_reading);
 
     // [`figures`] states the other three.
-    let mut lines = reading_rows(&book, cx.stats_from, s);
-    // `s.on_the_kindle`, the file's row, last whatever stands above it.
-    lines.push((s.on_the_kindle, where_note(&book, s)));
+    let lines = reading_rows(&book, cx.stats_from, s);
     // `deep`: `theme.row_h` a row, or what the section leaves.
     let deep = (theme.row_h * lines.len() as i32).min(inner.h);
     let rows = Rect::new(inner.x, inner.y, inner.w, deep).rows(lines.len() as i32, 0);
@@ -672,10 +674,9 @@ fn grown(text: &mut TextRenderer, theme: &Theme, author: bool, kinds: usize) -> 
     }
 }
 
-/// `reading_rows`: the rows the reading section states, each its name and its figure: every one but
-/// the file's own.
+/// `reading_rows`: the rows the reading section states, each its name and its figure, the file's
+/// own last. A paper book states its speed in pages a minute, and neither words nor a file.
 pub fn reading_rows(book: &BookStat, from: StatsFrom, s: &Strings) -> Vec<(&'static str, String)> {
-    let (count, rate) = unit(book, s);
     let mut lines: Vec<(&str, String)> = vec![
         (s.sittings, book.sittings.to_string()),
         (s.days, days_note(book, s)),
@@ -684,20 +685,32 @@ pub fn reading_rows(book: &BookStat, from: StatsFrom, s: &Strings) -> Vec<(&'sta
             s.average_a_sitting,
             date::duration(book.per_sitting(from), s),
         ),
-        (count, date::words(book.words_read(from))),
-        (
-            s.reading_speed,
-            book.wpm(from)
-                .map_or(DASH.into(), |w| format!("{w} {rate}")),
-        ),
+    ];
+    match book.is_paper() {
+        true => lines.push((s.reading_speed, ppm_note(book, from, s))),
+        false => {
+            let (count, rate) = unit(book, s);
+            lines.push((count, date::words(book.words_read(from))));
+            lines.push((
+                s.reading_speed,
+                book.wpm(from)
+                    .map_or(DASH.into(), |w| format!("{w} {rate}")),
+            ));
+        }
+    }
+    lines.extend([
         (s.started, day_note(book.first_day, book, s)),
         (s.last_read, day_note(book.last_day, book, s)),
         (s.finished_on, finished_note(book, s)),
-    ];
+    ]);
     // `restarted_on` stands where a restart emptied `finished_on`.
     if !book.restarted_on.is_empty() {
         let said = crate::lang::counted(s.n_times, book.times_finished());
         lines.push((s.read_through_row, said));
+    }
+    // `s.on_the_kindle`, the file's row, last whatever stands above it.
+    if !book.is_paper() {
+        lines.push((s.on_the_kindle, where_note(book, s)));
     }
     lines
 }
@@ -722,6 +735,13 @@ fn figures(cx: &mut Ctx, words: Rect, book: &BookStat) {
     let height = chrome::figure_height(cx.text, theme);
     let row = Rect::new(words.x, words.bottom() - height, words.w, height);
     chrome::figures(cx.fb, cx.text, theme, row, &stated);
+}
+
+/// `ppm_note`: `BookStat::ppm` to one place, paper running half a page to two a minute; [`DASH`]
+/// where no page was turned.
+pub fn ppm_note(book: &BookStat, from: StatsFrom, s: &Strings) -> String {
+    book.ppm(from)
+        .map_or(DASH.into(), |p| format!("{p:.1} {}", s.ppm))
 }
 
 /// `where_note`: `BookStat::on_kindle` as `s.yes` or `s.no`.
@@ -1116,6 +1136,58 @@ mod tests {
         };
         assert_eq!(finished_note(&done, en()), "Sep 3, 2026");
         assert_eq!(where_note(&done, en()), "yes");
+    }
+
+    /// `paper`: [`book`] read on paper, 90 pages over an hour and a half.
+    fn paper() -> BookStat {
+        BookStat {
+            cde_key: "paper-20261101T100000".into(),
+            cde_type: String::new(),
+            page_turns: 90,
+            ..book(5_400, 5_400, 0)
+        }
+    }
+
+    #[test]
+    fn a_paper_book_states_pages_a_minute_and_neither_words_nor_a_file() {
+        let names = |book: &BookStat| -> Vec<&str> {
+            reading_rows(book, StatsFrom::App, en())
+                .iter()
+                .map(|(name, _)| *name)
+                .collect()
+        };
+        let kindle = book(600, 0, 0);
+        let s = en();
+        assert!(names(&kindle).contains(&s.words));
+        assert_eq!(names(&kindle).last(), Some(&s.on_the_kindle));
+        let rows = reading_rows(&paper(), StatsFrom::App, s);
+        assert!(!names(&paper()).contains(&s.words));
+        assert!(!names(&paper()).contains(&s.on_the_kindle));
+        assert_eq!(names(&paper()).len(), names(&kindle).len() - 2);
+        let speed = rows.iter().find(|(name, _)| *name == s.reading_speed);
+        assert_eq!(speed.map(|(_, said)| said.as_str()), Some("1.0 ppm"));
+        let unread = BookStat {
+            page_turns: 0,
+            ..paper()
+        };
+        assert_eq!(ppm_note(&unread, StatsFrom::App, s), DASH);
+        for lang in Lang::ALL {
+            assert!(!lang.strings().ppm.is_empty(), "{lang:?}");
+        }
+    }
+
+    #[test]
+    fn a_paper_books_page_draws_no_controls() {
+        let Ok(mut text) = TextRenderer::load(24.0) else {
+            return;
+        };
+        for (w, h) in PANELS {
+            let theme = Theme::for_screen(w, h);
+            let script = Script::Unknown;
+            assert_eq!(open_height(&mut text, &theme, script, &paper(), en()), 0);
+            assert!(open_height(&mut text, &theme, script, &book(600, 0, 0), en()) > 0);
+        }
+        assert!(!paper().can_mark() && !paper().can_open());
     }
 
     #[test]

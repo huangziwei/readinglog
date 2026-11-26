@@ -166,6 +166,12 @@ impl Book {
         !self.cde_key.starts_with('*') || crate::library::is_reading(&self.location)
     }
 
+    /// `is_paper`: whether this is a book read on paper, laid in off a `p` row by
+    /// `Record::lay_paper`.
+    pub fn is_paper(&self) -> bool {
+        crate::paper::is_paper(&self.cde_key)
+    }
+
     /// `read_through`: whether the progress this book holds calls it read through.
     fn read_through(&self) -> bool {
         self.percent >= FINISHED_PERCENT
@@ -263,6 +269,10 @@ pub struct Record {
     pub metadata: Vec<crate::metadata::Metadata>,
     /// `links`: `l` rows, names counted as one value, one per link.
     pub links: Vec<crate::metadata::links::Link>,
+    /// `paper_books`: `p` rows, ascending by when each book was added.
+    pub paper_books: Vec<crate::paper::PaperBook>,
+    /// `paper_sittings`: `q` rows, ascending by when each sitting was logged.
+    pub paper_sittings: Vec<crate::paper::PaperSitting>,
 }
 
 /// `Pass`: what one pass did.
@@ -396,6 +406,10 @@ impl Record {
                     .extend(crate::written::read_correction(&mut f)),
                 Some("d") => set.extend(crate::metadata::read_row(line)),
                 Some("l") => linked.extend(crate::metadata::links::read_row(line)),
+                Some("p") => out.paper_books.extend(crate::paper::read_book(&mut f)),
+                Some("q") => out
+                    .paper_sittings
+                    .extend(crate::paper::read_sitting(&mut f)),
                 _ => {}
             }
         }
@@ -543,6 +557,12 @@ impl Record {
         }
         for c in &self.corrections {
             crate::written::write_correction(&mut out, c);
+        }
+        for b in &self.paper_books {
+            crate::paper::write_book(&mut out, b);
+        }
+        for s in &self.paper_sittings {
+            crate::paper::write_sitting(&mut out, s);
         }
         close(&mut out);
         out
@@ -1770,6 +1790,9 @@ impl Record {
                 .collect(),
             // `links` name words of the whole record, not one book.
             links: Vec::new(),
+            // `slot` holds a `b` row, which no paper book is stored as.
+            paper_books: Vec::new(),
+            paper_sittings: Vec::new(),
         }
     }
 
@@ -1843,7 +1866,7 @@ impl Record {
 
     /// `sort` orders `sittings` on `started_at`, `end_position` and `ended_at`, keeping one row per
     /// `started_at` and `end_position`.
-    fn sort(&mut self) {
+    pub(crate) fn sort(&mut self) {
         // `ended_at`: the latest sorts first and stands, `ended_at` moving between passes.
         self.sittings.sort_by(|a, b| {
             (&a.started_at, a.end_position, Reverse(&a.ended_at)).cmp(&(
@@ -3306,6 +3329,8 @@ mod tests {
             corrections: Vec::new(),
             metadata: Vec::new(),
             links: Vec::new(),
+            paper_books: Vec::new(),
+            paper_sittings: Vec::new(),
             cleared: vec![Cleared {
                 extent: 304_517,
                 key: "B00OKPCRLG".into(),
@@ -3364,6 +3389,8 @@ mod tests {
             corrections: Vec::new(),
             metadata: Vec::new(),
             links: Vec::new(),
+            paper_books: Vec::new(),
+            paper_sittings: Vec::new(),
             cleared: vec![Cleared {
                 extent: 148_207,
                 key: "B00OKPCRLG".into(),
@@ -3768,6 +3795,8 @@ mod tests {
             corrections: Vec::new(),
             metadata: Vec::new(),
             links: Vec::new(),
+            paper_books: Vec::new(),
+            paper_sittings: Vec::new(),
             clock: Clock::default(),
         };
         record.sittings[0].progress = progress;
@@ -3914,6 +3943,8 @@ mod tests {
             corrections: Vec::new(),
             metadata: Vec::new(),
             links: Vec::new(),
+            paper_books: Vec::new(),
+            paper_sittings: Vec::new(),
             clock: Clock::default(),
         }
     }

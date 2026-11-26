@@ -751,7 +751,7 @@ mod tests {
         let root = kindle_dir("import-put-volume", &one());
         let file = Record::file(&root.join(APP_DIR));
         // `later` stands for a row a later build of Reading Log writes.
-        let later = "q\tfrom a later build";
+        let later = "y\tfrom a later build";
         let held = format!("{}{later}\n", std::fs::read_to_string(&file).unwrap());
         std::fs::write(&file, &held).unwrap();
         let first = kindle(&ws, &plugged(&root, serial), || {}).unwrap();
@@ -762,13 +762,13 @@ mod tests {
         };
         crate::notes::write(&ws, serial, &on, "written here").unwrap();
         // `since`: the Kindle's own record moved on before the sync reads it again.
-        let since = held.replace(later, &format!("{later}\nq\tsince"));
+        let since = held.replace(later, &format!("{later}\ny\tsince"));
         std::fs::write(&file, &since).unwrap();
         assert!(put_back(&ws, serial, &MassStorageTransport::new(root.clone())).unwrap());
         let on_kindle = std::fs::read_to_string(&file).unwrap();
         assert_eq!(Record::from_text(&on_kindle).notes.len(), 1);
         assert!(
-            on_kindle.contains("q\tsince\n"),
+            on_kindle.contains("y\tsince\n"),
             "the Kindle's own lines stand"
         );
         let other = |text: &str| -> Vec<String> {
@@ -882,6 +882,70 @@ mod tests {
         assert_eq!(Record::load(&on_kindle).sittings.len(), 2);
         // Once more: the Kindle holds the row, nothing to put.
         assert!(!kindle(&ws, &plugged(&root, serial), || {}).unwrap().put);
+    }
+
+    /// A paper book written here, over mass storage and over MTP: a sync puts its
+    /// rows onto the Kindle, the Kindle's own save keeps them, the next import keeps
+    /// them, and a sitting deleted here stays deleted past the Kindle's older copy.
+    #[test]
+    fn a_paper_book_written_here_goes_onto_the_kindle_and_outlasts_every_import() {
+        for over in ["volume", "mtp"] {
+            let ws = Workspace::create(&scratch(&format!("import-paper-{over}"))).unwrap();
+            let serial = "G000K1";
+            let root = kindle_dir(&format!("import-paper-{over}-storage"), &one());
+            let device = match over {
+                "mtp" => over_mtp(&root, serial),
+                _ => plugged(&root, serial),
+            };
+            kindle(&ws, &device, || {}).unwrap();
+            let new = crate::paper::NewBook {
+                title: "On Paper".into(),
+                author: "Someone".into(),
+                language: "en".into(),
+                pages: 200,
+            };
+            let key = crate::paper::add_book(&ws, serial, &new).unwrap();
+            let ours = ws.kindle_dir(serial).join(RECORD);
+            let added = Record::load(&ours).paper_books[0].added.clone();
+            let read = crate::paper::Read {
+                day: "2026-09-02".into(),
+                from: "21:00".into(),
+                to: "21:30".into(),
+                from_page: 0,
+                to_page: 30,
+            };
+            let logged = crate::paper::log(&ws, serial, &added, &read).unwrap();
+            assert!(kindle(&ws, &device, || {}).unwrap().put, "{over}");
+            let app = root.join(APP_DIR);
+            let on = Record::load(&app);
+            assert_eq!(
+                (on.paper_books.len(), on.paper_sittings.len()),
+                (1, 1),
+                "{over}"
+            );
+            // `Record::keep`: the Kindle's own pass, a sitting of its own on.
+            let mut pass = Record::load(&app);
+            pass.sittings.push(sitting("2026-09-03T09:00:00", 100, 600));
+            pass.keep(&app, &mut None).unwrap();
+            let older = std::fs::read_to_string(Record::file(&app)).unwrap();
+            assert_eq!(Record::from_text(&older).paper_sittings.len(), 1);
+            kindle(&ws, &device, || {}).unwrap();
+            let held = Record::load(&ours);
+            assert_eq!(held.sittings.len(), 2, "{over}: the Kindle's pass came in");
+            assert_eq!(
+                held.paper_sittings.len(),
+                1,
+                "{over}: and the paper rows stand"
+            );
+            let drawn = held.drawn().record;
+            assert!(drawn.books.iter().any(|b| b.cde_key == key), "{over}");
+            crate::paper::delete(&ws, serial, &logged).unwrap();
+            // `older`, the Kindle's copy still holding the sitting live, comes in again.
+            std::fs::write(Record::file(&app), &older).unwrap();
+            assert!(kindle(&ws, &device, || {}).unwrap().put, "{over}");
+            assert!(Record::load(&ours).paper_sittings[0].deleted, "{over}");
+            assert!(Record::load(&app).paper_sittings[0].deleted, "{over}");
+        }
     }
 
     #[test]

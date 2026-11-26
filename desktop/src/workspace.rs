@@ -385,8 +385,8 @@ impl Workspace {
         out
     }
 
-    /// Each record the workspace holds that states a sitting or a book: every
-    /// Kindle's, then the one no Kindle was named for.
+    /// Each record the workspace holds that states a sitting, a book or a paper
+    /// book: every Kindle's, then the one no Kindle was named for.
     pub fn sources(&self) -> Vec<Source> {
         self.kindles()
             .into_iter()
@@ -400,7 +400,11 @@ impl Workspace {
                 dir: self.record_dir(),
                 serial: None,
             }])
-            .filter(|s| !s.record.sittings.is_empty() || !s.record.books.is_empty())
+            .filter(|s| {
+                !s.record.sittings.is_empty()
+                    || !s.record.books.is_empty()
+                    || !s.record.paper_books.is_empty()
+            })
             .collect()
     }
 

@@ -19,7 +19,7 @@ use readinglog_native::record::Record;
 use readinglog_native::settings::{
     ColorScheme, Scope, SittingFloor, StatsFrom, TextSize, WeekStart,
 };
-use readinglog_native::stats::Stats;
+use readinglog_native::stats::{BookStat, Stats};
 use readinglog_native::ui::chrome::Tab;
 use readinglog_native::ui::paint;
 use readinglog_native::ui::splash;
@@ -364,6 +364,10 @@ fn thinned_for(shot: &Shot, opts: &Opts, covers: &Path, lang: Lang) -> Option<Re
             record.reset_at = "260810:120000".into();
             return Some(record);
         }
+        // `paper`: the library with a paper book on it, `book:paper` its own page.
+        ("book" | "books", Some(of)) if of == "paper" || of.starts_with("paper:") => {
+            return Some(fixture::papered(opts.day, covers));
+        }
         // `cleared`: the book listed last, cleared and kept, sorting last either way and leaving
         // every other index where it stands.
         ("book" | "books", Some(of)) if of.ends_with("cleared") => {
@@ -474,7 +478,12 @@ fn draw(app: &mut App, fb: &mut Framebuffer, shot: &Shot, week: WeekStart) -> Re
                 Some((at, name)) => (at, Some(question(name)?), BookTab::Statistics, 0, None),
                 None => (of, None, BookTab::Statistics, 0, None),
             };
-            (Some(at.parse().unwrap_or(0)), asking, page, from, find)
+            // `paper` names the first paper book, wherever the list sorts it.
+            let index = match at {
+                "paper" => app.stats().books.iter().position(BookStat::is_paper),
+                at => at.parse().ok(),
+            };
+            (Some(index.unwrap_or(0)), asking, page, from, find)
         }
         _ => (None, None, BookTab::Statistics, 0, None),
     };
@@ -796,14 +805,14 @@ fn list() {
             }
             "today" => "  (:quiet :empty :busy)",
             "book" => {
-                "  (:<index> :<index>:graphs :<index>:graphs:<n> :<index>:journal\n   :<index>:journal:<n> :<index>:journal:earliest :<index>:find\n   :<index>:find:<query> :<index>:restart :<index>:mark :<index>:unmark\n   :<index>:clear :<index>:cleared :<index>:written :<index>:written:<n>\n   :<index>:journal:open:<n> :<index>:written:open:<n>:<page>)"
+                "  (:<index> :<index>:graphs :<index>:graphs:<n> :<index>:journal\n   :<index>:journal:<n> :<index>:journal:earliest :<index>:find\n   :<index>:find:<query> :<index>:restart :<index>:mark :<index>:unmark\n   :<index>:clear :<index>:cleared :<index>:written :<index>:written:<n>\n   :<index>:journal:open:<n> :<index>:written:open:<n>:<page>\n   :paper :paper:graphs)"
             }
             "config" => {
                 "  (:reset :nobackup :restore :gone :rebuild :many :many2 :backups\n   :backups2)"
             }
             "search" | "journal" => "  (:<query> :empty :none :down :preedit)",
             "books" => {
-                "  (:finished :unfinished :unfinished-progress :time :progress :up\n   :mid :last :window :windowweek :windowprogress :windowempty\n   :tag:<type>:<tag> :unset:<type>)"
+                "  (:finished :unfinished :unfinished-progress :time :progress :up\n   :mid :last :window :windowweek :windowprogress :windowempty\n   :tag:<type>:<tag> :unset:<type> :paper)"
             }
             _ => "",
         };

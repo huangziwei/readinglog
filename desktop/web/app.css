@@ -1876,6 +1876,117 @@ section h2 .said .search {
   margin: 18px 0 0;
 }
 
+/* `.tools`: Books' head right of its name, Add a Paper Book beside the search */
+.head .tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.head .tools .chip {
+  cursor: pointer;
+}
+/* `.paperadd`: the card adding a paper book, under Books' head; `.fields` sets
+   its short fields, and a sitting's, side by side */
+.paperadd {
+  margin: 16px 0 0;
+  max-width: 640px;
+}
+.paperadd h3 {
+  margin: 0 0 14px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--soft);
+}
+.fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 0 12px;
+}
+select.box {
+  appearance: none;
+  padding-right: 28px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--soft) 50%),
+    linear-gradient(135deg, var(--soft) 50%, transparent 50%);
+  background-position: calc(100% - 15px) 55%, calc(100% - 10px) 55%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}
+.paperadd .note {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--soft);
+}
+.paperadd .acts,
+.paper .acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin: 0;
+}
+.paperadd .acts button,
+.paper .acts button {
+  margin-left: 0;
+}
+.paperadd .acts .save,
+.paper .acts .save {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: none;
+}
+/* `.paper`: a paper book's own part over its charts: the log form, `.logged`
+   sittings, each row opening `#sitting-form` in its place, and the pages */
+.paper > section:first-child {
+  margin-top: 0;
+}
+.logged {
+  padding: 6px 20px;
+}
+.logged .row > span:first-child {
+  color: var(--ink);
+}
+.logged .row .what {
+  margin-left: auto;
+  color: var(--soft);
+  white-space: nowrap;
+}
+.logged .row .acts button {
+  padding: 3px 10px;
+}
+.logged .row.open {
+  display: block;
+}
+.logged .row.open > :not(.editor) {
+  display: none;
+}
+/* `.rows div` sets every div of a row as a row; the editor's own stand as set above */
+.logged .row .editor {
+  display: block;
+  padding: 8px 0;
+  border-bottom: none;
+}
+.logged .row .editor .fields {
+  display: grid;
+  padding: 0;
+  border-bottom: none;
+}
+.paperbook {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+}
+.paperbook .field {
+  margin: 0;
+  width: 140px;
+}
+.paperbook .acts {
+  flex: 1;
+}
+.paperbook [data-act="delete-paper"] {
+  margin-right: auto;
+}
+
 /* `hidden` hides, whatever display a rule above sets. */
 [hidden] {
   display: none !important;

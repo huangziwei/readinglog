@@ -27,6 +27,7 @@ pub mod metadata;
 pub mod net;
 pub mod open;
 pub mod orientation;
+pub mod paper;
 pub mod record;
 pub mod settings;
 pub mod sidecar;

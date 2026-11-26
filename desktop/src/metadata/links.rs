@@ -348,12 +348,18 @@ pub(super) fn refiled(ws: &Workspace, from: &str, to: &str, at: &str) -> Result<
     }
 }
 
-/// `every`: what each book of every record of `ws` states.
+/// `every`: what each book of every record of `ws` states, its paper books among them.
 fn every(ws: &Workspace) -> Vec<Values> {
     let mut out = Vec::new();
     for source in ws.sources() {
         let rows = super::read(&source.dir);
-        for book in &source.record.books {
+        let paper = source
+            .record
+            .paper_books
+            .iter()
+            .filter(|p| !p.deleted)
+            .map(|p| p.as_book());
+        for book in source.record.books.iter().cloned().chain(paper) {
             let set = Set::of(&rows, &book.cde_key, book.extent);
             out.push(Values::of(&book.author, &set));
         }

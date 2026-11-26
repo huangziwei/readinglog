@@ -1,6 +1,7 @@
 //! The window: [`page`] draws the route its hash names through
 //! [`screen::render`]; the other commands import, set a setting, correct a
-//! highlight, write a note, delete a backup or everything, and ask.
+//! highlight, write a note, add a paper book and log its sittings, delete a
+//! backup or everything, and ask.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -25,6 +26,7 @@ use crate::edits::{self, HighlightId};
 use crate::import::{self, Imported};
 use crate::metadata;
 use crate::notes;
+use crate::paper;
 use crate::screen::{self, Covers, Page, Route, Shown};
 use crate::workspace::{CONFIG_FILE, Workspace, now};
 
@@ -602,6 +604,114 @@ async fn delete_note(
     Ok(true)
 }
 
+/// What a paper book's command says where it wrote nothing: the refusal in
+/// `ws`'s language where `err` is one, else `err` as it stands.
+fn refused(ws: &Workspace, err: anyhow::Error) -> String {
+    let w = screen::Words::of(ws.config.lang());
+    screen::refusal(&err, w).map_or_else(|| said(err), String::from)
+}
+
+/// Add `book`, read on paper, to the record of the Kindle `kindle` names, or of
+/// the one Kindle the folder holds where `kindle` is empty. Answers the key its
+/// page is routed by.
+#[tauri::command]
+fn add_paper_book(
+    app: AppHandle,
+    open: State<'_, Open>,
+    kindle: String,
+    book: paper::NewBook,
+) -> Answer<String> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    paper::add_book(&ws, &kindle, &book).map_err(|err| refused(&ws, err))
+}
+
+/// Set the pages of the paper book added at `added` in the Kindle `kindle`'s record.
+#[tauri::command]
+fn set_paper_pages(
+    app: AppHandle,
+    open: State<'_, Open>,
+    kindle: String,
+    added: String,
+    pages: i64,
+) -> Answer<()> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    paper::set_pages(&ws, &kindle, &added, pages).map_err(|err| refused(&ws, err))
+}
+
+/// Delete the paper book added at `added` in the Kindle `kindle`'s record, its
+/// sittings with it, once a dialog stating them is answered yes. Answers
+/// whether it went.
+#[tauri::command]
+async fn delete_paper_book(
+    app: AppHandle,
+    open: State<'_, Open>,
+    kindle: String,
+    added: String,
+) -> Answer<bool> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    let lang = ws.config.lang();
+    let (s, w) = (lang.strings(), screen::Words::of(lang));
+    let sittings = paper::sittings_in(&ws, &kindle, &added).map_err(|err| refused(&ws, err))?;
+    let note = counted(w.delete_paper_said, sittings as i64);
+    if !ask(&app, w.delete_paper_ask, note, s.delete_do, s.cancel) {
+        return Ok(false);
+    }
+    paper::delete_book(&ws, &kindle, &added).map_err(|err| refused(&ws, err))?;
+    Ok(true)
+}
+
+/// Log `read` in the paper book added at `book`, in the Kindle `kindle`'s
+/// record. Answers the moment that names the sitting.
+#[tauri::command]
+fn log_sitting(
+    app: AppHandle,
+    open: State<'_, Open>,
+    kindle: String,
+    book: String,
+    read: paper::Read,
+) -> Answer<String> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    paper::log(&ws, &kindle, &book, &read).map_err(|err| refused(&ws, err))
+}
+
+/// Set the paper sitting logged at `logged` in the Kindle `kindle`'s record to `read`.
+#[tauri::command]
+fn edit_sitting(
+    app: AppHandle,
+    open: State<'_, Open>,
+    kindle: String,
+    logged: String,
+    read: paper::Read,
+) -> Answer<()> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    paper::edit(&ws, &kindle, &logged, &read).map_err(|err| refused(&ws, err))
+}
+
+/// Delete the paper sitting logged at `logged` in the Kindle `kindle`'s record,
+/// once a dialog is answered yes. Answers whether it went.
+#[tauri::command]
+async fn delete_sitting(
+    app: AppHandle,
+    open: State<'_, Open>,
+    kindle: String,
+    logged: String,
+) -> Answer<bool> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    let lang = ws.config.lang();
+    let (s, w) = (lang.strings(), screen::Words::of(lang));
+    if !ask(
+        &app,
+        w.delete_sitting_ask,
+        w.delete_sitting_said.to_string(),
+        s.delete_do,
+        s.cancel,
+    ) {
+        return Ok(false);
+    }
+    paper::delete(&ws, &kindle, &logged).map_err(|err| refused(&ws, err))?;
+    Ok(true)
+}
+
 /// Show `path` in its folder.
 #[tauri::command]
 fn reveal(app: AppHandle, path: String) -> Answer<()> {
@@ -730,6 +840,12 @@ pub fn run() {
             write_note,
             reword_note,
             delete_note,
+            add_paper_book,
+            set_paper_pages,
+            delete_paper_book,
+            log_sitting,
+            edit_sitting,
+            delete_sitting,
             edit_metadata,
             edit_metadata_each,
             rename_metadata,

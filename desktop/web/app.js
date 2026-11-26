@@ -54,6 +54,12 @@ const WRITING = new Set([
   "link_names",
   "unlink_names",
   "undo_metadata",
+  "add_paper_book",
+  "set_paper_pages",
+  "delete_paper_book",
+  "log_sitting",
+  "edit_sitting",
+  "delete_sitting",
 ]);
 
 /** `call`: the command `name`'s answer, `err` flashed and thrown on, and `resync` set going where `WRITING` holds `name`. */
@@ -80,7 +86,7 @@ function settled(run, wait) {
 /** `drawn`: the route and width last drawn. */
 let drawn = { route: null, width: 0 };
 
-/** `editing`: what holds an editor open (a row, a note, the note field holding words, a metadata editor or a `.types` field), which `show`, its own buttons and Escape close. */
+/** `editing`: what holds an editor open (a row, a note, the note field holding words, a metadata editor, a `.types` field, the form adding a paper book or a paper sitting being edited), which `show`, its own buttons and Escape close. */
 let editing = null;
 
 /** `drawing`: whether `show` is setting a page in place, its fields losing the focus keeping nothing. */
@@ -171,6 +177,11 @@ function template(id) {
 /** `closeAny` closes whatever `editing` holds open. */
 function closeAny() {
   if (!editing) return;
+  if (editing.matches("[data-paper-add]")) {
+    editing.hidden = true;
+    editing = null;
+    return;
+  }
   if (editing.closest(".meta, .sheet, .renaming, .linking")) {
     closeMeta();
     return;
@@ -696,14 +707,18 @@ main.addEventListener("mousedown", (event) => {
   option.parentElement.hidden = true;
   if (box.closest(".types")) keepType(box, againOf(box)).catch(console.error);
   else if (box.closest(".linking")) link(box.closest(".linking")).catch(console.error);
-  else if (box.dataset.field === "type") box.closest(".adding")?.querySelector('input[data-field="tag"]').focus();
+  else if (box.dataset.field === "type") {
+    box.closest(".adding")?.querySelector('input[data-field="tag"]').focus();
+  }
 });
 
 // `Enter` keeps the head's editor or a `.types` field, renames, counts a value as
 // one with another, or adds a tag, never while `isComposing`; `Escape` closes, or
 // puts a `.types` field back.
 main.addEventListener("keydown", async (event) => {
-  const box = event.target.closest(".meta input, .sheet input, .renaming input, .linking input, .types input");
+  const box = event.target.closest(
+    ".meta input, .sheet input, .renaming input, .linking input, .types input",
+  );
   if (!box || event.isComposing || event.keyCode === 229) return;
   if (box.closest(".types")) typeKey(event, box);
   else if (event.key === "Escape") {
@@ -743,7 +758,9 @@ function askOf(box) {
   }
   const type = box.dataset.type ?? (fresh ? name.value.trim() : name.dataset.was);
   if (box.closest(".more")) {
-    return words && type ? ["edit_metadata", { books: [bookOf(box)], patch: { add: [{ type, tag: words }] } }] : null;
+    return words && type
+      ? ["edit_metadata", { books: [bookOf(box)], patch: { add: [{ type, tag: words }] } }]
+      : null;
   }
   if (!words || words === box.dataset.was) return null;
   return ["retag_every", { from: { type, tag: box.dataset.was }, to: { type, tag: words } }];
@@ -883,7 +900,10 @@ function drawPicked() {
   const n = picked().length;
   chosen.hidden = n === 0;
   chosen.previousElementSibling.hidden = n > 0;
-  chosen.querySelector("b").textContent = counted(chosen.dataset.said.replace("{n}", n), Number(chosen.dataset.total));
+  chosen.querySelector("b").textContent = counted(
+    chosen.dataset.said.replace("{n}", n),
+    Number(chosen.dataset.total),
+  );
 }
 
 main.addEventListener("click", (event) => {
@@ -1017,7 +1037,9 @@ async function applySheet(sheet) {
   for (const box of sheet.querySelectorAll(":scope > .field input[data-field]")) {
     if (box.closest(".retag")) continue;
     const field = box.dataset.field;
-    const back = sheet.querySelector(`[data-act="bulk-back"][data-field="${field}"]`).classList.contains("on");
+    const back = sheet.querySelector(`[data-act="bulk-back"][data-field="${field}"]`).classList.contains(
+      "on",
+    );
     const value = box.value.trim();
     if (back) patch[field] = "back";
     else if (value) patch[field] = { to: value };
@@ -1038,7 +1060,9 @@ async function applySheet(sheet) {
 async function rename(renaming, box = null) {
   const boxes = box
     ? [box]
-    : [...renaming.querySelectorAll("input")].filter((b) => b.dataset.was === undefined || b.value.trim() !== b.dataset.was);
+    : [...renaming.querySelectorAll("input")].filter((b) =>
+      b.dataset.was === undefined || b.value.trim() !== b.dataset.was
+    );
   const books = [...main.querySelectorAll("[data-pickable] .tile")].map((t) => JSON.parse(t.dataset.book));
   const undone = [];
   const renamed = [];
@@ -1054,7 +1078,9 @@ async function rename(renaming, box = null) {
   closeMeta();
   refilter((by, type, is) => {
     const same = (a, b) => (a ?? "").toLowerCase() === (b ?? "").toLowerCase();
-    const one = renamed.find((r) => r.by === by && same(is, r.was) && (r.type === undefined || same(type, r.type)));
+    const one = renamed.find((r) =>
+      r.by === by && same(is, r.was) && (r.type === undefined || same(type, r.type))
+    );
     return [by, type, one ? one.to : is];
   });
   await show();
@@ -1167,6 +1193,153 @@ document.addEventListener("click", async (event) => {
       break;
     }
   }
+});
+
+// `fieldsOf` … `saveSitting`: a paper book, added off Books' form, and on its own
+// page a sitting logged, edited or deleted, its pages set and the book deleted.
+
+/** `fieldsOf`: the value of each named field under `holder`, by its name. */
+function fieldsOf(holder) {
+  const out = {};
+  for (const box of holder.querySelectorAll("[name]")) out[box.name] = box.value;
+  return out;
+}
+
+/** `pageNumber`: a page field's number, -1 for an empty one, which the record refuses. */
+function pageNumber(said) {
+  return said === undefined || said === "" ? -1 : Number(said);
+}
+
+/** `readOf`: the sitting the fields under `holder` state, as `log_sitting` and `edit_sitting` take it. */
+function readOf(holder) {
+  const f = fieldsOf(holder);
+  return {
+    day: f.day ?? "",
+    from: f.from ?? "",
+    to: f.to ?? "",
+    from_page: pageNumber(f.from_page),
+    to_page: pageNumber(f.to_page),
+  };
+}
+
+/** `addPaper` adds the paper book Books' form `form` states, and opens its page. */
+async function addPaper(form) {
+  const f = fieldsOf(form);
+  const key = await call("add_paper_book", {
+    kindle: f.kindle ?? "",
+    book: {
+      title: f.title ?? "",
+      author: f.author ?? "",
+      language: f.language ?? "",
+      pages: pageNumber(f.pages),
+    },
+  });
+  editing = null;
+  location.hash = `#/book/${encodeURIComponent(key)}`;
+}
+
+/** `openSitting` opens `#sitting-form` on the logged sitting `row`, its fields set to the row's. */
+function openSitting(row) {
+  closeAny();
+  const editor = template("sitting-form");
+  const field = (name, value) => (editor.querySelector(`[name="${name}"]`).value = value);
+  field("day", row.dataset.day);
+  field("from", row.dataset.from);
+  field("to", row.dataset.to);
+  field("from_page", row.dataset.fromPage);
+  field("to_page", row.dataset.toPage);
+  row.classList.add("open");
+  row.append(editor);
+  editor.querySelector("input").focus();
+  editing = row;
+}
+
+/** `saveSitting` sets the logged sitting `row` to what its editor states. */
+async function saveSitting(row) {
+  const paper = row.closest(".paper");
+  await call("edit_sitting", {
+    kindle: paper.dataset.kindle,
+    logged: row.dataset.logged,
+    read: readOf(row.querySelector(".editor")),
+  });
+  editing = null;
+  await show();
+}
+
+document.addEventListener("click", async (event) => {
+  const act = event.target.closest("[data-act]");
+  if (!act) return;
+  const paper = act.closest(".paper");
+  switch (act.dataset.act) {
+    case "no-kindle":
+      flash(act.dataset.said, true);
+      break;
+    case "add-paper": {
+      const form = main.querySelector("[data-paper-add]");
+      if (!form.hidden) {
+        closeAny();
+        break;
+      }
+      closeAny();
+      form.hidden = false;
+      form.querySelector("[name=title]").focus();
+      editing = form;
+      break;
+    }
+    case "cancel-paper":
+      closeAny();
+      break;
+    case "save-paper":
+      await addPaper(act.closest("[data-paper-add]"));
+      break;
+    case "log-sitting":
+      await call("log_sitting", {
+        kindle: paper.dataset.kindle,
+        book: paper.dataset.added,
+        read: readOf(act.closest("[data-log]")),
+      });
+      await show();
+      break;
+    case "edit-sitting":
+      openSitting(act.closest("[data-logged]"));
+      break;
+    case "cancel-sitting":
+      closeAny();
+      break;
+    case "save-sitting":
+      await saveSitting(act.closest("[data-logged]"));
+      break;
+    case "delete-sitting": {
+      const logged = act.closest("[data-logged]").dataset.logged;
+      if (await call("delete_sitting", { kindle: paper.dataset.kindle, logged })) await show();
+      break;
+    }
+    case "set-pages":
+      await call("set_paper_pages", {
+        kindle: paper.dataset.kindle,
+        added: paper.dataset.added,
+        pages: pageNumber(fieldsOf(act.closest("[data-pages]")).pages),
+      });
+      await show();
+      break;
+    case "delete-paper":
+      if (await call("delete_paper_book", { kindle: paper.dataset.kindle, added: paper.dataset.added })) {
+        location.hash = "#/books";
+      }
+      break;
+  }
+});
+
+// `Enter` in a paper book's field presses the button its form saves with.
+main.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || event.target.tagName !== "INPUT") return;
+  const form = event.target.closest("[data-paper-add], [data-log], [data-sitting], [data-pages]");
+  const save = form?.querySelector(
+    '[data-act="save-paper"], [data-act="log-sitting"], [data-act="save-sitting"], [data-act="set-pages"]',
+  );
+  if (!save) return;
+  event.preventDefault();
+  save.click();
 });
 
 /** `composing`: whether an input method is composing text, which `show` throws away with the box it is typed in. */

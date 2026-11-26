@@ -102,6 +102,8 @@ pub(super) fn page(cx: &Ctx, at: usize, reading: Option<usize>, way: Way, query:
         None => out.push_str("<div class=\"parts\">"),
     }
     out.push_str("<div class=\"part\" id=\"kindles\">");
+    // `panel`: a paper book's sittings, logged and logging, over the part every book draws.
+    out.push_str(&super::paper::panel(cx, at));
     out.push_str(&kindles(
         cx,
         at,
@@ -185,8 +187,7 @@ fn kindles(
         "<section><h2>{}</h2><div class=\"card board\">",
         esc(s.the_reading)
     );
-    let mut rows = book_view::reading_rows(book, cx.from, s);
-    rows.push((s.on_the_kindle, book_view::where_note(book, s)));
+    let rows = book_view::reading_rows(book, cx.from, s);
     for (name, value) in rows.iter().filter(|(_, value)| value != book_view::DASH) {
         let _ = write!(
             out,

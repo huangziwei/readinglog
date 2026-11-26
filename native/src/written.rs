@@ -147,12 +147,13 @@ pub struct Drawn {
 }
 
 impl Record {
-    /// `take_written` takes `other`'s notes, corrections, `d` rows and links: each one this record
-    /// holds none of is added, and of two copies of one the later `edited` stands. `take_written`
-    /// answers whether anything moved.
+    /// `take_written` takes `other`'s notes, corrections, `d` rows, links, paper books and paper
+    /// sittings: each one this record holds none of is added, and of two copies of one the later
+    /// `edited` stands. `take_written` answers whether anything moved.
     pub fn take_written(&mut self, other: &Record) -> bool {
         let mut moved = crate::metadata::take(&mut self.metadata, &other.metadata);
         moved |= crate::metadata::links::take(&mut self.links, &other.links);
+        moved |= self.take_paper(other);
         for fresh in &other.notes {
             match self.notes.iter_mut().find(|n| n.written == fresh.written) {
                 Some(held) if fresh.edited > held.edited => {
@@ -185,19 +186,22 @@ impl Record {
         moved
     }
 
-    /// `sort_written` orders `notes` by when they were written and `corrections` by identity, one
-    /// row each.
+    /// `sort_written` orders `notes` by when they were written, `corrections` by identity and the
+    /// paper rows through `Record::sort_paper`, one row each.
     pub(crate) fn sort_written(&mut self) {
         self.notes.sort_by(|a, b| a.written.cmp(&b.written));
         self.notes.dedup_by(|a, b| a.written == b.written);
         self.corrections.sort_by(|a, b| a.id.cmp(&b.id));
         self.corrections.dedup_by(|a, b| a.id == b.id);
+        self.sort_paper();
     }
 
-    /// `drawn`: this record as it is drawn: a copy with each correction set and each note laid in
-    /// at its passage's start, else at the range it was written on, and a note alone at none.
+    /// `drawn`: this record as it is drawn: a copy with each paper book and sitting laid in
+    /// (`Record::lay_paper`), each correction set, and each note laid in at its passage's start,
+    /// else at the range it was written on, and a note alone at none.
     pub fn drawn(&self) -> Drawn {
         let mut record = self.clone();
+        record.lay_paper();
         let mut corrected = HashSet::new();
         for highlight in &mut record.highlights {
             let Some(text) = record
@@ -345,7 +349,7 @@ impl Record {
 
 /// `now`, or a second past `held` where `now` is no later: each edit of a row
 /// stamped after the one before it.
-fn after(held: &str, now: &str) -> String {
+pub(crate) fn after(held: &str, now: &str) -> String {
     match now > held {
         true => now.to_string(),
         false => later(held),
@@ -537,9 +541,9 @@ pub(crate) fn read_correction<'a>(f: &mut impl Iterator<Item = &'a str>) -> Opti
     })
 }
 
-/// `text`, a record's file, with its `d`, `l`, `w`, `r` and closing rows replaced
-/// by `written`'s: every other line as `text` holds it, whatever build wrote it, a
-/// `d` or `l` row naming a field no build here reads among them.
+/// `text`, a record's file, with its `d`, `l`, `w`, `r`, `p`, `q` and closing rows
+/// replaced by `written`'s: every other line as `text` holds it, whatever build wrote
+/// it, a `d`, `l`, `p` or `q` row no build here reads among them.
 pub fn splice(text: &str, written: &Record) -> String {
     let mut out = String::with_capacity(text.len());
     for line in text.lines() {
@@ -547,6 +551,7 @@ pub fn splice(text: &str, written: &Record) -> String {
             Some("w" | "r" | crate::record::END) => true,
             Some("d") => crate::metadata::read_row(line).is_some(),
             Some("l") => crate::metadata::links::read_row(line).is_some(),
+            Some("p" | "q") => crate::paper::owns(line),
             _ => false,
         };
         if owned {
@@ -566,6 +571,12 @@ pub fn splice(text: &str, written: &Record) -> String {
     }
     for c in &written.corrections {
         write_correction(&mut out, c);
+    }
+    for b in &written.paper_books {
+        crate::paper::write_book(&mut out, b);
+    }
+    for s in &written.paper_sittings {
+        crate::paper::write_sitting(&mut out, s);
     }
     crate::record::close(&mut out);
     out
@@ -785,9 +796,9 @@ mod tests {
     fn a_splice_keeps_every_other_line_as_it_stood() {
         let mut held = record();
         held.add_note(note("2026-10-10T08:00:00", None, "alone"));
-        let text = format!("{}q\tfrom a later build\n", record().text());
+        let text = format!("{}y\tfrom a later build\n", record().text());
         let spliced = splice(&text, &held);
-        assert!(spliced.contains("q\tfrom a later build\n"));
+        assert!(spliced.contains("y\tfrom a later build\n"));
         assert_eq!(Record::from_text(&spliced).notes, held.notes);
         assert!(crate::record::closed(&spliced));
         assert_eq!(splice(&held.text(), &held), held.text());

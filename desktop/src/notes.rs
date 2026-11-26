@@ -61,6 +61,7 @@ fn noted(record: &Record, kindle: &str, on: &On, text: &str, at: &str) -> Result
     if text.trim().is_empty() {
         return Err(anyhow!("a note holds no words"));
     }
+    // `book`: the key and extent of the book the note is on, a paper book's among them.
     let (book, passage) = match on {
         On::Book { key, extent } => {
             let book = record
@@ -70,6 +71,8 @@ fn noted(record: &Record, kindle: &str, on: &On, text: &str, at: &str) -> Result
                     false => b.cde_key == *key,
                     true => b.cde_key.is_empty() && b.extent == *extent,
                 })
+                .map(|b| (b.cde_key.clone(), b.extent))
+                .or_else(|| record.paper_keyed(key).map(|p| (p.key(), p.extent())))
                 .ok_or_else(|| anyhow!("no book {key} in the record of {kindle}"))?;
             (book, None)
         }
@@ -91,14 +94,15 @@ fn noted(record: &Record, kindle: &str, on: &On, text: &str, at: &str) -> Result
                 to: held.end,
                 words: held.body.clone(),
             };
-            (book, Some(passage))
+            ((book.cde_key.clone(), book.extent), Some(passage))
         }
     };
+    let (key, extent) = book;
     Ok(Note {
         written: at.to_string(),
         edited: at.to_string(),
-        key: book.cde_key.clone(),
-        extent: book.extent,
+        key,
+        extent,
         on: passage,
         text: text.to_string(),
         deleted: false,

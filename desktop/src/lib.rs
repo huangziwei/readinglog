@@ -9,6 +9,7 @@ pub mod import;
 pub mod kindles;
 pub mod metadata;
 pub mod notes;
+pub mod paper;
 pub mod screen;
 pub mod workspace;
 

@@ -317,6 +317,43 @@ mod tests {
         }
     }
 
+    /// `together` over two Kindles' drawn records, as `Shown::of` lays them: the paper book one
+    /// holds comes through as a plain book, its key's prefix, its reading and its Kindle standing.
+    #[test]
+    fn a_paper_book_keeps_its_prefix_and_its_reading_where_two_kindles_meet() {
+        use readinglog_native::settings::{SittingFloor, StatsFrom};
+        let mut first = reading(10.0, 600);
+        let added = first
+            .add_paper_book("On Paper", "", "en", 100, "2026-08-30T08:00:00")
+            .unwrap();
+        first
+            .log_paper_sitting(
+                &added,
+                ("2026-09-01T20:00:00", "2026-09-01T21:00:00"),
+                (0, 50),
+                "2026-09-02T00:00:00",
+            )
+            .unwrap();
+        let sources = [
+            source(first.drawn().record, Some("G003H2-7890")),
+            source(reading(60.0, 900).drawn().record, Some("G0027J-ABCD")),
+        ];
+        let one = together(&sources);
+        assert!(one.paper_books.is_empty(), "laid in as books already");
+        let day = readinglog_native::date::parse_day("2026-09-02").unwrap();
+        for from in [StatsFrom::App, StatsFrom::Kindle] {
+            let stats = Stats::build(&one, day, true, from, SittingFloor::All);
+            assert_eq!(stats.books.len(), 3);
+            let paper = stats.books.iter().find(|b| b.is_paper()).unwrap();
+            assert_eq!((paper.seconds, paper.page_turns), (3600, 50));
+            assert_eq!(paper.percent_shown(), 50);
+            assert_eq!(paper.time_left(from), Some(3600), "{from:?}");
+            assert_eq!(origin(paper.extent).0, Some(0));
+            let key = readinglog_native::paper::key(&added);
+            assert_eq!(key_origin(&paper.cde_key), (Some(0), key.as_str()));
+        }
+    }
+
     #[test]
     fn a_key_or_extent_together_did_not_move_names_no_source() {
         assert_eq!(origin(100), (None, 100));

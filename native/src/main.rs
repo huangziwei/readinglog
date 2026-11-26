@@ -225,12 +225,12 @@ fn highlights_said(merge: &highlights::Merge) -> Option<String> {
     ))
 }
 
-/// The record as text, one sitting a line.
+/// The record as text, one book a line, drawn as the screens draw it.
 fn dump() -> Result<()> {
     let record = collect()?;
     let (today, _) = date::now();
     let settings = settings::Settings::load(lang::Lang::detect());
-    let stats = Stats::build(
+    let stats = Stats::drawn(
         &record,
         today,
         settings.show_unidentified,

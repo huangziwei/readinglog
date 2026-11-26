@@ -1068,3 +1068,43 @@ pub fn tagged(mut record: Record) -> Record {
     });
     record
 }
+
+/// `PAPER_READ`: [`papered`]'s sittings: days back from the last day drawn, the minute it opened at,
+/// minutes read, and the pages it opened and closed on. The fourth runs past midnight.
+const PAPER_READ: [(i64, i64, i64, i64, i64); 8] = [
+    (15, 21 * 60 + 10, 45, 0, 40),
+    (13, 22 * 60, 55, 40, 95),
+    (12, 7 * 60 + 20, 25, 95, 118),
+    (10, 23 * 60 + 20, 70, 118, 190),
+    (7, 20 * 60 + 40, 50, 190, 240),
+    (5, 21 * 60 + 15, 35, 240, 275),
+    (2, 13 * 60, 90, 275, 360),
+    (0, 21 * 60 + 30, 45, 360, 405),
+];
+
+/// [`library`] with a book of 432 pages read on paper over the last fortnight, the `p` and `q` rows
+/// the desktop writes, the newest sitting closing on `last`.
+pub fn papered(last: i64, covers: &Path) -> Record {
+    let mut record = library(last, covers);
+    let now = date::stamp(last, 86_399);
+    let Ok(added) = record.add_paper_book(
+        "The Orchard at Hollin Bank",
+        "Margit Sølvberg",
+        "en",
+        432,
+        &date::stamp(last - 16, 19 * 3600),
+    ) else {
+        return record;
+    };
+    for (back, at, minutes, from, to) in PAPER_READ {
+        let opens = (last - back) * 86_400 + at * 60;
+        let closes = opens + minutes * 60;
+        let stamp = |at: i64| date::stamp(at.div_euclid(86_400), at.rem_euclid(86_400));
+        let logged =
+            record.log_paper_sitting(&added, (&stamp(opens), &stamp(closes)), (from, to), &now);
+        if let Err(why) = logged {
+            eprintln!("!! fixture: a paper sitting {back} days back: {why}");
+        }
+    }
+    record
+}

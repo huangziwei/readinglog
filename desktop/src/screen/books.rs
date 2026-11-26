@@ -12,7 +12,7 @@ use readinglog_native::view::search;
 use readinglog_native::view::{Shelf, Sort, Way, Window};
 
 use super::words::Words;
-use super::{Ctx, Route, chip, esc, metadata, tile};
+use super::{Ctx, Route, chip, esc, metadata, paper, tile};
 use crate::metadata::links::Name;
 use crate::metadata::{By, narrows};
 
@@ -56,9 +56,12 @@ pub(super) fn page(
         .filter(|by| matches!(by, By::Tag(..)))
         .cloned()
         .collect();
+    // `adding`: the button adding a paper book beside the search, and the form it opens.
+    let (add, adding) = paper::adding(cx);
     let mut out = format!(
-        "<header class=\"head\"><h1>{}</h1><input class=\"search\" type=\"search\" data-search=\"books\" \
-         value=\"{}\" placeholder=\"{}\"></header><div class=\"bar\"><div class=\"chips\">",
+        "<header class=\"head\"><h1>{}</h1><span class=\"tools\">{add}<input class=\"search\" type=\"search\" \
+         data-search=\"books\" value=\"{}\" placeholder=\"{}\"></span></header>{adding}\
+         <div class=\"bar\"><div class=\"chips\">",
         esc(s.books),
         esc(query),
         esc(w.search_books)

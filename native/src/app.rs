@@ -1275,9 +1275,10 @@ impl App {
                 let Some(backup) = held.get(at) else {
                     return Action::Nothing;
                 };
-                // `peek` once for the figures the question states, `inside` totalled whole.
+                // `peek` once for the figures the question states, `inside` totalled whole and
+                // drawn as the screens draw it.
                 let inside = crate::backup::peek(&backup.path).unwrap_or_default();
-                let held = crate::stats::Stats::build(
+                let held = crate::stats::Stats::drawn(
                     &inside,
                     self.today,
                     true,

@@ -121,9 +121,15 @@ impl BookStat {
         self.percent >= FINISHED_PERCENT
     }
 
-    /// `can_mark`: whether `finished` can be set: `percent` states neither way.
+    /// `can_mark`: whether `finished` can be set: a Kindle book whose `percent` states neither
+    /// way. A paper book's sittings state it.
     pub fn can_mark(&self) -> bool {
-        !self.read_through()
+        !self.is_paper() && !self.read_through()
+    }
+
+    /// `is_paper`: whether this is a book read on paper, its rows written on the desktop.
+    pub fn is_paper(&self) -> bool {
+        crate::paper::is_paper(&self.cde_key)
     }
 
     /// `can_restart`: whether `Record::restart` has anything to clear: `finished`, or progress.
@@ -184,6 +190,13 @@ impl BookStat {
             return None;
         }
         Some((read as f64 * ahead / covered) as i64)
+    }
+
+    /// `ppm`: pages a minute: the pages turned over this mode's seconds, as a paper book states its
+    /// speed.
+    pub fn ppm(&self, from: StatsFrom) -> Option<f64> {
+        let read = self.read_seconds(from);
+        (self.page_turns > 0 && read > 0).then(|| self.page_turns as f64 * 60.0 / read as f64)
     }
 
     /// `wpm`: words a minute: `stated_wpm` under [`StatsFrom::Kindle`], else this mode's own words
@@ -305,9 +318,10 @@ pub struct Across<'a> {
 }
 
 impl Stats {
-    /// [`Self::build`] over `record` as `Record::drawn` draws it, corrections in place,
-    /// every `w` row laid in ([`Self::written`] naming them) and each book in its `d`
-    /// rows' metadata ([`Self::lay_metadata`]); over `record` itself where it holds none.
+    /// [`Self::build`] over `record` as `Record::drawn` draws it, paper books and sittings laid
+    /// in, corrections in place, every `w` row laid in ([`Self::written`] naming them) and each
+    /// book in its `d` rows' metadata ([`Self::lay_metadata`]); over `record` itself where it
+    /// holds none of them.
     pub fn drawn(
         record: &Record,
         today: i64,
@@ -315,7 +329,10 @@ impl Stats {
         from: StatsFrom,
         floor: SittingFloor,
     ) -> Self {
-        let mut out = match record.notes.is_empty() && record.corrections.is_empty() {
+        let plain = record.notes.is_empty()
+            && record.corrections.is_empty()
+            && record.paper_books.is_empty();
+        let mut out = match plain {
             true => Self::build(record, today, unidentified, from, floor),
             false => {
                 let drawn = record.drawn();
@@ -2314,6 +2331,8 @@ pub(crate) mod tests {
             corrections: Vec::new(),
             metadata: Vec::new(),
             links: Vec::new(),
+            paper_books: Vec::new(),
+            paper_sittings: Vec::new(),
             clock: Clock::default(),
         }
     }
