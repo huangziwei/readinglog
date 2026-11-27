@@ -1971,20 +1971,47 @@ select.box {
   padding: 0;
   border-bottom: none;
 }
+/* `.paperbook`: a `.line` for the pages and one for the cover, each its
+   buttons at the right, and Delete This Book under them at the left */
 .paperbook {
+  display: grid;
+  gap: 14px;
+}
+.paperbook .line {
   display: flex;
   align-items: flex-end;
   gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--rule);
 }
 .paperbook .field {
   margin: 0;
   width: 140px;
 }
-.paperbook .acts {
+.paperbook .line .acts {
   flex: 1;
 }
-.paperbook [data-act="delete-paper"] {
-  margin-right: auto;
+.paperbook .label {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--soft);
+  align-self: center;
+}
+.paperbook > .acts {
+  justify-content: flex-start;
+}
+/* `.picked`: the add form's Choose a Cover… and the file it took */
+.paperadd .picked {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.paperadd .picked small {
+  color: var(--soft);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* `hidden` hides, whatever display a rule above sets. */

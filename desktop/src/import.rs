@@ -13,6 +13,7 @@ use crate::device::{DeviceInfo, TPath, Transport};
 use crate::metadata::{self, links};
 use crate::workspace::{BACKUPS, RECORD, Workspace, write_file, writing};
 use readinglog_native::backup::{self, About, Kind};
+use readinglog_native::paper;
 use readinglog_native::record::{self, PARTIAL_FILE, Record};
 use readinglog_native::update::archive::{self, Archive, Source};
 
@@ -134,28 +135,58 @@ pub fn kindle(ws: &Workspace, device: &DeviceInfo, putting: impl FnOnce()) -> Re
     Ok(Synced { imported, put })
 }
 
-/// Write the workspace copy's `w`, `r` and `d` rows for `serial`, and the
-/// workspace's `l` rows, into the Kindle's `sessions.tsv` as [`record_on`] reads
-/// it, every other line as it stands, where a row moves or `record_on` reads the
-/// partial. Answers whether it wrote.
+/// Write the workspace copy's `w`, `r`, `d`, `p` and `q` rows for `serial`, and
+/// the workspace's `l` rows, into the Kindle's `sessions.tsv` as [`record_on`]
+/// reads it, every other line as it stands, where a row moves or `record_on`
+/// reads the partial; [`put_covers`] first. Answers whether it wrote.
 fn put_back(ws: &Workspace, serial: &str, transport: &dyn Transport) -> Result<bool> {
     let app = app_folder(transport)?;
+    let ours = ws.kindle_dir(serial).join(RECORD);
+    let written = Record::load(&ours);
+    let covers = put_covers(&ours, &written, transport, &app)?;
     let (bytes, in_place) = record_on(transport, &app)?;
     let held = String::from_utf8_lossy(&bytes).into_owned();
-    let ours = ws.kindle_dir(serial).join(RECORD);
     let mut merged = Record::from_text(&held);
     let mut rows = metadata::rows(&held);
     let mut linked = links::rows(&held);
-    let notes_moved = merged.take_written(&Record::load(&ours));
+    let notes_moved = merged.take_written(&written);
     let rows_moved = metadata::take(&mut rows, &metadata::read(&ours));
     let links_moved = links::take(&mut linked, &links::of(ws));
     let text = match notes_moved || rows_moved || links_moved {
         true => metadata::splice(&held, &merged, &rows, &linked),
-        false if in_place => return Ok(false),
+        false if in_place => return Ok(covers),
         false => held,
     };
     transport.write_atomic(&app.join(RECORD_NAME), text.as_bytes())?;
     Ok(true)
+}
+
+/// Write onto the Kindle each cover a paper book standing in `written`, the
+/// record in `ours`, names that the Kindle holds none of, ahead of the row that
+/// names it: a name is never given twice, so a name held is that picture.
+/// Answers whether it wrote one.
+fn put_covers(
+    ours: &Path,
+    written: &Record,
+    transport: &dyn Transport,
+    app: &TPath,
+) -> Result<bool> {
+    let mut put = false;
+    for book in written.paper_books.iter().filter(|b| !b.deleted) {
+        let Some(name) = Path::new(&book.cover).file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let at = app.join(PICTURES).join(name);
+        let local = ours.join(PICTURES).join(name);
+        if !paper::is_cover(name) || !local.is_file() || transport.exists(&at)? {
+            continue;
+        }
+        let bytes =
+            std::fs::read(&local).with_context(|| format!("reading {}", local.display()))?;
+        transport.write_atomic(&at, &bytes)?;
+        put = true;
+    }
+    Ok(put)
 }
 
 /// The folder on `transport` holding the app's record, as `sessions.tsv` or
@@ -903,6 +934,7 @@ mod tests {
                 author: "Someone".into(),
                 language: "en".into(),
                 pages: 200,
+                cover: None,
             };
             let key = crate::paper::add_book(&ws, serial, &new).unwrap();
             let ours = ws.kindle_dir(serial).join(RECORD);
@@ -945,6 +977,57 @@ mod tests {
             assert!(kindle(&ws, &device, || {}).unwrap().put, "{over}");
             assert!(Record::load(&ours).paper_sittings[0].deleted, "{over}");
             assert!(Record::load(&app).paper_sittings[0].deleted, "{over}");
+        }
+    }
+
+    /// A paper book's cover set here, over mass storage and over MTP: a sync puts
+    /// the picture onto the Kindle with the row naming it, the Kindle's own cover
+    /// pass leaves it standing, and the window draws it off its copy here.
+    #[test]
+    fn a_paper_cover_set_here_goes_onto_the_kindle_and_stays_there() {
+        for over in ["volume", "mtp"] {
+            let ws = Workspace::create(&scratch(&format!("import-cover-{over}"))).unwrap();
+            let serial = "G000K1";
+            let root = kindle_dir(&format!("import-cover-{over}-storage"), &one());
+            let device = match over {
+                "mtp" => over_mtp(&root, serial),
+                _ => plugged(&root, serial),
+            };
+            kindle(&ws, &device, || {}).unwrap();
+            let picture = scratch(&format!("import-cover-{over}-picture")).join("front.png");
+            image::RgbImage::from_pixel(300, 450, image::Rgb([40, 90, 160]))
+                .save(&picture)
+                .unwrap();
+            let new = crate::paper::NewBook {
+                title: "On Paper".into(),
+                author: String::new(),
+                language: "en".into(),
+                pages: 200,
+                cover: Some(picture.to_string_lossy().into_owned()),
+            };
+            crate::paper::add_book(&ws, serial, &new).unwrap();
+            assert!(kindle(&ws, &device, || {}).unwrap().put, "{over}");
+            let app = root.join(APP_DIR);
+            let on = Record::load(&app);
+            let named = Path::new(&on.paper_books[0].cover).to_path_buf();
+            let file = app.join(PICTURES).join(named.file_name().unwrap());
+            assert!(readinglog_native::covers::drawable(&file), "{over}");
+            // `Record::keep_covers_from`: the Kindle's own pass, sweeping what no book of its names.
+            let mut pass = Record::load(&app);
+            pass.keep_covers_from(&app, &scratch(&format!("import-cover-{over}-none")));
+            assert!(file.exists(), "{over}: the Kindle's sweep spares it");
+            assert!(app.join(PICTURES).join("B1.jpg").exists());
+            assert!(
+                !kindle(&ws, &device, || {}).unwrap().put,
+                "{over}: nothing more to put"
+            );
+            // `shown`: the window draws the paper book's cover off its copy here.
+            let today = readinglog_native::date::parse_day("2026-09-02").unwrap();
+            let shown = crate::screen::Shown::of(&ws, today).unwrap();
+            let at = shown.stats.books.iter().position(|b| b.is_paper()).unwrap();
+            let drawn = shown.covers[at].clone().unwrap();
+            assert_eq!(drawn.file_name(), named.file_name(), "{over}");
+            assert!(drawn.starts_with(ws.kindle_dir(serial)), "{over}");
         }
     }
 

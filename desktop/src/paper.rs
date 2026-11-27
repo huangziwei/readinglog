@@ -1,20 +1,25 @@
 //! Paper books written here: `p` and `q` rows of the record of a Kindle this
 //! workspace holds, which that Kindle takes at its next sync and draws as it
-//! draws its own books. [`add_book`] … [`delete`] write them, each refusal a
-//! `paper::Refusal` or [`NoKindle`] the window states in its own words.
+//! draws its own books, and their covers beside the Kindle's own. [`add_book`]
+//! … [`delete`] write them, each refusal a `paper::Refusal`, [`NoKindle`] or
+//! [`NotAPicture`] the window states in its own words.
 
-use anyhow::{Result, anyhow};
+use std::path::Path;
+
+use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
 
+use readinglog_native::covers::COVERS_DIR;
 use readinglog_native::date;
 use readinglog_native::paper::{self, Refusal};
 
 use crate::kindles::Source;
 use crate::metadata::suggested_language;
-use crate::workspace::{Workspace, keep_written, now};
+use crate::workspace::{Workspace, keep_written, now, write_file};
 
 /// `NewBook`: a paper book as the window adds it; a blank `language` takes the
-/// one its characters say, where they say one.
+/// one its characters say, where they say one, and `cover` names a picture on
+/// disk to take as its cover.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct NewBook {
     pub title: String,
@@ -23,6 +28,8 @@ pub struct NewBook {
     #[serde(default)]
     pub language: String,
     pub pages: i64,
+    #[serde(default)]
+    pub cover: Option<String>,
 }
 
 /// `Read`: a sitting as the window logs it: its day (`YYYY-MM-DD`), the minute
@@ -74,6 +81,66 @@ impl std::fmt::Display for NoKindle {
 
 impl std::error::Error for NoKindle {}
 
+/// `NotAPicture`: why a cover was not taken: its file decodes as neither a JPEG
+/// nor a PNG.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NotAPicture;
+
+impl std::fmt::Display for NotAPicture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("a cover has to be a JPEG or a PNG")
+    }
+}
+
+impl std::error::Error for NotAPicture {}
+
+/// `COVER_BOX`: the box a cover is fitted within, never sampled up to it: past
+/// the window's largest cover at twice its pixels, and the Kindle's.
+const COVER_BOX: (u32, u32) = (400, 600);
+
+/// `COVER_QUALITY`: the JPEG quality a cover is written at.
+const COVER_QUALITY: u8 = 88;
+
+/// `fitted`: the picture at `path` as a cover is kept: turned the way its EXIF
+/// orientation says, fitted within [`COVER_BOX`], its transparency laid on
+/// white, a baseline JPEG with no metadata; [`NotAPicture`] where it decodes as
+/// neither a JPEG nor a PNG.
+pub fn fitted(path: &Path) -> Result<Vec<u8>> {
+    use image::ImageDecoder as _;
+    let reader = image::ImageReader::open(path)
+        .with_context(|| format!("reading {}", path.display()))?
+        .with_guessed_format()
+        .with_context(|| format!("reading {}", path.display()))?;
+    let mut decoder = reader.into_decoder().map_err(|_| NotAPicture)?;
+    let turned = decoder
+        .orientation()
+        .unwrap_or(image::metadata::Orientation::NoTransforms);
+    let mut picture = image::DynamicImage::from_decoder(decoder).map_err(|_| NotAPicture)?;
+    picture.apply_orientation(turned);
+    let (w, h) = COVER_BOX;
+    if picture.width() > w || picture.height() > h {
+        picture = picture.resize(w, h, image::imageops::FilterType::Lanczos3);
+    }
+    let rgba = picture.to_rgba8();
+    let on_white = image::RgbImage::from_fn(rgba.width(), rgba.height(), |x, y| {
+        let [r, g, b, a] = rgba.get_pixel(x, y).0;
+        let lay = |c: u8| ((u32::from(c) * u32::from(a) + 255 * (255 - u32::from(a))) / 255) as u8;
+        image::Rgb([lay(r), lay(g), lay(b)])
+    });
+    let mut out = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, COVER_QUALITY)
+        .encode_image(&on_white)
+        .context("writing a cover")?;
+    Ok(out)
+}
+
+/// `cover_into` writes `bytes` as a new cover of the book added at `added`, into
+/// the covers folder beside `source`'s record under the name its row takes.
+fn cover_into(source: &mut Source, added: &str, bytes: &[u8]) -> Result<()> {
+    let name = source.record.set_paper_cover(added, &now())?;
+    write_file(&source.dir.join(COVERS_DIR).join(name), bytes)
+}
+
 /// `kindles`: the cut serials of the Kindles whose records `ws` holds, which a
 /// paper book can go into.
 pub fn kindles(ws: &Workspace) -> Vec<String> {
@@ -102,19 +169,45 @@ fn source(ws: &Workspace, kindle: &str) -> Result<Source> {
 }
 
 /// `add_book` adds `book` to the record of the Kindle `kindle` names, at the
-/// clock's moment, and answers the key the book draws under.
+/// clock's moment, its cover with it where it names one, and answers the key
+/// the book draws under. A cover that is no picture adds nothing.
 pub fn add_book(ws: &Workspace, kindle: &str, book: &NewBook) -> Result<String> {
     let mut source = source(ws, kindle)?;
     let language = match book.language.trim() {
         "" => suggested_language(&book.title, &book.author).unwrap_or_default(),
         code => code,
     };
+    let cover = match book.cover.as_deref().filter(|p| !p.is_empty()) {
+        Some(path) => Some(fitted(Path::new(path))?),
+        None => None,
+    };
     let added =
         source
             .record
             .add_paper_book(&book.title, &book.author, language, book.pages, &now())?;
+    if let Some(bytes) = cover {
+        cover_into(&mut source, &added, &bytes)?;
+    }
     keep_written(&source)?;
     Ok(paper::key(&added))
+}
+
+/// `set_cover` takes the picture at `picture` as the cover of the book added at
+/// `added`, [`fitted`] and written beside the Kindle's covers here; the next
+/// sync puts it on the Kindle.
+pub fn set_cover(ws: &Workspace, kindle: &str, added: &str, picture: &Path) -> Result<()> {
+    let mut source = source(ws, kindle)?;
+    source.record.paper_book(added).ok_or(Refusal::NoBook)?;
+    let bytes = fitted(picture)?;
+    cover_into(&mut source, added, &bytes)?;
+    keep_written(&source)
+}
+
+/// `remove_cover` takes the cover off the book added at `added`.
+pub fn remove_cover(ws: &Workspace, kindle: &str, added: &str) -> Result<()> {
+    let mut source = source(ws, kindle)?;
+    source.record.take_paper_cover(added, &now())?;
+    keep_written(&source)
 }
 
 /// `set_pages` sets the pages of the book added at `added`.
@@ -242,6 +335,7 @@ mod tests {
                 author: "夏目漱石".into(),
                 language: String::new(),
                 pages: 300,
+                cover: None,
             },
         )
         .unwrap();
@@ -318,6 +412,7 @@ mod tests {
             author: String::new(),
             language: "en".into(),
             pages: 100,
+            cover: None,
         };
         let err = add_book(&ws, "", &new).unwrap_err();
         assert_eq!(err.downcast_ref::<NoKindle>(), Some(&NoKindle));
@@ -330,5 +425,103 @@ mod tests {
         add_book(&ws, "G000K2", &new).unwrap();
         let held = Record::load(&ws.kindle_dir("G000K2").join("record"));
         assert_eq!(held.paper_books.len(), 1);
+    }
+
+    /// `saved`: a picture `w` by `h` at `path`, a JPEG or a PNG by its extension, every pixel
+    /// `rgba`.
+    fn saved(path: &std::path::Path, (w, h): (u32, u32), rgba: [u8; 4]) {
+        let picture = image::RgbaImage::from_pixel(w, h, image::Rgba(rgba));
+        match path.extension().and_then(|e| e.to_str()) {
+            Some("png") => picture.save(path).unwrap(),
+            _ => image::DynamicImage::ImageRgba8(picture)
+                .to_rgb8()
+                .save(path)
+                .unwrap(),
+        }
+    }
+
+    /// `size`: the width and height of the JPEG `bytes` hold.
+    fn size(bytes: &[u8]) -> (u32, u32) {
+        assert!(bytes.starts_with(b"\xff\xd8\xff"), "a JPEG");
+        let picture = image::load_from_memory_with_format(bytes, image::ImageFormat::Jpeg).unwrap();
+        (picture.width(), picture.height())
+    }
+
+    #[test]
+    fn a_cover_is_fitted_into_its_box_turned_upright_and_laid_on_white() {
+        let dir = scratch("paper-fitted");
+        let at = |name: &str| dir.join(name);
+        saved(&at("wide.jpg"), (1200, 800), [200, 40, 40, 255]);
+        assert_eq!(size(&fitted(&at("wide.jpg")).unwrap()), (400, 267));
+        saved(&at("tall.png"), (300, 2000), [30, 60, 140, 255]);
+        assert_eq!(size(&fitted(&at("tall.png")).unwrap()), (90, 600));
+        // `small`, transparent: never sampled up, and laid on white.
+        saved(&at("small.png"), (100, 150), [0, 0, 0, 0]);
+        let small = fitted(&at("small.png")).unwrap();
+        assert_eq!(size(&small), (100, 150));
+        let pixel = image::load_from_memory(&small)
+            .unwrap()
+            .to_rgb8()
+            .get_pixel(50, 75)
+            .0;
+        assert!(pixel.iter().all(|c| *c > 245), "{pixel:?}");
+        // `turned`: a phone's photo, 40 by 20 as stored, its EXIF saying it stands turned a
+        // quarter: an APP1 segment, `Exif`, a little-endian TIFF header and one IFD entry,
+        // Orientation (0x0112) at 6.
+        saved(&at("flat.jpg"), (40, 20), [40, 120, 90, 255]);
+        let flat = std::fs::read(at("flat.jpg")).unwrap();
+        let mut exif = vec![0xFF, 0xE1, 0x00, 0x22];
+        exif.extend_from_slice(b"Exif\0\0II\x2A\0\x08\0\0\0\x01\0");
+        exif.extend_from_slice(&[0x12, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00]);
+        exif.extend_from_slice(&[0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        let turned = [&flat[..2], &exif, &flat[2..]].concat();
+        std::fs::write(at("turned.jpg"), turned).unwrap();
+        assert_eq!(size(&fitted(&at("turned.jpg")).unwrap()), (20, 40));
+        // `notes.txt`: no picture at all.
+        std::fs::write(at("notes.txt"), "not a picture").unwrap();
+        let err = fitted(&at("notes.txt")).unwrap_err();
+        assert_eq!(err.downcast_ref::<NotAPicture>(), Some(&NotAPicture));
+    }
+
+    #[test]
+    fn a_cover_set_here_is_written_beside_the_kindles_and_named_on_its_row() {
+        let ws = with_kindle("paper-cover");
+        let dir = ws.kindle_dir("G000K1").join("record");
+        let picture = scratch("paper-cover-picture").join("front.png");
+        saved(&picture, (800, 1200), [180, 140, 40, 255]);
+        let new = NewBook {
+            title: "On Paper".into(),
+            author: String::new(),
+            language: "en".into(),
+            pages: 200,
+            cover: Some(picture.to_string_lossy().into_owned()),
+        };
+        add_book(&ws, "", &new).unwrap();
+        let held = Record::load(&dir);
+        let book = &held.paper_books[0];
+        let name = std::path::Path::new(&book.cover).file_name().unwrap();
+        assert!(paper::is_cover(&name.to_string_lossy()));
+        assert_eq!(book.cover, paper::on_the_kindle(&name.to_string_lossy()));
+        let written = std::fs::read(dir.join(COVERS_DIR).join(name)).unwrap();
+        assert_eq!(size(&written), (400, 600));
+        // `set_cover` again: a file of its own; `remove_cover` leaves both files standing.
+        let added = book.added.clone();
+        set_cover(&ws, "", &added, &picture).unwrap();
+        let again = Record::load(&dir).paper_books[0].cover.clone();
+        assert_ne!(again, book.cover);
+        remove_cover(&ws, "", &added).unwrap();
+        assert!(Record::load(&dir).paper_books[0].cover.is_empty());
+        let files = std::fs::read_dir(dir.join(COVERS_DIR)).unwrap().count();
+        assert_eq!(files, 2);
+        // `notes`: no picture, and no book added for it.
+        let notes = scratch("paper-cover-notes").join("notes.txt");
+        std::fs::write(&notes, "not a picture").unwrap();
+        let bad = NewBook {
+            cover: Some(notes.to_string_lossy().into_owned()),
+            ..new
+        };
+        let err = add_book(&ws, "", &bad).unwrap_err();
+        assert_eq!(err.downcast_ref::<NotAPicture>(), Some(&NotAPicture));
+        assert_eq!(Record::load(&dir).paper_books.len(), 1);
     }
 }

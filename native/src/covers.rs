@@ -107,7 +107,9 @@ fn keyed(name: &str) -> Option<&str> {
 }
 
 /// Delete every file under [`COVERS_DIR`] that no key in `keys` names,
-/// answering how many went. A `.partial` sibling goes with them.
+/// answering how many went. A `.partial` sibling goes with them. A paper
+/// book's cover stays whatever `keys` holds: the desktop wrote it, and only the
+/// side that wrote a file deletes it.
 pub fn sweep(dir: &Path, keys: &[&str]) -> usize {
     let names: std::collections::HashSet<String> = keys.iter().map(|k| file_name(k)).collect();
     let Ok(entries) = std::fs::read_dir(dir.join(COVERS_DIR)) else {
@@ -115,7 +117,8 @@ pub fn sweep(dir: &Path, keys: &[&str]) -> usize {
     };
     let mut gone = 0;
     for entry in entries.flatten() {
-        if names.contains(&entry.file_name().to_string_lossy().into_owned()) {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if names.contains(&name) || crate::paper::is_cover(&name) {
             continue;
         }
         match std::fs::remove_file(entry.path()) {

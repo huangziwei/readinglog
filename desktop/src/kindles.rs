@@ -138,12 +138,29 @@ pub fn cover(dirs: &[PathBuf], key: &str) -> Option<PathBuf> {
     }
 }
 
-/// `book` with its cover pointing at the copy [`cover`] finds under `dirs`, at
-/// none where no copy there draws or `cde_key` is empty, and no `thumbnail`.
+/// `paper_cover`: the copy of the cover a paper book's row names, by its file's
+/// name, in its own source's folder for a key [`together`] marked, else in the
+/// first of `dirs` holding one; none where the row names none.
+fn paper_cover(dirs: &[PathBuf], book: &record::Book) -> Option<PathBuf> {
+    let name = Path::new(&book.cover).file_name()?;
+    let held = |dir: &PathBuf| {
+        let at = dir.join(covers::COVERS_DIR).join(name);
+        covers::drawable(&at).then_some(at)
+    };
+    match key_origin(&book.cde_key) {
+        (Some(n), _) => dirs.get(n).and_then(held),
+        (None, _) => dirs.iter().find_map(held),
+    }
+}
+
+/// `book` with its cover pointing at the copy [`cover`] finds under `dirs`, a
+/// paper book's at the copy [`paper_cover`] finds, at none where no copy there
+/// draws or `cde_key` is empty, and no `thumbnail`.
 pub fn on_this_computer(book: &record::Book, dirs: &[PathBuf]) -> record::Book {
-    let cover = match book.cde_key.is_empty() {
-        true => None,
-        false => cover(dirs, &book.cde_key),
+    let cover = match (book.is_paper(), book.cde_key.is_empty()) {
+        (true, _) => paper_cover(dirs, book),
+        (false, true) => None,
+        (false, false) => cover(dirs, &book.cde_key),
     }
     .map(|at| at.to_string_lossy().into_owned())
     .unwrap_or_default();
@@ -352,6 +369,33 @@ mod tests {
             let key = readinglog_native::paper::key(&added);
             assert_eq!(key_origin(&paper.cde_key), (Some(0), key.as_str()));
         }
+    }
+
+    #[test]
+    fn a_paper_book_draws_the_cover_its_row_names_and_none_once_it_is_taken_off() {
+        use readinglog_native::paper::{self, PaperBook};
+        let dir = crate::tests::scratch("kindles-paper-cover");
+        let name = paper::cover_name("2026-08-30T08:00:00", "2026-09-01T08:00:00");
+        let file = dir.join(covers::COVERS_DIR).join(&name);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        image::RgbImage::from_pixel(4, 6, image::Rgb([40, 90, 160]))
+            .save_with_format(&file, image::ImageFormat::Png)
+            .unwrap();
+        let row = PaperBook {
+            added: "2026-08-30T08:00:00".into(),
+            pages: 100,
+            title: "On Paper".into(),
+            cover: paper::on_the_kindle(&name),
+            ..PaperBook::default()
+        };
+        let dirs = [dir.clone()];
+        let drawn = on_this_computer(&row.as_book(), &dirs);
+        assert_eq!(drawn.cover, file.to_string_lossy());
+        let bare = PaperBook {
+            cover: String::new(),
+            ..row
+        };
+        assert_eq!(on_this_computer(&bare.as_book(), &dirs).cover, "");
     }
 
     #[test]

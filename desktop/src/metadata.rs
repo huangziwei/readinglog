@@ -829,6 +829,7 @@ mod tests {
             author: "Someone".into(),
             language: "en".into(),
             pages: 200,
+            cover: None,
         };
         let key = crate::paper::add_book(&ws, KINDLE, &new).unwrap();
         let extent = Record::load(&at).paper_books[0].extent();

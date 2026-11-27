@@ -186,6 +186,17 @@ pub struct Words {
     pub refused_pages: &'static str,
     pub refused_overlaps: &'static str,
     pub refused_gone: &'static str,
+    /// `the_book`, `cover_field` … `not_a_picture`: a paper book's own card on its page, its
+    /// cover's field there and in the add form, the buttons choosing and removing one, what the
+    /// add form says before one is chosen, the pictures the dialog offers, and why a file was not
+    /// taken as one.
+    pub the_book: &'static str,
+    pub cover_field: &'static str,
+    pub choose_cover: &'static str,
+    pub remove_cover: &'static str,
+    pub no_cover_chosen: &'static str,
+    pub pictures: &'static str,
+    pub not_a_picture: &'static str,
 }
 
 const ENGLISH: Words = Words {
@@ -320,6 +331,13 @@ const ENGLISH: Words = Words {
     refused_pages: "Pages run from 0 to the book's last, the first no later than the second.",
     refused_overlaps: "Another paper sitting covers that time.",
     refused_gone: "It is no longer there.",
+    the_book: "This book",
+    cover_field: "Cover",
+    choose_cover: "Choose a Cover…",
+    remove_cover: "Remove the Cover",
+    no_cover_chosen: "None chosen",
+    pictures: "Pictures",
+    not_a_picture: "A cover has to be a JPEG or a PNG picture.",
 };
 
 const GERMAN: Words = Words {
@@ -458,6 +476,13 @@ const GERMAN: Words = Words {
     refused_pages: "Seiten reichen von 0 bis zur letzten des Buchs, die erste nicht nach der zweiten.",
     refused_overlaps: "In dieser Zeit liegt schon eine andere Papiersitzung.",
     refused_gone: "Das gibt es nicht mehr.",
+    the_book: "Dieses Buch",
+    cover_field: "Titelbild",
+    choose_cover: "Titelbild wählen…",
+    remove_cover: "Titelbild entfernen",
+    no_cover_chosen: "Keines gewählt",
+    pictures: "Bilder",
+    not_a_picture: "Ein Titelbild muss ein JPEG- oder PNG-Bild sein.",
 };
 
 const JAPANESE: Words = Words {
@@ -590,6 +615,13 @@ const JAPANESE: Words = Words {
     refused_pages: "ページは 0 から本の最後のページまでで、開始は終了より後にできません。",
     refused_overlaps: "その時間には別の紙の本の記録があります。",
     refused_gone: "もうありません。",
+    the_book: "この本",
+    cover_field: "表紙",
+    choose_cover: "表紙を選ぶ…",
+    remove_cover: "表紙を外す",
+    no_cover_chosen: "未選択",
+    pictures: "画像",
+    not_a_picture: "表紙は JPEG か PNG の画像にしてください。",
 };
 
 const SIMPLIFIED: Words = Words {
@@ -720,6 +752,13 @@ const SIMPLIFIED: Words = Words {
     refused_pages: "页码从 0 到书的最后一页，起始页不能晚于结束页。",
     refused_overlaps: "这段时间已有另一次纸质书阅读。",
     refused_gone: "它已经不在了。",
+    the_book: "这本书",
+    cover_field: "封面",
+    choose_cover: "选择封面…",
+    remove_cover: "移除封面",
+    no_cover_chosen: "未选择",
+    pictures: "图片",
+    not_a_picture: "封面需要是 JPEG 或 PNG 图片。",
 };
 
 const TRADITIONAL: Words = Words {
@@ -850,6 +889,13 @@ const TRADITIONAL: Words = Words {
     refused_pages: "頁碼從 0 到書的最後一頁，起始頁不能晚於結束頁。",
     refused_overlaps: "這段時間已有另一次紙本書閱讀。",
     refused_gone: "它已經不在了。",
+    the_book: "這本書",
+    cover_field: "封面",
+    choose_cover: "選擇封面…",
+    remove_cover: "移除封面",
+    no_cover_chosen: "未選擇",
+    pictures: "圖片",
+    not_a_picture: "封面需要是 JPEG 或 PNG 圖片。",
 };
 
 impl Words {

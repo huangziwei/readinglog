@@ -625,6 +625,46 @@ fn add_paper_book(
     paper::add_book(&ws, &kindle, &book).map_err(|err| refused(&ws, err))
 }
 
+/// A picture picked in a dialog, a JPEG or a PNG; `None` where the dialog is
+/// cancelled.
+#[tauri::command]
+async fn pick_picture(app: AppHandle, open: State<'_, Open>) -> Answer<Option<String>> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    let w = screen::Words::of(ws.config.lang());
+    Ok(app
+        .dialog()
+        .file()
+        .add_filter(w.pictures, &["jpg", "jpeg", "png"])
+        .blocking_pick_file()
+        .map(|p| p.to_string()))
+}
+
+/// Take the picture at `picture` as the cover of the paper book added at
+/// `added` in the Kindle `kindle`'s record.
+#[tauri::command]
+fn set_paper_cover(
+    app: AppHandle,
+    open: State<'_, Open>,
+    kindle: String,
+    added: String,
+    picture: String,
+) -> Answer<()> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    paper::set_cover(&ws, &kindle, &added, Path::new(&picture)).map_err(|err| refused(&ws, err))
+}
+
+/// Take the cover off the paper book added at `added` in the Kindle `kindle`'s record.
+#[tauri::command]
+fn remove_paper_cover(
+    app: AppHandle,
+    open: State<'_, Open>,
+    kindle: String,
+    added: String,
+) -> Answer<()> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    paper::remove_cover(&ws, &kindle, &added).map_err(|err| refused(&ws, err))
+}
+
 /// Set the pages of the paper book added at `added` in the Kindle `kindle`'s record.
 #[tauri::command]
 fn set_paper_pages(
@@ -841,6 +881,9 @@ pub fn run() {
             reword_note,
             delete_note,
             add_paper_book,
+            pick_picture,
+            set_paper_cover,
+            remove_paper_cover,
             set_paper_pages,
             delete_paper_book,
             log_sitting,

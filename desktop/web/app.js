@@ -60,6 +60,8 @@ const WRITING = new Set([
   "log_sitting",
   "edit_sitting",
   "delete_sitting",
+  "set_paper_cover",
+  "remove_paper_cover",
 ]);
 
 /** `call`: the command `name`'s answer, `err` flashed and thrown on, and `resync` set going where `WRITING` holds `name`. */
@@ -1232,6 +1234,7 @@ async function addPaper(form) {
       author: f.author ?? "",
       language: f.language ?? "",
       pages: pageNumber(f.pages),
+      cover: f.cover || null,
     },
   });
   editing = null;
@@ -1320,6 +1323,25 @@ document.addEventListener("click", async (event) => {
         added: paper.dataset.added,
         pages: pageNumber(fieldsOf(act.closest("[data-pages]")).pages),
       });
+      await show();
+      break;
+    case "pick-cover": {
+      const picked = await call("pick_picture");
+      if (!picked) break;
+      const form = act.closest("[data-paper-add]");
+      form.querySelector('[name="cover"]').value = picked;
+      form.querySelector("[data-chosen]").textContent = picked.split("/").pop();
+      break;
+    }
+    case "choose-paper-cover": {
+      const picture = await call("pick_picture");
+      if (!picture) break;
+      await call("set_paper_cover", { kindle: paper.dataset.kindle, added: paper.dataset.added, picture });
+      await show();
+      break;
+    }
+    case "remove-paper-cover":
+      await call("remove_paper_cover", { kindle: paper.dataset.kindle, added: paper.dataset.added });
       await show();
       break;
     case "delete-paper":

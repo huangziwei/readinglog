@@ -39,6 +39,9 @@ pub struct PaperBook {
     pub author: String,
     /// `language`: a language code, as a Kindle's library states one.
     pub language: String,
+    /// `cover`: where its cover sits on the Kindle, under `covers::COVERS_DIR`, as a `b` row's
+    /// `cover` names a Kindle book's; empty for none.
+    pub cover: String,
 }
 
 impl PaperBook {
@@ -62,6 +65,7 @@ impl PaperBook {
             title: self.title.clone(),
             author: self.author.clone(),
             language: self.language.clone(),
+            cover: self.cover.clone(),
             percent: match self.pages > 0 {
                 true => 0.0,
                 false => -1.0,
@@ -176,16 +180,73 @@ pub fn extent(added: &str) -> Option<i64> {
     instant(added).map(|at| PAPER_FROM + at)
 }
 
+/// `digits`: `stamp`, a `YYYY-MM-DDTHH:MM:SS` instant, without its punctuation:
+/// `20261126T154512`.
+fn digits(stamp: &str) -> String {
+    stamp.chars().filter(char::is_ascii_alphanumeric).collect()
+}
+
+/// `stamped`: whether `text` is what [`digits`] makes of an instant: eight digits, `T`, six digits.
+fn stamped(text: &[u8]) -> bool {
+    text.len() == 15
+        && text.iter().enumerate().all(|(at, c)| match at {
+            8 => *c == b'T',
+            _ => c.is_ascii_digit(),
+        })
+}
+
 /// `key`: the key the book added at `added` draws under: [`KEY_PREFIX`] and `added`'s digits,
 /// `paper-20261126T154512`.
 pub fn key(added: &str) -> String {
-    let digits: String = added.chars().filter(char::is_ascii_alphanumeric).collect();
-    format!("{KEY_PREFIX}{digits}")
+    format!("{KEY_PREFIX}{}", digits(added))
 }
 
-/// `is_paper`: whether `key` names a paper book.
+/// `is_paper`: whether `key` is one [`key`] makes, alone or with the `@` and number a desktop
+/// marks one Kindle's keys with among several. A Kindle book a sidecar alone names takes its
+/// file's name as its key, so the prefix alone proves nothing.
 pub fn is_paper(key: &str) -> bool {
-    key.starts_with(KEY_PREFIX)
+    let Some(rest) = key.strip_prefix(KEY_PREFIX).map(str::as_bytes) else {
+        return false;
+    };
+    let (stamp, mark) = rest.split_at(rest.len().min(15));
+    let marked = match mark.split_first() {
+        None => true,
+        Some((b'@', n)) => !n.is_empty() && n.iter().all(u8::is_ascii_digit),
+        Some(_) => false,
+    };
+    stamped(stamp) && marked
+}
+
+/// `COVER_PREFIX`: what a paper cover's file name opens with.
+const COVER_PREFIX: &str = "paper_";
+
+/// `cover_name`: the file a cover set at `at` on the book added at `added` takes under
+/// `covers::COVERS_DIR`: `paper_20261126T154512_20261127T090000.jpg`, a name each time one is
+/// set, so no cache holds the picture it replaced.
+pub fn cover_name(added: &str, at: &str) -> String {
+    format!("{COVER_PREFIX}{}_{}.jpg", digits(added), digits(at))
+}
+
+/// `is_cover`: whether `name` is a file name [`cover_name`] makes.
+pub fn is_cover(name: &str) -> bool {
+    let Some(rest) = name
+        .strip_prefix(COVER_PREFIX)
+        .and_then(|r| r.strip_suffix(".jpg"))
+        .map(str::as_bytes)
+    else {
+        return false;
+    };
+    rest.len() == 31 && rest[15] == b'_' && stamped(&rest[..15]) && stamped(&rest[16..])
+}
+
+/// `on_the_kindle`: where the cover named `name` sits on the Kindle, what a `p` row's `cover`
+/// states.
+pub fn on_the_kindle(name: &str) -> String {
+    std::path::Path::new(crate::record::RECORD_DIR)
+        .join(crate::covers::COVERS_DIR)
+        .join(name)
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// `state`: the word a row states whether it stands in.
@@ -200,7 +261,7 @@ fn state(deleted: bool) -> &'static str {
 pub(crate) fn write_book(out: &mut String, b: &PaperBook) {
     let _ = writeln!(
         out,
-        "{BOOK_ROW}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "{BOOK_ROW}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         b.added,
         b.edited,
         state(b.deleted),
@@ -208,6 +269,7 @@ pub(crate) fn write_book(out: &mut String, b: &PaperBook) {
         escaped(&b.title),
         escaped(&b.author),
         escaped(&b.language),
+        escaped(&b.cover),
     );
 }
 
@@ -223,6 +285,7 @@ pub(crate) fn read_book<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Pap
     let title = unescaped(next());
     let author = unescaped(next());
     let language = unescaped(next());
+    let cover = unescaped(next());
     Some(PaperBook {
         edited: match edited.is_empty() {
             true => added.clone(),
@@ -234,6 +297,7 @@ pub(crate) fn read_book<'a>(f: &mut impl Iterator<Item = &'a str>) -> Option<Pap
         title,
         author,
         language,
+        cover,
     })
 }
 
@@ -513,6 +577,7 @@ impl Record {
             title: title.trim().to_string(),
             author: author.trim().to_string(),
             language: language.trim().to_string(),
+            cover: String::new(),
         });
         self.sort_paper();
         Ok(added)
@@ -536,6 +601,27 @@ impl Record {
         }
         let book = self.live_paper_book(added)?;
         book.pages = pages;
+        book.edited = after(&book.edited, now);
+        Ok(())
+    }
+
+    /// `set_paper_cover` names a new cover on the book added at `added`, as of `now`: its row
+    /// states where it sits on the Kindle ([`on_the_kindle`]) under the name [`cover_name`] makes of
+    /// the moment the row takes. Answers that name, the file the picture is written to.
+    pub fn set_paper_cover(&mut self, added: &str, now: &str) -> Result<String, Refusal> {
+        let book = self.live_paper_book(added)?;
+        let at = after(&book.edited, now);
+        let name = cover_name(added, &at);
+        book.cover = on_the_kindle(&name);
+        book.edited = at;
+        Ok(name)
+    }
+
+    /// `take_paper_cover` takes the cover off the book added at `added`, as of `now`; its file
+    /// stays where it is, drawn nowhere.
+    pub fn take_paper_cover(&mut self, added: &str, now: &str) -> Result<(), Refusal> {
+        let book = self.live_paper_book(added)?;
+        book.cover = String::new();
         book.edited = after(&book.edited, now);
         Ok(())
     }
@@ -1115,5 +1201,103 @@ mod tests {
         ] {
             assert_eq!(instant(not), None, "{not}");
         }
+    }
+
+    #[test]
+    fn a_paper_key_is_its_whole_shape_and_a_sideload_named_like_one_is_not() {
+        assert!(is_paper("paper-20261126T154512"));
+        assert!(is_paper("paper-20261126T154512@1"), "one Kindle of several");
+        for not in [
+            "paper-towns",
+            "paper-20261126T15451",
+            "paper-20261126T154512x",
+            "paper-20261126T154512@",
+            "paper-20261126t154512",
+            "Paper-20261126T154512",
+            "paper-２0261126T154512",
+        ] {
+            assert!(!is_paper(not), "{not}");
+        }
+        // `towns`: a sideload its sidecar alone names keeps its Kindle's controls.
+        let towns = crate::stats::BookStat {
+            cde_key: "paper-towns".into(),
+            ..crate::stats::BookStat::default()
+        };
+        assert!(!towns.is_paper() && towns.can_mark());
+    }
+
+    /// `picture`: a small PNG at `path`, the kind of file `covers::drawable` takes.
+    fn picture(path: &std::path::Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        image::RgbImage::from_pixel(4, 6, image::Rgb([40, 90, 160]))
+            .save(path)
+            .unwrap();
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("readinglog-paper-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_cover_rides_the_row_and_draws_as_any_books_cover() {
+        let mut held = record();
+        // `set_paper_cover` names the file by the moment the row takes: past its last edit.
+        let name = held.set_paper_cover(ADDED, "2026-11-06T08:00:00").unwrap();
+        assert_eq!(name, "paper_20261101T100000_20261106T080000.jpg");
+        assert!(is_cover(&name));
+        assert!(!is_cover("paper_20261101T100000.jpg") && !is_cover("B00KEY.jpg"));
+        assert_eq!(held.paper_books[0].edited, "2026-11-06T08:00:00");
+        assert_eq!(
+            held.paper_books[0].cover,
+            format!("/mnt/us/extensions/readinglog/covers/{name}")
+        );
+        let again = held.set_paper_cover(ADDED, "2026-11-06T08:00:00").unwrap();
+        assert_ne!(
+            again, name,
+            "a second cover in one second takes a name of its own"
+        );
+        let read = Record::from_text(&held.text());
+        assert_eq!(
+            read.paper_books[0].cover,
+            on_the_kindle(&again),
+            "the row carries it"
+        );
+        // `at`: a picture where a test can write one, standing for the Kindle's own path.
+        let at = scratch("cover").join("covers").join(&name);
+        picture(&at);
+        let path = at.to_string_lossy().into_owned();
+        held.paper_books[0].cover.clone_from(&path);
+        let today = day("2026-11-06");
+        let stats = Stats::drawn(&held, today, true, StatsFrom::App, SittingFloor::All);
+        assert_eq!(stats.books[0].thumbnail, path);
+        assert!(stats.books[0].has_cover());
+        // `take_paper_cover`: no cover drawn, whatever file stands.
+        held.take_paper_cover(ADDED, "2026-11-07T08:00:00").unwrap();
+        assert!(held.paper_books[0].cover.is_empty() && at.exists());
+        let stats = Stats::drawn(&held, today, true, StatsFrom::App, SittingFloor::All);
+        assert!(!stats.books[0].has_cover());
+        held.delete_paper_book(ADDED, NOW).unwrap();
+        assert_eq!(held.set_paper_cover(ADDED, NOW), Err(Refusal::NoBook));
+    }
+
+    #[test]
+    fn the_kindles_sweep_leaves_every_paper_cover_where_the_desktop_put_it() {
+        let dir = scratch("sweep");
+        let kept = cover_name(ADDED, NOW);
+        for name in [
+            kept.as_str(),
+            "B00KEY.jpg",
+            "B00GONE.jpg",
+            "paper_towns.jpg",
+        ] {
+            picture(&dir.join(crate::covers::COVERS_DIR).join(name));
+        }
+        assert_eq!(crate::covers::sweep(&dir, &["B00KEY"]), 2);
+        let left = |name: &str| dir.join(crate::covers::COVERS_DIR).join(name).exists();
+        assert!(left(&kept) && left("B00KEY.jpg"));
+        assert!(!left("B00GONE.jpg") && !left("paper_towns.jpg"));
     }
 }

@@ -1589,6 +1589,7 @@ mod tests {
             author: "Someone".into(),
             language: "en".into(),
             pages: 200,
+            cover: None,
         };
         let key = crate::paper::add_book(&ws, "", &new).unwrap();
         let shown = Shown::of(&ws, clock()).unwrap();
@@ -1627,6 +1628,11 @@ mod tests {
         assert!(main.contains("data-from=\"21:00\" data-to=\"22:00\""));
         assert!(main.contains("pp. 0–60 · 1h"), "{main}");
         assert!(main.contains("<dd>1.0 ppm</dd>"), "{main}");
+        assert!(main.contains("data-act=\"choose-paper-cover\""));
+        assert!(
+            !main.contains("data-act=\"remove-paper-cover\""),
+            "no cover to remove yet"
+        );
         let s = Lang::English.strings();
         assert!(!main.contains(&format!("<dt>{}</dt>", s.on_the_kindle)));
         assert!(!main.contains(&format!("<dt>{}</dt>", s.words)));
@@ -1637,6 +1643,7 @@ mod tests {
         // Books: the button beside the search, the one Kindle named in the form.
         let books = draw("/books").main;
         assert!(books.contains("data-act=\"add-paper\""));
+        assert!(books.contains("data-act=\"pick-cover\"") && books.contains("name=\"cover\""));
         assert!(books.contains("<input type=\"hidden\" name=\"kindle\" value=\"G000K1\">"));
         assert!(books.contains("On Paper"), "the book on the shelf");
     }
@@ -1668,6 +1675,8 @@ mod tests {
             }
             let nowhere = anyhow::Error::from(crate::paper::NoKindle);
             assert_eq!(refusal(&nowhere, w), Some(w.no_kindle));
+            let blank = anyhow::Error::from(crate::paper::NotAPicture);
+            assert_eq!(refusal(&blank, w), Some(w.not_a_picture));
             assert_eq!(refusal(&anyhow::anyhow!("a disk error"), w), None);
         }
     }

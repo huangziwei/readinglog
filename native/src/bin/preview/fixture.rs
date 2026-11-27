@@ -1082,8 +1082,13 @@ const PAPER_READ: [(i64, i64, i64, i64, i64); 8] = [
     (0, 21 * 60 + 30, 45, 360, 405),
 ];
 
+/// `PAPER_COVER`: the stand-in cover slot [`papered`]'s book takes, a tone no [`LIBRARY`] book's
+/// neighbours share.
+const PAPER_COVER: usize = 15;
+
 /// [`library`] with a book of 432 pages read on paper over the last fortnight, the `p` and `q` rows
-/// the desktop writes, the newest sitting closing on `last`.
+/// the desktop writes, its cover where `covers` holds the stand-ins, the newest sitting closing on
+/// `last`.
 pub fn papered(last: i64, covers: &Path) -> Record {
     let mut record = library(last, covers);
     let now = date::stamp(last, 86_399);
@@ -1096,6 +1101,10 @@ pub fn papered(last: i64, covers: &Path) -> Record {
     ) else {
         return record;
     };
+    // `cover`: the stand-in's path in the place of the Kindle's own, which the preview has none of.
+    if let Some(book) = record.paper_books.iter_mut().find(|b| b.added == added) {
+        book.cover = cover(covers, PAPER_COVER);
+    }
     for (back, at, minutes, from, to) in PAPER_READ {
         let opens = (last - back) * 86_400 + at * 60;
         let closes = opens + minutes * 60;

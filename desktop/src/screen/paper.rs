@@ -88,10 +88,17 @@ pub(super) fn adding(cx: &Ctx) -> (String, String) {
             form.push_str("</select></label>");
         }
     }
+    // `cover`: the path `pick-cover` puts there, `data-chosen` its file's name.
     let _ = write!(
         form,
-        "</div><p class=\"note\">{}</p><p class=\"acts\"><button type=\"button\" data-act=\"cancel-paper\">{}</button>\
+        "</div><div class=\"field\"><span>{}</span><span class=\"picked\">\
+         <button type=\"button\" class=\"chip\" data-act=\"pick-cover\">{}</button>\
+         <small data-chosen>{}</small></span><input type=\"hidden\" name=\"cover\" value=\"\"></div>\
+         <p class=\"note\">{}</p><p class=\"acts\"><button type=\"button\" data-act=\"cancel-paper\">{}</button>\
          <button type=\"button\" class=\"save\" data-act=\"save-paper\">{}</button></p></div>",
+        esc(w.cover_field),
+        esc(w.choose_cover),
+        esc(w.no_cover_chosen),
         esc(w.paper_note),
         esc(s.cancel),
         esc(w.add)
@@ -178,20 +185,33 @@ pub(super) fn panel(cx: &Ctx, at: usize) -> String {
         }
         out.push_str("</div></section>");
     }
+    // `remove`: Remove the Cover, where the row names one.
+    let remove = match book.cover.is_empty() {
+        true => String::new(),
+        false => format!(
+            "<button type=\"button\" data-act=\"remove-paper-cover\">{}</button>",
+            esc(w.remove_cover)
+        ),
+    };
     let _ = write!(
         out,
-        "<section><h2>{}</h2><div class=\"card paperbook\" data-pages>\
-         <label class=\"field\"><span>{}</span><input class=\"box\" type=\"number\" min=\"1\" step=\"1\" name=\"pages\" value=\"{}\"></label>\
-         <p class=\"acts\"><button type=\"button\" data-act=\"delete-paper\">{}</button>\
-         <button type=\"button\" class=\"save\" data-act=\"set-pages\">{}</button></p></div></section>\
+        "<section><h2>{}</h2><div class=\"card paperbook\">\
+         <div class=\"line\" data-pages><label class=\"field\"><span>{}</span>\
+         <input class=\"box\" type=\"number\" min=\"1\" step=\"1\" name=\"pages\" value=\"{}\"></label>\
+         <p class=\"acts\"><button type=\"button\" class=\"save\" data-act=\"set-pages\">{}</button></p></div>\
+         <div class=\"line\"><span class=\"label\">{}</span><p class=\"acts\">{remove}\
+         <button type=\"button\" data-act=\"choose-paper-cover\">{}</button></p></div>\
+         <p class=\"acts\"><button type=\"button\" data-act=\"delete-paper\">{}</button></p></div></section>\
          <template id=\"sitting-form\"><div class=\"editor\" data-sitting>{}<p class=\"acts\">\
          <button type=\"button\" data-act=\"cancel-sitting\">{}</button>\
          <button type=\"button\" class=\"save\" data-act=\"save-sitting\">{}</button></p></div></template></div>",
-        esc(w.pages_field),
+        esc(w.the_book),
         esc(w.pages_field),
         book.pages,
-        esc(w.delete_paper),
         esc(w.save),
+        esc(w.cover_field),
+        esc(w.choose_cover),
+        esc(w.delete_paper),
         fields(w, None, today, 0, book.pages),
         esc(s.cancel),
         esc(w.save)
@@ -234,11 +254,15 @@ fn logged(cx: &Ctx, sitting: &PaperSitting) -> String {
     )
 }
 
-/// `refusal`: why a paper book or sitting was not written, in the window's words, where `err` is a
-/// `Refusal` or `paper::NoKindle`; `None` for any other failure.
+/// `refusal`: why a paper book, its cover or a sitting was not written, in the window's words,
+/// where `err` is a `Refusal`, `paper::NoKindle` or `paper::NotAPicture`; `None` for any other
+/// failure.
 pub fn refusal(err: &anyhow::Error, w: &Words) -> Option<&'static str> {
     if err.downcast_ref::<crate::paper::NoKindle>().is_some() {
         return Some(w.no_kindle);
+    }
+    if err.downcast_ref::<crate::paper::NotAPicture>().is_some() {
+        return Some(w.not_a_picture);
     }
     Some(match err.downcast_ref::<Refusal>()? {
         Refusal::Untitled => w.refused_untitled,
