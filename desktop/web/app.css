@@ -1913,10 +1913,63 @@ select.box {
   background-size: 5px 5px;
   background-repeat: no-repeat;
 }
-.paperadd .note {
-  margin: 0 0 12px;
-  font-size: 12px;
+/* `.entry`: the add form's `.jacket`, its cover `.well` over the way to take the
+   picture off again, beside the `.named` fields */
+.paperadd .entry {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 0 22px;
+  align-items: start;
+  margin: 0 0 4px;
+}
+.paperadd .jacket {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+/* `.well`: a cover a picture is dropped on, or chosen through as `.welcome .drop`
+   is; `.held` once it shows the picture as the book will */
+.well {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 2px dashed var(--rule);
+  border-radius: 5px;
+  background: var(--card);
   color: var(--soft);
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: center;
+}
+.well:hover {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+.well.held {
+  padding: 0;
+  border: none;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.14), 0 8px 20px rgba(0, 0, 0, 0.14);
+}
+.well img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* `.over`: the cover a picture dragged over the window lands on */
+.well.over,
+.hero .cover.over,
+.paperedit .field.over {
+  outline: 3px dashed var(--accent);
+  outline-offset: 4px;
+}
+.paperedit .field.over {
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 .paperadd .acts,
 .paper .acts {
@@ -1971,49 +2024,28 @@ select.box {
   padding: 0;
   border-bottom: none;
 }
-/* `.paperbook`: a `.line` for the pages and one for the cover, each its
-   buttons at the right, and Delete This Book under them at the left */
-.paperbook {
+/* `.paperedit`: a paper book's pages and its cover's line in its editor, side by side,
+   and Delete This Book at the left of the editor's buttons */
+.paperedit {
   display: grid;
-  gap: 14px;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 0 22px;
+  align-items: end;
 }
-.paperbook .line {
+.paperedit .acts {
   display: flex;
-  align-items: flex-end;
-  gap: 16px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--rule);
-}
-.paperbook .field {
-  margin: 0;
-  width: 140px;
-}
-.paperbook .line .acts {
-  flex: 1;
-}
-.paperbook .label {
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  color: var(--soft);
-  align-self: center;
-}
-.paperbook > .acts {
   justify-content: flex-start;
-}
-/* `.picked`: the add form's Choose a Cover… and the file it took */
-.paperadd .picked {
-  display: flex;
+  gap: 6px;
+  min-height: 35px;
   align-items: center;
-  gap: 10px;
+  margin: 0;
 }
-.paperadd .picked small {
-  color: var(--soft);
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.paperedit .acts button {
+  margin-left: 0;
 }
-
+.metaedit [data-act="delete-paper"] {
+  margin-right: auto;
+}
 /* `hidden` hides, whatever display a rule above sets. */
 [hidden] {
   display: none !important;

@@ -465,8 +465,19 @@ function bookOf(at) {
   return JSON.parse(at.closest("[data-book]").dataset.book);
 }
 
-/** `closeMeta` closes the metadata editor, the bulk editor, Rename… or Same as… open, every field of the head back as it was. */
+/** `openMeta` opens the head `meta`'s editor, in the hero's place. */
+function openMeta(meta) {
+  closeAny();
+  meta.classList.add("open");
+  meta.querySelector(".metaedit").hidden = false;
+  main.querySelector(".hero")?.classList.add("editing");
+  meta.querySelector(".metaedit input").focus();
+  editing = meta;
+}
+
+/** `closeMeta` closes the metadata editor, the bulk editor, Rename… or Same as… open, every field of the head back as it was and the hero's cover its own. */
 function closeMeta() {
+  unstage();
   for (const open of main.querySelectorAll(".metaedit, .renaming, .linking")) open.hidden = true;
   for (const box of main.querySelectorAll(".meta input[data-was]")) {
     box.value = box.dataset.was;
@@ -559,15 +570,20 @@ function changeOf(box, was) {
   return value ? { to: value } : "back";
 }
 
-/** `saveMeta` saves the head's editor, each field changed. */
+/** `saveMeta` saves the head's editor, each field changed, a paper book's pages and cover first. */
 async function saveMeta(meta) {
   const patch = {};
   for (const box of meta.querySelectorAll(".metaedit input[data-field]")) {
     const change = changeOf(box, box.dataset.was);
     if (change) patch[box.dataset.field] = change;
   }
-  if (Object.keys(patch).length === 0) return closeMeta();
-  await patched([bookOf(meta)], patch);
+  const wrote = await savePaper(meta.querySelector("[data-paper-edit]"));
+  if (Object.keys(patch).length) await patched([bookOf(meta)], patch);
+  else {
+    closeMeta();
+    if (wrote) await show();
+  }
+  if (wrote) chosen(null);
 }
 
 /** `retagsOf`: what the bulk editor's tag fields in `holder` ask for, `retag` each tag whose group's type or own words changed and `remove` each marked gone, a blank field standing as it was. */
@@ -1093,16 +1109,9 @@ document.addEventListener("click", async (event) => {
   const act = event.target.closest("[data-act]");
   if (!act) return;
   switch (act.dataset.act) {
-    case "edit-meta": {
-      closeAny();
-      const meta = act.closest(".meta");
-      meta.classList.add("open");
-      meta.querySelector(".metaedit").hidden = false;
-      main.querySelector(".hero")?.classList.add("editing");
-      meta.querySelector(".metaedit input").focus();
-      editing = meta;
+    case "edit-meta":
+      openMeta(act.closest(".meta"));
       break;
-    }
     case "cancel-meta":
     case "cancel-rename":
     case "cancel-link":
@@ -1197,8 +1206,9 @@ document.addEventListener("click", async (event) => {
   }
 });
 
-// `fieldsOf` … `saveSitting`: a paper book, added off Books' form, and on its own
-// page a sitting logged, edited or deleted, its pages set and the book deleted.
+// `fieldsOf` … `savePaper`: a paper book, added off Books' form; on its own page a
+// sitting logged, edited or deleted; and in its editor its pages and cover set and
+// the book deleted. A cover is chosen in a dialog or dropped on one.
 
 /** `fieldsOf`: the value of each named field under `holder`, by its name. */
 function fieldsOf(holder) {
@@ -1238,7 +1248,105 @@ async function addPaper(form) {
     },
   });
   editing = null;
+  chosen(null);
   location.hash = `#/book/${encodeURIComponent(key)}`;
+}
+
+/** `shownCover`: the address of the picture the add form's well shows. */
+let shownCover = null;
+
+/** `chosen` lets go of the picture `shownCover` holds, `src` holding it in its place. */
+function chosen(src) {
+  if (shownCover) URL.revokeObjectURL(shownCover);
+  shownCover = src;
+}
+
+/** `chooseCover` sets the add form `form`'s cover to the picture at `picture`, its well showing it as `fit_cover` fits it; `null` takes it off. */
+async function chooseCover(form, picture) {
+  let src = null;
+  if (picture) {
+    const fitted = await call("fit_cover", { picture });
+    src = URL.createObjectURL(new Blob([fitted], { type: "image/jpeg" }));
+  }
+  chosen(src);
+  const well = form.querySelector(".well");
+  const img = well.querySelector("img");
+  if (src) img.src = src;
+  else img.removeAttribute("src");
+  img.hidden = !src;
+  well.querySelector("span").hidden = !!src;
+  well.classList.toggle("held", !!src);
+  form.querySelector('[name="cover"]').value = picture ?? "";
+  form.querySelector('[data-act="unpick-cover"]').hidden = !src;
+}
+
+/** `dropCover` takes `picture` as the cover of what `target` stands for: the add form's, or, into its editor, that of the paper book whose page it is. */
+async function dropCover(target, picture) {
+  if (!picture) return;
+  const form = target.closest("[data-paper-add]");
+  if (form) return await chooseCover(form, picture);
+  const meta = main.querySelector(".hero .meta");
+  if (meta.querySelector(".metaedit").hidden) openMeta(meta);
+  await stageCover(meta.querySelector("[data-paper-edit]"), picture);
+}
+
+/** `drawnCover`: the hero's cover as the page drew it, while the editor shows another in its place; `null` where it shows its own. */
+let drawnCover = null;
+
+/** `stageCover` shows `picture` as the hero's cover, as `fit_cover` fits it, for the editor's paper part `part` to set on Save; `null` shows the book with none, to take its cover off. */
+async function stageCover(part, picture) {
+  let src = null;
+  if (picture) {
+    const fitted = await call("fit_cover", { picture });
+    src = URL.createObjectURL(new Blob([fitted], { type: "image/jpeg" }));
+  }
+  const cover = main.querySelector(".hero .cover");
+  drawnCover ??= cover.innerHTML;
+  chosen(src);
+  if (src) {
+    const img = document.createElement("img");
+    img.alt = "";
+    img.src = src;
+    cover.replaceChildren(img);
+    part.dataset.set = picture;
+  } else {
+    cover.replaceChildren(template("uncovered"));
+    delete part.dataset.set;
+  }
+  part.toggleAttribute("data-off", !src && part.hasAttribute("data-covered"));
+  part.querySelector('[data-act="remove-paper-cover"]').hidden = !src;
+}
+
+/** `unstage` gives the hero back the cover the page drew, letting go of the one the editor showed. */
+function unstage() {
+  const part = main.querySelector("[data-paper-edit]");
+  if (drawnCover === null || !part) return;
+  main.querySelector(".hero .cover").innerHTML = drawnCover;
+  drawnCover = null;
+  chosen(null);
+  delete part.dataset.set;
+  part.removeAttribute("data-off");
+  part.querySelector('[data-act="remove-paper-cover"]').hidden = !part.hasAttribute("data-covered");
+}
+
+/** `savePaper` writes what the editor's paper part `part` changes, its pages and then its cover; whether it wrote any. */
+async function savePaper(part) {
+  if (!part) return false;
+  const book = { kindle: part.dataset.kindle, added: part.dataset.added };
+  const pages = part.querySelector('[name="pages"]');
+  let wrote = false;
+  if (pages.value !== pages.dataset.was) {
+    await call("set_paper_pages", { ...book, pages: pageNumber(pages.value) });
+    pages.dataset.was = pages.value;
+    wrote = true;
+  }
+  if (part.dataset.set) await call("set_paper_cover", { ...book, picture: part.dataset.set });
+  else if (part.hasAttribute("data-off")) await call("remove_paper_cover", book);
+  else return wrote;
+  delete part.dataset.set;
+  part.removeAttribute("data-off");
+  drawnCover = null;
+  return true;
 }
 
 /** `openSitting` opens `#sitting-form` on the logged sitting `row`, its fields set to the row's. */
@@ -1272,7 +1380,7 @@ async function saveSitting(row) {
 document.addEventListener("click", async (event) => {
   const act = event.target.closest("[data-act]");
   if (!act) return;
-  const paper = act.closest(".paper");
+  const paper = act.closest("[data-added]");
   switch (act.dataset.act) {
     case "no-kindle":
       flash(act.dataset.said, true);
@@ -1317,47 +1425,39 @@ document.addEventListener("click", async (event) => {
       if (await call("delete_sitting", { kindle: paper.dataset.kindle, logged })) await show();
       break;
     }
-    case "set-pages":
-      await call("set_paper_pages", {
-        kindle: paper.dataset.kindle,
-        added: paper.dataset.added,
-        pages: pageNumber(fieldsOf(act.closest("[data-pages]")).pages),
-      });
-      await show();
-      break;
     case "pick-cover": {
       const picked = await call("pick_picture");
-      if (!picked) break;
-      const form = act.closest("[data-paper-add]");
-      form.querySelector('[name="cover"]').value = picked;
-      form.querySelector("[data-chosen]").textContent = picked.split("/").pop();
+      if (picked) await chooseCover(act.closest("[data-paper-add]"), picked);
       break;
     }
+    case "unpick-cover":
+      await chooseCover(act.closest("[data-paper-add]"), null);
+      break;
     case "choose-paper-cover": {
       const picture = await call("pick_picture");
-      if (!picture) break;
-      await call("set_paper_cover", { kindle: paper.dataset.kindle, added: paper.dataset.added, picture });
-      await show();
+      if (picture) await stageCover(paper, picture);
       break;
     }
     case "remove-paper-cover":
-      await call("remove_paper_cover", { kindle: paper.dataset.kindle, added: paper.dataset.added });
-      await show();
+      await stageCover(paper, null);
       break;
-    case "delete-paper":
-      if (await call("delete_paper_book", { kindle: paper.dataset.kindle, added: paper.dataset.added })) {
+    case "delete-paper": {
+      // Delete This Book stands with the editor's buttons, beside its paper part.
+      const book = act.closest(".metaedit").querySelector("[data-paper-edit]").dataset;
+      if (await call("delete_paper_book", { kindle: book.kindle, added: book.added })) {
         location.hash = "#/books";
       }
       break;
+    }
   }
 });
 
 // `Enter` in a paper book's field presses the button its form saves with.
 main.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" || event.target.tagName !== "INPUT") return;
-  const form = event.target.closest("[data-paper-add], [data-log], [data-sitting], [data-pages]");
+  const form = event.target.closest("[data-paper-add], [data-log], [data-sitting]");
   const save = form?.querySelector(
-    '[data-act="save-paper"], [data-act="log-sitting"], [data-act="save-sitting"], [data-act="set-pages"]',
+    '[data-act="save-paper"], [data-act="log-sitting"], [data-act="save-sitting"]',
   );
   if (!save) return;
   event.preventDefault();
@@ -1438,10 +1538,33 @@ main.addEventListener("mousemove", (event) => {
 });
 main.addEventListener("mouseleave", () => (tip.hidden = true));
 
+/** `lit`: the cover a drag over the window stands on, lit while it does. */
+let lit = null;
+
+/** `coverAt`: the cover a drop at `position` lands on, a `[data-cover-drop]`, or `null`. On macOS the point is in the view's own points, which are the page's CSS pixels, whatever its `PhysicalPosition` type says. */
+function coverAt(position) {
+  if (!position) return null;
+  return document.elementFromPoint(position.x, position.y)?.closest("[data-cover-drop]") ?? null;
+}
+
+/** `light` lights `target` as the one cover a drop lands on, none for `null`. */
+function light(target) {
+  if (target === lit) return;
+  lit?.classList.remove("over");
+  target?.classList.add("over");
+  lit = target;
+}
+
+// A drop on a cover sets that cover; anywhere else it is brought in, the veil
+// over the whole window while it drags there.
 TAURI.webview.getCurrentWebview().onDragDropEvent((event) => {
-  const payload = event.payload;
-  veil.hidden = !(payload.type === "enter" || payload.type === "over");
-  if (payload.type === "drop") bring(payload.paths ?? []).catch(console.error);
+  const { type, paths = [], position } = event.payload;
+  const dragging = type === "enter" || type === "over";
+  const target = dragging || type === "drop" ? coverAt(position) : null;
+  light(dragging ? target : null);
+  veil.hidden = !dragging || target !== null;
+  if (type !== "drop") return;
+  (target ? dropCover(target, paths[0]) : bring(paths)).catch(console.error);
 });
 
 // `ArrowLeft` and `ArrowRight` step a span or a day, through the page's `a[data-key]`.

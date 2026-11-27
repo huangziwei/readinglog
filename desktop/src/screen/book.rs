@@ -63,9 +63,14 @@ pub(super) fn page(cx: &Ctx, at: usize, reading: Option<usize>, way: Way, query:
             listed.len()
         ),
     };
+    // `drop`: a paper book's cover takes a picture dropped on it, into its editor.
+    let drop = match cx.paper_of(at) {
+        Some(_) => " data-cover-drop",
+        None => "",
+    };
     let mut out = format!(
         "<div class=\"slim\" hidden><b{}>{}</b>{jumps}</div>\
-         <div class=\"hero\"><div class=\"cover\">{}</div><div class=\"words\"><h1{}>{}</h1>{}\
+         <div class=\"hero\"><div class=\"cover\"{drop}>{}</div><div class=\"words\"><h1{}>{}</h1>{}\
          <div class=\"meter\"><div class=\"track\"><i style=\"width: {percent}%; background: {}\"></i></div><b>{}</b></div>\
          <dl class=\"figures\">",
         lang(&book.language, &book.title),

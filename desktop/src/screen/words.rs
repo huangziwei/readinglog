@@ -144,17 +144,16 @@ pub struct Words {
     pub show_top: &'static str,
     /// `search_books`: the Books search's hint, naming publishers and tags too.
     pub search_books: &'static str,
-    /// `add_paper` … `paper_note`: Books' button adding a book read on paper, and the form it
+    /// `add_paper` … `no_kindle`: Books' button adding a book read on paper, and the form it
     /// opens: its head, a language left to the book's characters (`by_its_characters`), the
-    /// pages, the Kindle whose record it goes into, and the note under them; `no_kindle`, what
-    /// the button says in a folder holding no Kindle's record.
+    /// pages and the Kindle whose record it goes into; `no_kindle`, what the button says in a
+    /// folder holding no Kindle's record.
     pub add_paper: &'static str,
     pub paper_heading: &'static str,
     pub language_field: &'static str,
     pub by_its_characters: &'static str,
     pub pages_field: &'static str,
     pub kindle_field: &'static str,
-    pub paper_note: &'static str,
     pub no_kindle: &'static str,
     /// `log_sitting` … `log_do`: a paper book's form logging a sitting: its day, the minutes it
     /// opened and closed at, the pages it opened and closed on, and its button; `pages_span`
@@ -186,15 +185,13 @@ pub struct Words {
     pub refused_pages: &'static str,
     pub refused_overlaps: &'static str,
     pub refused_gone: &'static str,
-    /// `the_book`, `cover_field` … `not_a_picture`: a paper book's own card on its page, its
-    /// cover's field there and in the add form, the buttons choosing and removing one, what the
-    /// add form says before one is chosen, the pictures the dialog offers, and why a file was not
-    /// taken as one.
-    pub the_book: &'static str,
+    /// `cover_field` … `not_a_picture`: a paper book's cover's line in its editor, the buttons
+    /// choosing and removing a cover, what the add form's cover says before one is chosen or
+    /// dropped (`drop_cover`), the pictures the dialog offers, and why a file was not taken as one.
     pub cover_field: &'static str,
     pub choose_cover: &'static str,
     pub remove_cover: &'static str,
-    pub no_cover_chosen: &'static str,
+    pub drop_cover: &'static str,
     pub pictures: &'static str,
     pub not_a_picture: &'static str,
 }
@@ -305,8 +302,7 @@ const ENGLISH: Words = Words {
     by_its_characters: "As its characters say",
     pages_field: "Pages",
     kindle_field: "Kindle",
-    paper_note: "It goes into this Kindle's record, and the Kindle shows it from its next sync.",
-    no_kindle: "Sync a Kindle into this folder first: a paper book goes into a Kindle's record.",
+    no_kindle: "Sync a Kindle into this folder first.",
     log_sitting: "Log a sitting",
     day_field: "Day",
     from_field: "From",
@@ -331,13 +327,12 @@ const ENGLISH: Words = Words {
     refused_pages: "Pages run from 0 to the book's last, the first no later than the second.",
     refused_overlaps: "Another paper sitting covers that time.",
     refused_gone: "It is no longer there.",
-    the_book: "This book",
     cover_field: "Cover",
     choose_cover: "Choose a Cover…",
     remove_cover: "Remove the Cover",
-    no_cover_chosen: "None chosen",
+    drop_cover: "Drop a cover here, or choose one.",
     pictures: "Pictures",
-    not_a_picture: "A cover has to be a JPEG or a PNG picture.",
+    not_a_picture: "A cover has to be a JPEG, PNG, WebP, GIF or BMP picture.",
 };
 
 const GERMAN: Words = Words {
@@ -447,10 +442,7 @@ const GERMAN: Words = Words {
     by_its_characters: "Nach seinen Schriftzeichen",
     pages_field: "Seiten",
     kindle_field: "Kindle",
-    paper_note: "Es kommt in die Aufzeichnung dieses Kindles, und der Kindle zeigt es ab der \
-                 nächsten Synchronisierung.",
-    no_kindle: "Synchronisieren Sie zuerst einen Kindle in diesen Ordner: Ein Papierbuch kommt \
-                in die Aufzeichnung eines Kindles.",
+    no_kindle: "Synchronisieren Sie zuerst einen Kindle in diesen Ordner.",
     log_sitting: "Sitzung eintragen",
     day_field: "Tag",
     from_field: "Von",
@@ -476,13 +468,12 @@ const GERMAN: Words = Words {
     refused_pages: "Seiten reichen von 0 bis zur letzten des Buchs, die erste nicht nach der zweiten.",
     refused_overlaps: "In dieser Zeit liegt schon eine andere Papiersitzung.",
     refused_gone: "Das gibt es nicht mehr.",
-    the_book: "Dieses Buch",
     cover_field: "Titelbild",
     choose_cover: "Titelbild wählen…",
     remove_cover: "Titelbild entfernen",
-    no_cover_chosen: "Keines gewählt",
+    drop_cover: "Ziehen Sie ein Titelbild hierher, oder wählen Sie eines.",
     pictures: "Bilder",
-    not_a_picture: "Ein Titelbild muss ein JPEG- oder PNG-Bild sein.",
+    not_a_picture: "Ein Titelbild muss ein JPEG-, PNG-, WebP-, GIF- oder BMP-Bild sein.",
 };
 
 const JAPANESE: Words = Words {
@@ -590,8 +581,7 @@ const JAPANESE: Words = Words {
     by_its_characters: "文字から判断",
     pages_field: "ページ数",
     kindle_field: "Kindle",
-    paper_note: "この Kindle の記録に入り、次の同期から Kindle にも表示されます。",
-    no_kindle: "先に Kindle をこのフォルダに同期してください。紙の本は Kindle の記録に入ります。",
+    no_kindle: "先に Kindle をこのフォルダに同期してください。",
     log_sitting: "読書を記録",
     day_field: "日付",
     from_field: "開始",
@@ -615,13 +605,12 @@ const JAPANESE: Words = Words {
     refused_pages: "ページは 0 から本の最後のページまでで、開始は終了より後にできません。",
     refused_overlaps: "その時間には別の紙の本の記録があります。",
     refused_gone: "もうありません。",
-    the_book: "この本",
     cover_field: "表紙",
     choose_cover: "表紙を選ぶ…",
     remove_cover: "表紙を外す",
-    no_cover_chosen: "未選択",
+    drop_cover: "表紙をここにドロップするか、選んでください。",
     pictures: "画像",
-    not_a_picture: "表紙は JPEG か PNG の画像にしてください。",
+    not_a_picture: "表紙は JPEG・PNG・WebP・GIF・BMP のいずれかの画像にしてください。",
 };
 
 const SIMPLIFIED: Words = Words {
@@ -727,8 +716,7 @@ const SIMPLIFIED: Words = Words {
     by_its_characters: "按文字判断",
     pages_field: "页数",
     kindle_field: "Kindle",
-    paper_note: "它会记入这台 Kindle 的记录，下次同步后 Kindle 上也会显示。",
-    no_kindle: "请先把 Kindle 同步到这个文件夹：纸质书会记入 Kindle 的记录。",
+    no_kindle: "请先把 Kindle 同步到这个文件夹。",
     log_sitting: "记录一次阅读",
     day_field: "日期",
     from_field: "开始",
@@ -752,13 +740,12 @@ const SIMPLIFIED: Words = Words {
     refused_pages: "页码从 0 到书的最后一页，起始页不能晚于结束页。",
     refused_overlaps: "这段时间已有另一次纸质书阅读。",
     refused_gone: "它已经不在了。",
-    the_book: "这本书",
     cover_field: "封面",
     choose_cover: "选择封面…",
     remove_cover: "移除封面",
-    no_cover_chosen: "未选择",
+    drop_cover: "把封面拖到这里，或选择一张。",
     pictures: "图片",
-    not_a_picture: "封面需要是 JPEG 或 PNG 图片。",
+    not_a_picture: "封面需要是 JPEG、PNG、WebP、GIF 或 BMP 图片。",
 };
 
 const TRADITIONAL: Words = Words {
@@ -864,8 +851,7 @@ const TRADITIONAL: Words = Words {
     by_its_characters: "依文字判斷",
     pages_field: "頁數",
     kindle_field: "Kindle",
-    paper_note: "它會記入這台 Kindle 的記錄，下次同步後 Kindle 上也會顯示。",
-    no_kindle: "請先把 Kindle 同步到這個資料夾：紙本書會記入 Kindle 的記錄。",
+    no_kindle: "請先把 Kindle 同步到這個資料夾。",
     log_sitting: "記錄一次閱讀",
     day_field: "日期",
     from_field: "開始",
@@ -889,13 +875,12 @@ const TRADITIONAL: Words = Words {
     refused_pages: "頁碼從 0 到書的最後一頁，起始頁不能晚於結束頁。",
     refused_overlaps: "這段時間已有另一次紙本書閱讀。",
     refused_gone: "它已經不在了。",
-    the_book: "這本書",
     cover_field: "封面",
     choose_cover: "選擇封面…",
     remove_cover: "移除封面",
-    no_cover_chosen: "未選擇",
+    drop_cover: "把封面拖到這裡，或選擇一張。",
     pictures: "圖片",
-    not_a_picture: "封面需要是 JPEG 或 PNG 圖片。",
+    not_a_picture: "封面需要是 JPEG、PNG、WebP、GIF 或 BMP 圖片。",
 };
 
 impl Words {

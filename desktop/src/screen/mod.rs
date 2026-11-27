@@ -795,9 +795,8 @@ impl Ctx<'_> {
             .get(&(self.serial(at).to_string(), HighlightId::of(highlight)))
     }
 
-    /// `cover`: the cover of the book at `at`, or one made of its title on its tone.
+    /// `cover`: the cover of the book at `at`, or one [`made`](Self::made) where it has none.
     fn cover(&self, at: usize) -> String {
-        let book = &self.stats.books[at];
         if let Some(path) = &self.covers[at] {
             let path = esc(&path.to_string_lossy());
             return match self.links {
@@ -805,6 +804,12 @@ impl Ctx<'_> {
                 Covers::Files => format!("<img src=\"file://{path}\" alt=\"\">"),
             };
         }
+        self.made(at)
+    }
+
+    /// `made`: the cover the book at `at` draws with none of its own, its title on its tone.
+    fn made(&self, at: usize) -> String {
+        let book = &self.stats.books[at];
         let [r, g, b] = self.tones[at];
         format!(
             "<div class=\"made\"{} style=\"background: linear-gradient(160deg, rgb({r},{g},{b}), rgb({},{},{}))\">\
@@ -1628,22 +1633,78 @@ mod tests {
         assert!(main.contains("data-from=\"21:00\" data-to=\"22:00\""));
         assert!(main.contains("pp. 0–60 · 1h"), "{main}");
         assert!(main.contains("<dd>1.0 ppm</dd>"), "{main}");
-        assert!(main.contains("data-act=\"choose-paper-cover\""));
+        // The pages, the cover and Delete This Book are in the editor, and no card of their own.
+        let w = Words::of(Lang::English);
+        assert!(!main.contains("paperbook"), "{main}");
+        let part = format!(
+            "<div class=\"paperedit\" data-paper-edit data-kindle=\"G000K1\" data-added=\"{added}\">"
+        );
+        let editor = main
+            .split_once("<div class=\"metaedit\" hidden>")
+            .map(|(_, rest)| rest)
+            .unwrap();
+        assert!(editor.contains(&part), "{main}");
+        assert!(editor.contains("name=\"pages\" value=\"200\" data-was=\"200\""));
+        assert!(editor.contains("data-act=\"choose-paper-cover\""));
         assert!(
-            !main.contains("data-act=\"remove-paper-cover\""),
+            editor.contains("data-act=\"remove-paper-cover\" hidden"),
             "no cover to remove yet"
         );
+        assert!(editor.contains("<template id=\"uncovered\"><div class=\"made\""));
+        assert!(editor.contains(&format!(
+            "<p class=\"acts\"><button type=\"button\" data-act=\"delete-paper\">{}</button>\
+             <button data-act=\"cancel-meta\">",
+            w.delete_paper
+        )));
+        // A picture dropped on the hero's cover or on the editor's cover line goes into the editor.
+        assert!(
+            main.contains("<div class=\"cover\" data-cover-drop>"),
+            "{main}"
+        );
+        assert!(editor.contains("<div class=\"field\" data-cover-drop>"));
+        assert_eq!(main.matches("data-cover-drop").count(), 2);
         let s = Lang::English.strings();
         assert!(!main.contains(&format!("<dt>{}</dt>", s.on_the_kindle)));
         assert!(!main.contains(&format!("<dt>{}</dt>", s.words)));
-        // `B1`, a Kindle book: no panel, its file's row standing.
+        // A cover set: the editor says so, and offers to remove it.
+        let picture = scratch("screen-paper-cover").join("cover.png");
+        image::RgbaImage::from_pixel(20, 30, image::Rgba([90, 30, 30, 255]))
+            .save(&picture)
+            .unwrap();
+        crate::paper::set_cover(&ws, "", &added, &picture).unwrap();
+        let shown = Shown::of(&ws, clock()).unwrap();
+        let covered = render(
+            Some(&shown),
+            &ws,
+            &Route::parse(&format!("/book/{key}")),
+            1072.0,
+            Covers::Files,
+            None,
+        )
+        .main;
+        assert!(covered.contains(&part.replace(">", " data-covered>")));
+        assert!(covered.contains("<button type=\"button\" data-act=\"remove-paper-cover\">"));
+        // `B1`, a Kindle book: no panel, nothing of a paper book's in its editor.
         let kindle = draw("/book/B1").main;
         assert!(!kindle.contains("data-act=\"log-sitting\""));
         assert!(kindle.contains(&format!("<dt>{}</dt>", s.on_the_kindle)));
-        // Books: the button beside the search, the one Kindle named in the form.
+        assert!(!kindle.contains("data-paper-edit") && !kindle.contains("delete-paper"));
+        assert!(
+            !kindle.contains("data-cover-drop"),
+            "a Kindle's cover is its own"
+        );
+        // Books: the button beside the search, the one Kindle named in the form, its cover a
+        // well taking a picture chosen or dropped.
         let books = draw("/books").main;
         assert!(books.contains("data-act=\"add-paper\""));
-        assert!(books.contains("data-act=\"pick-cover\"") && books.contains("name=\"cover\""));
+        assert!(books.contains(&format!(
+            "<button type=\"button\" class=\"well\" data-act=\"pick-cover\" data-cover-drop>\
+             <span>{}</span><img alt=\"\" hidden></button>",
+            w.drop_cover
+        )));
+        assert!(
+            books.contains("data-act=\"unpick-cover\" hidden") && books.contains("name=\"cover\"")
+        );
         assert!(books.contains("<input type=\"hidden\" name=\"kindle\" value=\"G000K1\">"));
         assert!(books.contains("On Paper"), "the book on the shelf");
     }

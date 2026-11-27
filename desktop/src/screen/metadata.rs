@@ -582,7 +582,8 @@ fn separate(cx: &Ctx, asked: &Linking, class: &str) -> String {
 
 /// `at`'s editor: its title, authors and publisher, each field holding what
 /// `values` states; under a title or authors `cx.metadata` sets, the book's own
-/// words with Revert.
+/// words with Revert. A paper book's also holds its pages, its cover and Delete
+/// This Book (`paper::editing`, `paper::deleting`).
 fn editor(cx: &Ctx, at: usize, values: &Values) -> String {
     let w = Words::of(cx.lang);
     let book = &cx.stats.books[at];
@@ -621,10 +622,12 @@ fn editor(cx: &Ctx, at: usize, values: &Values) -> String {
         "",
         "",
     ));
+    out.push_str(&super::paper::editing(cx, at));
     let _ = write!(
         out,
-        "<p class=\"acts\"><button data-act=\"cancel-meta\">{}</button>\
+        "<p class=\"acts\">{}<button data-act=\"cancel-meta\">{}</button>\
          <button class=\"save\" data-act=\"save-meta\">{}</button></p></div>",
+        super::paper::deleting(cx, at),
         esc(cx.s.cancel),
         esc(w.save)
     );

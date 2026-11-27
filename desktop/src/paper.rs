@@ -81,14 +81,14 @@ impl std::fmt::Display for NoKindle {
 
 impl std::error::Error for NoKindle {}
 
-/// `NotAPicture`: why a cover was not taken: its file decodes as neither a JPEG
-/// nor a PNG.
+/// `NotAPicture`: why a cover was not taken: its file decodes as none of JPEG,
+/// PNG, WebP, GIF and BMP.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NotAPicture;
 
 impl std::fmt::Display for NotAPicture {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("a cover has to be a JPEG or a PNG")
+        f.write_str("a cover has to be a JPEG, PNG, WebP, GIF or BMP")
     }
 }
 
@@ -101,10 +101,10 @@ const COVER_BOX: (u32, u32) = (400, 600);
 /// `COVER_QUALITY`: the JPEG quality a cover is written at.
 const COVER_QUALITY: u8 = 88;
 
-/// `fitted`: the picture at `path` as a cover is kept: turned the way its EXIF
-/// orientation says, fitted within [`COVER_BOX`], its transparency laid on
-/// white, a baseline JPEG with no metadata; [`NotAPicture`] where it decodes as
-/// neither a JPEG nor a PNG.
+/// `fitted`: the picture at `path`, a JPEG, PNG, WebP, GIF or BMP told by its bytes, as a cover
+/// is kept: turned the way its EXIF orientation says, fitted within [`COVER_BOX`], its
+/// transparency laid on white, a baseline JPEG with no metadata; [`NotAPicture`] where it decodes
+/// as none of them.
 pub fn fitted(path: &Path) -> Result<Vec<u8>> {
     use image::ImageDecoder as _;
     let reader = image::ImageReader::open(path)
@@ -427,8 +427,8 @@ mod tests {
         assert_eq!(held.paper_books.len(), 1);
     }
 
-    /// `saved`: a picture `w` by `h` at `path`, a JPEG or a PNG by its extension, every pixel
-    /// `rgba`.
+    /// `saved`: a picture `w` by `h` at `path`, a JPEG, PNG, GIF or BMP by its extension, every
+    /// pixel `rgba`.
     fn saved(path: &std::path::Path, (w, h): (u32, u32), rgba: [u8; 4]) {
         let picture = image::RgbaImage::from_pixel(w, h, image::Rgba(rgba));
         match path.extension().and_then(|e| e.to_str()) {
@@ -465,6 +465,31 @@ mod tests {
             .get_pixel(50, 75)
             .0;
         assert!(pixel.iter().all(|c| *c > 245), "{pixel:?}");
+        // `front.webp`, as a shop serves a cover, its right half see-through: told by its bytes
+        // under any name, fitted, and laid on white.
+        let mut rgba = image::RgbaImage::from_pixel(600, 900, image::Rgba([30, 60, 140, 255]));
+        for (x, _, pixel) in rgba.enumerate_pixels_mut() {
+            if x >= 300 {
+                *pixel = image::Rgba([0, 0, 0, 0]);
+            }
+        }
+        let mut webp = Vec::new();
+        image::codecs::webp::WebPEncoder::new_lossless(&mut webp)
+            .encode(&rgba, 600, 900, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        std::fs::write(at("front.jpg"), webp).unwrap();
+        let front = fitted(&at("front.jpg")).unwrap();
+        assert_eq!(size(&front), (400, 600));
+        let front = image::load_from_memory(&front).unwrap().to_rgb8();
+        let [r, g, b] = front.get_pixel(100, 300).0;
+        assert!(r < 45 && (45..=75).contains(&g) && b > 125, "{r} {g} {b}");
+        assert!(front.get_pixel(300, 300).0.iter().all(|c| *c > 245));
+        // A GIF and a BMP.
+        saved(&at("wide.gif"), (900, 300), [200, 40, 40, 255]);
+        assert_eq!(size(&fitted(&at("wide.gif")).unwrap()), (400, 133));
+        saved(&at("square.bmp"), (500, 500), [40, 120, 90, 255]);
+        assert_eq!(size(&fitted(&at("square.bmp")).unwrap()), (400, 400));
+
         // `turned`: a phone's photo, 40 by 20 as stored, its EXIF saying it stands turned a
         // quarter: an APP1 segment, `Exif`, a little-endian TIFF header and one IFD entry,
         // Orientation (0x0112) at 6.

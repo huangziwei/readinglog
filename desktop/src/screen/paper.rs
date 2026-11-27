@@ -1,6 +1,7 @@
 //! A book read on paper, as the window writes it: Books' button and the form adding one
-//! ([`adding`]), and on its own page the form logging a sitting, the sittings logged, its pages
-//! and the way to delete it ([`panel`]). [`refusal`] states why a command wrote nothing.
+//! ([`adding`]); on its own page the form logging a sitting and the sittings logged ([`panel`]),
+//! and in its editor its pages, its cover and the way to delete it ([`editing`], [`deleting`]).
+//! [`refusal`] states why a command wrote nothing.
 
 use std::fmt::Write as _;
 
@@ -12,8 +13,8 @@ use super::words::Words;
 use super::{Ctx, esc};
 
 /// `adding`: Books' button adding a paper book, and the form it opens, hidden until `app.js` shows
-/// it: title, authors, language, pages, and the Kindle whose record it goes into where the folder
-/// holds several. In a folder holding none, the button says `no_kindle` and opens nothing.
+/// it: its cover, title, authors, language, pages, and the Kindle whose record it goes into where
+/// the folder holds several. In a folder holding none, the button says `no_kindle` and opens nothing.
 pub(super) fn adding(cx: &Ctx) -> (String, String) {
     let s = cx.s;
     let w = Words::of(cx.lang);
@@ -36,13 +37,21 @@ pub(super) fn adding(cx: &Ctx) -> (String, String) {
         "<button type=\"button\" class=\"chip\" data-act=\"add-paper\">{}</button>",
         esc(w.add_paper)
     );
+    // `well`: the cover, a picture chosen in its dialog or dropped on it, beside the fields;
+    // `app.js` puts the picture's path in `cover` and shows it as the book will.
     let mut form = format!(
-        "<div class=\"card paperadd\" data-paper-add hidden><h3>{}</h3>\
+        "<div class=\"card paperadd\" data-paper-add hidden><h3>{}</h3><div class=\"entry\">\
+         <div class=\"jacket\"><button type=\"button\" class=\"well\" data-act=\"pick-cover\" data-cover-drop>\
+         <span>{}</span><img alt=\"\" hidden></button>\
+         <button type=\"button\" class=\"chip\" data-act=\"unpick-cover\" hidden>{}</button>\
+         <input type=\"hidden\" name=\"cover\" value=\"\"></div><div class=\"named\">\
          <label class=\"field\"><span>{}</span><input class=\"box title\" name=\"title\"></label>\
          <label class=\"field\"><span>{}</span><input class=\"box\" name=\"author\"></label>\
          <div class=\"fields\"><label class=\"field\"><span>{}</span><select class=\"box\" name=\"language\">\
          <option value=\"\">{}</option>",
         esc(w.paper_heading),
+        esc(w.drop_cover),
+        esc(w.remove_cover),
         esc(w.title_field),
         esc(w.authors_field),
         esc(w.language_field),
@@ -88,18 +97,10 @@ pub(super) fn adding(cx: &Ctx) -> (String, String) {
             form.push_str("</select></label>");
         }
     }
-    // `cover`: the path `pick-cover` puts there, `data-chosen` its file's name.
     let _ = write!(
         form,
-        "</div><div class=\"field\"><span>{}</span><span class=\"picked\">\
-         <button type=\"button\" class=\"chip\" data-act=\"pick-cover\">{}</button>\
-         <small data-chosen>{}</small></span><input type=\"hidden\" name=\"cover\" value=\"\"></div>\
-         <p class=\"note\">{}</p><p class=\"acts\"><button type=\"button\" data-act=\"cancel-paper\">{}</button>\
+        "</div></div></div><p class=\"acts\"><button type=\"button\" data-act=\"cancel-paper\">{}</button>\
          <button type=\"button\" class=\"save\" data-act=\"save-paper\">{}</button></p></div>",
-        esc(w.cover_field),
-        esc(w.choose_cover),
-        esc(w.no_cover_chosen),
-        esc(w.paper_note),
         esc(s.cancel),
         esc(w.add)
     );
@@ -152,8 +153,9 @@ fn fields(w: &Words, read: Option<&PaperSitting>, day: &str, from_page: i64, max
 }
 
 /// `panel`: the paper book at `at`'s own part: the form logging a sitting, its from page at the
-/// bookmark; the sittings logged, newest first, each with Edit and Delete; the pages, and the way
-/// to delete the book. Empty for a Kindle book.
+/// bookmark, and the sittings logged, newest first, each with Edit and Delete. Its pages, its
+/// cover and the way to delete it are in its editor ([`editing`], [`deleting`]). Empty for a
+/// Kindle book.
 pub(super) fn panel(cx: &Ctx, at: usize) -> String {
     let Some((rows, book)) = cx.paper_of(at) else {
         return String::new();
@@ -185,38 +187,62 @@ pub(super) fn panel(cx: &Ctx, at: usize) -> String {
         }
         out.push_str("</div></section>");
     }
-    // `remove`: Remove the Cover, where the row names one.
-    let remove = match book.cover.is_empty() {
-        true => String::new(),
-        false => format!(
-            "<button type=\"button\" data-act=\"remove-paper-cover\">{}</button>",
-            esc(w.remove_cover)
-        ),
-    };
     let _ = write!(
         out,
-        "<section><h2>{}</h2><div class=\"card paperbook\">\
-         <div class=\"line\" data-pages><label class=\"field\"><span>{}</span>\
-         <input class=\"box\" type=\"number\" min=\"1\" step=\"1\" name=\"pages\" value=\"{}\"></label>\
-         <p class=\"acts\"><button type=\"button\" class=\"save\" data-act=\"set-pages\">{}</button></p></div>\
-         <div class=\"line\"><span class=\"label\">{}</span><p class=\"acts\">{remove}\
-         <button type=\"button\" data-act=\"choose-paper-cover\">{}</button></p></div>\
-         <p class=\"acts\"><button type=\"button\" data-act=\"delete-paper\">{}</button></p></div></section>\
-         <template id=\"sitting-form\"><div class=\"editor\" data-sitting>{}<p class=\"acts\">\
+        "<template id=\"sitting-form\"><div class=\"editor\" data-sitting>{}<p class=\"acts\">\
          <button type=\"button\" data-act=\"cancel-sitting\">{}</button>\
          <button type=\"button\" class=\"save\" data-act=\"save-sitting\">{}</button></p></div></template></div>",
-        esc(w.the_book),
-        esc(w.pages_field),
-        book.pages,
-        esc(w.save),
-        esc(w.cover_field),
-        esc(w.choose_cover),
-        esc(w.delete_paper),
         fields(w, None, today, 0, book.pages),
         esc(s.cancel),
         esc(w.save)
     );
     out
+}
+
+/// `editing`: the paper book at `at`'s part of its editor, written with the rest on Save: its pages,
+/// and its cover's line, which chooses a picture or removes the one standing, the hero's cover
+/// showing the book as Save leaves it, and takes a picture dropped on it as the hero's cover does.
+/// `uncovered` is the hero's cover with none, `data-covered` says the book has one. Empty for a
+/// Kindle book.
+pub(super) fn editing(cx: &Ctx, at: usize) -> String {
+    let Some((_, book)) = cx.paper_of(at) else {
+        return String::new();
+    };
+    let w = Words::of(cx.lang);
+    let (covered, remove) = match book.cover.is_empty() {
+        true => ("", " hidden"),
+        false => (" data-covered", ""),
+    };
+    format!(
+        "<div class=\"paperedit\" data-paper-edit data-kindle=\"{}\" data-added=\"{}\"{covered}>\
+         <label class=\"field\"><span>{}</span><input class=\"box\" type=\"number\" min=\"1\" step=\"1\" \
+         name=\"pages\" value=\"{}\" data-was=\"{}\"></label>\
+         <div class=\"field\" data-cover-drop><span>{}</span><p class=\"acts\">\
+         <button type=\"button\" data-act=\"choose-paper-cover\">{}</button>\
+         <button type=\"button\" data-act=\"remove-paper-cover\"{remove}>{}</button></p></div>\
+         <template id=\"uncovered\">{}</template></div>",
+        esc(cx.serial(at)),
+        esc(&book.added),
+        esc(w.pages_field),
+        book.pages,
+        book.pages,
+        esc(w.cover_field),
+        esc(w.choose_cover),
+        esc(w.remove_cover),
+        cx.made(at)
+    )
+}
+
+/// `deleting`: Delete This Book…, the paper book at `at`'s, first of its editor's buttons; empty
+/// for a Kindle book.
+pub(super) fn deleting(cx: &Ctx, at: usize) -> String {
+    match cx.paper_of(at) {
+        Some(_) => format!(
+            "<button type=\"button\" data-act=\"delete-paper\">{}</button>",
+            esc(Words::of(cx.lang).delete_paper)
+        ),
+        None => String::new(),
+    }
 }
 
 /// `logged`: one sitting as its row in the list: its day and minutes, its pages and how long it

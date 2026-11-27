@@ -615,7 +615,7 @@ fn refused(ws: &Workspace, err: anyhow::Error) -> String {
 /// the one Kindle the folder holds where `kindle` is empty. Answers the key its
 /// page is routed by.
 #[tauri::command]
-fn add_paper_book(
+async fn add_paper_book(
     app: AppHandle,
     open: State<'_, Open>,
     kindle: String,
@@ -625,8 +625,8 @@ fn add_paper_book(
     paper::add_book(&ws, &kindle, &book).map_err(|err| refused(&ws, err))
 }
 
-/// A picture picked in a dialog, a JPEG or a PNG; `None` where the dialog is
-/// cancelled.
+/// A picture picked in a dialog, a JPEG, PNG, WebP, GIF or BMP; `None` where
+/// the dialog is cancelled.
 #[tauri::command]
 async fn pick_picture(app: AppHandle, open: State<'_, Open>) -> Answer<Option<String>> {
     let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
@@ -634,15 +634,31 @@ async fn pick_picture(app: AppHandle, open: State<'_, Open>) -> Answer<Option<St
     Ok(app
         .dialog()
         .file()
-        .add_filter(w.pictures, &["jpg", "jpeg", "png"])
+        .add_filter(w.pictures, &["jpg", "jpeg", "png", "webp", "gif", "bmp"])
         .blocking_pick_file()
         .map(|p| p.to_string()))
+}
+
+/// The picture at `picture` fitted as a paper book's cover is, as JPEG bytes:
+/// what the add form shows once one is chosen or dropped on it, refused as
+/// [`set_paper_cover`] refuses it. Async, as every command fitting a picture
+/// is, so a camera's picture never holds the window still.
+#[tauri::command]
+async fn fit_cover(
+    app: AppHandle,
+    open: State<'_, Open>,
+    picture: String,
+) -> Answer<tauri::ipc::Response> {
+    let ws = Workspace::open(&folder(&app, &open)?).map_err(said)?;
+    paper::fitted(Path::new(&picture))
+        .map(tauri::ipc::Response::new)
+        .map_err(|err| refused(&ws, err))
 }
 
 /// Take the picture at `picture` as the cover of the paper book added at
 /// `added` in the Kindle `kindle`'s record.
 #[tauri::command]
-fn set_paper_cover(
+async fn set_paper_cover(
     app: AppHandle,
     open: State<'_, Open>,
     kindle: String,
@@ -882,6 +898,7 @@ pub fn run() {
             delete_note,
             add_paper_book,
             pick_picture,
+            fit_cover,
             set_paper_cover,
             remove_paper_cover,
             set_paper_pages,
