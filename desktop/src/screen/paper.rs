@@ -1,20 +1,20 @@
 //! A book read on paper, as the window writes it: Books' button and the form adding one
 //! ([`adding`]); on its own page the form logging a sitting and the sittings logged ([`panel`]),
-//! and in its editor its pages, its cover and the way to delete it ([`editing`], [`deleting`]).
-//! [`refusal`] states why a command wrote nothing.
+//! and in its editor its pages, its cover (on the page's own, [`jacket`]) and the way to delete
+//! it ([`editing`], [`deleting`]). [`refusal`] states why a command wrote nothing.
 
 use std::fmt::Write as _;
 
 use readinglog_native::date;
-use readinglog_native::metadata::names;
 use readinglog_native::paper::{PaperSitting, Refusal};
 
 use super::words::Words;
 use super::{Ctx, esc};
 
 /// `adding`: Books' button adding a paper book, and the form it opens, hidden until `app.js` shows
-/// it: its cover, title, authors, language, pages, and the Kindle whose record it goes into where
-/// the folder holds several. In a folder holding none, the button says `no_kindle` and opens nothing.
+/// it: its cover, title, authors, pages, and the Kindle whose record it goes into where the folder
+/// holds several. Its language is a tag set on its page, as any book's is. In a folder holding
+/// none, the button says `no_kindle` and opens nothing.
 pub(super) fn adding(cx: &Ctx) -> (String, String) {
     let s = cx.s;
     let w = Words::of(cx.lang);
@@ -47,29 +47,13 @@ pub(super) fn adding(cx: &Ctx) -> (String, String) {
          <input type=\"hidden\" name=\"cover\" value=\"\"></div><div class=\"named\">\
          <label class=\"field\"><span>{}</span><input class=\"box title\" name=\"title\"></label>\
          <label class=\"field\"><span>{}</span><input class=\"box\" name=\"author\"></label>\
-         <div class=\"fields\"><label class=\"field\"><span>{}</span><select class=\"box\" name=\"language\">\
-         <option value=\"\">{}</option>",
+         <div class=\"fields\"><label class=\"field\"><span>{}</span>\
+         <input class=\"box\" type=\"number\" min=\"1\" step=\"1\" name=\"pages\"></label>",
         esc(w.paper_heading),
         esc(w.drop_cover),
         esc(w.remove_cover),
         esc(w.title_field),
         esc(w.authors_field),
-        esc(w.language_field),
-        esc(w.by_its_characters)
-    );
-    for (code, ..) in names::LANGUAGES {
-        let name = names::name(code, cx.lang).unwrap_or(code);
-        let _ = write!(
-            form,
-            "<option value=\"{}\">{}</option>",
-            esc(code),
-            esc(name)
-        );
-    }
-    let _ = write!(
-        form,
-        "</select></label><label class=\"field\"><span>{}</span>\
-         <input class=\"box\" type=\"number\" min=\"1\" step=\"1\" name=\"pages\"></label>",
         esc(w.pages_field)
     );
     match held.as_slice() {
@@ -154,8 +138,8 @@ fn fields(w: &Words, read: Option<&PaperSitting>, day: &str, from_page: i64, max
 
 /// `panel`: the paper book at `at`'s own part: the form logging a sitting, its from page at the
 /// bookmark, and the sittings logged, newest first, each with Edit and Delete. Its pages, its
-/// cover and the way to delete it are in its editor ([`editing`], [`deleting`]). Empty for a
-/// Kindle book.
+/// cover and the way to delete it are in its editor ([`editing`], [`jacket`], [`deleting`]). Empty
+/// for a Kindle book.
 pub(super) fn panel(cx: &Ctx, at: usize) -> String {
     let Some((rows, book)) = cx.paper_of(at) else {
         return String::new();
@@ -200,37 +184,45 @@ pub(super) fn panel(cx: &Ctx, at: usize) -> String {
 }
 
 /// `editing`: the paper book at `at`'s part of its editor, written with the rest on Save: its pages,
-/// and its cover's line, which chooses a picture or removes the one standing, the hero's cover
-/// showing the book as Save leaves it, and takes a picture dropped on it as the hero's cover does.
-/// `uncovered` is the hero's cover with none, `data-covered` says the book has one. Empty for a
-/// Kindle book.
+/// and the cover the hero shows while it is open (`jacket`), `uncovered` being the hero's cover with
+/// none and `data-covered` saying the book has one. Empty for a Kindle book.
 pub(super) fn editing(cx: &Ctx, at: usize) -> String {
     let Some((_, book)) = cx.paper_of(at) else {
         return String::new();
     };
     let w = Words::of(cx.lang);
-    let (covered, remove) = match book.cover.is_empty() {
-        true => ("", " hidden"),
-        false => (" data-covered", ""),
+    let covered = match book.cover.is_empty() {
+        true => "",
+        false => " data-covered",
     };
     format!(
         "<div class=\"paperedit\" data-paper-edit data-kindle=\"{}\" data-added=\"{}\"{covered}>\
          <label class=\"field\"><span>{}</span><input class=\"box\" type=\"number\" min=\"1\" step=\"1\" \
-         name=\"pages\" value=\"{}\" data-was=\"{}\"></label>\
-         <div class=\"field\" data-cover-drop><span>{}</span><p class=\"acts\">\
-         <button type=\"button\" data-act=\"choose-paper-cover\">{}</button>\
-         <button type=\"button\" data-act=\"remove-paper-cover\"{remove}>{}</button></p></div>\
-         <template id=\"uncovered\">{}</template></div>",
+         name=\"pages\" value=\"{}\" data-was=\"{}\"></label><template id=\"uncovered\">{}</template></div>",
         esc(cx.serial(at)),
         esc(&book.added),
         esc(w.pages_field),
         book.pages,
         book.pages,
-        esc(w.cover_field),
-        esc(w.choose_cover),
-        esc(w.remove_cover),
         cx.made(at)
     )
+}
+
+/// `jacket`: the paper book at `at`'s cover on its page, which takes a picture dropped on it into
+/// its editor, with Remove the Cover under it while the editor is open and a cover shows; `None`
+/// for a Kindle book, whose cover is its own.
+pub(super) fn jacket(cx: &Ctx, at: usize) -> Option<String> {
+    let (_, book) = cx.paper_of(at)?;
+    let remove = match book.cover.is_empty() {
+        true => " hidden",
+        false => "",
+    };
+    Some(format!(
+        "<div class=\"jacket\"><div class=\"cover\" data-cover-drop>{}</div>\
+         <button type=\"button\" class=\"chip\" data-act=\"remove-paper-cover\"{remove}>{}</button></div>",
+        cx.cover(at),
+        esc(Words::of(cx.lang).remove_cover)
+    ))
 }
 
 /// `deleting`: Delete This Book…, the paper book at `at`'s, first of its editor's buttons; empty

@@ -145,13 +145,10 @@ pub struct Words {
     /// `search_books`: the Books search's hint, naming publishers and tags too.
     pub search_books: &'static str,
     /// `add_paper` … `no_kindle`: Books' button adding a book read on paper, and the form it
-    /// opens: its head, a language left to the book's characters (`by_its_characters`), the
-    /// pages and the Kindle whose record it goes into; `no_kindle`, what the button says in a
-    /// folder holding no Kindle's record.
+    /// opens: its head, the pages and the Kindle whose record it goes into; `no_kindle`, what the
+    /// button says in a folder holding no Kindle's record.
     pub add_paper: &'static str,
     pub paper_heading: &'static str,
-    pub language_field: &'static str,
-    pub by_its_characters: &'static str,
     pub pages_field: &'static str,
     pub kindle_field: &'static str,
     pub no_kindle: &'static str,
@@ -185,11 +182,9 @@ pub struct Words {
     pub refused_pages: &'static str,
     pub refused_overlaps: &'static str,
     pub refused_gone: &'static str,
-    /// `cover_field` … `not_a_picture`: a paper book's cover's line in its editor, the buttons
-    /// choosing and removing a cover, what the add form's cover says before one is chosen or
-    /// dropped (`drop_cover`), the pictures the dialog offers, and why a file was not taken as one.
-    pub cover_field: &'static str,
-    pub choose_cover: &'static str,
+    /// `remove_cover` … `not_a_picture`: the button taking a cover off, what the add form's cover
+    /// says before one is chosen or dropped (`drop_cover`), the pictures the dialog offers, and
+    /// why a file was not taken as one.
     pub remove_cover: &'static str,
     pub drop_cover: &'static str,
     pub pictures: &'static str,
@@ -298,8 +293,6 @@ const ENGLISH: Words = Words {
     search_books: "Search title, author, publisher or tag",
     add_paper: "Add a Paper Book…",
     paper_heading: "A book read on paper",
-    language_field: "Language",
-    by_its_characters: "As its characters say",
     pages_field: "Pages",
     kindle_field: "Kindle",
     no_kindle: "Sync a Kindle into this folder first.",
@@ -327,8 +320,6 @@ const ENGLISH: Words = Words {
     refused_pages: "Pages run from 0 to the book's last, the first no later than the second.",
     refused_overlaps: "Another paper sitting covers that time.",
     refused_gone: "It is no longer there.",
-    cover_field: "Cover",
-    choose_cover: "Choose a Cover…",
     remove_cover: "Remove the Cover",
     drop_cover: "Drop a cover here, or choose one.",
     pictures: "Pictures",
@@ -438,8 +429,6 @@ const GERMAN: Words = Words {
     search_books: "Titel, Autor, Verlag oder Tag suchen",
     add_paper: "Papierbuch hinzufügen…",
     paper_heading: "Ein auf Papier gelesenes Buch",
-    language_field: "Sprache",
-    by_its_characters: "Nach seinen Schriftzeichen",
     pages_field: "Seiten",
     kindle_field: "Kindle",
     no_kindle: "Synchronisieren Sie zuerst einen Kindle in diesen Ordner.",
@@ -468,8 +457,6 @@ const GERMAN: Words = Words {
     refused_pages: "Seiten reichen von 0 bis zur letzten des Buchs, die erste nicht nach der zweiten.",
     refused_overlaps: "In dieser Zeit liegt schon eine andere Papiersitzung.",
     refused_gone: "Das gibt es nicht mehr.",
-    cover_field: "Titelbild",
-    choose_cover: "Titelbild wählen…",
     remove_cover: "Titelbild entfernen",
     drop_cover: "Ziehen Sie ein Titelbild hierher, oder wählen Sie eines.",
     pictures: "Bilder",
@@ -577,8 +564,6 @@ const JAPANESE: Words = Words {
     search_books: "題名・著者・出版社・タグで検索",
     add_paper: "紙の本を追加…",
     paper_heading: "紙で読んだ本",
-    language_field: "言語",
-    by_its_characters: "文字から判断",
     pages_field: "ページ数",
     kindle_field: "Kindle",
     no_kindle: "先に Kindle をこのフォルダに同期してください。",
@@ -605,8 +590,6 @@ const JAPANESE: Words = Words {
     refused_pages: "ページは 0 から本の最後のページまでで、開始は終了より後にできません。",
     refused_overlaps: "その時間には別の紙の本の記録があります。",
     refused_gone: "もうありません。",
-    cover_field: "表紙",
-    choose_cover: "表紙を選ぶ…",
     remove_cover: "表紙を外す",
     drop_cover: "表紙をここにドロップするか、選んでください。",
     pictures: "画像",
@@ -712,8 +695,6 @@ const SIMPLIFIED: Words = Words {
     search_books: "搜索书名、作者、出版社或标签",
     add_paper: "添加纸质书…",
     paper_heading: "读的纸质书",
-    language_field: "语言",
-    by_its_characters: "按文字判断",
     pages_field: "页数",
     kindle_field: "Kindle",
     no_kindle: "请先把 Kindle 同步到这个文件夹。",
@@ -740,8 +721,6 @@ const SIMPLIFIED: Words = Words {
     refused_pages: "页码从 0 到书的最后一页，起始页不能晚于结束页。",
     refused_overlaps: "这段时间已有另一次纸质书阅读。",
     refused_gone: "它已经不在了。",
-    cover_field: "封面",
-    choose_cover: "选择封面…",
     remove_cover: "移除封面",
     drop_cover: "把封面拖到这里，或选择一张。",
     pictures: "图片",
@@ -847,8 +826,6 @@ const TRADITIONAL: Words = Words {
     search_books: "搜尋書名、作者、出版社或標籤",
     add_paper: "新增紙本書…",
     paper_heading: "讀的紙本書",
-    language_field: "語言",
-    by_its_characters: "依文字判斷",
     pages_field: "頁數",
     kindle_field: "Kindle",
     no_kindle: "請先把 Kindle 同步到這個資料夾。",
@@ -875,8 +852,6 @@ const TRADITIONAL: Words = Words {
     refused_pages: "頁碼從 0 到書的最後一頁，起始頁不能晚於結束頁。",
     refused_overlaps: "這段時間已有另一次紙本書閱讀。",
     refused_gone: "它已經不在了。",
-    cover_field: "封面",
-    choose_cover: "選擇封面…",
     remove_cover: "移除封面",
     drop_cover: "把封面拖到這裡，或選擇一張。",
     pictures: "圖片",

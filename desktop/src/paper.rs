@@ -17,16 +17,14 @@ use crate::kindles::Source;
 use crate::metadata::suggested_language;
 use crate::workspace::{Workspace, keep_written, now, write_file};
 
-/// `NewBook`: a paper book as the window adds it; a blank `language` takes the
-/// one its characters say, where they say one, and `cover` names a picture on
-/// disk to take as its cover.
+/// `NewBook`: a paper book as the window adds it, `cover` naming a picture on
+/// disk to take as its cover. Its row's language is the one its characters say,
+/// where they say one; the reader states one as a tag, as on any book.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct NewBook {
     pub title: String,
     #[serde(default)]
     pub author: String,
-    #[serde(default)]
-    pub language: String,
     pub pages: i64,
     #[serde(default)]
     pub cover: Option<String>,
@@ -173,10 +171,7 @@ fn source(ws: &Workspace, kindle: &str) -> Result<Source> {
 /// the book draws under. A cover that is no picture adds nothing.
 pub fn add_book(ws: &Workspace, kindle: &str, book: &NewBook) -> Result<String> {
     let mut source = source(ws, kindle)?;
-    let language = match book.language.trim() {
-        "" => suggested_language(&book.title, &book.author).unwrap_or_default(),
-        code => code,
-    };
+    let language = suggested_language(&book.title, &book.author).unwrap_or_default();
     let cover = match book.cover.as_deref().filter(|p| !p.is_empty()) {
         Some(path) => Some(fitted(Path::new(path))?),
         None => None,
@@ -333,7 +328,6 @@ mod tests {
             &NewBook {
                 title: "こころ".into(),
                 author: "夏目漱石".into(),
-                language: String::new(),
                 pages: 300,
                 cover: None,
             },
@@ -410,7 +404,6 @@ mod tests {
         let new = NewBook {
             title: "A Book".into(),
             author: String::new(),
-            language: "en".into(),
             pages: 100,
             cover: None,
         };
@@ -517,7 +510,6 @@ mod tests {
         let new = NewBook {
             title: "On Paper".into(),
             author: String::new(),
-            language: "en".into(),
             pages: 200,
             cover: Some(picture.to_string_lossy().into_owned()),
         };

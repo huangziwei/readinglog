@@ -1206,9 +1206,10 @@ document.addEventListener("click", async (event) => {
   }
 });
 
-// `fieldsOf` … `savePaper`: a paper book, added off Books' form; on its own page a
-// sitting logged, edited or deleted; and in its editor its pages and cover set and
-// the book deleted. A cover is chosen in a dialog or dropped on one.
+// `fieldsOf` … `savePaper`: a paper book, added off Books' form, its cover chosen in a
+// dialog or dropped on the form's; on its own page a sitting logged, edited or deleted;
+// and in its editor its pages set, its cover dropped on the hero's or taken off, and the
+// book deleted.
 
 /** `fieldsOf`: the value of each named field under `holder`, by its name. */
 function fieldsOf(holder) {
@@ -1242,7 +1243,6 @@ async function addPaper(form) {
     book: {
       title: f.title ?? "",
       author: f.author ?? "",
-      language: f.language ?? "",
       pages: pageNumber(f.pages),
       cover: f.cover || null,
     },
@@ -1314,7 +1314,7 @@ async function stageCover(part, picture) {
     delete part.dataset.set;
   }
   part.toggleAttribute("data-off", !src && part.hasAttribute("data-covered"));
-  part.querySelector('[data-act="remove-paper-cover"]').hidden = !src;
+  main.querySelector('.hero [data-act="remove-paper-cover"]').hidden = !src;
 }
 
 /** `unstage` gives the hero back the cover the page drew, letting go of the one the editor showed. */
@@ -1326,7 +1326,7 @@ function unstage() {
   chosen(null);
   delete part.dataset.set;
   part.removeAttribute("data-off");
-  part.querySelector('[data-act="remove-paper-cover"]').hidden = !part.hasAttribute("data-covered");
+  main.querySelector('.hero [data-act="remove-paper-cover"]').hidden = !part.hasAttribute("data-covered");
 }
 
 /** `savePaper` writes what the editor's paper part `part` changes, its pages and then its cover; whether it wrote any. */
@@ -1433,13 +1433,8 @@ document.addEventListener("click", async (event) => {
     case "unpick-cover":
       await chooseCover(act.closest("[data-paper-add]"), null);
       break;
-    case "choose-paper-cover": {
-      const picture = await call("pick_picture");
-      if (picture) await stageCover(paper, picture);
-      break;
-    }
     case "remove-paper-cover":
-      await stageCover(paper, null);
+      await stageCover(main.querySelector("[data-paper-edit]"), null);
       break;
     case "delete-paper": {
       // Delete This Book stands with the editor's buttons, beside its paper part.

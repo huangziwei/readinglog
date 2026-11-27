@@ -467,6 +467,17 @@ svg text {
   align-items: flex-end;
   margin-bottom: 8px;
 }
+/* `.jacket`: a paper book's cover, Remove the Cover under it while its editor is open */
+.hero .jacket {
+  flex: none;
+  align-self: flex-start;
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+}
+.hero:not(.editing) .jacket .chip {
+  display: none;
+}
 .hero .cover {
   width: 168px;
   flex: none;
@@ -1904,6 +1915,10 @@ section h2 .said .search {
   grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
   gap: 0 12px;
 }
+/* the add form's pages, alone or beside the Kindle, as wide as a field beside another */
+.paperadd .fields {
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
 select.box {
   appearance: none;
   padding-right: 28px;
@@ -1962,14 +1977,9 @@ select.box {
 }
 /* `.over`: the cover a picture dragged over the window lands on */
 .well.over,
-.hero .cover.over,
-.paperedit .field.over {
+.hero .cover.over {
   outline: 3px dashed var(--accent);
   outline-offset: 4px;
-}
-.paperedit .field.over {
-  outline-offset: 2px;
-  border-radius: 4px;
 }
 .paperadd .acts,
 .paper .acts {
@@ -2024,24 +2034,10 @@ select.box {
   padding: 0;
   border-bottom: none;
 }
-/* `.paperedit`: a paper book's pages and its cover's line in its editor, side by side,
-   and Delete This Book at the left of the editor's buttons */
-.paperedit {
-  display: grid;
-  grid-template-columns: 140px minmax(0, 1fr);
-  gap: 0 22px;
-  align-items: end;
-}
-.paperedit .acts {
-  display: flex;
-  justify-content: flex-start;
-  gap: 6px;
-  min-height: 35px;
-  align-items: center;
-  margin: 0;
-}
-.paperedit .acts button {
-  margin-left: 0;
+/* `.paperedit`: a paper book's pages in its editor, and Delete This Book at the left of
+   the editor's buttons */
+.paperedit .field {
+  width: 140px;
 }
 .metaedit [data-act="delete-paper"] {
   margin-right: auto;

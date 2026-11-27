@@ -1592,7 +1592,6 @@ mod tests {
         let new = crate::paper::NewBook {
             title: "On Paper".into(),
             author: "Someone".into(),
-            language: "en".into(),
             pages: 200,
             cover: None,
         };
@@ -1645,28 +1644,33 @@ mod tests {
             .unwrap();
         assert!(editor.contains(&part), "{main}");
         assert!(editor.contains("name=\"pages\" value=\"200\" data-was=\"200\""));
-        assert!(editor.contains("data-act=\"choose-paper-cover\""));
-        assert!(
-            editor.contains("data-act=\"remove-paper-cover\" hidden"),
-            "no cover to remove yet"
-        );
         assert!(editor.contains("<template id=\"uncovered\"><div class=\"made\""));
+        assert!(
+            !main.contains("choose-paper-cover"),
+            "a cover is dropped, not chosen"
+        );
         assert!(editor.contains(&format!(
             "<p class=\"acts\"><button type=\"button\" data-act=\"delete-paper\">{}</button>\
              <button data-act=\"cancel-meta\">",
             w.delete_paper
         )));
-        // A picture dropped on the hero's cover or on the editor's cover line goes into the editor.
+        // The hero's cover takes a dropped picture into the editor, Remove the Cover under it
+        // once there is one.
         assert!(
-            main.contains("<div class=\"cover\" data-cover-drop>"),
+            main.contains(
+                "<div class=\"jacket\"><div class=\"cover\" data-cover-drop><div class=\"made\""
+            ),
             "{main}"
         );
-        assert!(editor.contains("<div class=\"field\" data-cover-drop>"));
-        assert_eq!(main.matches("data-cover-drop").count(), 2);
+        assert!(main.contains(&format!(
+            "<button type=\"button\" class=\"chip\" data-act=\"remove-paper-cover\" hidden>{}</button></div>",
+            w.remove_cover
+        )));
+        assert_eq!(main.matches("data-cover-drop").count(), 1);
         let s = Lang::English.strings();
         assert!(!main.contains(&format!("<dt>{}</dt>", s.on_the_kindle)));
         assert!(!main.contains(&format!("<dt>{}</dt>", s.words)));
-        // A cover set: the editor says so, and offers to remove it.
+        // A cover set: the editor says so, and Remove the Cover stands under it.
         let picture = scratch("screen-paper-cover").join("cover.png");
         image::RgbaImage::from_pixel(20, 30, image::Rgba([90, 30, 30, 255]))
             .save(&picture)
@@ -1683,7 +1687,10 @@ mod tests {
         )
         .main;
         assert!(covered.contains(&part.replace(">", " data-covered>")));
-        assert!(covered.contains("<button type=\"button\" data-act=\"remove-paper-cover\">"));
+        assert!(covered.contains(&format!(
+            "<button type=\"button\" class=\"chip\" data-act=\"remove-paper-cover\">{}</button>",
+            w.remove_cover
+        )));
         // `B1`, a Kindle book: no panel, nothing of a paper book's in its editor.
         let kindle = draw("/book/B1").main;
         assert!(!kindle.contains("data-act=\"log-sitting\""));
@@ -1697,6 +1704,10 @@ mod tests {
         // well taking a picture chosen or dropped.
         let books = draw("/books").main;
         assert!(books.contains("data-act=\"add-paper\""));
+        assert!(
+            !books.contains("name=\"language\""),
+            "a language is a tag, set on the book's page"
+        );
         assert!(books.contains(&format!(
             "<button type=\"button\" class=\"well\" data-act=\"pick-cover\" data-cover-drop>\
              <span>{}</span><img alt=\"\" hidden></button>",

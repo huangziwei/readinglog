@@ -827,7 +827,6 @@ mod tests {
         let new = crate::paper::NewBook {
             title: "On Paper".into(),
             author: "Someone".into(),
-            language: "en".into(),
             pages: 200,
             cover: None,
         };
