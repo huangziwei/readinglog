@@ -1629,6 +1629,10 @@ mod tests {
             main.contains("name=\"from_page\" value=\"60\""),
             "the bookmark"
         );
+        // Its times are typed on a 24-hour clock, in the log form and the sitting editor alike.
+        assert!(!main.contains("type=\"time\""), "{main}");
+        assert!(main.contains("placeholder=\"--:--\" data-clock name=\"from\" value=\"\""));
+        assert_eq!(main.matches(" data-clock ").count(), 4, "{main}");
         assert!(main.contains("data-from=\"21:00\" data-to=\"22:00\""));
         assert!(main.contains("pp. 0–60 · 1h"), "{main}");
         assert!(main.contains("<dd>1.0 ppm</dd>"), "{main}");

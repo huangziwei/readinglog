@@ -96,9 +96,14 @@ fn minute(stamp: &str) -> &str {
     stamp.get(11..16).unwrap_or_default()
 }
 
+/// `CLOCK`: a time field: a minute typed as `HH:MM` on a 24-hour clock, as the window tells every
+/// time. `type="time"` would draw it the locale's way, with AM and PM in English. `app.js` reads
+/// what is typed into `HH:MM` and steps it with the arrow keys (`[data-clock]`).
+const CLOCK: &str = "class=\"box\" type=\"text\" inputmode=\"numeric\" maxlength=\"5\" placeholder=\"--:--\" data-clock";
+
 /// `fields`: a sitting's five fields, each holding what `read` states, `day` its day where it states
-/// none, and `max` the book's pages; the form `app.js` reads `log_sitting`'s and `edit_sitting`'s
-/// `read` off.
+/// none, the two times [`CLOCK`] fields, and `max` the book's pages; the form `app.js` reads
+/// `log_sitting`'s and `edit_sitting`'s `read` off.
 fn fields(w: &Words, read: Option<&PaperSitting>, day: &str, from_page: i64, max: i64) -> String {
     let (day, from, to, opened, closed) = match read {
         Some(r) => (
@@ -119,8 +124,8 @@ fn fields(w: &Words, read: Option<&PaperSitting>, day: &str, from_page: i64, max
     format!(
         "<div class=\"fields\">\
          <label class=\"field\"><span>{}</span><input class=\"box\" type=\"date\" name=\"day\" value=\"{}\"></label>\
-         <label class=\"field\"><span>{}</span><input class=\"box\" type=\"time\" name=\"from\" value=\"{}\"></label>\
-         <label class=\"field\"><span>{}</span><input class=\"box\" type=\"time\" name=\"to\" value=\"{}\"></label>\
+         <label class=\"field\"><span>{}</span><input {CLOCK} name=\"from\" value=\"{}\"></label>\
+         <label class=\"field\"><span>{}</span><input {CLOCK} name=\"to\" value=\"{}\"></label>\
          <label class=\"field\"><span>{}</span><input class=\"box\" type=\"number\" min=\"0\" max=\"{max}\" step=\"1\" name=\"from_page\" value=\"{}\"></label>\
          <label class=\"field\"><span>{}</span><input class=\"box\" type=\"number\" min=\"0\" max=\"{max}\" step=\"1\" name=\"to_page\" value=\"{}\"></label></div>",
         esc(w.day_field),

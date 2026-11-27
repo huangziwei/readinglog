@@ -1207,9 +1207,9 @@ document.addEventListener("click", async (event) => {
 });
 
 // `fieldsOf` … `savePaper`: a paper book, added off Books' form, its cover chosen in a
-// dialog or dropped on the form's; on its own page a sitting logged, edited or deleted;
-// and in its editor its pages set, its cover dropped on the hero's or taken off, and the
-// book deleted.
+// dialog or dropped on the form's; on its own page a sitting logged, edited or deleted,
+// its times on a 24-hour clock; and in its editor its pages set, its cover dropped on the
+// hero's or taken off, and the book deleted.
 
 /** `fieldsOf`: the value of each named field under `holder`, by its name. */
 function fieldsOf(holder) {
@@ -1223,17 +1223,52 @@ function pageNumber(said) {
   return said === undefined || said === "" ? -1 : Number(said);
 }
 
-/** `readOf`: the sitting the fields under `holder` state, as `log_sitting` and `edit_sitting` take it. */
+/** `clockOf`: `said`, a time typed as its hour alone, its hour and minutes run together (`930`, `2130`) or split by `:` or `.`, in full-width digits too, as `HH:MM` on a 24-hour clock; `null` where it names no time. */
+function clockOf(said) {
+  const typed = said.normalize("NFKC").trim();
+  const split = /^(\d{1,2})[:.](\d{2})$/.exec(typed)?.slice(1);
+  const run = /^\d{1,4}$/.test(typed)
+    ? typed.length > 2 ? [typed.slice(0, -2), typed.slice(-2)] : [typed, "0"]
+    : null;
+  const [h, m] = (split ?? run ?? [NaN, NaN]).map(Number);
+  if (!(h <= 23 && m <= 59)) return null;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+/** `readOf`: the sitting the fields under `holder` state, as `log_sitting` and `edit_sitting` take it, a time as `clockOf` reads it, or as typed for the record to refuse. */
 function readOf(holder) {
   const f = fieldsOf(holder);
+  const time = (said = "") => clockOf(said) ?? said;
   return {
     day: f.day ?? "",
-    from: f.from ?? "",
-    to: f.to ?? "",
+    from: time(f.from),
+    to: time(f.to),
     from_page: pageNumber(f.from_page),
     to_page: pageNumber(f.to_page),
   };
 }
+
+// A `[data-clock]` field shows what was typed in it as `clockOf` reads it once it is
+// left, and `ArrowUp` and `ArrowDown` step its hour or its minute, whichever the caret
+// stands in, each wrapping round on its own as a time field's do.
+main.addEventListener("change", (event) => {
+  const box = event.target.closest("[data-clock]");
+  if (box) box.value = clockOf(box.value) ?? box.value;
+});
+main.addEventListener("keydown", (event) => {
+  const box = event.target.closest("[data-clock]");
+  if (!box || event.isComposing || event.keyCode === 229) return;
+  if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+  const at = clockOf(box.value);
+  if (!at) return;
+  event.preventDefault();
+  const minutes = box.selectionStart > 2;
+  const by = event.key === "ArrowUp" ? 1 : -1;
+  const [h, m] = at.split(":").map(Number);
+  const two = (n, round) => String((n + by + round) % round).padStart(2, "0");
+  box.value = minutes ? `${at.slice(0, 2)}:${two(m, 60)}` : `${two(h, 24)}:${at.slice(3)}`;
+  box.setSelectionRange(minutes ? 3 : 0, minutes ? 5 : 2);
+});
 
 /** `addPaper` adds the paper book Books' form `form` states, and opens its page. */
 async function addPaper(form) {
